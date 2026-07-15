@@ -1,0 +1,21 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "frank-forecast",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-07-04",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "triggers": {
+    "crons": ["*/10 * * * *"]
+  },
+  "kv_namespaces": [
+    {
+      "binding": "FRANK_FORECAST_CACHE",
+      "id": "dd68c9d4ad3a4d35ab288ff764bfea25"
+    }
+  ]
+}

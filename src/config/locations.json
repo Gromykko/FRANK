@@ -1,0 +1,205 @@
+[
+  {
+    "id": "horsens",
+    "name": "Horsens",
+    "areaName": "Horsens Fjord",
+    "subtitle": "Horsens",
+    "timezone": "Europe/Copenhagen",
+    "coordinate": {
+      "latitude": 55.858,
+      "longitude": 9.905
+    },
+    "emmaId": "DK004",
+    "kommuneAliases": ["Horsens"],
+    "dmiCollections": {
+      "water": ["dkss_idw", "dkss_nsbs"],
+      "waves": ["wam_nsb", "wam_dw"]
+    },
+    "localRules": [
+      {
+        "id": "vorsoe",
+        "title": "Vorsø bird sanctuary",
+        "body": "The island and the water around it are a protected reserve with a seasonal no-go zone and a keep-your-distance rule along the coast. The dates and the exact distance change, so check what's current before you go.",
+        "link": { "label": "Fredningen — Vorsø", "url": "https://www.fredninger.dk/fredning/soevind-aakaer-og-vorsoe/" }
+      },
+      {
+        "id": "crossings",
+        "title": "Where the club allows crossings",
+        "body": "The club limits where you may cross the fjord, and some passages (like the Sundet sluice) are off-limits. Confirm the current crossing rules with the club before heading across.",
+        "link": { "label": "Horsens Kajakklub", "url": "https://www.horsens-kajakklub.dk/" }
+      },
+      {
+        "id": "winter",
+        "title": "Winter paddling limits",
+        "body": "In the cold season the club limits how far from shore you may paddle, and rules out going where there's ice between you and the shore. Check the current winter rules with your club.",
+        "link": { "label": "Horsens Kajakklub", "url": "https://www.horsens-kajakklub.dk/" }
+      },
+      {
+        "id": "noerrestrand",
+        "title": "Nørrestrand nesting closure",
+        "body": "Nørrestrand is a protected wildlife reserve with a seasonal closure during the bird nesting period. Check the current dates before you go.",
+        "link": { "label": "Fredningen — Nørrestrand", "url": "https://www.fredninger.dk/fredning/noerrestrand/" }
+      },
+      {
+        "id": "shipping",
+        "title": "Commercial shipping lane",
+        "body": "The main channel runs down the middle of the fjord. Large cargo ships heading to Horsens Harbour and the local ferries have right of way — cross it quickly and at a right angle."
+      },
+      {
+        "id": "daylight",
+        "title": "Sunrise to sunset",
+        "body": "Paddling is generally allowed only between sunrise and sunset unless you carry navigation lights. FRANK's Daylight setting reflects this."
+      }
+    ],
+    "_note": "Caps aligned 2026-07-14 to the Vejle/BBKK club-grounded scheme (the only club-published numbers on this coast): onshore 5.0/8.0 for the long east fetch, offshore capped LOWER at 4.5/7.0 for fralandsvind drift risk. Horsens Fjord shares Vejle's geometry (opens east, town at the west head), and the previous values (onshore 4.5/7.0, offshore 5.5/8.0) capped offshore LOOSER than onshore - contradicting the validated fralandsvind principle.",
+    "windSectors": [
+      {
+        "id": "onshore",
+        "label": "Easterly",
+        "description": "Onshore wind into Horsens Fjord — longest fetch, biggest chop",
+        "exposure": "onshore",
+        "min": 45,
+        "max": 135,
+        "safeLimit": 5.0,
+        "cautionLimit": 8.0
+      },
+      {
+        "id": "offshore",
+        "label": "Westerly",
+        "description": "Offshore wind (fralandsvind) away from the inner fjord — capped lower for drift risk despite flatter water",
+        "exposure": "offshore",
+        "min": 225,
+        "max": 315,
+        "safeLimit": 4.5,
+        "cautionLimit": 7.0
+      }
+    ]
+  },
+  {
+    "id": "vejle",
+    "name": "Vejle",
+    "areaName": "Vejle Fjord",
+    "subtitle": "Vejle",
+    "timezone": "Europe/Copenhagen",
+    "_note": "Coordinate is a mid-fjord point (55.705, 9.68) where DMI's DKSS grid has a valid wet node with real water temperature and tide (the grid is patchy in the narrow fjord - most nearby points are masked/null, this one is a genuine in-fjord node). Wind sectors: geometry confirmed (Vejle Fjord opens east, town at the western head, so E=onshore/longest-fetch, W=offshore). Caps grounded in Brejning Baad Klub kajak practice on this exact coastline (5 m/s guest, 6 m/s competency, 8 m/s instructed ceiling): onshore 5.0/8.0, offshore capped LOWER at 4.5/7.0 to respect fralandsvind (offshore) drift risk rather than pure wave roughness. Like Horsens, the E-vs-W directional split is the app's own model (no Danish club publishes per-direction caps); the flat Max Wind cap is the club-style rule. Source: brejninghavn.dk BBKK Sikkerhed PDF.",
+    "coordinate": {
+      "latitude": 55.705,
+      "longitude": 9.68
+    },
+    "emmaId": "DK004",
+    "kommuneAliases": ["Vejle", "Trekant"],
+    "dmiCollections": {
+      "water": ["dkss_idw", "dkss_nsbs"],
+      "waves": ["wam_nsb", "wam_dw"]
+    },
+    "localRules": [
+      {
+        "id": "daylight",
+        "title": "Sunrise to sunset",
+        "body": "Paddling is generally allowed only between sunrise and sunset unless you carry navigation lights. FRANK's Daylight setting reflects this."
+      }
+    ],
+    "windSectors": [
+      {
+        "id": "onshore",
+        "label": "Easterly",
+        "description": "Onshore wind up the fjord from the open east mouth — longest fetch, biggest chop",
+        "exposure": "onshore",
+        "min": 45,
+        "max": 135,
+        "safeLimit": 5.0,
+        "cautionLimit": 8.0
+      },
+      {
+        "id": "offshore",
+        "label": "Westerly",
+        "description": "Offshore wind (fralandsvind) from the sheltered west head — capped lower for drift risk despite flatter water",
+        "exposure": "offshore",
+        "min": 225,
+        "max": 315,
+        "safeLimit": 4.5,
+        "cautionLimit": 7.0
+      }
+    ]
+  },
+  {
+    "id": "kolding",
+    "name": "Kolding",
+    "areaName": "Kolding Fjord",
+    "subtitle": "Kolding",
+    "timezone": "Europe/Copenhagen",
+    "_note": "Added 2026-07-14. Coordinate is the fjord-mouth DKSS node by Løverodde/Lillebælt (probed live: dkss_idw wet, water-temperature 17.2C + real deviation; wam_nsb waves confirmed on first worker build; the mid-fjord grid at 9.55 is masked like Vejle's interior). The node sits at the edge of Kolding Kajak Klub's daily rovand (Kolding Fjord west of the Skaerbaek-Loverodde line). CAPS GROUNDED in KKK's published rules (koldingkajakklub.dk/sikkerhed): 'hoejst 5 m/s' for non-released paddlers + 300 m rovand + winter Oct-Apr / 100 m - the flat 5 m/s corroborates the onshore safe cap exactly; the 8.0 danger ceiling rests on the Brejning instructed-ceiling analogy, and the E/W directional split is the app's own model, like every city.",
+    "coordinate": {
+      "latitude": 55.512,
+      "longitude": 9.659
+    },
+    "emmaId": "DK005",
+    "kommuneAliases": ["Kolding", "Trekant"],
+    "dmiCollections": {
+      "water": ["dkss_idw", "dkss_nsbs"],
+      "waves": ["wam_nsb", "wam_dw"]
+    },
+    "windSectors": [
+      {
+        "id": "onshore",
+        "label": "Easterly",
+        "description": "Onshore wind up the fjord from Lillebælt — longest fetch, biggest chop",
+        "exposure": "onshore",
+        "min": 45,
+        "max": 135,
+        "safeLimit": 5.0,
+        "cautionLimit": 8.0
+      },
+      {
+        "id": "offshore",
+        "label": "Westerly",
+        "description": "Offshore wind (fralandsvind) from the west head — capped lower for drift risk",
+        "exposure": "offshore",
+        "min": 225,
+        "max": 315,
+        "safeLimit": 4.5,
+        "cautionLimit": 7.0
+      }
+    ]
+  },
+  {
+    "id": "aarhus",
+    "name": "Aarhus",
+    "areaName": "Aarhus Bugt",
+    "subtitle": "Aarhus",
+    "timezone": "Europe/Copenhagen",
+    "_note": "Added 2026-07-14, PROVISIONAL. Coordinate is an inner Aarhus Bugt DKSS node just off the city (probed live: dkss_idw water-temperature 18.4C + real deviation, wam_nsb wave height 0.15m - both wet). Geometry: city on the WEST shore, bay opens east/southeast to Kattegat, so E=onshore (long Kattegat fetch), W=offshore (fralandsvind). Open-bay fetch is longer than the fjords', so the same caps may be too loose here - an Aarhus-local paddler should calibrate before the provisional flag comes off.",
+    "coordinate": {
+      "latitude": 56.129,
+      "longitude": 10.257
+    },
+    "emmaId": "DK004",
+    "kommuneAliases": ["Aarhus", "Århus"],
+    "dmiCollections": {
+      "water": ["dkss_idw", "dkss_nsbs"],
+      "waves": ["wam_nsb", "wam_dw"]
+    },
+    "windSectors": [
+      {
+        "id": "onshore",
+        "label": "Easterly",
+        "description": "Onshore wind off the open bay — long Kattegat fetch onto the city shore",
+        "exposure": "onshore",
+        "min": 45,
+        "max": 135,
+        "safeLimit": 5.0,
+        "cautionLimit": 8.0
+      },
+      {
+        "id": "offshore",
+        "label": "Westerly",
+        "description": "Offshore wind (fralandsvind) from the city shore — capped lower for drift risk",
+        "exposure": "offshore",
+        "min": 225,
+        "max": 315,
+        "safeLimit": 4.5,
+        "cautionLimit": 7.0
+      }
+    ]
+  }
+]

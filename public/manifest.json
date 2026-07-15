@@ -1,0 +1,30 @@
+{
+  "short_name": "FRANK",
+  "name": "FRANK — Fjord Risk Assessment & Navigation Kit",
+  "id": "/FRANK/",
+  "version": "0.1.0",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    }
+  ],
+  "start_url": "/FRANK/",
+  "background_color": "#0c1117",
+  "theme_color": "#1d6fd1",
+  "display": "standalone",
+  "orientation": "portrait"
+}

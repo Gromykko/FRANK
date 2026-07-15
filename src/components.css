@@ -1,0 +1,3130 @@
+/* Timeline Bar Styles */
+.timeline-bar-container {
+  width: 100%;
+  position: relative;
+  margin-top: 10px;
+}
+
+.timeline-track-wrapper {
+  position: relative;
+  background: transparent;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--panel-border);
+  display: flex;
+  flex-direction: column;
+}
+
+.timeline-track {
+  display: flex;
+  width: 100%;
+  height: 28px;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  overflow: hidden;
+}
+
+.meteogram-row {
+  display: flex;
+  width: 100%;
+  border-top: 1px solid var(--panel-border);
+  background: transparent;
+}
+
+.meteogram-cell {
+  flex: 0 0 44px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-main);
+  border-right: 1px solid var(--panel-border);
+  padding: 3px 0;
+  height: 32px; /* Fixed height for standard rows */
+  transition: background 0.2s ease, opacity 0.2s ease;
+}
+.meteogram-cell.tall {
+  height: 44px; /* Taller height for wind row (icon + text + gap) */
+}
+/* Night cells dim via background tint only — element opacity would drag the
+   values below readable contrast. */
+.meteogram-cell.is-night {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.timeline-block {
+  height: 100%;
+  border-right: 1px solid var(--panel-border);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.timeline-block:last-child {
+  border-right: none;
+}
+
+.timeline-block:hover {
+  background-color: var(--primary-bg);
+}
+
+/* Selection is drawn once, by the full-column overlay border
+   (.timeline-overlay-cell.is-selected) — the header cell adds nothing. */
+
+.timeline-hour-text {
+  font-size: 11px;
+  color: var(--text-main);
+  font-weight: 700;
+  pointer-events: none;
+}
+
+/* The hour header stays neutral (plain theme ink on the panel); the verdict
+   lives in a thin full-strength safety ribbon along the bottom of the row.
+   Caution keeps its diagonal stripes and danger its cross-hatch inside the
+   ribbon, so the three states differ by texture as well as hue. */
+.timeline-block {
+  --ribbon-color: transparent;
+  padding-bottom: 7px;
+}
+
+.timeline-block.status-safe {
+  --ribbon-color: var(--color-safe);
+  background: linear-gradient(var(--ribbon-color), var(--ribbon-color)) bottom / 100% 7px no-repeat;
+}
+.timeline-block.status-caution {
+  --ribbon-color: var(--color-caution);
+  background:
+    repeating-linear-gradient(45deg, transparent 0 5px, rgba(0, 0, 0, 0.22) 5px 7px) bottom / 100% 7px no-repeat,
+    linear-gradient(var(--ribbon-color), var(--ribbon-color)) bottom / 100% 7px no-repeat;
+}
+.timeline-block.status-danger {
+  --ribbon-color: var(--color-danger);
+  background:
+    repeating-linear-gradient(45deg, transparent 0 4px, rgba(0, 0, 0, 0.25) 4px 6px) bottom / 100% 7px no-repeat,
+    repeating-linear-gradient(-45deg, transparent 0 4px, rgba(0, 0, 0, 0.25) 4px 6px) bottom / 100% 7px no-repeat,
+    linear-gradient(var(--ribbon-color), var(--ribbon-color)) bottom / 100% 7px no-repeat;
+}
+
+/* A calm marker where the longer-range MET period blocks begin. */
+.timeline-block.is-outlook-start::before {
+  content: 'LONGER RANGE';
+  position: absolute;
+  top: -16px;
+  left: 3px;
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-shadow: none;
+  white-space: nowrap;
+}
+
+/* Longer-range blocks read as calm, lower-confidence columns — muted, not
+   alarming (no heavy stripes). */
+.timeline-block.is-low-confidence,
+.meteogram-cell.is-low-confidence {
+  opacity: 0.78;
+}
+
+.meteogram-cell.is-low-confidence .meteogram-value {
+  font-style: italic;
+}
+
+.timeline-day-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none; /* Hide scrollbar for tabs */
+}
+
+.timeline-day-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.day-tab-btn {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  color: var(--text-muted);
+  min-height: 44px;
+  padding: 6px 16px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.day-tab-btn:hover {
+  background: color-mix(in srgb, var(--text-main) 6%, transparent);
+  color: var(--text-main);
+}
+
+.day-tab-btn.active {
+  background: var(--primary);
+  color: var(--text-inverse);
+  border-color: var(--primary);
+}
+
+.day-tab-btn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.scrollable-timeline {
+  overflow-x: auto;
+  overflow-y: hidden;
+  touch-action: pan-x pan-y pinch-zoom;
+  overscroll-behavior-x: contain;
+  padding-bottom: 4px;
+}
+
+.timeline-block {
+  flex-direction: column;
+}
+
+/* Night hours: mute the label, tint the cell like the night rows below, and
+   dim the ribbon toward the background — no element opacity anywhere. */
+.timeline-block.is-night {
+  background-color: rgba(0, 0, 0, 0.12);
+}
+.timeline-block.is-night.status-safe {
+  --ribbon-color: color-mix(in srgb, var(--color-safe) 45%, var(--bg-app));
+}
+.timeline-block.is-night.status-caution {
+  --ribbon-color: color-mix(in srgb, var(--color-caution) 45%, var(--bg-app));
+}
+.timeline-block.is-night.status-danger {
+  --ribbon-color: color-mix(in srgb, var(--color-danger) 45%, var(--bg-app));
+}
+.timeline-block.is-night .timeline-hour-text {
+  color: var(--text-muted);
+}
+
+.moon-icon {
+  margin-top: 2px;
+  color: var(--text-muted);
+}
+
+/* Weather Widget Animations */
+.weather-widget-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15));
+}
+
+.sun-spin svg {
+  animation: spin-slow 12s linear infinite;
+}
+
+.cloud-drift svg {
+  animation: float-drift 4s ease-in-out infinite alternate;
+}
+
+.sun-cloud-drift svg:nth-child(1) {
+  animation: spin-slow 20s linear infinite;
+}
+.sun-cloud-drift svg:nth-child(2) {
+  animation: float-drift-slight 5s ease-in-out infinite alternate;
+}
+
+.rain-fall svg {
+  animation: bounce-rain 1.5s ease-in-out infinite;
+}
+
+.moon-pulse svg {
+  animation: glow-pulse 3s ease-in-out infinite alternate;
+}
+
+.lightning-flash svg {
+  animation: flash-lightning 2s ease-in-out infinite;
+}
+
+.snow-spin svg {
+  animation: wobble-snow 3s ease-in-out infinite alternate;
+}
+
+@keyframes spin-slow {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes float-drift {
+  0% { transform: translateY(0) translateX(-1px); }
+  100% { transform: translateY(-2px) translateX(2px); }
+}
+
+@keyframes float-drift-slight {
+  0% { transform: translateY(0) translateX(0); }
+  100% { transform: translateY(-1px) translateX(1px); }
+}
+
+@keyframes bounce-rain {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(2px); }
+}
+
+@keyframes glow-pulse {
+  0% { filter: drop-shadow(0 0 1px rgba(255,255,255,0.2)); opacity: 0.8; }
+  100% { filter: drop-shadow(0 0 6px rgba(255,255,255,0.6)); opacity: 1; }
+}
+
+@keyframes flash-lightning {
+  0%, 90%, 94%, 98%, 100% { opacity: 1; filter: drop-shadow(0 0 0px transparent); }
+  92%, 96% { opacity: 0.4; filter: drop-shadow(0 0 8px var(--color-caution)); }
+}
+
+@keyframes wobble-snow {
+  0% { transform: rotate(-5deg) translateY(0); }
+  100% { transform: rotate(5deg) translateY(1px); }
+}
+
+/* Custom Select Dropdown & Options */
+.custom-select-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--bg-app) !important;
+  border: 1px solid var(--panel-border) !important;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.custom-select-option {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  text-align: left;
+  border: none;
+  font-family: inherit;
+  padding: 8px 12px;
+  cursor: pointer;
+  color: var(--text-main) !important;
+  background: transparent;
+  transition: background 0.15s, color 0.15s;
+  font-size: 14px;
+}
+
+.custom-select-option:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.custom-select-option:hover,
+.custom-select-option.is-focused {
+  background: var(--primary-bg) !important;
+  color: var(--primary) !important;
+}
+
+.custom-select-trigger:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.custom-select-option.is-selected {
+  background: var(--primary) !important;
+  color: var(--text-inverse) !important;
+  font-weight: 600;
+}
+
+/* Scroll Navigation Chevrons */
+.timeline-scroll-wrapper {
+  position: relative;
+}
+
+.timeline-day-tabs,
+.chart-scroll-container {
+  touch-action: pan-x pan-y pinch-zoom;
+  overscroll-behavior-x: contain;
+}
+
+/* Info Modal */
+.info-modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3000;
+}
+
+.info-modal-content {
+  width: 90%;
+  max-width: 600px;
+  max-height: 80vh;
+  background: var(--bg-app);
+  border: 1px solid var(--panel-border);
+  box-shadow: var(--shadow-hard);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  overflow-y: auto;
+  color: var(--text-main);
+  font-family: inherit;
+}
+
+.info-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--panel-border);
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+}
+
+/* Keyboard-accessible click targets over the timeline matrix */
+.timeline-overlay-cell {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.timeline-overlay-cell:hover:not(.is-selected) {
+  background: var(--primary-bg);
+}
+
+.timeline-overlay-cell:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+/* Weather widget icon tones (colors come from theme tokens, not inline hex) */
+.weather-widget-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.weather-widget-icon.tone-sun { color: var(--icon-sun); }
+.weather-widget-icon.tone-moon { color: var(--icon-moon); }
+.weather-widget-icon.tone-cloud { color: var(--text-muted); }
+.weather-widget-icon.tone-drizzle { color: var(--icon-drizzle); }
+.weather-widget-icon.tone-rain { color: var(--icon-rain); }
+.weather-widget-icon.tone-snow { color: var(--icon-snow); }
+.weather-widget-icon.tone-storm { color: var(--color-caution-text); }
+
+/* Timeline matrix layout */
+.timeline-bar-container {
+  --hour-cell-width: 44px;
+}
+
+.timeline-day-tabs {
+  white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+  width: auto;
+  margin: 0 0 24px 0;
+  padding: 0;
+  cursor: grab;
+  scroll-snap-type: x mandatory;
+}
+@media (max-width: 600px) {
+  .timeline-day-tabs {
+    margin: 0 0 16px 0;
+    padding: 0;
+  }
+}
+
+.day-tab-btn {
+  scroll-snap-align: start;
+}
+
+.timeline-scroll-wrapper {
+  display: flex;
+  align-items: flex-start;
+  position: relative;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+}
+@media (max-width: 600px) {
+  .timeline-scroll-wrapper {
+    margin: 0;
+    padding: 0;
+  }
+}
+
+.timeline-legend-col {
+  width: 55px;
+  padding-left: 0;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  padding-top: 32px; /* matches the colored timeline-track height exactly */
+  border-right: 1px solid var(--panel-border);
+  background: var(--panel-bg);
+  z-index: 10;
+}
+
+.timeline-legend-label {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  border-top: 1px solid var(--panel-border);
+  text-align: right;
+}
+
+.timeline-legend-label.tall {
+  height: 44px;
+}
+
+.scrollable-timeline {
+  width: calc(100% - 55px);
+  padding-right: 0;
+  cursor: grab;
+  padding-bottom: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+}
+
+.timeline-track-wrapper {
+  padding-right: 20px;
+  box-sizing: content-box;
+}
+
+.timeline-track {
+  height: 32px;
+}
+
+.timeline-block {
+  flex: 0 0 var(--hour-cell-width);
+}
+
+.timeline-block.is-day-start,
+.meteogram-cell.is-day-start {
+  border-left: 2px solid rgba(148, 163, 184, 0.35);
+}
+
+.timeline-block.is-outlook-start,
+.meteogram-cell.is-outlook-start {
+  border-left: 2px dashed var(--panel-border);
+}
+
+.meteogram-row {
+  align-items: center;
+  height: 32px;
+}
+
+.meteogram-row.tall {
+  height: 44px;
+}
+
+.meteogram-cell {
+  flex: 0 0 var(--hour-cell-width);
+  height: 100%;
+  border-top: 1px solid var(--panel-border);
+}
+
+.meteogram-wind-stack {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.meteogram-wind-value {
+  font-weight: 700;
+  font-size: 11px;
+  color: var(--text-main);
+  line-height: 1;
+}
+
+.meteogram-value {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-main);
+  line-height: 1;
+}
+
+/* Matrix numerals stay monochrome (the row label already names the metric);
+   the data-series hues live in the charts, where they identify a series. */
+
+.timeline-overlay-grid {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.timeline-overlay-cell {
+  flex: 0 0 var(--hour-cell-width);
+}
+
+.timeline-overlay-cell.is-day-start {
+  border-left: 2px solid rgba(148, 163, 184, 0.5);
+}
+
+.timeline-overlay-cell.is-outlook-start {
+  border-left: 2px dashed var(--panel-border);
+}
+
+.timeline-overlay-cell.is-selected {
+  box-shadow: inset 0 0 0 2px var(--primary);
+  background: color-mix(in srgb, var(--primary) 6%, transparent);
+}
+
+/* Timeline weather-icon and wind-arrow tones */
+.tl-icon-sun { color: var(--icon-sun); }
+.tl-icon-cloud { color: var(--text-muted); }
+.tl-icon-rain { color: var(--icon-drizzle); }
+.tl-icon-snow { color: var(--icon-snow); }
+.tl-icon-storm { color: var(--color-caution-text); }
+
+.wind-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+/* Detailed charts layout */
+.charts-disclosure-body {
+  display: block;
+  padding-top: 16px;
+}
+
+/* Day rail: one sticky label per calendar day rides in the chart's 20px top
+   margin. The current day's label holds the scrollport's left edge; the next
+   day's label arrives anchored to its 00:00 boundary and pushes it out. */
+.chart-canvas {
+  position: relative;
+}
+
+/* Sits between the wind header and the wind chart, flush against the chart's
+   top hour axis so the day names read as part of the time scale. */
+.chart-day-rail {
+  position: relative;
+  height: 18px;
+  margin-bottom: -4px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* No overflow:hidden here - that would turn the cell into the label's
+   scrollport and break the sticky behavior */
+.chart-day-cell {
+  position: absolute;
+  top: 0;
+  height: 100%;
+}
+
+.chart-day-label {
+  position: sticky;
+  left: 8px;
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 20px;
+  white-space: nowrap;
+  color: var(--text-muted);
+  background: var(--panel-bg);
+  padding: 0 6px;
+  border-radius: var(--radius-xs);
+}
+
+.chart-scroll-container {
+  width: calc(100% - 32px);
+  padding-right: 0;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  cursor: grab;
+}
+
+.chart-canvas {
+  box-sizing: content-box;
+  padding-right: 20px;
+}
+
+.chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chart-header-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chart-header-metric {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chart-header-metric.tone-wind { color: var(--data-wind); }
+.chart-header-metric.tone-wave { color: var(--data-wave); }
+.chart-header-metric.tone-tide { color: var(--data-tide); }
+/* Air/water readouts wear their line's color; the separator stays neutral */
+.chart-metric-air { color: var(--data-air-temp); }
+.chart-metric-water { color: var(--data-water-temp); }
+.chart-header-metric .tone-wind { color: var(--data-wind); }
+.chart-header-metric .tone-gust { color: var(--data-gust); }
+.chart-header-metric .tone-wave { color: var(--data-wave); }
+.chart-header-metric .tone-tide { color: var(--data-tide); }
+
+/* ── Single-body charts ────────────────────────────────────────────────────
+   All four graphs live in ONE horizontal scroll container (one time axis,
+   one drag, no cross-chart sync). Headers travel inside the canvas; each
+   header's content sticks to the visible left edge like the day labels do. */
+.chart-scroll-container.chart-scroll-single {
+  width: 100%;
+}
+
+.chart-inline-header {
+  width: 100%;
+  padding: 10px 0 2px;
+}
+
+/* Give each following graph a clear visual break from the plot above it. */
+.chart-plot-wrap + .chart-inline-header {
+  margin-top: 20px;
+  padding-top: 8px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.chart-inline-header-content {
+  position: sticky;
+  left: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+/* Sticky Y rail: HTML tick values + limit labels pinned to the scrollport's
+   left edge (same sticky trick as the day labels), so the axis stays readable
+   however far the charts are scrolled. The SVG axis keeps its gutter and grid
+   but renders no tick text of its own. */
+.chart-plot-wrap {
+  position: relative;
+}
+
+.chart-sticky-rail {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.chart-sticky-anchor {
+  position: sticky;
+  left: 0;
+  display: inline-block;
+  width: 0;
+  height: 100%;
+}
+
+/* Frozen axis column: a solid strip over the SVG's reserved 34px gutter, so
+   data and night shading scrolling under it stay masked — like the frozen
+   first column of a spreadsheet. (At scroll 0 the gutter is empty anyway.) */
+.chart-sticky-anchor::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 34px;
+  background: var(--panel-bg);
+}
+
+.chart-axis-chip,
+.chart-limit-chip {
+  position: absolute;
+  font-size: 10px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Limit names begin at the plot edge; numeric axis ticks stay in the gutter. */
+.chart-limit-chip {
+  left: calc(34px + 2px);
+  background: color-mix(in srgb, var(--panel-bg) 85%, transparent);
+  padding: 2px 4px;
+  border-radius: var(--radius-xs);
+}
+
+/* Tick values are plain text on the frozen strip, right-aligned and ending
+   ~4px before the plot edge — a classic axis column, outside the graph.
+   Limit labels start inside the plot (left: 36px above), so no collision. */
+.chart-axis-chip {
+  left: 0;
+  width: 30px;
+  text-align: right;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+}
+
+/* Limit labels sit just above their dashed rule */
+.chart-limit-chip {
+  transform: translateY(-100%);
+  margin-top: -2px;
+  font-weight: 700;
+}
+
+.chart-limit-chip--caution { color: var(--color-caution-text); }
+.chart-limit-chip--danger { color: var(--color-danger-text); }
+.chart-limit-chip--muted { color: var(--text-muted); font-weight: 600; }
+
+/* Compact padding so the collapsed header matches the Detailed Graphs
+   button height; 24px sides align its title with the other sections */
+/* Padding lives on the header and body so the label bezel can bleed to the
+   plate edges; the panel itself is just the mounting frame. */
+.planner-settings-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-subtitle {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.panel-collapse-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  min-height: 62px;
+  margin: -24px -24px 0 -24px;
+  padding: 16px 24px;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  transition: background-color 0.15s;
+}
+
+.panel-collapse-header:not(.is-open) {
+  margin-bottom: -24px;
+  border-radius: inherit;
+}
+
+@media (max-width: 600px) {
+  .panel-collapse-header {
+    margin: -16px -16px 16px -16px;
+    padding: 14px 16px;
+  }
+  .panel-collapse-header:not(.is-open) {
+    margin-bottom: -16px;
+  }
+}
+
+.panel-collapse-header:hover {
+  background: var(--bg-app);
+}
+
+.panel-collapse-header:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.panel-collapse-header.is-open {
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+/* Typography is set by the shared .settings-title/.launch-panel-title/
+   .charts-disclosure-title rule (the engraved-label bezel). */
+
+/* The accordion toggle inside the heading: a real button wearing the
+   engraved title's clothes (font/colors inherit from .settings-title) */
+.collapse-title-btn {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.collapse-title-btn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+.settings-info-btn {
+  background: transparent;
+  border: 2px solid var(--text-main);
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: bold;
+  color: var(--text-main);
+  cursor: pointer;
+  margin-left: 8px;
+  vertical-align: middle;
+  padding: 0;
+  position: relative;
+}
+
+/* Instant tooltip: a native title waits out the OS hover delay, but a
+   dedicated info affordance should answer the hover immediately. */
+.settings-info-btn::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 8px);
+  /* right-anchored: a centered tip clips at the screen edge on phones */
+  right: -8px;
+  background: var(--panel-bg);
+  color: var(--text-main);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-xs);
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 30;
+}
+
+.settings-info-btn:hover::after,
+.settings-info-btn:focus-visible::after {
+  opacity: 1;
+}
+
+.settings-collapse-chevron {
+  color: var(--text-muted);
+}
+
+.settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-top: 16px;
+}
+
+/* ---------- Your Limits: instrument panel ----------
+   Per-limit instrument cards with push-button steppers, and read-only zone
+   bars where the amber band IS the caution margin. (Trip mode lives in the
+   Trip Profile panel at the top of the section stack.) */
+
+.limit-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.limit-card {
+  padding: 8px 0 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border-bottom: 1px solid var(--panel-border);
+}
+.limit-card:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+/* Dim a disabled card's readouts (icon/name, steppers, zone bar, caption) but
+   never the toggle switches — those stay fully lit so it is always obvious you
+   can flip the setting (and its sub-settings) back on. */
+.limit-card.is-off .limit-id,
+.limit-card.is-off > .limit-value-row,
+.limit-card.is-off > .limit-zone,
+.limit-card.is-off .limit-caution-copy,
+.limit-card.is-off .limit-caution-row > .limit-value-row {
+  opacity: 0.6;
+}
+
+.limit-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.limit-id {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.limit-titles {
+  display: flex;
+  flex-direction: column;
+}
+
+.limit-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.limit-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+/* Physical toggle switch. The OFF state keeps a clearly visible gray track
+   and a raised white knob — dimming it into the panel made it read as
+   decoration instead of a control you can flip. */
+.toggle-switch {
+  width: 42px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--text-main) 22%, transparent);
+  background: color-mix(in srgb, var(--text-main) 16%, var(--panel-bg));
+  position: relative;
+  cursor: pointer;
+  flex: 0 0 auto;
+  padding: 0;
+  transition: background 0.15s ease;
+}
+
+.toggle-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  transition: left 0.15s ease;
+}
+
+.toggle-switch:not(.is-on):not(:disabled):hover {
+  background: color-mix(in srgb, var(--text-main) 26%, var(--panel-bg));
+}
+
+.toggle-switch.is-on {
+  background: var(--color-safe);
+}
+
+.toggle-switch.is-on::after {
+  left: 20px;
+}
+
+.toggle-switch.is-small {
+  width: 40px;
+  height: 24px;
+}
+
+.toggle-switch.is-small::after {
+  width: 18px;
+  height: 18px;
+}
+
+.toggle-switch.is-small.is-on::after {
+  left: 18px;
+}
+
+.toggle-switch:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* A disabled toggle keeps full opacity (only the cursor signals it is locked)
+   so it never reads as broken — it still clearly shows its on/off state. */
+.toggle-switch:disabled {
+  cursor: not-allowed;
+}
+
+/* Stepper: big push-buttons around a tabular readout. No slider to grab by
+   accident while scrolling, exact to the step, workable with cold thumbs. */
+.limit-value-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: center;
+}
+
+.step-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--housing-edge);
+  background: var(--housing);
+  color: var(--housing-text);
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: var(--shadow-hard-sm);
+  flex: 0 0 auto;
+}
+
+.step-btn:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: none;
+}
+
+.step-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+  box-shadow: none;
+}
+
+.step-btn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.limit-value {
+  min-width: 110px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.limit-value-num {
+  display: block;
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.limit-value small {
+  display: block;
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+/* Mini variant for caution margins and sector limits */
+.limit-value-row.is-mini {
+  gap: 8px;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+}
+
+.limit-value-row.is-mini .step-btn {
+  width: 36px;
+  height: 36px;
+  font-size: 16px;
+  border-radius: var(--radius-sm);
+}
+
+.limit-value-row.is-mini .limit-value {
+  min-width: 64px;
+}
+
+.limit-value-row.is-mini .limit-value-num {
+  font-size: 16px;
+}
+
+.limit-value-row.is-mini .limit-value small {
+  font-size: 9px;
+  margin-top: 2px;
+}
+
+/* Zone bar: where the limit sits between calm and dangerous. The amber band
+   is the caution margin; the marker is the configured limit. */
+.limit-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* Gauge geometry on purpose: a thin flat strip with no thumb and no motion.
+   The 12px pill track with an overhanging marker read as a slider, and
+   users tried to drag it - the steppers above are the only input. */
+.zone-bar {
+  position: relative;
+  height: 5px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--panel-border);
+  cursor: default;
+  background: linear-gradient(90deg,
+    var(--color-safe) 0 var(--zone-a),
+    var(--color-caution) var(--zone-a) var(--zone-b),
+    var(--color-danger) var(--zone-b) 100%);
+  opacity: 0.9;
+}
+
+/* Danger at the low end (water temperature) */
+.zone-bar.is-inverted {
+  background: linear-gradient(90deg,
+    var(--color-danger) 0 var(--zone-a),
+    var(--color-caution) var(--zone-a) var(--zone-b),
+    var(--color-safe) var(--zone-b) 100%);
+}
+
+.zone-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+.zone-label-mid {
+  text-align: center;
+}
+
+/* Secondary control row inside a card: caution margin, sector limits */
+.limit-caution-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px dashed var(--panel-border);
+  padding-top: 10px;
+}
+
+.limit-caution-row.is-off .limit-caution-copy,
+.limit-caution-row.is-off .limit-value-row {
+  opacity: 0.45;
+}
+
+.limit-caution-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.limit-caution-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.limit-caution-name.is-caution {
+  color: var(--color-caution-text);
+}
+
+.limit-caution-hint {
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+/* Rarely-touched settings fold behind one disclosure */
+/* Same disclosure language as the app's other collapse headers: solid
+   hairline, quiet surface hover, plain ink. (Dashed borders are reserved for
+   the lower-confidence outlook and would misread here.) */
+.advanced-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-main);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 12px 14px;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.advanced-toggle:hover {
+  background: var(--bg-app);
+  border-color: color-mix(in srgb, var(--text-main) 25%, transparent);
+}
+
+.advanced-toggle:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.advanced-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 2px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.advanced-body > .advanced-row:last-child,
+.advanced-group .advanced-row {
+  border-bottom: 0;
+}
+
+/* flex-basis 0 keeps long hints from pushing the control onto its own line;
+   the selects still wrap below on phones via the 580px rule */
+.advanced-row-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.advanced-group {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.advanced-group.is-off .advanced-row-label {
+  opacity: 0.5;
+}
+
+/* Local wind sectors: a read-only compass rose beside named sector bands whose
+   only editable values are the speed caps. Scales to any number of sectors. */
+.sector-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px 2px 10px;
+}
+
+.sector-lead {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.sector-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+/* Rose above the list on mobile; beside it on wider panels. */
+.sector-rose-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.compass-rose {
+  width: 128px;
+  height: 128px;
+  flex: none;
+}
+
+.compass-ring {
+  fill: none;
+  stroke: var(--panel-border);
+  stroke-width: 1.5;
+}
+
+.compass-tick {
+  stroke: var(--text-muted);
+  stroke-width: 1.5;
+}
+
+.compass-arc {
+  fill: none;
+  stroke: var(--color-caution);
+  stroke-width: 9;
+  stroke-linecap: round;
+  opacity: 0.9;
+}
+
+.compass-arc.exposure-offshore {
+  opacity: 0.55;
+}
+
+.compass-label {
+  fill: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sector-chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-caution) 18%, transparent);
+  color: var(--color-caution-text);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.sector-chip.exposure-offshore {
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  color: var(--primary);
+}
+
+.sector-bearing {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+@media (min-width: 560px) {
+  .sector-rose-wrap {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 14px;
+  }
+  .compass-rose {
+    position: sticky;
+    top: 8px;
+  }
+}
+
+.setting-icon {
+  color: var(--primary);
+  transition: color 0.3s;
+}
+
+.setting-icon.is-caution { color: var(--color-caution); }
+.setting-icon.is-danger { color: var(--color-danger); }
+.setting-icon.is-safe { color: var(--color-safe); }
+.setting-icon.is-sun { color: var(--icon-sun); }
+
+.sector-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: 100%;
+  min-width: 0;
+}
+
+.sector-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0 14px;
+}
+
+/* Sectors after the first are separated by a hairline, so the list reads as one
+   group regardless of how many sectors a fjord has. */
+.sector-block + .sector-block {
+  padding-top: 14px;
+  border-top: 1px dashed var(--panel-border);
+}
+
+.sector-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--primary);
+  text-transform: uppercase;
+}
+
+/* Custom select */
+.custom-select-container {
+  position: relative;
+  width: 100%;
+  min-width: 140px;
+  max-width: 180px;
+  flex-shrink: 0;
+  z-index: 1;
+}
+
+.custom-select-container.is-compact {
+  min-width: 104px;
+  max-width: 112px;
+}
+
+.custom-select-container.is-open {
+  z-index: 1000;
+}
+
+.custom-select-trigger {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  text-align: left;
+  cursor: pointer;
+  background: var(--bg-app);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm);
+  color: var(--text-main);
+  padding: 8px 12px;
+  font-weight: 600;
+  font-family: inherit;
+  font-size: 14px;
+  height: 44px;
+}
+
+.custom-select-container.is-compact .custom-select-trigger {
+  padding: 8px;
+  font-size: 12px;
+}
+
+.custom-select-container.is-open .custom-select-trigger {
+  border-color: var(--primary);
+}
+
+.custom-select-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.custom-select-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.custom-select-chevron {
+  transition: transform 0.2s;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.custom-select-container.is-open .custom-select-chevron {
+  transform: rotate(180deg);
+}
+
+/* Launch results */
+.launch-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  position: relative;
+  z-index: 10;
+}
+
+.launch-results-head {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 0;
+}
+
+.launch-empty {
+  padding: 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-muted);
+  border: 1px dashed var(--panel-border);
+  border-radius: var(--radius-md);
+}
+
+/* Tide-table list: day-grouped launch windows, vertical scroll only — exact
+   times in a scannable column, the numbers/caveats/actions the Gantt sibling
+   deliberately omits. No horizontal gestures. */
+.tide-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tide-day-head {
+  margin: 8px 0 0;
+  padding-bottom: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.tide-day-head:first-child {
+  margin-top: 0;
+}
+
+.tide-row-wrap {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.tide-row {
+  appearance: none;
+  flex: 1;
+  min-width: 0;
+  min-height: 56px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 10px 12px 10px 16px;
+  text-align: left;
+  font-family: inherit;
+  background: var(--bg-app);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+/* 4px accent bar on the left edge: solid green = confirmed window; the
+   lower-confidence stripe = outlook (never colour alone — the row also
+   carries an "outlook" text tag). */
+.tide-row::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--color-safe);
+}
+
+.tide-row.is-outlook::before {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.35) 0 3px,
+    transparent 3px 6px
+  );
+}
+
+.tide-row:hover {
+  border-color: var(--primary);
+  background: var(--primary-bg);
+}
+
+.tide-row:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.tide-row-main {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.tide-time {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
+}
+
+.tide-duration {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.tide-tag {
+  margin-left: 4px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-xs);
+}
+
+.tide-conditions {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Caveat line: sunset cutoff / partial daylight / regional warning. Text-first
+   and muted — advisory, never competing with the window itself. Only the small
+   warning icon carries the DMI colour. */
+.tide-caveats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.tide-caveat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tide-caveat .warning-ico { flex: none; }
+.tide-caveat .warning-ico.warning--yellow { color: var(--color-caution-text); }
+.tide-caveat .warning-ico.warning--orange { color: var(--color-warning-orange); }
+.tide-caveat .warning-ico.warning--red { color: var(--color-danger); }
+
+.tide-share {
+  flex: 0 0 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-app);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  color: var(--primary);
+  cursor: pointer;
+}
+
+.tide-share:hover,
+.tide-share:focus-visible {
+  border-color: var(--primary);
+}
+
+.tide-share:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+/* ── Horizontal rail variant (under live comparison, see LIST_LAYOUT) ──────
+   Cards in a swipeable row: compact panel height, but windows past the fold
+   need a swipe. Day labels move inside each card. */
+.tide-list.is-horizontal {
+  flex-direction: row;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-main) 30%, transparent) transparent;
+  cursor: grab;
+}
+
+.tide-list.is-horizontal.is-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.tide-list.is-horizontal .tide-row-wrap {
+  position: relative;
+  flex: 0 0 min(240px, calc(100vw - 96px));
+}
+
+/* Share overlays the card's top-right corner so the card keeps its width. */
+.tide-list.is-horizontal .tide-share {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  flex: none;
+  width: 40px;
+  min-height: 40px;
+}
+
+.tide-list.is-horizontal .tide-row {
+  padding-right: 52px;
+}
+
+.tide-day-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* Launch calendar view */
+/* Launch-window calendar: a day-row Gantt. One row per forecast day on a
+   shared 00–24 axis; the windows are drawn as bars (which are also the touch
+   targets), so "when this week can I paddle" reads in one glance with no
+   scrolling in either direction. Night is an overlay drawn ABOVE the bars —
+   a window that runs past sunset dims honestly. */
+.calendar-view {
+  display: flex;
+  flex-direction: column;
+}
+
+.calendar-legend {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  align-items: center;
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+.calendar-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* The "Your limits" legend entry doubles as the on/off switch for the dashed
+   limit rules on the graphs (off by default — that's a lot of red/amber ink). */
+button.legend-toggle {
+  font: inherit;
+  font-weight: 600;
+  color: var(--text-main);
+  background: var(--panel-bg);
+  border: 1px solid color-mix(in srgb, var(--text-muted) 45%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 3px 10px;
+  cursor: pointer;
+  box-shadow: var(--shadow-lg);
+  transition: var(--transition-smooth);
+}
+
+button.legend-toggle:hover {
+  border-color: var(--text-muted);
+}
+
+button.legend-toggle:active {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+
+button.legend-toggle.is-on {
+  border-color: color-mix(in srgb, var(--color-caution) 65%, transparent);
+  background: color-mix(in srgb, var(--color-caution) 12%, transparent);
+}
+
+.legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-xs);
+}
+
+.legend-swatch.window {
+  background: var(--color-safe);
+}
+
+/* The app's lower-confidence stripe texture, as used on the bars. */
+.legend-swatch.outlook {
+  background: var(--color-safe);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.22) 0 3px,
+    transparent 3px 6px
+  );
+  border: 1px solid var(--panel-border);
+}
+
+/* Matches NIGHT_FILL in WeatherCharts.tsx */
+.legend-swatch.night {
+  background: var(--chart-night-fill);
+  border: 1px solid var(--panel-border);
+}
+
+/* The "now" marker: same thin blue line as .gantt-now. */
+.legend-swatch.now {
+  width: 2px;
+  border-radius: 1px;
+  background: var(--primary);
+}
+
+/* Charts-legend swatch: the dashed "your limits" rule. */
+.legend-swatch.limit-line {
+  height: 0;
+  border-radius: 0;
+  background: none;
+  border-top: 2px dashed var(--color-caution);
+}
+
+/* Desktop: one legend line. Phones: break after the window/outlook pair so
+   the legend reads as two balanced rows instead of a ragged wrap. */
+.calendar-legend-break {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  .calendar-legend-break {
+    display: block;
+    flex-basis: 100%;
+    height: 0;
+  }
+}
+
+/* Phones wrap the legend and tighten the section's lead-in gap */
+@media (max-width: 600px) {
+  .charts-disclosure-body {
+    padding-top: 8px;
+  }
+
+  .calendar-legend {
+    row-gap: 4px;
+    margin-bottom: 10px;
+  }
+}
+
+.calendar-empty {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.gantt {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Axis header: tick labels 00/06/12/18/24 above the shared track column. */
+.gantt-axis {
+  display: flex;
+  align-items: flex-end;
+}
+
+.gantt-axis-track {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 16px;
+}
+
+.gantt-tick {
+  position: absolute;
+  transform: translateX(-50%);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Keep the edge labels inside the track instead of bleeding out of the card */
+.gantt-tick:first-child {
+  transform: none;
+}
+
+.gantt-tick:last-child {
+  transform: translateX(-100%);
+}
+
+.gantt-row {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+.gantt-day {
+  flex: 0 0 44px;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.gantt-weekday {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.gantt-daynum {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The 00–24 track: faint surface + hairline ticks every 6h (25% steps). */
+.gantt-track {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  border-radius: var(--radius-xs);
+  background-color: rgba(148, 163, 184, 0.08);
+  background-image: linear-gradient(to right, var(--panel-border) 1px, transparent 1px);
+  background-size: 25% 100%;
+}
+
+.gantt-bar {
+  appearance: none;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 8px;
+  padding: 0 2px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: var(--color-safe);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  cursor: pointer;
+  font-family: inherit;
+  z-index: 1;
+}
+
+.gantt-bar:hover {
+  filter: brightness(1.06);
+}
+
+.gantt-bar:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.gantt-bar-label {
+  position: relative;
+  z-index: 2;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-inverse);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Outlook (longer-range block) windows: the lower-confidence stripe texture
+   and NO start–end times — a 6h block is not a promise about 02:00. */
+.gantt-bar.is-outlook {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.22) 0 4px,
+    transparent 4px 8px
+  );
+  border: 1px solid var(--panel-border);
+}
+
+.gantt-bar.is-outlook .gantt-bar-label {
+  font-style: italic;
+  font-weight: 600;
+}
+
+/* Night overlay sits ABOVE the bars (matches the charts' NIGHT_FILL), so a
+   window running past sunset visibly dims across the boundary. */
+.gantt-night {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(10, 15, 30, 0.45);
+  border-radius: var(--radius-xs);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* "Now" marker on today's row. */
+.gantt-now {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--primary);
+  border-radius: 1px;
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* Safety manual modal */
+.info-modal-content.is-flush {
+  padding: 0;
+}
+
+.manual-header {
+  position: sticky;
+  top: 0;
+  background: var(--bg-app);
+  z-index: 10;
+  border-bottom: 2px solid var(--panel-border);
+  padding: 20px 24px 12px 24px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 0;
+}
+
+.manual-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+}
+
+.manual-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 20px 24px 24px 24px;
+}
+
+.manual-h {
+  margin: 0 0 6px 0;
+  font-size: 13px;
+  border-bottom: 1px solid var(--panel-border);
+  padding-bottom: 4px;
+  color: var(--primary);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.manual-p {
+  margin: 0;
+}
+
+.manual-list {
+  margin: 4px 0 0 16px;
+  padding: 0;
+}
+
+.manual-list.spaced {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.manual-note {
+  margin: 6px 0 0 0;
+  font-style: italic;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.manual-close-btn {
+  width: 100%;
+  margin-top: 8px;
+  padding: 11px 0;
+  background: transparent;
+  color: var(--text-main);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-family: var(--font-heading);
+}
+
+.settings-autosave-note {
+  margin: 8px 0 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* Instrument-style numerals: aligned digits everywhere data is read */
+.meteogram-value,
+.meteogram-wind-value,
+.timeline-hour-text,
+.chart-header-metric {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Official DMI warning stripe (varsel) ─────────────────────────────────
+   A calm, flat band pinned at the top of the app, coloured by awareness level.
+   The colour is a left accent + tint, never the sole signal — the level word,
+   icon and text all state the hazard. Links out to DMI for full details. */
+.warning-stripe {
+  --stripe-bg: color-mix(in srgb, var(--stripe-color) 13%, transparent);
+  --stripe-border: color-mix(in srgb, var(--stripe-color) 40%, transparent);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 11px 14px;
+  border: 1px solid var(--stripe-border);
+  border-left: 4px solid var(--stripe-color);
+  background: var(--stripe-bg);
+  border-radius: var(--radius-md);
+  color: var(--text-main);
+  text-decoration: none;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.warning-stripe--yellow { --stripe-color: var(--color-caution); }
+.warning-stripe--orange { --stripe-color: var(--color-warning-orange); }
+.warning-stripe--red { --stripe-color: var(--color-danger); }
+
+.warning-stripe:hover {
+  background: color-mix(in srgb, var(--stripe-color) 20%, transparent);
+  border-color: color-mix(in srgb, var(--stripe-color) 55%, transparent);
+}
+
+.warning-stripe:focus-visible {
+  outline: 2px solid var(--stripe-color);
+  outline-offset: 2px;
+}
+
+.warning-stripe-icon {
+  flex: none;
+  color: var(--stripe-color);
+}
+
+.warning-stripe-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.warning-stripe-title {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.warning-stripe-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.warning-stripe-source {
+  flex: none;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.warning-stripe-chevron {
+  flex: none;
+  color: var(--text-muted);
+}
+
+/* Longer-range (MET period block) launch suggestions — calm, clearly softer
+   than the exact hourly windows. */
+/* GERTY-style pixel face — the app's companion indicator. Lit pixels draw in
+   currentColor so the face inherits the current rating's color. Sized inline
+   (28px) by default; contexts can override. */
+.gerty-face {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  image-rendering: pixelated;
+}
+
+.gerty-face rect {
+  fill: currentColor;
+}
+
+.gerty-eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: gerty-blink 6s infinite;
+}
+
+@keyframes gerty-blink {
+  0%, 90%, 100% { transform: scaleY(1); }
+  93%, 95% { transform: scaleY(0.12); }
+  98% { transform: scaleY(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gerty-eyes {
+    animation: none;
+  }
+}
+
+/* ==========================================================================
+   Clean Instrument — new mobile-first shell
+   ========================================================================== */
+
+/* ① FRANK device header — a physical instrument housing in the same surface
+   family as the other panels. The check status is centered along the top,
+   then three seam-divided columns: round CRT with the GERTY face over the
+   nameplate | the dot-matrix phrase display |
+   the refresh/theme buttons stacked over the location. Both screens glow in
+   the rating's phosphor color. Spacing scale inside: 4 / 8 / 12 / 16. */
+.frank-device {
+  padding-top: max(10px, env(safe-area-inset-top));
+}
+
+.frank-device-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 16px 14px;
+  /* Same corner tier as every other .panel card */
+  border-radius: var(--radius-md);
+  background: var(--frank-housing);
+  border: 1px solid var(--frank-housing-edge);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), var(--shadow-lg);
+}
+
+/* One shared 3×2 grid: row 1 is the "screen band" (CRT, display, and the
+   button stack all span it), row 2 is the "label line" (nameplate, switch
+   bank, location). The middle cells carry the seams on both sides. */
+.frank-device-columns {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'crt  display actions'
+    'name .       location';
+  column-gap: 16px;
+  /* Air between the CRT/buttons row and the nameplate/location row — the
+     location switcher is a tap target directly under the theme button, so
+     this gap doubles as touch separation. */
+  row-gap: 10px;
+  min-width: 0;
+}
+
+.frank-device-shell.rating-safe { --frank-phosphor: var(--crt-safe); }
+.frank-device-shell.rating-caution { --frank-phosphor: var(--crt-caution); }
+.frank-device-shell.rating-danger { --frank-phosphor: var(--crt-danger); }
+
+.frank-crt {
+  grid-area: crt;
+  justify-self: center;
+  align-self: center;
+  position: relative;
+  overflow: hidden;
+  width: 82px;
+  height: 82px;
+  border-radius: 50%;
+  background: var(--crt-screen);
+  border: 1px solid #05080d;
+  color: var(--frank-phosphor);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.65), 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.frank-crt .gerty-face {
+  width: 56px;
+  height: 56px;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, currentColor 55%, transparent));
+}
+
+/* Faint scanlines on both screens keep the CRT vibe without heavy chrome */
+.frank-crt::after,
+.frank-display::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.045) 0 1px,
+    transparent 1px 3px
+  );
+  pointer-events: none;
+}
+
+.frank-nameplate {
+  grid-area: name;
+  justify-self: center;
+  align-self: center;
+  font-family: var(--font-heading);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  /* Wide, even inter-letter tracking evoking the spaced-out sci-fi title logo */
+  letter-spacing: 0.6em;
+  text-indent: 0.6em;
+  text-transform: uppercase;
+  color: var(--frank-housing-text);
+  opacity: 0.9;
+}
+
+/* Middle cell carries the seams that divide the three columns; the display
+   keeps its natural height, centered on the band's midline, so the eye-line
+   runs CRT center → display center → between the two buttons. */
+.frank-cell-display {
+  grid-area: display;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0 16px;
+  border-left: 1px solid var(--frank-housing-edge);
+  border-right: 1px solid var(--frank-housing-edge);
+}
+
+
+.frank-display {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--crt-screen);
+  border: 1px solid #05080d;
+  color: var(--frank-phosphor);
+  box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.6);
+  /* Type set on the display so the marquee measure span always matches */
+  font-family: 'VT323', var(--font-mono);
+  font-size: 25px;
+  letter-spacing: 0.05em;
+}
+
+.frank-display-text {
+  white-space: nowrap;
+  text-shadow: 0 0 8px color-mix(in srgb, currentColor 60%, transparent);
+}
+
+/* Hidden twin used to measure the un-padded text width for the marquee */
+.frank-display-measure {
+  position: absolute;
+  visibility: hidden;
+  white-space: nowrap;
+}
+
+/* A phrase that overflows becomes a slow walking line: enters from the right
+   edge (padding-left: 100% of the display) and exits fully left (-100% of its
+   own width). Duration is set inline, proportional to the travel distance. */
+.frank-display.is-marquee {
+  justify-content: flex-start;
+}
+
+.frank-display.is-marquee .frank-display-text {
+  padding-left: 100%;
+  animation: frank-marquee 12s linear infinite;
+  will-change: transform;
+}
+
+@keyframes frank-marquee {
+  to { transform: translateX(-100%); }
+}
+
+/* Button cluster column: centered in the same band as the CRT and display. */
+.frank-actions {
+  grid-area: actions;
+  justify-self: center;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  align-items: center;
+}
+
+/* Physical push-buttons: round, raised a touch off the housing */
+.frank-device .header-icon-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--frank-housing) 88%, white);
+  border: 1px solid var(--frank-housing-edge);
+  color: var(--frank-housing-text);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.frank-device .header-icon-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--frank-housing) 88%, white);
+  border-color: color-mix(in srgb, var(--text-main) 32%, transparent);
+  color: var(--frank-housing-text);
+}
+
+.frank-device .header-icon-btn:active:not(:disabled) {
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.25);
+  transform: translateY(1px);
+}
+
+/* Triangle button cluster (per the owner's sketch): flag + refresh side by
+   side on top, theme centered underneath — a two-buttons-wide flex-wrap box. */
+.frank-device .header-btn-cluster {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+  width: calc(44px * 2 + var(--space-2));
+}
+
+/* The language flag inside its round push-button (SVG, not emoji — emoji
+   flags render as plain letters on Windows). */
+.header-icon-btn .flag-icon {
+  width: 20px;
+  height: 14px;
+  display: block;
+}
+
+/* Trip profile panel: the mode is one variable with four positions, so it
+   reads as ONE control - a recessed selector track whose single indicator
+   slides between detents - with a plain-words line naming what the active
+   mode actually does. Lives at the top of the section stack. */
+.trip-profile-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 24px 16px;
+}
+
+.trip-profile-head {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.trip-profile-subtitle {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* While the popover is open, the hover tip would double the same words
+   right above it (touch keeps :hover stuck after the tap) */
+.settings-info-btn[aria-expanded="true"]::after {
+  display: none;
+}
+
+/* The "?" popover: all four modes side by side, dismissed by outside
+   click or Escape. Overlays the selector - it is a transient reading. */
+.trip-profile-info {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 40;
+  width: min(380px, 100%);
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-main);
+}
+
+.trip-profile-info p {
+  margin: 0;
+}
+
+.trip-profile-info-note {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.frank-mode-bank {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border-radius: 13px;
+  background: var(--bg-app);
+  border: 1px solid var(--panel-border);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.12);
+  padding: 2px;
+}
+
+.frank-mode-indicator {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc((100% - 4px) / 4);
+  border-radius: 11px;
+  /* The selected-mode pill uses the interactive/selection color, not the safety
+     green — it marks which mode is chosen, not a verdict, and white-on-green
+     failed contrast (WCAG 1.4.3). */
+  background: var(--primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  transform: translateX(calc(var(--mode-index, 0) * 100%));
+  transition: transform 0.18s ease;
+}
+
+.frank-mode {
+  appearance: none;
+  background: none;
+  border: none;
+  min-height: 36px;
+  padding: 5px 10px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 11px;
+  color: var(--text-main);
+}
+
+.frank-mode:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.frank-mode-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  transition: color 0.18s ease;
+}
+
+.frank-mode:not(.is-on):hover .frank-mode-label {
+  color: var(--text-main);
+}
+
+.frank-mode.is-on .frank-mode-label {
+  color: var(--text-inverse);
+}
+
+/* Check status: one centered line along the housing top */
+.frank-cache {
+  align-self: center;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Label on line 1, the (optional) caveat on line 2. The caveat can be long
+   ("waves & water from an earlier update · marine service busy") - stacking
+   keeps it readable on a phone instead of truncating it to nothing. */
+.frank-cache-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+
+.frank-cache-source {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.frank-cache-detail {
+  font-size: 10px;
+  opacity: 0.85;
+}
+
+.frank-cache::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  margin-top: 3px;
+  border-radius: 50%;
+  background: var(--color-safe);
+  box-shadow: 0 0 4px var(--color-safe);
+  flex: 0 0 auto;
+}
+
+.frank-cache.watch::before {
+  background: var(--color-caution);
+  box-shadow: 0 0 4px var(--color-caution);
+}
+
+/* In-flight refresh: a calm neutral dot, no glow - not a status, just "working" */
+.frank-cache.neutral::before {
+  background: var(--text-muted);
+  box-shadow: none;
+}
+
+.frank-cache.late::before {
+  background: var(--color-danger);
+  box-shadow: 0 0 4px var(--color-danger);
+}
+
+/* Location: shares the label line with the nameplate */
+.frank-location {
+  grid-area: location;
+  justify-self: center;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--frank-housing-text);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Location switcher: the readout becomes a button + city picker when more than
+   one location is configured. Positioned so the menu drops below-right. */
+.location-switcher {
+  position: relative;
+  overflow: visible;
+}
+
+.location-switcher-btn {
+  appearance: none;
+  background: none;
+  border: none;
+  /* Generous tap padding (negative margin keeps the visual footprint): the
+     visible label is ~17px tall, but the touch target must clear the 24px
+     floor — it sits one row-gap under the 44px theme button. */
+  padding: 6px;
+  margin: -6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  border-radius: var(--radius-xs);
+}
+
+.location-switcher-btn:hover {
+  color: var(--primary);
+}
+
+.location-switcher-btn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.location-switcher-chevron {
+  opacity: 0.7;
+}
+
+.location-switcher-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  min-width: 160px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.location-switcher-option {
+  appearance: none;
+  width: 100%;
+  background: none;
+  border: none;
+  border-radius: var(--radius-xs);
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--text-main);
+  text-align: left;
+}
+
+.location-switcher-option:hover {
+  background: var(--bg-app);
+}
+
+.location-switcher-option:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.location-switcher-option.is-current {
+  color: var(--primary);
+}
+
+.location-switcher-check {
+  width: 13px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--primary);
+}
+
+/* Marks a location whose safety config isn't locally calibrated yet. */
+.location-switcher-pill {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-caution) 18%, transparent);
+  color: var(--color-caution-text);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* Provisional-location notice: it's persistent, so it reads as a calm neutral
+   info chip rather than the amber alarm used for real, transient warnings —
+   otherwise a permanent amber box trains users to ignore the amber box. */
+.provisional-note {
+  border-color: var(--panel-border);
+  background: color-mix(in srgb, var(--text-muted) 8%, transparent);
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* Narrow phones: shrink the CRT, buttons and labels so the middle column
+   keeps room for the display */
+@media (max-width: 480px) {
+  .frank-device-shell {
+    gap: 10px;
+    padding: 10px 12px 12px;
+  }
+
+  .frank-device-columns {
+    column-gap: 12px;
+    /* Pin the left column at the old 72px CRT footprint even though the CRT
+       itself shrank to 64px — otherwise the seams and the phrase display sit
+       visibly left of the header's centre. */
+    grid-template-columns: minmax(72px, auto) minmax(0, 1fr) auto;
+  }
+
+  /* Slightly smaller CRT on phones: every saved pixel goes to the phrase
+     display, which is squeezed between the CRT and the button column. */
+  .frank-crt {
+    width: 64px;
+    height: 64px;
+  }
+
+  .frank-crt .gerty-face {
+    width: 42px;
+    height: 42px;
+  }
+
+  .frank-cell-display {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .frank-display {
+    min-height: 56px;
+    padding: 6px 10px;
+    font-size: 21px;
+  }
+
+  .frank-device .header-icon-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  /* The location label is a tappable control (the switcher), so keep it at a
+     comfortable 11px on mobile rather than shrinking it like a caption. */
+  .frank-location {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+  }
+
+  /* Same 11px as the location switcher beside it — the two share the label
+     line, so they should read as one voice (tracking still tightened so the
+     five letters fit under the narrower mobile CRT). */
+  .frank-nameplate {
+    font-size: 11px;
+    letter-spacing: 0.45em;
+    text-indent: 0.45em;
+  }
+}
+
+/* Linear section stack (replaces the dashboard grid). Section gap matches
+   the header→snapshot distance (the stack's own top padding) so every seam
+   down the page reads the same. */
+.app-sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) 0 20px;
+}
+
+/* ② Conditions snapshot: the at-a-glance card */
+.snapshot {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* A real 2-column grid (rows use display:contents) so the left/right split
+   sits on one shared vertical line across every row — reads as an instrument
+   panel instead of four independently-splitting flex rows. */
+.snapshot-grid {
+  display: grid;
+  /* Left column a touch wider — its values (wind + gusts, descriptions) are
+     longer than the right column's short readouts. */
+  grid-template-columns: 1.35fr 1fr;
+  column-gap: 14px;
+  row-gap: 12px;
+  align-items: center;
+}
+
+.snapshot-row {
+  display: contents;
+}
+
+.snapshot-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.snapshot-cell-end {
+  justify-content: flex-end;
+  text-align: right;
+}
+
+/* Ultra-narrow screens (Galaxy Fold cover display and similar): the two-column
+   grid can no longer hold the nowrap values without them colliding, so stack
+   to a single readable column instead. */
+@media (max-width: 349px) {
+  .snapshot-grid {
+    grid-template-columns: 1fr;
+    row-gap: 10px;
+  }
+
+  .snapshot-cell-end {
+    justify-content: flex-start;
+    text-align: left;
+  }
+}
+
+
+.snapshot-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  font-weight: 600;
+  flex: 0 0 auto;
+  /* Consistent label column so the values line up down the left cells */
+  min-width: 3.4em;
+}
+
+/* Right-hand labels hug their value instead of reserving the wide column */
+.snapshot-cell-end .snapshot-label {
+  min-width: 0;
+}
+
+.snapshot-value {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.snapshot-sub {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.snapshot-wind-arrow {
+  color: var(--primary);
+  transition: transform 0.3s ease;
+}
+
+.snapshot-sun {
+  gap: 12px;
+}
+
+.snapshot-sun .snapshot-value {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* Longer-range block detail: a calm note that this is lower-confidence data. */
+.snapshot-lowconf-note {
+  margin-top: 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius-xs);
+  background: var(--panel-border);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.snapshot-reasons-container {
+  padding: 12px 0 0;
+  border-top: 1px solid var(--panel-border);
+}
+
+/* Desktop: the snapshot becomes two panes side by side — the data grid on
+   the left, the conditions list on the right behind a single light vertical
+   seam (like the header's column seams) — so the wide card carries no dead
+   middle. Placed after the base rules above so the seam fully replaces the
+   mobile top border. */
+@media (min-width: 1100px) {
+  .snapshot {
+    display: grid;
+    grid-template-columns: minmax(0, 10fr) minmax(0, 11fr);
+    row-gap: 10px;
+  }
+
+  .snapshot-grid {
+    grid-column: 1;
+    grid-row: 1;
+    align-content: start;
+    /* Left column wider: its nowrap values (e.g. "3.1 m/s vindstød 3.1 maks")
+       are the longest and were overflowing their track into the right cell. */
+    grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+    column-gap: 20px;
+    padding-right: 20px;
+  }
+
+  .snapshot-cell-end {
+    justify-content: flex-start;
+    text-align: left;
+    /* A guaranteed buffer so the wind-direction arrow never sits under any
+       overflow from the (left-aligned) left column's longer readouts. */
+    padding-left: 12px;
+  }
+
+  .snapshot-lowconf-note {
+    grid-column: 1;
+    grid-row: 2;
+    margin-top: 0;
+    margin-right: 32px;
+  }
+
+  .snapshot-reasons-container {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    padding: 0 0 0 32px;
+    border-top: none;
+    border-left: 1px solid var(--panel-border);
+  }
+}
+
+.snapshot-time-anchor {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.snapshot-reasons {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  /* The most actionable text in the app — sized to match the data values above */
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.snapshot-reasons li {
+  position: relative;
+  padding-left: 18px;
+  color: var(--text-main);
+}
+
+.snapshot-reasons li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.4em;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--pip, var(--text-muted));
+}
+
+/* Each bullet is coloured by that reason's OWN severity, so a caution-level
+   note (e.g. the nighttime rule) shows amber even while the hour's overall
+   verdict is danger. */
+.snapshot-reasons li.reason-safe::before {
+  background: var(--color-safe);
+}
+
+.snapshot-reasons li.reason-caution::before {
+  background: var(--color-caution);
+}
+
+.snapshot-reasons li.reason-danger::before {
+  background: var(--color-danger);
+}
+
+/* The weather description can be long ("Thunderstorm with slight hail"); let it
+   shrink and ellipsize instead of pushing the Air reading off a 320px row. */
+.snapshot-value.snapshot-desc {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+
+/* Respect reduced-motion: silence the decorative weather-icon loops (the
+   strobing lightning flash is a photosensitivity concern), spinners, and the
+   blinking companion face. Meaning is still conveyed by color and text. */
+@media (prefers-reduced-motion: reduce) {
+  .sun-spin svg,
+  .cloud-drift svg,
+  .sun-cloud-drift svg,
+  .rain-fall svg,
+  .moon-pulse svg,
+  .lightning-flash svg,
+  .snow-spin svg,
+  .spinner,
+  .gerty-eyes,
+  .header-icon-btn:disabled svg {
+    animation: none !important;
+  }
+
+  /* Killing the marquee animation isn't enough: the text is staged at
+     padding-left:100% (off the right edge), so without the walk it would sit
+     invisible. Reset the offset so the phrase's start shows (clipped at the
+     edge, but readable) instead of a blank display. */
+  .frank-display.is-marquee .frank-display-text {
+    animation: none !important;
+    padding-left: 0 !important;
+  }
+}
+
+/* WCAG 2.2.2 Pause/Stop/Hide: the looping marquee can be paused by
+   pointing at it or focusing anything in the display */
+.frank-display.is-marquee:hover .frank-display-text,
+.frank-display.is-marquee:focus-within .frank-display-text {
+  animation-play-state: paused;
+}
