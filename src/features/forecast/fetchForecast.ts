@@ -114,7 +114,9 @@ async function fetchWarnings(location: ForecastLocation): Promise<WeatherWarning
   }
 }
 
-async function fetchDmiGeoJson(collection: string, parameters: string[], location: ForecastLocation): Promise<DmiFeatureCollection> {
+// Exported for tests (like the Worker's helpers) — the retry/terminal-status
+// branching is the part worth pinning down.
+export async function fetchDmiGeoJson(collection: string, parameters: string[], location: ForecastLocation): Promise<DmiFeatureCollection> {
   const url = buildDmiUrl(collection, parameters, location);
   let lastError: Error | null = null;
 
@@ -129,14 +131,18 @@ async function fetchDmiGeoJson(collection: string, parameters: string[], locatio
       const message = await response.text();
       lastError = new Error(`DMI ${collection} request failed: ${response.status} ${message.slice(0, 160)}`);
 
-      if (response.status !== 429 && response.status < 500) {
-        throw lastError;
-      }
+      // Terminal 4xx (429 excepted — DMI uses it for transient "server is
+      // busy"). Use break, not throw: a throw here is caught by this same
+      // try/catch and would fall through to the delay-and-retry anyway, so a
+      // hard 400/404 cost a second pointless request. Same fix the Worker
+      // already carries in fetchJsonWithRetries.
+      if (response.status !== 429 && response.status < 500) break;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
     }
 
-    await delay(700 * (attempt + 1));
+    // No backoff after the final attempt — it only delays the throw.
+    if (attempt < MAX_FETCH_ATTEMPTS - 1) await delay(700 * (attempt + 1));
   }
 
   throw lastError ?? new Error(`DMI ${collection} request failed`);
