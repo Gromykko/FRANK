@@ -4,7 +4,7 @@
 // deliberately does NOT cache the forecast API responses (those are cross-origin
 // and the client already keeps last-good data in localStorage — a stale SW copy
 // would only get in the way).
-const CACHE = 'frank-v0.2.2';
+const CACHE = 'frank-v0.2.3';
 const scope = self.registration.scope; // e.g. https://…/FRANK/
 const BASE = new URL('', scope).toString();
 
@@ -55,6 +55,14 @@ self.addEventListener('fetch', (e) => {
     );
     return;
   }
+
+  // Cache-first is only safe for URLs whose content can never change: the
+  // content-hashed build assets and the precached shell files above. Anything
+  // else same-origin goes straight to the network — above all Vite's dev
+  // modules, which serve changing content behind a STABLE url (/src/App.tsx).
+  // Caching those made every source edit invisible in the browser until the
+  // cache was manually cleared.
+  if (!url.pathname.includes('/assets/') && !SHELL.includes(url.toString())) return;
 
   // Built assets are content-hashed (immutable), so cache-first is safe — and we
   // populate the cache on the first successful fetch so a later offline visit has

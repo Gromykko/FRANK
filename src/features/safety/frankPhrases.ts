@@ -3,7 +3,7 @@ import type { SafetyRating } from './analyzeSafetyConditions';
 // FRANK's dot-matrix one-liners — GERTY-polite, sprinkled with Danish humor.
 // Keep every phrase short enough to read in one pass; the display switches to
 // a slow marquee automatically when a phrase overflows the screen.
-// `{0}` is the location's water-body word ("fjord"/"bugt", "Fjorden"/"Bugten"
+// `{0}` is the location's water-body word ("fjord"/"bay", "Fjorden"/"Bugten"
 // in Danish), filled in by the caller so Aarhus Bugt never gets called a fjord.
 const PHRASES: Record<SafetyRating, string[]> = {
   safe: [

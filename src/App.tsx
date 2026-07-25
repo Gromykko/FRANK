@@ -181,9 +181,10 @@ export default function App() {
   // FRANK's one-liner on the device display — stable for a given day + rating
   // so it doesn't reshuffle while scrubbing hours within the same verdict. The
   // {0} in some phrases is this location's water-body word, so Aarhus Bugt is
-  // never called a fjord (definite form in Danish: "Fjorden"/"Bugten").
+  // never called a fjord. English translates it ("bay"); Danish uses the
+  // definite form ("Fjorden"/"Bugten").
   const isBugt = CURRENT_LOCATION.areaName.toLowerCase().includes('bugt');
-  const waterWord = lang === 'da' ? (isBugt ? 'Bugten' : 'Fjorden') : (isBugt ? 'bugt' : 'fjord');
+  const waterWord = lang === 'da' ? (isBugt ? 'Bugten' : 'Fjorden') : (isBugt ? 'bay' : 'fjord');
   const frankPhrase = activeSafetyChecks
     ? t(getFrankPhrase(safetyDisplayRating, selectedDateStr), waterWord)
     : t('Limits are off. You are the captain now');
