@@ -159,6 +159,11 @@
   --color-caution: #fbbf24;
   --color-danger: #f87171;
   --color-danger-text: var(--color-danger);
+  /* Must be re-asserted here like its danger twin: the prefers-color-scheme
+     light block later in the file wins on source order, so without this a
+     manual light-OS -> dark-theme switch kept the dark amber #b45309, which
+     falls to ~2.3:1 on dark surfaces. */
+  --color-caution-text: var(--color-caution);
   --color-warning-orange: #fb923c;
   --bg-app: #0c1117;
   --bg-gradient: #0c1117;
@@ -623,10 +628,12 @@ h1, h2, h3, h4, h5, h6 {
 .chart-scroll-container,
 /* Scoped to the scroll body only: the legend's limits toggle also lives in
    .charts-grid and a grid-wide rule flattened it whenever it held focus. */
+/* Recharts injects its own focus outline on the SVG root. Scoped to those two
+   selectors only — the previous `.chart-scroll-container *:focus-visible` was
+   an unbounded, un-overridable rule that would silently swallow the focus ring
+   of any control later placed inside the scroller. */
 .recharts-wrapper svg,
-.recharts-surface,
-.chart-scroll-container *:focus,
-.chart-scroll-container *:focus-visible {
+.recharts-surface {
   outline: none !important;
   border: none !important;
   box-shadow: none !important;
@@ -641,6 +648,16 @@ h1, h2, h3, h4, h5, h6 {
 /* App shell helpers */
 .app-main {
   flex-grow: 1;
+}
+
+/* The standing "this is advisory" note. Sits above the provider attribution
+   and is deliberately a step more legible than it. */
+.footer-disclaimer {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  margin-bottom: 8px;
+  max-width: 68ch;
 }
 
 .error-screen {
@@ -663,7 +680,8 @@ h1, h2, h3, h4, h5, h6 {
   margin: 0 auto 24px;
 }
 
-.error-screen-retry {
+.error-screen-retry,
+.error-screen-actions .btn-control {
   width: auto;
   padding: 8px 24px;
   border-radius: var(--radius-md);
@@ -671,5 +689,13 @@ h1, h2, h3, h4, h5, h6 {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+
+/* Crash-screen recovery buttons; wraps rather than overflowing on narrow phones. */
+.error-screen-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
 }
 

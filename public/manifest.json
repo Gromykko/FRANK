@@ -1,6 +1,7 @@
 {
   "short_name": "FRANK",
   "name": "FRANK — Fjord Risk Assessment & Navigation Kit",
+  "description": "Go/no-go kayak forecast for Danish fjords — wind, waves, water level and launch windows checked against your own limits. Advisory only.",
   "id": "/FRANK/",
   "version": "0.1.0",
   "icons": [

@@ -20,7 +20,9 @@ MET Norway, DMI, and MeteoAlarm data are all CC BY 4.0 — the app's footer carr
 
 You set limits (max wind, gust margin, max wave, minimum water temperature, daylight, and more), or pick a preset: **Chill / Normal / Pro**. Touching any value switches to **Custom**, persisted per location. Each fjord also has curated wind sectors with their own caps — offshore sectors are capped *lower* than onshore despite flatter water, because fralandsvind blows you away from shore (drift risk beats chop). You can adjust the caps but not the geometry.
 
-Every enabled rule runs on every hour and may only raise the rating, never lower it; all triggered reasons are shown. A **launch window** is an unbroken run of Good-to-go hours (endpoints included — a 1-hour window needs 2 consecutive good samples), split at midnight for display. Past the ~2-day hourly range, MET's coarser multi-hour periods become outlook blocks, marked lower confidence throughout.
+Every enabled rule runs on every hour and may only raise the rating, never lower it; all triggered reasons are shown. A **launch window** is an unbroken run of Good-to-go hours (endpoints included — a 1-hour window needs 2 consecutive good samples), split at midnight and at any gap in the forecast series. Past the ~2-day hourly range, MET's coarser multi-hour periods become outlook blocks, marked lower confidence throughout.
+
+**Unknown is never treated as safe.** DMI's marine models leave nodes masked inside some fjords, so a reading can simply be absent. A missing value is carried as "no reading" rather than being filled in with a zero — it shows as `—` in the UI, and any hour where an enabled rule had nothing to judge is held at *Take care* with the missing field named, never cleared and never offered as a launch window. The same applies to a stored profile whose thresholds have been corrupted: they fall back to the defaults rather than silently disabling a check.
 
 ## The UI
 
@@ -44,6 +46,8 @@ npm run worker:deploy
 ```
 
 `.github/workflows/deploy.yml` lints, tests, builds, and deploys to GitHub Pages on every push to `main`. Don't regenerate `package-lock.json` on Windows — CI needs it built on Linux so platform-specific optional subtrees resolve.
+
+The Worker is **not** deployed by CI — `npm run worker:deploy` is a manual step. Whenever a change touches `worker/index.js` or the shared forecast-core it imports (`normalize.ts`, `sun.ts`, `weatherCodes.ts`), deploy the Worker too, and bump `PAYLOAD_VERSION` (`worker/index.js`) alongside `FORECAST_PAYLOAD_VERSION` (`src/features/forecast/types.ts`). They must stay equal: the stamp is what stops old payloads being served by new logic, and leaving it unchanged across a logic change is exactly how a stale Worker goes unnoticed.
 
 ## Where things live
 

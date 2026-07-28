@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { ChevronDown, ChevronUp, Clock, Navigation, Settings, Sun, Thermometer, Waves, Wind } from 'lucide-react';
 import { getWindSpeedLabel, getWaveHeightLabel } from '../features/safety/analyzeSafetyConditions';
 import SafetyManualModal from './SafetyManualModal';
@@ -77,7 +77,10 @@ function Stepper({ value, min, max, step, decimals, unit, label, onChange, disab
       >
         &minus;
       </button>
-      <div className="limit-value">
+      {/* Announced on change: the +/- buttons have static labels, so without
+          this a screen-reader user nudging a safety threshold hears nothing
+          back and cannot tell what they just set it to. */}
+      <div className="limit-value" aria-live="polite" aria-atomic="true">
         <span className="limit-value-num">{value.toFixed(decimals)}</span>
         <small>{unit}</small>
       </div>
@@ -133,6 +136,10 @@ export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLi
   const { t } = useLang();
   const [isOpen, setIsOpen] = useState(false);
   const [showInfoModal, setShowInfoModal] = useState(false);
+  // Stable identity: the modal's focus effect keys off onClose, and a fresh
+  // arrow each render made it re-run on every parent re-render (including the
+  // 60s forecast heartbeat) — stealing focus back and breaking focus restore.
+  const closeInfoModal = useCallback(() => setShowInfoModal(false), []);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const windSectors = CURRENT_LOCATION.windSectors;
 
@@ -246,7 +253,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLi
                 cautionStart={settings.maxWindSpeedSafe}
                 cautionEnd={windCautionAt}
                 leftLabel={t('0 calm')}
-                midLabel={t('caution to {0}', windCautionAt.toFixed(1))}
+                midLabel={t('danger from {0}', windCautionAt.toFixed(1))}
                 rightLabel={t('20+ gale')}
               />
               <div className={`limit-caution-row ${settings.enableWindSpeed && settings.enableWindGust ? '' : 'is-off'}`}>
@@ -259,7 +266,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLi
                 />
                 <div className="limit-caution-copy">
                   <span className="limit-caution-name">{t('Gust margin')}</span>
-                  <span className="limit-caution-hint">{t('gusts up to {0} m/s rate Caution', windCautionAt.toFixed(1))}</span>
+                  <span className="limit-caution-hint">{t('Danger at {0} m/s and above — for gusts and average wind alike', windCautionAt.toFixed(1))}</span>
                 </div>
                 <Stepper
                   compact
@@ -300,7 +307,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLi
                 cautionStart={settings.maxWaveHeightSafe}
                 cautionEnd={waveCautionAt}
                 leftLabel={t('0 flat')}
-                midLabel={t('caution to {0}', waveCautionAt.toFixed(2))}
+                midLabel={t('danger from {0}', waveCautionAt.toFixed(2))}
                 rightLabel={t('1.5+ rough')}
               />
               <div className={`limit-caution-row ${settings.enableWaveHeight && settings.enableWaveCaution ? '' : 'is-off'}`}>
@@ -313,7 +320,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLi
                 />
                 <div className="limit-caution-copy">
                   <span className="limit-caution-name">{t('Caution margin')}</span>
-                  <span className="limit-caution-hint">{t('waves up to {0} m rate Caution', waveCautionAt.toFixed(2))}</span>
+                  <span className="limit-caution-hint">{t('Danger at {0} m and above', waveCautionAt.toFixed(2))}</span>
                 </div>
                 <Stepper
                   compact
@@ -398,6 +405,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLi
                   </div>
                 </div>
                 <CustomSelect
+                  ariaLabel={t('Min Duration')}
                   value={settings.minDuration}
                   onChange={val => updateCriteria({ minDuration: val })}
                   options={[
@@ -419,6 +427,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLi
                   </div>
                 </div>
                 <CustomSelect
+                  ariaLabel={t('Water level')}
                   value={settings.tidePreference}
                   onChange={val => updateCriteria({ tidePreference: val })}
                   options={[
@@ -479,7 +488,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLi
                               <span className="sector-heading">
                                 {t(sector.label)}
                                 <span className={`sector-chip exposure-${sector.exposure}`}>{t(EXPOSURE_LABEL[sector.exposure])}</span>
-                                <span className="sector-bearing">{t('from {0}', bearing)}</span>
+                                <span className="sector-bearing">{t('from {0}', t(bearing))}</span>
                               </span>
                               <p className="limit-hint">{t(sector.description)}</p>
 
@@ -535,7 +544,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLi
       {showInfoModal && (
         <SafetyManualModal
           settings={settings}
-          onClose={() => setShowInfoModal(false)}
+          onClose={closeInfoModal}
         />
       )}
     </>

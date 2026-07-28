@@ -11,6 +11,7 @@ import {
   Line,
 } from 'recharts';
 import { formatDateShort, formatWeekday, locationHourLabel } from '../utils/date';
+import { formatReading, formatSigned } from '../utils/number';
 import { useLang } from '../i18n';
 import type { HourlyData } from '../features/forecast/types';
 import type { SafetySettings } from '../features/safety/presets';
@@ -76,8 +77,12 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
   const chartData = useMemo(() => {
     return displayData.map((item) => {
       const date = new Date(item.time);
-      const wind = parseFloat(item.windSpeed.toFixed(1));
-      const gust = parseFloat(item.windGust.toFixed(1));
+      // null, not 0 — Recharts draws a gap for null, which is the honest shape
+      // for an hour a provider gave us nothing for. A 0 would draw a real point.
+      const plot = (value: number | undefined, decimals: number) =>
+        Number.isFinite(value) ? parseFloat((value as number).toFixed(decimals)) : null;
+      const wind = plot(item.windSpeed, 1);
+      const gust = plot(item.windGust, 1);
       return {
         ...item,
         timeLabel: locationHourLabel(date),
@@ -92,11 +97,11 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
         // The gust RIBBON is the visible object: the band between sustained
         // wind and gusts, so gust spread reads directly instead of as a
         // second line to mentally subtract.
-        gustBand: [wind, gust] as [number, number],
-        waveDisplay: parseFloat(item.waveHeight.toFixed(2)),
-        tideDisplay: parseFloat(item.tideLevel.toFixed(2)),
-        tempWaterDisplay: parseFloat(item.tempWater.toFixed(1)),
-        tempDisplay: parseFloat(item.tempAir.toFixed(1)),
+        gustBand: (wind === null || gust === null ? null : [wind, gust]) as [number, number] | null,
+        waveDisplay: plot(item.waveHeight, 2),
+        tideDisplay: plot(item.tideLevel, 2),
+        tempWaterDisplay: plot(item.tempWater, 1),
+        tempDisplay: plot(item.tempAir, 1),
       };
     });
     // t: timeLabel/dayLabel embed locale-formatted dates via the module-level
@@ -379,9 +384,9 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
           {/* 1 — WIND: gust spread as a ribbon, your caps as labeled rules */}
           {inlineHeader(<Wind size={16} />, t('Wind & gusts'), activeMetric(
             <>
-              <span className="tone-wind">{activeItem.windSpeed.toFixed(1)} m/s</span>
+              <span className="tone-wind">{formatReading(activeItem.windSpeed, 1)} m/s</span>
               {' · '}
-              <span className="tone-gust">{t('gusts {0}', activeItem.windGust.toFixed(1))}</span>
+              <span className="tone-gust">{t('gusts {0}', formatReading(activeItem.windGust, 1))}</span>
             </>
           ))}
           {/* Day labels sit directly on the wind chart's top hour axis, so
@@ -428,7 +433,7 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
 
           {/* 2 — WAVES */}
           {inlineHeader(<Waves size={16} />, t('Waves'), activeMetric(
-            <span className="tone-wave">{t('{0} m · period {1} s', activeItem.waveHeight.toFixed(2), activeItem.wavePeriod.toFixed(1))}</span>
+            <span className="tone-wave">{t('{0} m · period {1} s', formatReading(activeItem.waveHeight, 2), formatReading(activeItem.wavePeriod, 1))}</span>
           ))}
           <div className="chart-plot-wrap" style={{ width: `${chartWidth}px` }}>
             <AreaChart width={chartWidth} height={150} data={chartData} accessibilityLayer={false} onClick={handleChartClick} margin={CHART_MARGIN}>
@@ -455,7 +460,7 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
 
           {/* 3 — WATER LEVEL */}
           {inlineHeader(<ArrowDownUp size={16} />, t('Water level'), activeMetric(
-            <span className="tone-tide">{activeItem.tideLevel > 0 ? '+' : ''}{activeItem.tideLevel.toFixed(2)} m</span>
+            <span className="tone-tide">{formatSigned(activeItem.tideLevel, 2)} m</span>
           ))}
           <div className="chart-plot-wrap" style={{ width: `${chartWidth}px` }}>
             <AreaChart width={chartWidth} height={130} data={chartData} accessibilityLayer={false} onClick={handleChartClick} margin={CHART_MARGIN}>
@@ -478,9 +483,9 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
           {/* 4 — TEMPERATURE (carries the shared hour axis) */}
           {inlineHeader(<Thermometer size={16} />, t('Air & water temp'), activeMetric(
             <>
-              <span className="chart-metric-air">{t('air {0}°', activeItem.tempAir.toFixed(1))}</span>
+              <span className="chart-metric-air">{t('air {0}°', formatReading(activeItem.tempAir, 1))}</span>
               {' · '}
-              <span className="chart-metric-water">{t('water {0}°', activeItem.tempWater.toFixed(1))}</span>
+              <span className="chart-metric-water">{t('water {0}°', formatReading(activeItem.tempWater, 1))}</span>
             </>
           ))}
           <div className="chart-plot-wrap" style={{ width: `${chartWidth}px` }}>

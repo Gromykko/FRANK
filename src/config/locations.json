@@ -168,6 +168,7 @@
     "areaName": "Aarhus Bugt",
     "subtitle": "Aarhus",
     "timezone": "Europe/Copenhagen",
+    "provisional": true,
     "_note": "Added 2026-07-14, PROVISIONAL. Coordinate is an inner Aarhus Bugt DKSS node just off the city (probed live: dkss_idw water-temperature 18.4C + real deviation, wam_nsb wave height 0.15m - both wet). Geometry: city on the WEST shore, bay opens east/southeast to Kattegat, so E=onshore (long Kattegat fetch), W=offshore (fralandsvind). Open-bay fetch is longer than the fjords', so the same caps may be too loose here - an Aarhus-local paddler should calibrate before the provisional flag comes off.",
     "coordinate": {
       "latitude": 56.129,

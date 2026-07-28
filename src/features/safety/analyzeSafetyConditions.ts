@@ -31,7 +31,9 @@ function severityFromMetSymbol(symbol: string | undefined): SafetyRating {
     return base.includes('heavy') || base.includes('showers') ? 'danger' : 'caution';
   }
   if (base.includes('sleet')) {
-    return base.includes('heavy') ? 'danger' : 'caution';
+    // Sleet showers are as squally and low-visibility as snow showers, and
+    // colder-wet — rated the same rather than one band softer.
+    return base.includes('heavy') || base.includes('showers') ? 'danger' : 'caution';
   }
   if (base.includes('rain')) {
     if (base.includes('heavy')) return 'danger';
@@ -44,15 +46,17 @@ function severityFromMetSymbol(symbol: string | undefined): SafetyRating {
 }
 
 // Fallback for any legacy cache entry that predates symbol_code: map the WMO
-// weather_code (WMO 4677) to the same severity bands.
+// weather_code (WMO 4677) to the same severity bands. These MUST agree with
+// severityFromMetSymbol above via metSymbolToWmoCode — where they disagreed,
+// identical weather rated differently depending on how old the payload was.
 const WEATHER_CODE_SEVERITY: Record<number, SafetyRating> = {
   0: 'safe', 1: 'safe', 2: 'safe', 3: 'safe',   // clear -> overcast
   45: 'caution', 48: 'caution',                 // fog
   51: 'safe', 53: 'caution', 55: 'caution',     // drizzle
   56: 'caution', 57: 'caution',                 // freezing drizzle
-  61: 'caution', 63: 'caution', 65: 'danger',   // rain
-  66: 'caution', 67: 'danger',                  // freezing rain
-  71: 'caution', 73: 'danger', 75: 'danger',    // snow
+  61: 'safe', 63: 'caution', 65: 'danger',      // rain ('lightrain' is safe)
+  66: 'caution', 67: 'danger',                  // freezing rain / sleet
+  71: 'caution', 73: 'caution', 75: 'danger',   // snow ('snow' is caution)
   77: 'caution',                                // snow grains
   80: 'caution', 81: 'caution', 82: 'danger',   // rain showers
   85: 'danger', 86: 'danger',                   // snow showers
@@ -95,7 +99,15 @@ export function resolveSectors(location: ForecastLocation, settings: SafetySetti
   });
 }
 
+// A value FRANK can actually assess. Every threshold below is a `>=`/`<`
+// comparison, and those are ALL false against NaN — so an hour with a missing
+// reading would pass every rule untouched and be reported "safe". Unknown is
+// not safe, and this is the one verdict the app must never invent.
+const isReading = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value);
+
 export function getWindSpeedLabel(speed: number): string {
+  if (!isReading(speed)) return 'Unknown';
   if (speed <= 0.2) return 'Calm';
   if (speed <= 1.5) return 'Light Air';
   if (speed <= 3.3) return 'Light Breeze';
@@ -110,6 +122,7 @@ export function getWindSpeedLabel(speed: number): string {
 }
 
 export function getWaveHeightLabel(height: number): string {
+  if (!isReading(height)) return 'Unknown';
   if (height <= 0.1) return 'Flat / Calm';
   if (height <= 0.5) return 'Smooth / Small Ripples';
   if (height <= 1.25) return 'Slight / Choppy';
@@ -132,6 +145,10 @@ export function analyzeSafetyConditions(
   const reasons: SafetyReason[] = [];
   let rating: SafetyRating = 'safe';
 
+  // Readings an enabled rule needed but couldn't use. Collected rather than
+  // returned early, so a rule that CAN run (a gale) still gets to speak.
+  const missing: string[] = [];
+
   const addReason = (severity: SafetyRating, text: string) => {
     reasons.push({ severity, text });
   };
@@ -140,26 +157,36 @@ export function analyzeSafetyConditions(
   // sits exactly on the limit should read "at your limit", not "exceeds". Base
   // the choice on the DISPLAYED (rounded) value so it matches the panel — a raw
   // 0.2012 shown as "0.20" reads "at your 0.20 limit", never "0.20 exceeds 0.2".
+  // Both numbers are printed at the same precision as the comparison that chose
+  // the wording, so a derived limit like 0.1 + 0.2 reads "0.30", never
+  // "0.30000000000000004", and 8 reads "8.0" next to a value of "8.0".
   const limitReason = (
     value: number, limit: number, decimals: number,
     atKey: string, overKey: string, ...args: (string | number)[]
   ) => translate(value.toFixed(decimals) === limit.toFixed(decimals) ? atKey : overKey, ...args);
 
   const enableWindSpeed = settings.enableWindSpeed ?? true;
-  if (enableWindSpeed) {
+  const enableCustom = settings.enableCustomWindDirs ?? false;
+
+  // Wind speed feeds both the general limit and the per-sector caps, so it is
+  // required as soon as either is on.
+  const hasWindSpeed = isReading(data.windSpeed);
+  if ((enableWindSpeed || enableCustom) && !hasWindSpeed) missing.push('wind speed');
+
+  if (enableWindSpeed && hasWindSpeed) {
     const windLabel = translate(getWindSpeedLabel(data.windSpeed));
     if (data.windSpeed >= settings.maxWindSpeedCaution) {
       rating = 'danger';
       addReason('danger', limitReason(data.windSpeed, settings.maxWindSpeedCaution, 1,
         'Wind speed: {0} m/s ({1}). At your danger limit of {2} m/s.',
         'Wind speed: {0} m/s ({1}). Exceeds your danger limit of {2} m/s.',
-        data.windSpeed.toFixed(1), windLabel, settings.maxWindSpeedCaution));
+        data.windSpeed.toFixed(1), windLabel, settings.maxWindSpeedCaution.toFixed(1)));
     } else if (data.windSpeed >= settings.maxWindSpeedSafe) {
       rating = 'caution';
       addReason('caution', limitReason(data.windSpeed, settings.maxWindSpeedSafe, 1,
         'Wind speed: {0} m/s ({1}). At your safe limit of {2} m/s.',
         'Wind speed: {0} m/s ({1}). Exceeds your safe limit of {2} m/s.',
-        data.windSpeed.toFixed(1), windLabel, settings.maxWindSpeedSafe));
+        data.windSpeed.toFixed(1), windLabel, settings.maxWindSpeedSafe.toFixed(1)));
     }
   }
 
@@ -169,7 +196,10 @@ export function analyzeSafetyConditions(
   // presets place that exactly on the caution limit, but a custom margin
   // moves the ceiling with it, as the settings panel and manual describe.
   const enableWindGust = enableWindSpeed && (settings.enableWindGust ?? true);
-  if (enableWindGust) {
+  // MET issues no gust forecast for the longer-range blocks, so an absent gust
+  // there is a known limit of the source, not a hole in this hour's data.
+  if (enableWindGust && !data.blockSpanHours && !isReading(data.windGust)) missing.push('wind gusts');
+  if (enableWindGust && isReading(data.windGust)) {
     const gustLabel = translate(getWindSpeedLabel(data.windGust));
     const gustDangerLimit = settings.maxWindSpeedSafe + (settings.gustMargin ?? 2.5);
     if (data.windGust >= gustDangerLimit) {
@@ -177,13 +207,13 @@ export function analyzeSafetyConditions(
       addReason('danger', limitReason(data.windGust, gustDangerLimit, 1,
         'Wind gusts: {0} m/s ({1}). At your gust ceiling of {2} m/s.',
         'Wind gusts: {0} m/s ({1}). Above your gust ceiling of {2} m/s.',
-        data.windGust.toFixed(1), gustLabel, gustDangerLimit));
+        data.windGust.toFixed(1), gustLabel, gustDangerLimit.toFixed(1)));
     } else if (data.windGust >= settings.maxWindSpeedSafe) {
       if (rating !== 'danger') rating = 'caution';
       addReason('caution', limitReason(data.windGust, settings.maxWindSpeedSafe, 1,
         'Wind gusts: {0} m/s ({1}). At your safe limit of {2} m/s.',
         'Wind gusts: {0} m/s ({1}). Exceeds your safe limit of {2} m/s.',
-        data.windGust.toFixed(1), gustLabel, settings.maxWindSpeedSafe));
+        data.windGust.toFixed(1), gustLabel, settings.maxWindSpeedSafe.toFixed(1)));
     }
   }
 
@@ -191,11 +221,15 @@ export function analyzeSafetyConditions(
   // the wind falls within applies its own safe/danger caps; onshore/offshore
   // membership feeds the wind-against-water-level rule below (cross-shore
   // sectors set neither flag, so they opt out of it).
-  const enableCustom = settings.enableCustomWindDirs ?? false;
-  const sectors = enableCustom ? resolveSectors(CURRENT_LOCATION, settings) : [];
+  const hasWindDir = isReading(data.windDirection);
+  if (enableCustom && !hasWindDir) missing.push('wind direction');
+  const sectors = enableCustom && hasWindSpeed && hasWindDir
+    ? resolveSectors(CURRENT_LOCATION, settings)
+    : [];
   let windIsOnshore = false;
   let windIsOffshore = false;
-  const windDir = Math.round(data.windDirection);
+  // 359.6° rounds to 360, which is not a bearing — wrap it back to 0.
+  const windDir = Math.round(data.windDirection) % 360;
   for (const sector of sectors) {
     if (!inSector(data.windDirection, sector.min, sector.max)) continue;
     if (sector.exposure === 'onshore') windIsOnshore = true;
@@ -207,17 +241,20 @@ export function analyzeSafetyConditions(
       addReason('danger', limitReason(data.windSpeed, sector.cautionLimit, 1,
         '{0} wind ({1}°) is at your {2} m/s danger cap for this direction.',
         '{0} wind ({1}°) is over your {2} m/s danger cap for this direction.',
-        translate(sector.label), windDir, sector.cautionLimit));
+        translate(sector.label), windDir, sector.cautionLimit.toFixed(1)));
     } else if (data.windSpeed >= sector.safeLimit) {
       if (rating !== 'danger') rating = 'caution';
       addReason('caution', limitReason(data.windSpeed, sector.safeLimit, 1,
         '{0} wind ({1}°) is at your {2} m/s safe cap for this direction.',
         '{0} wind ({1}°) is over your {2} m/s safe cap for this direction.',
-        translate(sector.label), windDir, sector.safeLimit));
+        translate(sector.label), windDir, sector.safeLimit.toFixed(1)));
     }
   }
 
-  if (enableCustom && nextHourTide !== undefined) {
+  // Needs both water levels to tell rising from falling. Without them the rule
+  // simply doesn't run — it's a refinement on top of the wind rules, not a
+  // hazard of its own, so an absent tide series isn't reported as missing data.
+  if (enableCustom && isReading(nextHourTide) && isReading(data.tideLevel) && hasWindSpeed) {
     const isWaterRising = nextHourTide > data.tideLevel;
     // Offshore wind opposes rising water; onshore wind opposes falling water.
     if ((isWaterRising && windIsOffshore) || (!isWaterRising && windIsOnshore)) {
@@ -229,19 +266,21 @@ export function analyzeSafetyConditions(
   }
 
   const enableWaterTemp = settings.enableWaterTemp ?? true;
-  if (enableWaterTemp) {
+  if (enableWaterTemp && !isReading(data.tempWater)) missing.push('water temperature');
+  if (enableWaterTemp && isReading(data.tempWater)) {
     if (data.tempWater < settings.minWaterTempCaution) {
       rating = 'danger';
-      addReason('danger', translate("Water temperature: {0}°C — colder than your danger limit of {1}°C. You'd really want a drysuit or heavy thermals for this.", data.tempWater.toFixed(1), settings.minWaterTempCaution));
+      addReason('danger', translate("Water temperature: {0}°C — colder than your danger limit of {1}°C. You'd really want a drysuit or heavy thermals for this.", data.tempWater.toFixed(1), settings.minWaterTempCaution.toFixed(1)));
     } else if (data.tempWater < settings.minWaterTempSafe) {
       if (rating !== 'danger') rating = 'caution';
-      addReason('caution', translate('Water temperature: {0}°C — under your safe limit of {1}°C. Worth layering up.', data.tempWater.toFixed(1), settings.minWaterTempSafe));
+      addReason('caution', translate('Water temperature: {0}°C — under your safe limit of {1}°C. Worth layering up.', data.tempWater.toFixed(1), settings.minWaterTempSafe.toFixed(1)));
     }
   }
 
   const enableWaveHeight = settings.enableWaveHeight ?? true;
   const enableWaveCaution = settings.enableWaveCaution ?? true;
-  if (enableWaveHeight) {
+  if (enableWaveHeight && !isReading(data.waveHeight)) missing.push('wave height');
+  if (enableWaveHeight && isReading(data.waveHeight)) {
     const waveLabel = translate(getWaveHeightLabel(data.waveHeight));
     // The danger ceiling always applies when wave height is enabled; the
     // "wave caution margin" toggle only controls the intermediate caution band.
@@ -250,13 +289,13 @@ export function analyzeSafetyConditions(
       addReason('danger', limitReason(data.waveHeight, settings.maxWaveHeightCaution, 2,
         'Wave height: {0} m ({1}). At your danger limit of {2} m.',
         'Wave height: {0} m ({1}). Exceeds your danger limit of {2} m.',
-        data.waveHeight.toFixed(2), waveLabel, settings.maxWaveHeightCaution));
+        data.waveHeight.toFixed(2), waveLabel, settings.maxWaveHeightCaution.toFixed(2)));
     } else if (enableWaveCaution && data.waveHeight >= settings.maxWaveHeightSafe) {
       if (rating !== 'danger') rating = 'caution';
       addReason('caution', limitReason(data.waveHeight, settings.maxWaveHeightSafe, 2,
         'Wave height: {0} m ({1}). At your safe limit of {2} m.',
         'Wave height: {0} m ({1}). Exceeds your safe limit of {2} m.',
-        data.waveHeight.toFixed(2), waveLabel, settings.maxWaveHeightSafe));
+        data.waveHeight.toFixed(2), waveLabel, settings.maxWaveHeightSafe.toFixed(2)));
     }
   }
 
@@ -265,6 +304,7 @@ export function analyzeSafetyConditions(
   // the human-readable description (via the symbol's mapped WMO code). No custom
   // derivation, no lightning probability, no configurable rain limit. The
   // weather_code path is a fallback for any pre-symbol_code cache entry.
+  if (!data.symbolCode && !isReading(data.weatherCode)) missing.push('weather');
   const weatherSeverity = data.symbolCode
     ? severityFromMetSymbol(data.symbolCode)
     : WEATHER_CODE_SEVERITY[data.weatherCode] ?? 'safe';
@@ -283,6 +323,16 @@ export function analyzeSafetyConditions(
   if ((settings.daylightOnly ?? true) && !data.isDay && !data.blockSpanHours) {
     if (rating !== 'danger') rating = 'caution';
     addReason('caution', translate('Nighttime: outside sunrise-to-sunset paddling hours.'));
+  }
+
+  // An hour FRANK could not fully assess is never cleared. This runs before the
+  // all-clear below, so "everything's within your limits" can only be said when
+  // every enabled rule actually had a reading to judge.
+  if (missing.length > 0) {
+    if (rating !== 'danger') rating = 'caution';
+    addReason('caution', translate(
+      'No reading for {0} this hour, so FRANK cannot clear it. Unknown is not the same as safe — check another source before you launch.',
+      missing.map((field) => translate(field)).join(', ')));
   }
 
   if (reasons.length === 0) {

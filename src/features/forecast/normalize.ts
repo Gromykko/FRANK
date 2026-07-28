@@ -51,9 +51,20 @@ export interface MetForecastResponse {
 // Shared forecast-core helpers. Exported so the Worker imports the one canonical
 // copy instead of maintaining its own (they must never drift — they compute the
 // numbers the safety verdict runs on).
+// A reading the providers did not give us. NaN rather than 0, because 0 is a
+// perfectly plausible measurement — 0 m of wave and 0°C water both read as real
+// values to every threshold, and "flat calm" is the most dangerous thing a
+// missing wave height could pretend to be. Every `>=`/`<` against NaN is false,
+// and analyzeSafetyConditions treats a non-finite reading as "cannot clear this
+// hour" rather than as a pass.
+export const NO_READING = NaN;
+
 export function asNumber(value: number | string | null | undefined): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string') {
+    // Number('') and Number('  ') are both 0 — an empty field is missing data,
+    // not a zero measurement.
+    if (value.trim() === '') return undefined;
     const parsed = Number(value);
     if (Number.isFinite(parsed)) return parsed;
   }
@@ -244,11 +255,11 @@ export function aggregateBlockMarine(
 
   // Aggregate only the samples that actually carry a value — coercing a missing
   // sample to 0 would drag the average toward 0 and collapse the min to 0. If a
-  // field is absent across the whole window, fall back to [0] (the old
-  // behaviour) so max/min/avg stay finite.
+  // field is absent across the WHOLE window there is nothing to aggregate, so
+  // the result is NO_READING, not a fabricated 0.
   const definedNums = (arr: (number | undefined)[]): number[] => {
     const out = arr.filter((v): v is number => v != null);
-    return out.length ? out : [0];
+    return out.length ? out : [NO_READING];
   };
   const waveHeights = definedNums(waves.map((w) => w.waveHeight));
   const tideLevels = definedNums(waters.map((w) => w.tideLevel));
@@ -264,16 +275,16 @@ export function aggregateBlockMarine(
     waveHeight: Math.max(...waveHeights),
     waveHeightMin: Math.min(...waveHeights),
     waveHeightMax: Math.max(...waveHeights),
-    waveDirection: centreWave.waveDirection ?? 0,
-    wavePeriod: centreWave.wavePeriod ?? 0,
-    tideLevel: centre.tideLevel ?? 0,
+    waveDirection: centreWave.waveDirection ?? NO_READING,
+    wavePeriod: centreWave.wavePeriod ?? NO_READING,
+    tideLevel: centre.tideLevel ?? NO_READING,
     tideLevelMin: Math.min(...tideLevels),
     tideLevelMax: Math.max(...tideLevels),
     tempWater: temps.reduce((a, b) => a + b, 0) / temps.length,
     tempWaterMin: Math.min(...temps),
     tempWaterMax: Math.max(...temps),
-    currentSpeed: centre.currentSpeed ?? 0,
-    currentDirection: centre.currentDirection ?? 0,
+    currentSpeed: centre.currentSpeed ?? NO_READING,
+    currentDirection: centre.currentDirection ?? NO_READING,
   };
 }
 
@@ -282,16 +293,19 @@ export function aggregateBlockMarine(
 // wave, representative tide, average water temp); *Min/*Max carry the range.
 // Shared so the Worker and client build identical block rows.
 export function assembleBlockRow(block: MetBlock, marine: BlockMarine, isDay: boolean): HourlyData {
-  const windSpeed = block.windSpeed ?? 0;
-  const windGust = block.windGust ?? block.windSpeed ?? 0;
+  const windSpeed = block.windSpeed ?? NO_READING;
+  // MET publishes no gust for its 6/12-hourly blocks. Substituting the
+  // sustained wind here made the UI print "gusts N max" for a gust nobody
+  // forecast — and understated it, since real gusts run well above sustained.
+  const windGust = block.windGust ?? NO_READING;
   return {
     time: block.time,
-    tempAir: block.tempAir ?? 0,
+    tempAir: block.tempAir ?? NO_READING,
     precipitation: block.precipitation ?? 0,
     symbolCode: block.symbolCode,
     weatherCode: block.weatherCode,
     windSpeed,
-    windDirection: block.windDirection ?? 0,
+    windDirection: block.windDirection ?? NO_READING,
     windGust,
     waveHeight: marine.waveHeight,
     waveDirection: marine.waveDirection,
@@ -332,20 +346,23 @@ export function assembleHourlyRow(
 ): HourlyData {
   return {
     time: weather.time,
-    tempAir: weather.tempAir ?? 0,
+    tempAir: weather.tempAir ?? NO_READING,
     precipitation: weather.precipitation ?? 0,
     symbolCode: weather.symbolCode ?? '',
-    weatherCode: weather.weatherCode ?? 0,
-    windSpeed: weather.windSpeed ?? 0,
-    windDirection: weather.windDirection ?? 0,
-    windGust: weather.windGust ?? weather.windSpeed ?? 0,
-    waveHeight: wave.waveHeight ?? 0,
-    waveDirection: wave.waveDirection ?? 0,
-    wavePeriod: wave.wavePeriod ?? 0,
-    tempWater: water.tempWater ?? 0,
-    tideLevel: water.tideLevel ?? 0,
-    currentSpeed: water.currentSpeed ?? 0,
-    currentDirection: water.currentDirection ?? 0,
+    // 0 is "clear sky" — a missing condition must not read as a fine day.
+    weatherCode: weather.weatherCode ?? NO_READING,
+    windSpeed: weather.windSpeed ?? NO_READING,
+    windDirection: weather.windDirection ?? NO_READING,
+    // MET does give hourly gusts; the sustained-wind fallback stays for the
+    // rare hour it omits one, since gust >= sustained always holds.
+    windGust: weather.windGust ?? weather.windSpeed ?? NO_READING,
+    waveHeight: wave.waveHeight ?? NO_READING,
+    waveDirection: wave.waveDirection ?? NO_READING,
+    wavePeriod: wave.wavePeriod ?? NO_READING,
+    tempWater: water.tempWater ?? NO_READING,
+    tideLevel: water.tideLevel ?? NO_READING,
+    currentSpeed: water.currentSpeed ?? NO_READING,
+    currentDirection: water.currentDirection ?? NO_READING,
     isDay,
     weatherSource: 'met-locationforecast',
     marineSource: 'dmi-dkss-wam',

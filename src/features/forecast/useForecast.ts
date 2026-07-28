@@ -75,7 +75,9 @@ export function useForecast(daylightOnly: boolean) {
     }
 
     let initialSelected = closestIndex;
-    if (preferDaylight && !data.hourly[closestIndex].isDay) {
+    // An empty payload leaves closestIndex pointing at nothing; the render path
+    // has its own guard, but reading .isDay here would throw first.
+    if (preferDaylight && data.hourly[closestIndex] && !data.hourly[closestIndex].isDay) {
       const firstDaylight = data.hourly.findIndex((h, idx) => idx >= closestIndex && h.isDay);
       if (firstDaylight !== -1) {
         initialSelected = firstDaylight;
@@ -190,7 +192,14 @@ export function useForecast(daylightOnly: boolean) {
       }
     }
 
-    bootForecast();
+    // A throw in here (a corrupt cached payload, an empty hourly array) would
+    // otherwise be an unhandled rejection that leaves `loading` true forever —
+    // an endless spinner with no way out. Surface the retryable error screen.
+    bootForecast().catch(() => {
+      if (cancelled) return;
+      setError('Could not refresh forecast data. Showing the latest cached forecast if available.');
+      setLoading(false);
+    });
 
     return () => {
       cancelled = true;

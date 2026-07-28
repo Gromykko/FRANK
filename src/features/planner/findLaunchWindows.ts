@@ -21,6 +21,24 @@ export interface SunTimes {
 }
 
 const MAX_WINDOWS = 12;
+// Outlook windows are capped separately: they are appended after the hourly
+// ones, so a single shared cap silently deleted the whole outlook section on
+// any forecast that already had 12 hourly windows.
+const MAX_BLOCK_WINDOWS = 4;
+
+// A run is only continuous if consecutive samples really are an hour apart.
+// The hourly series drops any hour with no marine sample within tolerance, so
+// array adjacency does NOT imply time adjacency — without this check a window
+// spanning a gap reports too short a duration AND silently covers an hour that
+// was never assessed at all.
+const HOUR_MS = 3_600_000;
+function isContiguous(previous: HourlyData, current: HourlyData): boolean {
+  const gap = new Date(current.time).getTime() - new Date(previous.time).getTime();
+  if (!Number.isFinite(gap)) return false;
+  // An hourly sample is followed one hour later; an outlook block is followed
+  // by the next block one full span later.
+  return gap <= (previous.blockSpanHours ?? 1) * HOUR_MS * 1.01;
+}
 
 // A window is a run of consecutive safe forecast samples within one day.
 // An N-hour window needs N+1 safe samples: both endpoints of every hour
@@ -92,7 +110,9 @@ export function findLaunchWindows(
   };
 
   for (let i = 0; i < hourlyEnd; i++) {
-    const isNewDay = i > 0 && !isSameLocationDay(data[i].time, data[i - 1].time);
+    // A gap in the series breaks the run for the same reason a new day does:
+    // the hours either side are not one continuous stretch on the water.
+    const isNewDay = i > 0 && (!isSameLocationDay(data[i].time, data[i - 1].time) || !isContiguous(data[i - 1], data[i]));
     if (isSafe(i)) {
       if (currentStart === null) currentStart = i;
       else if (isNewDay) {
@@ -107,6 +127,7 @@ export function findLaunchWindows(
   if (currentStart !== null) addHourlySlot(currentStart, hourlyEnd - 1);
 
   // --- Longer-range block windows (each safe block qualifies) ------------
+  const blockSlots: LaunchWindow[] = [];
   let blockStart: number | null = null;
   const addBlockSlot = (start: number, end: number) => {
     if (!matchesWaterLevelPreference(start, end)) return;
@@ -122,6 +143,10 @@ export function findLaunchWindows(
     // period with no daylight at all is not a window, and one that includes
     // night hours is flagged so the card can say only its daylight part counts.
     let daylightPartial = false;
+    // With Daylight Only on and no sun schedule, a block's daylight overlap is
+    // unknowable — so it cannot be offered. Previously it was offered anyway,
+    // which meant a night block could be recommended.
+    if ((settings.daylightOnly ?? true) && !sun) return;
     if ((settings.daylightOnly ?? true) && sun) {
       const startMs = new Date(data[start].time).getTime();
       const endMs = new Date(data[end].time).getTime() + (data[end].blockSpanHours ?? 0) * 3_600_000;
@@ -130,7 +155,7 @@ export function findLaunchWindows(
       daylightPartial = overlap < endMs - startMs - 60_000;
     }
 
-    slots.push({
+    blockSlots.push({
       startIndex: start,
       endIndex: end,
       duration: spanHours,
@@ -140,7 +165,7 @@ export function findLaunchWindows(
   };
 
   for (let i = hourlyEnd; i < data.length; i++) {
-    const isNewDay = i > hourlyEnd && !isSameLocationDay(data[i].time, data[i - 1].time);
+    const isNewDay = i > hourlyEnd && (!isSameLocationDay(data[i].time, data[i - 1].time) || !isContiguous(data[i - 1], data[i]));
     if (isSafe(i)) {
       if (blockStart === null) blockStart = i;
       else if (isNewDay) {
@@ -154,7 +179,7 @@ export function findLaunchWindows(
   }
   if (blockStart !== null) addBlockSlot(blockStart, data.length - 1);
 
-  return slots.slice(0, MAX_WINDOWS);
+  return [...slots.slice(0, MAX_WINDOWS), ...blockSlots.slice(0, MAX_BLOCK_WINDOWS)];
 }
 
 const SUNSET_MARGIN_MS = 45 * 60 * 1000;

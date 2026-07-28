@@ -196,7 +196,10 @@ export function deriveCacheStatus(args: {
   return {
     view,
     expandedDetail,
-    failureDetail: cacheHealth?.message ? translate(' Last issue: {0}', cacheHealth.message) : '',
+    // Deliberately NOT surfaced: cacheHealth.message is an untranslated slice
+    // of an upstream HTTP body, so it dropped raw English provider HTML into a
+    // Danish safety banner. It stays in the payload for /health and the console.
+    failureDetail: '',
     showRefreshWarning,
     workerOutdated,
     forecastAgeLabel: formatRelativeAge(cacheAgeMs, translate),

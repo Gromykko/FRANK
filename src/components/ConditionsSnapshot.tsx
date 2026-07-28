@@ -3,10 +3,11 @@ import WeatherWidgetIcon from './WeatherWidgetIcon';
 import { blockHourRange } from '../features/forecast/blockHours';
 import { useLang } from '../i18n';
 import { formatWeekday, locationHourLabel } from '../utils/date';
+import { formatReading, formatSigned } from '../utils/number';
 import type { HourlyData } from '../features/forecast/types';
 import type { SafetyRating, SafetyReason } from '../features/safety/analyzeSafetyConditions';
 
-const signed = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}`;
+const signed = (v: number) => formatSigned(v, 2);
 
 interface ConditionsSnapshotProps {
   data: HourlyData;
@@ -44,23 +45,26 @@ export default function ConditionsSnapshot({
   // the *Min/*Max fields carry the full DMI range that lives in this detail
   // panel. A flat block (min == max after rounding) collapses to the single
   // value — "0.12–0.12 m" reads as a glitch, not a range.
-  const waveLo = (data.waveHeightMin ?? data.waveHeight).toFixed(2);
-  const waveHi = (data.waveHeightMax ?? data.waveHeight).toFixed(2);
-  const waveText = isBlock ? `${waveLo === waveHi ? waveHi : `${waveLo}–${waveHi}`} m` : `${data.waveHeight.toFixed(2)} m`;
-  const waterLo = (data.tempWaterMin ?? data.tempWater).toFixed(1);
-  const waterHi = (data.tempWaterMax ?? data.tempWater).toFixed(1);
-  const waterText = isBlock ? `${waterLo === waterHi ? waterHi : `${waterLo}–${waterHi}`}°C` : `${data.tempWater.toFixed(1)}°C`;
+  const waveLo = formatReading(data.waveHeightMin ?? data.waveHeight, 2);
+  const waveHi = formatReading(data.waveHeightMax ?? data.waveHeight, 2);
+  const waveText = isBlock ? `${waveLo === waveHi ? waveHi : `${waveLo}–${waveHi}`} m` : `${formatReading(data.waveHeight, 2)} m`;
+  const waterLo = formatReading(data.tempWaterMin ?? data.tempWater, 1);
+  const waterHi = formatReading(data.tempWaterMax ?? data.tempWater, 1);
+  const waterText = isBlock ? `${waterLo === waterHi ? waterHi : `${waterLo}–${waterHi}`}°C` : `${formatReading(data.tempWater, 1)}°C`;
   const tideLo = signed(data.tideLevelMin ?? data.tideLevel);
   const tideHi = signed(data.tideLevelMax ?? data.tideLevel);
   const tideText = isBlock
     ? (tideLo === tideHi ? `${tideHi} m` : t('{0} to {1} m', tideLo, tideHi))
-    : `${data.tideLevel >= 0 ? '+' : ''}${data.tideLevel.toFixed(2)} m`;
+    : `${formatSigned(data.tideLevel, 2)} m`;
   // MET supplies one instant wind value for an outlook block. Ignore legacy
   // percentile fields that may still exist in an older cached payload.
-  const windText = `${data.windSpeed.toFixed(1)} m/s`;
+  const windText = `${formatReading(data.windSpeed, 1)} m/s`;
+  // MET publishes no gust for the longer-range blocks — say so rather than
+  // repeating the sustained wind under a "gusts" label.
+  const blockGust = data.windGustMax ?? data.windGust;
   const gustText = isBlock
-    ? ` ${t('gusts {0} max', (data.windGustMax ?? data.windGust).toFixed(1))}`
-    : ` ${t('gusts {0}', data.windGust.toFixed(1))}`;
+    ? (Number.isFinite(blockGust) ? ` ${t('gusts {0} max', formatReading(blockGust, 1))}` : ` ${t('no gust forecast')}`)
+    : ` ${t('gusts {0}', formatReading(data.windGust, 1))}`;
 
   return (
     <section className="panel snapshot" aria-label={t('Current conditions')}>
@@ -73,7 +77,7 @@ export default function ConditionsSnapshot({
           </span>
           <span className="snapshot-cell snapshot-cell-end">
             <span className="snapshot-label">{t('Air')}</span>
-            <span className="snapshot-value">{data.tempAir.toFixed(1)}°C</span>
+            <span className="snapshot-value">{formatReading(data.tempAir, 1)}°C</span>
           </span>
         </div>
 

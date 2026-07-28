@@ -125,6 +125,26 @@ export const da: Record<string, string> = {
   'Forecast from {0}; cache checked {1}': 'Prognose fra {0}; cache tjekket {1}',
   'Forecast from {0}': 'Prognose fra {0}',
   ' Last issue: {0}': ' Seneste fejl: {0}',
+  'Advisory only — FRANK does not replace official warnings, club rules, or your own look at the water. You are responsible for the decision to launch.':
+    'Kun vejledende — FRANK erstatter ikke officielle varsler, klubbens regler eller dit eget blik på vandet. Du har selv ansvaret for beslutningen om at tage ud.',
+  'The forecast came back with no hours in it.': 'Prognosen kom tilbage uden timer i.',
+  'Charts are unavailable right now. The forecast above is unaffected.':
+    'Graferne er ikke tilgængelige lige nu. Prognosen ovenfor er upåvirket.',
+  'no gust forecast': 'ingen vindstødsprognose',
+  // Missing-reading wording — see analyzeSafetyConditions.
+  'No reading for {0} this hour, so FRANK cannot clear it. Unknown is not the same as safe — check another source before you launch.':
+    'FRANK har ingen måling af {0} denne time og kan derfor ikke frikende den. Ukendt er ikke det samme som sikkert — tjek en anden kilde, før du tager ud.',
+  'wind speed': 'vindhastighed',
+  'wind gusts': 'vindstød',
+  'wind direction': 'vindretning',
+  'wave height': 'bølgehøjde',
+  'water temperature': 'vandtemperatur',
+  'Unknown': 'Ukendt',
+  'danger from {0}': 'fare fra {0}',
+  'Danger at {0} m/s and above — for gusts and average wind alike':
+    'Fare ved {0} m/s og derover — både for vindstød og middelvind',
+  'Danger at {0} m and above': 'Fare ved {0} m og derover',
+  'Forecast days': 'Prognosedage',
 
   // ── Safety reasons (analyzeSafetyConditions.ts) ───────────────────────────
   'Wind speed: {0} m/s ({1}). Exceeds your danger limit of {2} m/s.':
@@ -312,9 +332,12 @@ export const da: Record<string, string> = {
   'danger below {0}°': 'fare under {0}°',
 
   // ── WarningStripe (+ planner warning badge) ───────────────────────────────
-  'Yellow': 'Gul',
+  // "varsel"/"vejrvarsel" are neuter (et varsel), so the colour takes -t —
+  // DMI itself writes "Gult varsel". These keys are only ever composed with
+  // those two nouns, so the neuter form is correct at every call site.
+  'Yellow': 'Gult',
   'Orange': 'Orange',
-  'Red': 'Rød',
+  'Red': 'Rødt',
   'Yellow warnings': 'gule varsler',
   'Orange warnings': 'orange varsler',
   'Red warnings': 'røde varsler',
@@ -482,8 +505,8 @@ export const da: Record<string, string> = {
   'Safe cap: {0} m/s, danger cap: {1} m/s.': 'Sikkert loft: {0} m/s, fareloft: {1} m/s.',
   'These limits use': 'Disse grænser bruger',
   'average wind speed only': 'kun middelvind',
-  '(not gusts), as standing-wave hazards here are driven by sustained wind blowing across a long open stretch of water (its "fetch").':
-    '(ikke vindstød), da farlige stående bølger her skabes af vedvarende vind hen over et langt frit stræk af vand (dets "fetch").',
+  '(not gusts), as the chop that matters here is driven by sustained wind blowing across a long open stretch of water (its "fetch").':
+    '(ikke vindstød), da den krappe sø, der betyder noget her, skabes af vedvarende vind hen over et langt frit stræk af vand (dets "fetch").',
   'Directions are fixed to the local geography; only the speed caps are yours to adjust.':
     'Retningerne er fastlagt efter den lokale geografi; kun vindlofterne kan du justere.',
   '5. Water Level': '5. Vandstand',
@@ -498,7 +521,7 @@ export const da: Record<string, string> = {
   '6. Weather Condition (Rain, Snow, Sleet, Fog, Thunder)': '6. Vejrforhold (regn, sne, slud, tåge, torden)',
   "The weather condition comes straight from the forecast's own symbol (MET Norway's symbol_code) — FRANK does not compute its own rain or lightning judgement. Each condition maps to a severity:":
     'Vejrforholdet kommer direkte fra prognosens eget symbol (MET Norways symbol_code) — FRANK beregner ikke sin egen regn- eller lynvurdering. Hvert forhold svarer til en alvorlighed:',
-  'clear, cloudy, light drizzle, and light rain — no weather warning.': 'klart, skyet, let støvregn og let regn — ingen vejradvarsel.',
+  'clear, cloudy, light drizzle, and light rain — no weather flag.': 'klart, skyet, let støvregn og let regn — ingen vejrbemærkning.',
   'moderate rain, light snow, sleet, fog, and rain showers — worth keeping an eye on.':
     'moderat regn, let sne, slud, tåge og regnbyger — værd at holde øje med.',
   'heavy rain, heavier snow or sleet, snow showers, and thunderstorms — probably one to skip.':

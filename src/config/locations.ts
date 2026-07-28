@@ -26,8 +26,10 @@ export interface ForecastLocation {
   // filtering, warnings stay region-level.
   kommuneAliases?: string[];
   // Local, area-specific heads-ups a paddler should know (crossings, protected
-  // areas, seasonal/daylight restrictions). Informational — shown in the Local
-  // Rules panel, never part of the safety verdict. Deliberately does NOT
+  // areas, seasonal/daylight restrictions). DORMANT: the Local Rules panel that
+  // rendered these was removed, so nothing reads this today — it is kept as
+  // curated data for a future surface. Never part of the safety verdict.
+  // Deliberately does NOT
   // reproduce exact dates/distances (those change and we don't maintain them):
   // each item names that a constraint exists and links out to the authority or
   // club that actually keeps the current rule. `link` is omitted for timeless

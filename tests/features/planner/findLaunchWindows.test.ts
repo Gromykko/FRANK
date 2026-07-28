@@ -121,13 +121,30 @@ describe('findLaunchWindows', () => {
       isLowConfidence: true,
       blockSpanHours: 6,
     };
-    const windows = findLaunchWindows([...hourly, block], baseSettings, 0);
+    // Daylight Only needs a sun schedule to judge a block; give it an all-day
+    // one so this test stays about low-confidence flagging.
+    const allDaySun = { sunrise: ['2026-07-11T00:00:00Z'], sunset: ['2026-07-11T23:59:00Z'] };
+    const windows = findLaunchWindows([...hourly, block], baseSettings, 0, allDaySun);
 
     const lowConf = windows.filter((w) => w.lowConfidence);
     expect(lowConf).toHaveLength(1);
     expect(lowConf[0]).toMatchObject({ startIndex: 3, endIndex: 3, duration: 6, lowConfidence: true });
     // The exact hourly window is still found and is not flagged low-confidence.
     expect(windows.some((w) => !w.lowConfidence)).toBe(true);
+  });
+
+  it('breaks a window at a gap in the hourly series', () => {
+    // The pipeline drops an hour with no marine sample, so array adjacency does
+    // not imply the hours are consecutive. A window spanning the hole would
+    // both under-report its duration and cover an hour never assessed at all.
+    const data = generateData(5);
+    data.splice(2, 1); // 10:00, 11:00, [13:00 missing 12:00], 14:00
+    const windows = findLaunchWindows(data, { ...baseSettings, minDuration: 1 } as SafetySettings, 0);
+    // Whatever windows come back, none may straddle the gap.
+    const gapStart = new Date(data[1].time).getTime();
+    const gapEnd = new Date(data[2].time).getTime();
+    expect(gapEnd - gapStart).toBeGreaterThan(3_600_000);
+    expect(windows.every((w) => w.endIndex <= 1 || w.startIndex >= 2)).toBe(true);
   });
 
   it('does not offer a longer-range block window when the block is unsafe', () => {
@@ -251,9 +268,13 @@ describe('findLaunchWindows — longer-range block windows', () => {
     ...overrides,
   });
 
+  // Span/duration tests are not about daylight, so they pass an all-day sun
+  // schedule to keep the Daylight Only rule out of the way.
+  const allDaySun = { sunrise: ['2026-07-11T00:00:00'], sunset: ['2026-07-11T23:59:00'] };
+
   it('a run of two safe blocks sums blockSpanHours into the duration', () => {
     const blocks = [makeBlock('2026-07-11T06:00:00'), makeBlock('2026-07-11T12:00:00')];
-    const windows = findLaunchWindows(blocks, baseSettings, 0);
+    const windows = findLaunchWindows(blocks, baseSettings, 0, allDaySun);
     expect(windows).toMatchObject([
       { startIndex: 0, endIndex: 1, duration: 12, lowConfidence: true },
     ]);
@@ -262,17 +283,21 @@ describe('findLaunchWindows — longer-range block windows', () => {
   it('minDuration filters block windows by their summed span', () => {
     const settings6h = { ...baseSettings, minDuration: 6 } as SafetySettings;
     // A 6-hour block exactly meets a 6-hour minimum.
-    expect(findLaunchWindows([makeBlock('2026-07-11T06:00:00')], settings6h, 0)).toHaveLength(1);
+    expect(findLaunchWindows([makeBlock('2026-07-11T06:00:00')], settings6h, 0, allDaySun)).toHaveLength(1);
     // A shorter span is rejected by the same bar hourly windows clear.
     expect(
-      findLaunchWindows([makeBlock('2026-07-11T06:00:00', { blockSpanHours: 4 })], settings6h, 0)
+      findLaunchWindows([makeBlock('2026-07-11T06:00:00', { blockSpanHours: 4 })], settings6h, 0, allDaySun)
     ).toHaveLength(0);
   });
 
-  it('a night block with no sun schedule provided is still offered', () => {
-    const windows = findLaunchWindows([makeBlock('2026-07-11T00:00:00')], baseSettings, 0);
-    expect(windows).toHaveLength(1);
-    expect(windows[0].daylightPartial).toBeUndefined();
+  it('withholds block windows entirely when Daylight Only is on but no sun schedule is known', () => {
+    // Without sunrise/sunset there is no way to tell how much of a 6-hour block
+    // is daylight, and a block is never itself marked as night — so offering it
+    // could recommend a launch window that is entirely in the dark.
+    expect(findLaunchWindows([makeBlock('2026-07-11T00:00:00')], baseSettings, 0)).toHaveLength(0);
+    // With the rule off, the same block is offered as before.
+    const off = { ...baseSettings, daylightOnly: false } as SafetySettings;
+    expect(findLaunchWindows([makeBlock('2026-07-11T00:00:00')], off, 0)).toHaveLength(1);
   });
 
   describe('daylight filtering with a sun schedule', () => {

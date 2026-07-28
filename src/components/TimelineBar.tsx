@@ -1,6 +1,7 @@
 import { memo, useState, useEffect, useMemo, useRef } from 'react';
 import { Sun, Cloud, CloudRain, CloudLightning, CloudSnow, CloudSun, ArrowDown } from 'lucide-react';
 import { formatDateMedium, isSameLocationDay, locationHourLabel } from '../utils/date';
+import { formatReading, formatSigned } from '../utils/number';
 import { blockHourRange } from '../features/forecast/blockHours';
 import { useLang } from '../i18n';
 import type { HourlyData } from '../features/forecast/types';
@@ -408,6 +409,8 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
       <div
         ref={tabsRef}
         className="timeline-day-tabs"
+        role="group"
+        aria-label={t('Forecast days')}
         onMouseDown={handleTabsMouseDown}
         onMouseLeave={handleTabsMouseLeaveOrUp}
         onMouseUp={handleTabsMouseLeaveOrUp}
@@ -418,7 +421,11 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
           const isDayToday = isSameLocationDay(firstHourTime, new Date());
           return (
             <button
-              key={i}
+              key={day.label}
+              type="button"
+              // The active day was conveyed by a CSS class alone, so assistive
+              // tech heard seven identical-sounding buttons with no current one.
+              aria-pressed={activeDayIndex === i}
               className={`day-tab-btn ${activeDayIndex === i ? 'active' : ''}`}
               onClick={() => handleTabClick(i)}
             >
@@ -493,7 +500,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
                 <div key={h.actualIndex} className={`${meteogramCellClass(h)} tall`}>
                   <div className="meteogram-wind-stack">
                     <WindArrow direction={h.data.windDirection} size={WIND_ARROW_SIZE} />
-                    <span className="meteogram-wind-value">{Math.round(h.data.windSpeed)}/{Math.round(h.data.windGust)}</span>
+                    <span className="meteogram-wind-value">{formatReading(h.data.windSpeed, 0)}/{formatReading(h.data.windGust, 0)}</span>
                   </div>
                 </div>
               ))}
@@ -503,7 +510,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
               {allHours.map((h) => (
                 <div key={h.actualIndex} className={meteogramCellClass(h)}>
                   <span className="meteogram-value">
-                    {h.data.waveHeight.toFixed(1)}
+                    {formatReading(h.data.waveHeight, 1)}
                   </span>
                 </div>
               ))}
@@ -513,7 +520,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
               {allHours.map((h) => (
                 <div key={h.actualIndex} className={meteogramCellClass(h)}>
                   <span className="meteogram-value">
-                    {h.data.tideLevel > 0 ? '+' : ''}{h.data.tideLevel.toFixed(2)}
+                    {formatSigned(h.data.tideLevel, 2)}
                   </span>
                 </div>
               ))}
@@ -523,7 +530,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
               {allHours.map((h) => (
                 <div key={h.actualIndex} className={meteogramCellClass(h)}>
                   <span className="meteogram-value">
-                    {Math.round(h.data.tempAir)}
+                    {formatReading(h.data.tempAir, 0)}
                   </span>
                 </div>
               ))}
@@ -533,7 +540,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
               {allHours.map((h) => (
                 <div key={h.actualIndex} className={meteogramCellClass(h)}>
                   <span className="meteogram-value">
-                    {Math.round(h.data.tempWater)}
+                    {formatReading(h.data.tempWater, 0)}
                   </span>
                 </div>
               ))}

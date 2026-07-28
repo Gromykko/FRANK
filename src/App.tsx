@@ -12,6 +12,7 @@ import { getDisplayHourlyData } from './features/forecast/displayData';
 import { deriveCacheStatus } from './features/forecast/cacheStatusView';
 import { formatTime, formatDateTime, locationDateKey } from './utils/date';
 import { compassPoint } from './utils/compass';
+import { NO_READING_TEXT } from './utils/number';
 import { findLaunchWindows } from './features/planner/findLaunchWindows';
 import { useForecast } from './features/forecast/useForecast';
 import TimelineBar from './components/TimelineBar';
@@ -21,6 +22,7 @@ import StatusBar from './components/StatusBar';
 import ConditionsSnapshot from './components/ConditionsSnapshot';
 import TripProfilePanel from './components/TripProfilePanel';
 import WarningStripe from './components/WarningStripe';
+import ErrorBoundary from './components/ErrorBoundary';
 import { getFrankPhrase } from './features/safety/frankPhrases';
 import { useSettings } from './hooks/useSettings';
 import { useTheme } from './hooks/useTheme';
@@ -123,6 +125,7 @@ export default function App() {
         <h2 className="error-screen-title">{t("Can't reach the forecast right now")}</h2>
         <p className="error-screen-text">{t(error)}</p>
         <button
+          type="button"
           className="btn-control error-screen-retry"
           onClick={() => refreshForecast(true, true, true)}
         >
@@ -141,7 +144,28 @@ export default function App() {
     );
   }
 
-  const currentHourData = displayHourlyData[selectedHourIndex] ?? displayHourlyData[0] ?? weatherData.hourly[0];
+  // A payload with no hours is not something the dashboard can render — every
+  // panel below reads the selected hour. The old third fallback here
+  // (weatherData.hourly[0]) could never help: displayHourlyData is a 1:1 map of
+  // weatherData.hourly, so it is empty exactly when that is.
+  if (displayHourlyData.length === 0) {
+    return (
+      <div className="loader-container error-screen">
+        <AlertTriangle size={48} className="error-screen-icon" />
+        <h2 className="error-screen-title">{t("Can't reach the forecast right now")}</h2>
+        <p className="error-screen-text">{t('The forecast came back with no hours in it.')}</p>
+        <button
+          type="button"
+          className="btn-control error-screen-retry"
+          onClick={() => refreshForecast(true, true, true)}
+        >
+          <RefreshCw size={16} /> {t('Try Again')}
+        </button>
+      </div>
+    );
+  }
+
+  const currentHourData = displayHourlyData[selectedHourIndex] ?? displayHourlyData[0];
   const nextHourData = displayHourlyData[selectedHourIndex + 1];
   const safety = analyzeSafetyConditions(currentHourData, settings, nextHourData ? nextHourData.tideLevel : undefined, t);
   const activeSafetyChecks = [
@@ -193,11 +217,14 @@ export default function App() {
   // empty string; the date utils themselves take ISO strings directly.
   const formatSunTime = (isoStr: string) => (isoStr ? formatTime(isoStr) : '');
 
-  const windRotation = Math.round(currentHourData.windDirection);
+  // A missing wind direction must not become `rotate(NaNdeg)` or "NaN°".
+  const windRotation = Number.isFinite(currentHourData.windDirection)
+    ? Math.round(currentHourData.windDirection)
+    : 0;
   const weatherDesc = t(getWeatherDescription(currentHourData.weatherCode));
 
   const formatWindDirection = (degrees: number) =>
-    `${Math.round(degrees)}° ${t(compassPoint(degrees))}`;
+    Number.isFinite(degrees) ? `${Math.round(degrees) % 360}° ${t(compassPoint(degrees))}` : NO_READING_TEXT;
 
   // All cache-status derivation (header line, expanded detail, page warnings)
   // lives in the pure, unit-tested cacheStatusView helper. Date.now() is
@@ -360,15 +387,21 @@ export default function App() {
 
               {showDetailedCharts && (
                 <div className="charts-disclosure-body">
-                  <Suspense fallback={<div className="chart-panel chart-loading">{t('Loading charts...')}</div>}>
-                    <WeatherCharts
-                      data={displayHourlyData}
-                      settings={settings}
-                      selectedIndex={selectedHourIndex}
-                      onSelectIndex={setSelectedHourIndex}
-                      startIndex={nowIndex}
-                    />
-                  </Suspense>
+                  {/* Scoped boundary: React.lazy REJECTS (not just suspends) when
+                      a hashed chunk 404s after a redeploy, so without this an
+                      optional power-user panel would take the safety verdict,
+                      the timeline and the launch windows down with it. */}
+                  <ErrorBoundary fallback={<div className="chart-panel chart-loading">{t('Charts are unavailable right now. The forecast above is unaffected.')}</div>}>
+                    <Suspense fallback={<div className="chart-panel chart-loading">{t('Loading charts...')}</div>}>
+                      <WeatherCharts
+                        data={displayHourlyData}
+                        settings={settings}
+                        selectedIndex={selectedHourIndex}
+                        onSelectIndex={setSelectedHourIndex}
+                        startIndex={nowIndex}
+                      />
+                    </Suspense>
+                  </ErrorBoundary>
                 </div>
               )}
           </div>
@@ -379,6 +412,9 @@ export default function App() {
       {/* Footer */}
       <footer className="app-footer">
         <div className="container">
+          <p className="footer-disclaimer">
+            {t('Advisory only — FRANK does not replace official warnings, club rules, or your own look at the water. You are responsible for the decision to launch.')}
+          </p>
           <p className="footer-text">
             {t('Weather data by MET Norway')} (<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">CC BY 4.0</a>){t(', waves & water by DMI ({0}) for {1}.', dmiModels, weatherData.sources.location?.areaName ?? CURRENT_LOCATION.areaName)}{weatherData.warnings ? <> {t('Warnings by')} <a href="https://meteoalarm.org" target="_blank" rel="noreferrer">MeteoAlarm</a>/DMI (CC BY 4.0).</> : ''} {t('Forecast built {0}. Worker checked {1}.', formatDateTime(weatherData.sources.fetchedAt), formatDateTime(cacheCheckedAt))}
             <span className="footer-build">{appBuildLabel}</span>

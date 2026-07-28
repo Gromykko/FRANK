@@ -12,6 +12,7 @@ import { floorCaution } from '../features/safety/presets';
 import { CURRENT_LOCATION } from '../config/locations';
 import type { ForecastLocation } from '../config/locations';
 import { readStorage } from '../utils/storage';
+import { roundToDecimals } from '../utils/number';
 
 export type { SafetySettings } from '../features/safety/presets';
 
@@ -73,6 +74,47 @@ export function healSectorCautions(s: SafetySettings): SafetySettings {
   return { ...s, sectorLimits };
 }
 
+// Every numeric threshold, and the rounding they are stored at. A stored
+// profile is untrusted input: it survives app versions, can be hand-edited, and
+// `{...DEFAULT_SETTINGS, ...parsedJson}` will happily overwrite a number with a
+// string. A non-numeric cap poisons every comparison against it (`x >= "high"`
+// and `x >= NaN` are both false), which silently DISABLES that safety check and
+// reports "Good to go" — so each one falls back to its default instead.
+// Rounding here also kills the 0.1 + 0.2 = 0.30000000000000004 artifact that
+// derived caps otherwise carry into the reason text and back into storage.
+const NUMERIC_LIMITS: { key: keyof SafetySettings; decimals: number }[] = [
+  { key: 'maxWindSpeedSafe', decimals: 1 },
+  { key: 'maxWindSpeedCaution', decimals: 1 },
+  { key: 'minWaterTempSafe', decimals: 1 },
+  { key: 'minWaterTempCaution', decimals: 1 },
+  { key: 'maxWaveHeightSafe', decimals: 2 },
+  { key: 'maxWaveHeightCaution', decimals: 2 },
+  { key: 'gustMargin', decimals: 1 },
+  { key: 'waveCautionMargin', decimals: 2 },
+  { key: 'minDuration', decimals: 0 },
+];
+
+function coerceNumericLimits(s: SafetySettings): SafetySettings {
+  const out = { ...s };
+  for (const { key, decimals } of NUMERIC_LIMITS) {
+    const value = out[key];
+    (out[key] as number) = typeof value === 'number' && Number.isFinite(value)
+      ? roundToDecimals(value, decimals)
+      : (DEFAULT_SETTINGS[key] as number);
+  }
+  // Sector caps come from the same untrusted blob and feed the same comparisons.
+  const sectorLimits: SafetySettings['sectorLimits'] = {};
+  for (const [id, cap] of Object.entries(out.sectorLimits ?? {})) {
+    const safe = Number.isFinite(cap?.safe) ? roundToDecimals(cap.safe, 1) : undefined;
+    const caution = Number.isFinite(cap?.caution) ? roundToDecimals(cap.caution, 1) : undefined;
+    // A sector whose caps are unusable is dropped, so resolveSectors falls back
+    // to the location's curated values rather than to NaN.
+    if (safe !== undefined && caution !== undefined) sectorLimits[id] = { safe, caution };
+  }
+  out.sectorLimits = sectorLimits;
+  return out;
+}
+
 // Heal every inverted band. An inverted band flips the verdict — e.g. a wave
 // "danger" cap below the safe cap makes the caution branch unreachable and
 // reports danger for calm water. Wind uses the shared floorCaution gap; waves
@@ -80,9 +122,10 @@ export function healSectorCautions(s: SafetySettings): SafetySettings {
 // water temp is INVERTED — its danger threshold is the COLDER one, so
 // caution ≤ safe. Runs at EVERY entry point (stored-profile parse AND
 // saveSettings), so no editor — current or future — can ship an inverted band
-// into the assessment.
+// into the assessment. Type coercion runs first, so the healing below can
+// assume it is comparing real numbers.
 export function healSettings(s: SafetySettings): SafetySettings {
-  const healed = healSectorCautions(s);
+  const healed = healSectorCautions(coerceNumericLimits(s));
   return {
     ...healed,
     maxWindSpeedCaution: floorCaution(healed.maxWindSpeedSafe, healed.maxWindSpeedCaution),

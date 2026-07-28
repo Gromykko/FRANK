@@ -69,7 +69,7 @@ const MET_RAW_KEY_PREFIX = 'met-raw';
 // serving forecasts built by previous logic. The app checks the same number
 // and warns when the deployed worker lags behind it — keep this in sync with
 // FORECAST_PAYLOAD_VERSION in src/features/forecast/types.ts.
-const PAYLOAD_VERSION = 4;
+const PAYLOAD_VERSION = 5;
 
 const activeRefreshes = new Map();
 
@@ -829,8 +829,13 @@ async function refreshForecastCache(env, location, options = {}) {
 }
 
 async function handleForecastRequest(request, env, ctx, locationId) {
+  // Read-only endpoint: a POST/PUT must not be able to drive a refresh.
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return jsonResponse({ error: 'Method not allowed' }, 405);
+  }
+
   const location = findLocation(locationId);
-  if (!location || location.id !== locationId) {
+  if (!location) {
     return jsonResponse({ error: `Unknown forecast location: ${locationId}` }, 404);
   }
 

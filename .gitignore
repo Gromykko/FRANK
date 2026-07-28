@@ -16,6 +16,14 @@ an.md
 FUTURE_IDEAS.txt
 *.local
 
+# Secrets — Vite env files and Wrangler's local Worker secrets. This is a
+# public repo; neither must ever be committed.
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

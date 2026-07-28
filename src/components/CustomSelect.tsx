@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, type KeyboardEvent } from 'react';
+import { useState, useRef, useEffect, useId, type KeyboardEvent } from 'react';
 import { ChevronDown } from 'lucide-react';
 
 interface CustomSelectProps<T extends string | number> {
@@ -7,13 +7,16 @@ interface CustomSelectProps<T extends string | number> {
   options: { value: T; label: React.ReactNode }[];
   disabled?: boolean;
   compact?: boolean;
+  // Accessible name for the trigger. The visible caption beside these selects
+  // is a plain span, so without it the control announces only its value.
+  ariaLabel?: string;
 }
 
-export default function CustomSelect<T extends string | number>({ value, onChange, options, disabled, compact = false }: CustomSelectProps<T>) {
+export default function CustomSelect<T extends string | number>({ value, onChange, options, disabled, compact = false, ariaLabel }: CustomSelectProps<T>) {
   const [isOpen, setIsOpen] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(-1);
   const containerRef = useRef<HTMLDivElement>(null);
-  const listboxId = useRef(`listbox-${Math.random().toString(36).slice(2, 9)}`).current;
+  const listboxId = useId();
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -25,6 +28,10 @@ export default function CustomSelect<T extends string | number>({ value, onChang
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Syncs on OPEN only. `options` and `value` are intentionally out of the
+  // deps: the parent rebuilds the options array on every render (including the
+  // 60s forecast heartbeat), and re-running this mid-interaction snapped the
+  // arrow-key focus ring back to the selected item.
   useEffect(() => {
     if (isOpen) {
       const idx = options.findIndex(o => o.value === value);
@@ -32,7 +39,8 @@ export default function CustomSelect<T extends string | number>({ value, onChang
     } else {
       setFocusedIndex(-1);
     }
-  }, [isOpen, value, options]);
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   // Keep the arrow-key-focused option visible: the dropdown is capped at
   // max-height, so a focused option past the fold would otherwise never scroll
@@ -101,6 +109,9 @@ export default function CustomSelect<T extends string | number>({ value, onChang
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         aria-controls={listboxId}
+        // The visible "Min Duration"/"Water level" text is a sibling span, not
+        // a <label>, so without this a screen reader announces only the value.
+        aria-label={ariaLabel}
         // Lives on the FOCUSED element (this button), not the listbox -
         // otherwise screen readers never hear arrow-key navigation
         aria-activedescendant={isOpen && focusedIndex >= 0 ? `${listboxId}-opt-${focusedIndex}` : undefined}
@@ -123,6 +134,9 @@ export default function CustomSelect<T extends string | number>({ value, onChang
               key={opt.value}
               type="button"
               role="option"
+              // Focus stays on the trigger and moves via aria-activedescendant;
+              // tabbable options would fight that model and trap Tab in the list.
+              tabIndex={-1}
               aria-selected={opt.value === value}
               onClick={() => {
                 if (opt.value !== value) onChange(opt.value);

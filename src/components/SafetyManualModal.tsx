@@ -126,7 +126,7 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
               {sectors.map((s) => (
                 <li key={s.id}><strong>{t(s.label)} ({s.min}&deg;-{s.max}&deg;):</strong> {t(s.description)}. {t('Safe cap: {0} m/s, danger cap: {1} m/s.', s.safeLimit, s.cautionLimit)}</li>
               ))}
-              <li>{t('These limits use')} <strong>{t('average wind speed only')}</strong> {t('(not gusts), as standing-wave hazards here are driven by sustained wind blowing across a long open stretch of water (its "fetch").')}</li>
+              <li>{t('These limits use')} <strong>{t('average wind speed only')}</strong> {t('(not gusts), as the chop that matters here is driven by sustained wind blowing across a long open stretch of water (its "fetch").')}</li>
               <li>{t('Directions are fixed to the local geography; only the speed caps are yours to adjust.')}</li>
             </ul>
           </div>
@@ -147,7 +147,7 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
             <h3 className="manual-h">{t('6. Weather Condition (Rain, Snow, Sleet, Fog, Thunder)')}</h3>
             <p className="manual-p">{t("The weather condition comes straight from the forecast's own symbol (MET Norway's symbol_code) — FRANK does not compute its own rain or lightning judgement. Each condition maps to a severity:")}</p>
             <ul className="manual-list spaced">
-              <li><strong>{t('Good to go:')}</strong> {t('clear, cloudy, light drizzle, and light rain — no weather warning.')}</li>
+              <li><strong>{t('Good to go:')}</strong> {t('clear, cloudy, light drizzle, and light rain — no weather flag.')}</li>
               <li><strong>{t('Take care:')}</strong> {t('moderate rain, light snow, sleet, fog, and rain showers — worth keeping an eye on.')}</li>
               <li><strong>{t('Rough:')}</strong> {t('heavy rain, heavier snow or sleet, snow showers, and thunderstorms — probably one to skip.')}</li>
             </ul>

@@ -4,6 +4,7 @@ import type { SafetyRating } from '../features/safety/analyzeSafetyConditions';
 import { sunsetCutoffFor } from '../features/planner/findLaunchWindows';
 import type { LaunchWindow } from '../features/planner/findLaunchWindows';
 import { blockHourRange } from '../features/forecast/blockHours';
+import { formatReading } from '../utils/number';
 import { describeWarningArea, LEVEL_WORD, warningsOverlapping } from '../features/forecast/parseWarnings';
 import type { HourlyData, WeatherWarning } from '../features/forecast/types';
 import { CURRENT_LOCATION } from '../config/locations';
@@ -37,12 +38,6 @@ interface CalBar {
 
 const formatDuration = (t: Translate, hours: number) => t(hours === 1 ? '{0} hr' : '{0} hrs', hours);
 
-// TRIAL (2026-07-14): the owner is comparing list layouts live. 'horizontal'
-// = card rail (compact height, windows past the fold need a swipe);
-// 'vertical' = tide table (everything visible, page grows). Flip the word to
-// switch; delete the losing branch once decided.
-const LIST_LAYOUT = 'horizontal' as 'horizontal' | 'vertical';
-
 interface CalDay {
   key: string;
   weekday: string;
@@ -66,7 +61,7 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
   const listDragRef = useRef({ active: false, moved: false, startX: 0, scrollLeft: 0 });
 
   const handleListMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (LIST_LAYOUT !== 'horizontal' || event.button !== 0 || !listRef.current) return;
+    if (event.button !== 0 || !listRef.current) return;
     const list = listRef.current;
     if (event.clientY - list.getBoundingClientRect().top >= list.clientHeight) return;
     listDragRef.current = {
@@ -307,18 +302,17 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
             ) : viewMode === 'list' ? (
               /* Tide-table list: day-grouped — the Gantt sibling shows the
                  week's shape; this view carries the numbers, caveats, and the
-                 share action. Layout (vertical column vs horizontal rail) is
-                 under live comparison via LIST_LAYOUT above. */
+                 share action. */
               <div
                 ref={listRef}
-                className={`tide-list ${LIST_LAYOUT === 'horizontal' ? 'is-horizontal' : ''}`}
+                className="tide-list is-horizontal"
                 onMouseDown={handleListMouseDown}
                 onMouseMove={handleListMouseMove}
                 onMouseUp={endListDrag}
                 onMouseLeave={endListDrag}
                 onClickCapture={suppressDraggedClick}
               >
-                {windows.map((slot, index) => {
+                {windows.map((slot) => {
                   const startHour = data[slot.startIndex];
                   const endHour = data[slot.endIndex];
                   if (!startHour || !endHour) return null;
@@ -364,10 +358,10 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                   const windHi = Math.round(Math.max(...slotHours.map((h) => h.windSpeed)));
                   const waveLo = Math.min(...slotHours.map((h) => h.waveHeightMin ?? h.waveHeight));
                   const waveHi = Math.max(...slotHours.map((h) => h.waveHeightMax ?? h.waveHeight));
-                  const windShare = windLo === windHi ? `${windHi}` : `${windLo}–${windHi}`;
-                  const waveShare = waveLo.toFixed(2) === waveHi.toFixed(2)
-                    ? waveHi.toFixed(2)
-                    : `${waveLo.toFixed(2)}–${waveHi.toFixed(2)}`;
+                  const windShare = windLo === windHi ? formatReading(windHi, 0) : `${formatReading(windLo, 0)}–${formatReading(windHi, 0)}`;
+                  const waveShare = formatReading(waveLo, 2) === formatReading(waveHi, 2)
+                    ? formatReading(waveHi, 2)
+                    : `${formatReading(waveLo, 2)}–${formatReading(waveHi, 2)}`;
 
                   // Outlook windows flagged daylightPartial show only their
                   // DAYLIGHT slice — the times an hourly window would have
@@ -404,39 +398,27 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
 
                   const shareText = t('{0}: {1} {2}–{3}. Wind {4} m/s, waves {5} m.', CURRENT_LOCATION.areaName, formatDateLabel(startHour.time), displayStart, displayEnd, windShare, waveShare);
 
-                  // Day headers render whenever the (chronological) list moves
-                  // to a new location-day.
-                  const prevSlot = windows[index - 1];
-                  const prevStart = prevSlot ? data[prevSlot.startIndex] : undefined;
-                  const showDayHead = !prevStart || !isSameLocationDay(prevStart.time, startHour.time);
-
                   // daylightPartial needs no caveat line: the displayed times
                   // are already the daylight slice, and the "outlook" tag
                   // carries the lower-confidence nature.
                   const hasCaveats = sunsetCutoff || slotWarning;
 
                   return (
-                    <Fragment key={index}>
-                      {LIST_LAYOUT === 'vertical' && showDayHead && (
-                        <h3 className="tide-day-head">{formatDateMedium(startHour.time)}</h3>
-                      )}
+                    <Fragment key={slot.startIndex}>
                       <div className="tide-row-wrap">
                         <button
                           type="button"
                           className={`tide-row ${slot.lowConfidence ? 'is-outlook' : ''}`}
                           onClick={() => selectAndReveal(slot.startIndex)}
                         >
-                          {LIST_LAYOUT === 'horizontal' && (
-                            <span className="tide-day-inline">
-                              {formatDateMedium(startHour.time)}
-                              {/* Tag rides the day line so the card stays short. */}
-                              {slot.lowConfidence && <span className="tide-tag">{t('outlook')}</span>}
-                            </span>
-                          )}
+                          <span className="tide-day-inline">
+                            {formatDateMedium(startHour.time)}
+                            {/* Tag rides the day line so the card stays short. */}
+                            {slot.lowConfidence && <span className="tide-tag">{t('outlook')}</span>}
+                          </span>
                           <span className="tide-row-main">
                             <span className="tide-time">{displayStart}–{displayEnd}</span>
                             <span className="tide-duration"> · {formatDuration(t, displayDuration)}</span>
-                            {LIST_LAYOUT === 'vertical' && slot.lowConfidence && <span className="tide-tag">{t('outlook')}</span>}
                           </span>
                           <span className="tide-conditions">
                             {/* The min–max range across the whole window — a
@@ -505,12 +487,6 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                     </div>
                   )}
                 </div>
-
-                {windows.length === 0 && (
-                  <p className="calendar-empty">
-                    {t('No launch windows in this forecast — the timeline above shows the marginal hours.')}
-                  </p>
-                )}
 
                 {/* Day-row Gantt on a shared 00–24 axis: bars ARE the windows
                     (and the touch targets); night is an overlay drawn above

@@ -107,20 +107,6 @@
     linear-gradient(var(--ribbon-color), var(--ribbon-color)) bottom / 100% 7px no-repeat;
 }
 
-/* A calm marker where the longer-range MET period blocks begin. */
-.timeline-block.is-outlook-start::before {
-  content: 'LONGER RANGE';
-  position: absolute;
-  top: -16px;
-  left: 3px;
-  color: var(--text-muted);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-shadow: none;
-  white-space: nowrap;
-}
-
 /* Longer-range blocks read as calm, lower-confidence columns — muted, not
    alarming (no heavy stripes). */
 .timeline-block.is-low-confidence,
@@ -357,6 +343,7 @@
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.7);
+  -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
@@ -368,6 +355,7 @@
   width: 90%;
   max-width: 600px;
   max-height: 80vh;
+  max-height: 80dvh;
   background: var(--bg-app);
   border: 1px solid var(--panel-border);
   box-shadow: var(--shadow-hard);
@@ -662,15 +650,6 @@
 .chart-canvas {
   box-sizing: content-box;
   padding-right: 20px;
-}
-
-.chart-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  width: 100%;
-  flex-wrap: wrap;
-  gap: 4px;
 }
 
 .chart-header-title {
@@ -1016,7 +995,7 @@
   height: 24px;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--text-main) 22%, transparent);
-  background: color-mix(in srgb, var(--text-main) 16%, var(--panel-bg));
+  background: color-mix(in srgb, var(--text-main) 30%, var(--panel-bg));
   position: relative;
   cursor: pointer;
   flex: 0 0 auto;
@@ -1033,12 +1012,16 @@
   height: 18px;
   border-radius: 50%;
   background: #fff;
+  /* The knob rides a near-white track in light theme, where a white-on-white
+     disc left the whole OFF control under 3:1. The rim is what makes an off
+     limit distinguishable from an on one. */
+  border: 1px solid color-mix(in srgb, var(--text-main) 34%, transparent);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
   transition: left 0.15s ease;
 }
 
 .toggle-switch:not(.is-on):not(:disabled):hover {
-  background: color-mix(in srgb, var(--text-main) 26%, var(--panel-bg));
+  background: color-mix(in srgb, var(--text-main) 40%, var(--panel-bg));
 }
 
 .toggle-switch.is-on {
@@ -1982,7 +1965,7 @@ button.legend-toggle.is-on {
   position: absolute;
   top: 0;
   bottom: 0;
-  min-width: 8px;
+  min-width: 24px;
   padding: 0 2px;
   border: none;
   border-radius: var(--radius-xs);
@@ -2033,11 +2016,28 @@ button.legend-toggle.is-on {
 
 /* Night overlay sits ABOVE the bars (matches the charts' NIGHT_FILL), so a
    window running past sunset visibly dims across the boundary. */
+/* The verdict word above FRANK's one-liner. Colour reinforces it; the word
+   itself is what carries the meaning when colour can't. */
+.frank-verdict {
+  display: block;
+  /* Never wraps: it is one short word-pair and the display below needs the
+     vertical room more than the verdict needs a second line. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+  color: var(--frank-phosphor);
+}
+
 .gantt-night {
   position: absolute;
   top: 0;
   bottom: 0;
-  background: rgba(10, 15, 30, 0.45);
+  background: var(--chart-night-fill);
   border-radius: var(--radius-xs);
   pointer-events: none;
   z-index: 2;
@@ -2370,7 +2370,13 @@ button.legend-toggle.is-on {
 .frank-cell-display {
   grid-area: display;
   display: flex;
-  align-items: center;
+  /* Column, so the verdict word sits ABOVE the dot-matrix display instead of
+     competing with it for width. As a row item it took half the cell at 390px
+     and wrapped to four lines, leaving the marquee unreadable on the phone
+     form factor this app is built for. */
+  flex-direction: column;
+  justify-content: center;
+  align-items: stretch;
   min-width: 0;
   padding: 0 16px;
   border-left: 1px solid var(--frank-housing-edge);

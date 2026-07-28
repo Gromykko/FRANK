@@ -12,6 +12,12 @@ function getWeatherCacheKey(location: ForecastLocation): string {
   return `${WEATHER_CACHE_KEY_PREFIX}_${location.id}`;
 }
 
+// Deliberately does NOT check payloadVersion. The Worker is deployed by hand,
+// separately from the client, so the client is routinely the newer of the two
+// for a while after a release. Hard-rejecting an older stamp here turns that
+// window into a dead "can't reach the forecast" screen for every user — worse
+// than showing the last good forecast alongside the "worker out of date"
+// banner that deriveCacheStatus raises for exactly this case.
 function isWeatherData(value: unknown): value is WeatherData {
   const candidate = value as WeatherData | null;
 

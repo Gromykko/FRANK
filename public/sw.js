@@ -4,7 +4,7 @@
 // deliberately does NOT cache the forecast API responses (those are cross-origin
 // and the client already keeps last-good data in localStorage — a stale SW copy
 // would only get in the way).
-const CACHE = 'frank-v0.2.3';
+const CACHE = 'frank-v0.3.0';
 const scope = self.registration.scope; // e.g. https://…/FRANK/
 const BASE = new URL('', scope).toString();
 
@@ -13,9 +13,34 @@ const BASE = new URL('', scope).toString();
 const SHELL = ['', 'index.html', 'manifest.json', 'favicon.svg', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png']
   .map((path) => new URL(path, scope).toString());
 
+// The hashed bundle names change every build, so they can't be listed above.
+// Read them out of index.html instead. Without this the app is UNBOOTABLE
+// offline after a first visit: the JS/CSS are requested before this worker
+// activates, so they never pass through the fetch handler and never get cached
+// — install the PWA, drive to the ramp with no signal, get a white screen.
+// In dev, index.html points at /src/*, which this pattern deliberately misses.
+async function precacheBuildAssets(cache) {
+  try {
+    const res = await fetch(new URL('index.html', scope).toString(), { cache: 'reload' });
+    if (!res.ok) return;
+    const html = await res.text();
+    const assets = [...html.matchAll(/(?:src|href)="([^"]*\/assets\/[^"]+)"/g)]
+      .map((match) => new URL(match[1], scope).toString());
+    if (assets.length) await cache.addAll([...new Set(assets)]);
+  } catch {
+    // Offline or a partial fetch during install — the runtime cache-first
+    // handler below still populates these on the next successful load.
+  }
+}
+
 self.addEventListener('install', (e) => {
   e.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting())
+    caches.open(CACHE)
+      .then(async (cache) => {
+        await cache.addAll(SHELL);
+        await precacheBuildAssets(cache);
+      })
+      .then(() => self.skipWaiting())
   );
 });
 
