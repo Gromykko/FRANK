@@ -3,7 +3,7 @@ import WeatherWidgetIcon from './WeatherWidgetIcon';
 import { blockHourRange } from '../features/forecast/blockHours';
 import { useLang } from '../i18n';
 import { formatWeekday, locationHourLabel } from '../utils/date';
-import { formatReading, formatSigned } from '../utils/number';
+import { formatReading, formatSigned, NO_READING_TEXT } from '../utils/number';
 import type { HourlyData } from '../features/forecast/types';
 import type { SafetyRating, SafetyReason } from '../features/safety/analyzeSafetyConditions';
 
@@ -59,11 +59,11 @@ export default function ConditionsSnapshot({
   // MET supplies one instant wind value for an outlook block. Ignore legacy
   // percentile fields that may still exist in an older cached payload.
   const windText = `${formatReading(data.windSpeed, 1)} m/s`;
-  // MET publishes no gust for the longer-range blocks — say so rather than
-  // repeating the sustained wind under a "gusts" label.
+  // MET publishes no gust for the longer-range blocks. Show the no-reading
+  // dash rather than repeating the sustained wind under a "gusts" label.
   const blockGust = data.windGustMax ?? data.windGust;
   const gustText = isBlock
-    ? (Number.isFinite(blockGust) ? ` ${t('gusts {0} max', formatReading(blockGust, 1))}` : ` ${t('no gust forecast')}`)
+    ? (Number.isFinite(blockGust) ? ` ${t('gusts {0} max', formatReading(blockGust, 1))}` : ` ${t('gusts {0}', NO_READING_TEXT)}`)
     : ` ${t('gusts {0}', formatReading(data.windGust, 1))}`;
 
   return (

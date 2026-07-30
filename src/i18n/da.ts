@@ -130,7 +130,6 @@ export const da: Record<string, string> = {
   'The forecast came back with no hours in it.': 'Prognosen kom tilbage uden timer i.',
   'Charts are unavailable right now. The forecast above is unaffected.':
     'Graferne er ikke tilgængelige lige nu. Prognosen ovenfor er upåvirket.',
-  'no gust forecast': 'ingen vindstødsprognose',
   // Missing-reading wording — see analyzeSafetyConditions.
   'No reading for {0} this hour, so FRANK cannot clear it. Unknown is not the same as safe — check another source before you launch.':
     'FRANK har ingen måling af {0} denne time og kan derfor ikke frikende den. Ukendt er ikke det samme som sikkert — tjek en anden kilde, før du tager ud.',

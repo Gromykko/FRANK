@@ -8,9 +8,11 @@ export function roundToDecimals(value: number, decimals: number): number {
   return Math.round(value * factor) / factor;
 }
 
-// Shown wherever a provider gave us no value for this hour. An em-dash reads
-// as "no data" at a glance; printing "NaN" or a fabricated 0.00 would not.
-export const NO_READING_TEXT = '—';
+// Shown wherever a provider gave us no value for this hour. An en-dash reads
+// as "no data" at a glance while staying close to digit width, so it sits
+// cleanly in the meteogram's number cells ("4/–" beside "4/7"). Printing "NaN"
+// or a fabricated 0.00 would not do either job.
+export const NO_READING_TEXT = '–';
 
 // The single display formatter for forecast readings. Missing values arrive as
 // NaN by design (see NO_READING in features/forecast/normalize.ts) so they can
