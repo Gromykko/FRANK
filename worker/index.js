@@ -71,6 +71,15 @@ const MET_RAW_KEY_PREFIX = 'met-raw';
 // FORECAST_PAYLOAD_VERSION in src/features/forecast/types.ts.
 const PAYLOAD_VERSION = 5;
 
+// Re-stamping "we checked, nothing changed" costs a KV WRITE, and the free tier
+// allows 1000 a day. The cron (every 10 min x 4 locations = 576 runs) was
+// spending well over half the daily budget on that stamp alone, and running out
+// of writes stops the forecast updating with no user-visible error. The stamp
+// only feeds the "Checked HH:MM" line, so refreshing it hourly is plenty — a
+// real rebuild still writes immediately, and a user's manual refresh still
+// re-stamps so the button feels responsive.
+const CHECKED_STAMP_MIN_WRITE_INTERVAL_MS = 60 * 60 * 1000;
+
 const activeRefreshes = new Map();
 
 // Marine data still comes straight from DMI.
@@ -763,7 +772,16 @@ async function _refreshForecastCache(env, location, options = {}) {
         marineInstances: latestMarine,
         checkedBy: options.reason ?? 'check',
       });
-      await writeCachedForecast(env, location, checkedCache);
+      // The response always carries this check's timestamp; only PERSISTING it
+      // is throttled. Nothing about the forecast itself has changed, so a
+      // skipped write costs the stored stamp some precision and nothing else.
+      const storedStampMs = Date.parse(cachedHealth?.lastAttemptAt ?? '');
+      const stampIsStale =
+        !Number.isFinite(storedStampMs) ||
+        Date.now() - storedStampMs >= CHECKED_STAMP_MIN_WRITE_INTERVAL_MS;
+      if (stampIsStale || options.reason === 'manual') {
+        await writeCachedForecast(env, location, checkedCache);
+      }
       return checkedCache;
     }
 
