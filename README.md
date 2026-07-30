@@ -30,7 +30,7 @@ Top to bottom: a device-style header (a CRT with a GERTY face — smile, straigh
 
 ## Architecture
 
-The client is Vite + React 19 + TypeScript, deployed to GitHub Pages. In production it reads a prebuilt forecast JSON from a Cloudflare Worker (`frank-forecast`, `worker/index.js`), which runs a 10-minute cron: it checks MET's `Expires` header and DMI's model-run ids, rebuilds only when something actually changed, and stores one payload per location in KV. Each provider's last-good data is retained independently, so one provider being down degrades the payload (and says so) instead of freezing it. Payloads carry a version stamp; the Worker refuses to re-serve payloads built by older logic.
+The client is Vite + React 19 + TypeScript, deployed to GitHub Pages. In production it reads a prebuilt forecast JSON from a Cloudflare Worker (`frank-forecast`, `worker/index.js`), which runs a 10-minute cron: it checks MET's `Expires` header and DMI's model-run ids, rebuilds only when something actually changed, and stores one payload per location in KV. Each provider's last-good data is retained independently, so one provider being down degrades the payload (and says so) instead of freezing it. Payloads carry a version stamp: the Worker refuses to re-bless a cache built by older logic and rebuilds it, while the client accepts an older stamp and shows an "out of date" banner rather than leaving users with a dead screen during the window between the two deploys.
 
 The Worker imports the client's own `normalize.ts`, `sun.ts`, and `weatherCodes.ts` (the shared forecast-core), so the two can't drift on the numbers the verdict runs on — which is why `normalize.ts` must stay pure (no client-only imports). In dev, the client skips the Worker and fetches MET/DMI directly through Vite proxies.
 
@@ -47,7 +47,9 @@ npm run worker:deploy
 
 `.github/workflows/deploy.yml` lints, tests, builds, and deploys to GitHub Pages on every push to `main`. Don't regenerate `package-lock.json` on Windows — CI needs it built on Linux so platform-specific optional subtrees resolve.
 
-The Worker is **not** deployed by CI — `npm run worker:deploy` is a manual step. Whenever a change touches `worker/index.js` or the shared forecast-core it imports (`normalize.ts`, `sun.ts`, `weatherCodes.ts`), deploy the Worker too, and bump `PAYLOAD_VERSION` (`worker/index.js`) alongside `FORECAST_PAYLOAD_VERSION` (`src/features/forecast/types.ts`). They must stay equal: the stamp is what stops old payloads being served by new logic, and leaving it unchanged across a logic change is exactly how a stale Worker goes unnoticed.
+The Worker is **not** deployed by CI — `npm run worker:deploy` is a manual step. Whenever a change touches `worker/index.js` or the shared forecast-core it imports (`normalize.ts`, `sun.ts`, `weatherCodes.ts`), deploy the Worker too, and bump `PAYLOAD_VERSION` (`worker/index.js`) alongside `FORECAST_PAYLOAD_VERSION` (`src/features/forecast/types.ts`). They must stay equal: the stamp is what forces the Worker to rebuild instead of re-blessing a cache its own new code did not produce, and leaving it unchanged across a logic change is exactly how a stale Worker goes unnoticed.
+
+Watch the KV **write** budget when changing the refresh paths. The free tier allows 1000 writes/day, and the cron is 144 runs × 4 locations — so anything that writes on every tick spends the whole allowance before a single user arrives. Running out is a silent failure: the write throws inside `ctx.waitUntil`, and the forecast quietly stops updating while still being served as current.
 
 ## Where things live
 
