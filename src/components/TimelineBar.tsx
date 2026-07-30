@@ -38,6 +38,10 @@ function getWeatherIcon(code: number, size: number) {
 // The arrow stays neutral: the hour strip above already carries the safety
 // verdict, so re-tinting arrows by speed would just repeat it in more colors.
 function WindArrow({ direction, size }: { direction: number; size: number }) {
+  // No bearing, no arrow. `rotate(NaNdeg)` is an invalid declaration that CSS
+  // simply drops, leaving the arrow at 0deg — i.e. silently asserting "wind
+  // from due north" for an hour with no wind direction at all.
+  if (!Number.isFinite(direction)) return null;
   return (
     <div className="wind-arrow" style={{ transform: `rotate(${direction}deg)` }}>
       <ArrowDown size={size} />

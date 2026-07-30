@@ -339,7 +339,8 @@ export function analyzeSafetyConditions(
     // Describe the conditions in the standard terms (Beaufort wind, sea state,
     // MET weather label) instead of repeating the numbers shown above. The
     // bands match getWaveHeightLabel, phrased for prose.
-    const seaState = translate(data.waveHeight <= 0.1 ? 'calm water'
+    const seaState = translate(!isReading(data.waveHeight) ? 'sea state unknown'
+      : data.waveHeight <= 0.1 ? 'calm water'
       : data.waveHeight <= 0.5 ? 'small ripples'
       : data.waveHeight <= 1.25 ? 'choppy water'
       : data.waveHeight <= 2.5 ? 'rough water'

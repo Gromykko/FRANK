@@ -59,6 +59,34 @@ export interface MetForecastResponse {
 // hour" rather than as a pass.
 export const NO_READING = NaN;
 
+// The numeric HourlyData fields, i.e. everything NO_READING can land in.
+const READING_FIELDS = [
+  'tempAir', 'precipitation', 'weatherCode', 'windSpeed', 'windDirection', 'windGust',
+  'waveHeight', 'waveDirection', 'wavePeriod', 'tempWater', 'tideLevel',
+  'currentSpeed', 'currentDirection',
+  'windSpeedMin', 'windSpeedMax', 'windGustMax', 'waveHeightMin', 'waveHeightMax',
+  'tideLevelMin', 'tideLevelMax', 'tempWaterMin', 'tempWaterMax',
+] as const;
+
+// JSON has no NaN: `JSON.stringify(NaN)` is `null`, so every NO_READING becomes
+// null the moment a payload crosses the Worker boundary or hits localStorage.
+// That matters because null and NaN behave OPPOSITELY in a comparison —
+// `null <= 0.1` is true and `Math.min(null, 4)` is 0, so a missing reading would
+// quietly come back as a flat calm, while `NaN` fails every comparison as
+// intended. Revive them on the way in, so all the code downstream sees the
+// values it was written against. (Dev fetches directly and never serializes,
+// which is exactly why this only ever showed up in production.)
+export function reviveReadings<T extends { hourly?: unknown[] }>(payload: T): T {
+  if (!payload || !Array.isArray(payload.hourly)) return payload;
+  for (const hour of payload.hourly as Record<string, unknown>[]) {
+    if (!hour) continue;
+    for (const field of READING_FIELDS) {
+      if (hour[field] === null) hour[field] = NO_READING;
+    }
+  }
+  return payload;
+}
+
 export function asNumber(value: number | string | null | undefined): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string') {
@@ -353,9 +381,7 @@ export function assembleHourlyRow(
     weatherCode: weather.weatherCode ?? NO_READING,
     windSpeed: weather.windSpeed ?? NO_READING,
     windDirection: weather.windDirection ?? NO_READING,
-    // MET does give hourly gusts; the sustained-wind fallback stays for the
-    // rare hour it omits one, since gust >= sustained always holds.
-    windGust: weather.windGust ?? weather.windSpeed ?? NO_READING,
+    windGust: weather.windGust ?? NO_READING,
     waveHeight: wave.waveHeight ?? NO_READING,
     waveDirection: wave.waveDirection ?? NO_READING,
     wavePeriod: wave.wavePeriod ?? NO_READING,

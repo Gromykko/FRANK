@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { analyzeSafetyConditions } from '../../../src/features/safety/analyzeSafetyConditions';
 import { DEFAULT_SETTINGS } from '../../../src/features/safety/presets';
 import { parseStoredSettings } from '../../../src/hooks/useSettings';
-import { assembleHourlyRow, asNumber } from '../../../src/features/forecast/normalize';
+import { assembleHourlyRow, asNumber, reviveReadings } from '../../../src/features/forecast/normalize';
 import { findLaunchWindows } from '../../../src/features/planner/findLaunchWindows';
 import type { HourlyData } from '../../../src/features/forecast/types';
 
@@ -109,5 +109,58 @@ describe('a corrupt stored profile cannot disable a safety check', () => {
       .map((r) => r.text)
       .join(' ');
     expect(text).not.toMatch(/0\.30000000000000004/);
+  });
+});
+
+// JSON has no NaN. The Worker serializes the payload and the client re-caches
+// it in localStorage, so every NO_READING arrives as `null` in production —
+// and null behaves as 0 in a comparison, the exact opposite of NaN. Dev fetches
+// providers directly and never serializes, so this whole class of bug is
+// invisible there. These lock the round trip.
+describe('a missing reading survives the JSON round trip', () => {
+  const overWire = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+
+  it('turns NaN into null on the wire (the reason reviveReadings exists)', () => {
+    expect(overWire({ waveHeight: NaN }).waveHeight).toBeNull();
+    // …and null is not inert the way NaN is. This is the whole hazard: an
+    // absent wave height would read as flat calm rather than as unknown.
+    const absent = overWire({ waveHeight: NaN }).waveHeight as unknown as number;
+    expect(absent <= 0.1).toBe(true);
+    expect(Math.min(absent, 4.2)).toBe(0);
+    // Whereas the NaN it was serialized from fails the same comparison.
+    const inMemory: number = NaN;
+    expect(inMemory <= 0.1).toBe(false);
+  });
+
+  it('revives readings so a serialized payload rates the same as a live one', () => {
+    const live = { ...goodHour, waveHeight: NaN, tempWater: NaN };
+    const wire = reviveReadings(overWire({ hourly: [live] })).hourly[0];
+
+    expect(Number.isNaN(wire.waveHeight)).toBe(true);
+    expect(analyzeSafetyConditions(wire, DEFAULT_SETTINGS).rating)
+      .toBe(analyzeSafetyConditions(live, DEFAULT_SETTINGS).rating);
+  });
+
+  it('never describes the sea state it could not read', () => {
+    // Wave checks off, so nothing forces caution — the all-clear still must not
+    // invent "calm water" from an absent reading.
+    const settings = { ...DEFAULT_SETTINGS, enableWaveHeight: false };
+    for (const absent of [NaN, null]) {
+      const text = analyzeSafetyConditions(
+        { ...goodHour, waveHeight: absent } as unknown as HourlyData, settings
+      ).reasons.map((r) => r.text).join(' ');
+      expect(text, `waveHeight=${String(absent)}`).not.toMatch(/calm water|rough water|ripples|choppy/);
+    }
+  });
+
+  it('does not invent a gust from the sustained wind', () => {
+    const row = assembleHourlyRow(
+      { time: goodHour.time, timeMs: 0, windSpeed: 6.1, windDirection: 90, symbolCode: 'clearsky_day', weatherCode: 0, tempAir: 20 },
+      { time: goodHour.time, timeMs: 0, tempWater: 18, tideLevel: 0 },
+      { time: goodHour.time, timeMs: 0, waveHeight: 0.1 },
+      true
+    );
+    expect(row.windGust).not.toBe(6.1);
+    expect(Number.isFinite(row.windGust)).toBe(false);
   });
 });

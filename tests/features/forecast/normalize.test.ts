@@ -36,10 +36,13 @@ describe('metSymbolToWmoCode', () => {
     expect(metSymbolToWmoCode('partlycloudy_day')).toBe(2);
   });
 
-  it('falls back to 3 (overcast) for unknown or missing symbols', () => {
-    expect(metSymbolToWmoCode('someunknownsymbol')).toBe(3);
-    expect(metSymbolToWmoCode(undefined)).toBe(3);
-    expect(metSymbolToWmoCode('')).toBe(3);
+  it('reports an unknown or missing symbol as no reading, not as overcast', () => {
+    // Defaulting to WMO 3 stated "Overcast" — with a cloud icon and a safe
+    // rating — for weather the app could not identify. A non-finite code
+    // renders as "Unknown weather" and trips the missing-data rule instead.
+    expect(metSymbolToWmoCode('someunknownsymbol')).toBeNaN();
+    expect(metSymbolToWmoCode(undefined)).toBeNaN();
+    expect(metSymbolToWmoCode('')).toBeNaN();
   });
 
   it('maps the core precipitation family as documented', () => {

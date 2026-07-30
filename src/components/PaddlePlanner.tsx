@@ -354,10 +354,17 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                   // window's actual MET samples. Each outlook block contributes
                   // its one wind value; legacy percentile fields are ignored.
                   const slotHours = data.slice(slot.startIndex, slot.endIndex + 1);
-                  const windLo = Math.round(Math.min(...slotHours.map((h) => h.windSpeed)));
-                  const windHi = Math.round(Math.max(...slotHours.map((h) => h.windSpeed)));
-                  const waveLo = Math.min(...slotHours.map((h) => h.waveHeightMin ?? h.waveHeight));
-                  const waveHi = Math.max(...slotHours.map((h) => h.waveHeightMax ?? h.waveHeight));
+                  // Only real readings: Math.min/max coerce a missing value to
+                  // 0, which turned an unknown hour into a "0 m/s, 0.00 m"
+                  // flat-calm claim on the card AND in the shared text.
+                  const readings = (values: number[]) => values.filter(Number.isFinite);
+                  const winds = readings(slotHours.map((h) => h.windSpeed));
+                  const waveLos = readings(slotHours.map((h) => h.waveHeightMin ?? h.waveHeight));
+                  const waveHis = readings(slotHours.map((h) => h.waveHeightMax ?? h.waveHeight));
+                  const windLo = winds.length ? Math.round(Math.min(...winds)) : NaN;
+                  const windHi = winds.length ? Math.round(Math.max(...winds)) : NaN;
+                  const waveLo = waveLos.length ? Math.min(...waveLos) : NaN;
+                  const waveHi = waveHis.length ? Math.max(...waveHis) : NaN;
                   const windShare = windLo === windHi ? formatReading(windHi, 0) : `${formatReading(windLo, 0)}–${formatReading(windHi, 0)}`;
                   const waveShare = formatReading(waveLo, 2) === formatReading(waveHi, 2)
                     ? formatReading(waveHi, 2)

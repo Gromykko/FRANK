@@ -139,6 +139,7 @@ export const da: Record<string, string> = {
   'wave height': 'bølgehøjde',
   'water temperature': 'vandtemperatur',
   'Unknown': 'Ukendt',
+  'sea state unknown': 'ukendt søtilstand',
   'danger from {0}': 'fare fra {0}',
   'Danger at {0} m/s and above — for gusts and average wind alike':
     'Fare ved {0} m/s og derover — både for vindstød og middelvind',

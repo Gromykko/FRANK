@@ -63,10 +63,14 @@ const MET_SYMBOL_TO_WMO: Record<string, number> = {
   heavysnowshowers: 86,
 };
 
+// NaN for anything unrecognised, NOT a default condition: mapping an unknown
+// symbol onto WMO 3 made the app state "Overcast" — with a cloud icon and a
+// safe rating — for weather it could not identify. NaN flows into
+// getWeatherDescription as "Unknown weather" and trips the missing-data rule.
 export function metSymbolToWmoCode(symbol: string | undefined): number {
-  if (!symbol) return 3;
+  if (!symbol) return NaN;
   const base = symbol.replace(/_(day|night|polartwilight)$/, '');
   // Every "...andthunder" variant maps onto the WMO thunderstorm family.
   if (base.includes('thunder')) return base.includes('heavy') ? 99 : 95;
-  return MET_SYMBOL_TO_WMO[base] ?? 3;
+  return MET_SYMBOL_TO_WMO[base] ?? NaN;
 }

@@ -1,6 +1,7 @@
 import { CURRENT_LOCATION } from '../../config/locations';
 import type { ForecastLocation } from '../../config/locations';
 import type { WeatherData } from './types';
+import { reviveReadings } from './normalize';
 
 const DEFAULT_FORECAST_WORKER_BASE = 'https://frank-forecast.alswatchs.workers.dev';
 const WEATHER_CACHE_KEY_PREFIX = 'frank_weather_data_v2';
@@ -54,7 +55,7 @@ function readLocalCachedWeatherData(location: ForecastLocation): WeatherData | n
     const raw = localStorage.getItem(getWeatherCacheKey(location));
     if (!raw) return null;
 
-    const parsed = JSON.parse(raw);
+    const parsed = reviveReadings(JSON.parse(raw));
     if (isWeatherData(parsed) && isCacheFreshEnough(parsed)) {
       return parsed;
     }
@@ -83,7 +84,7 @@ async function readWorkerCachedWeatherData(location: ForecastLocation, forceRefr
 
     if (!response.ok) return null;
 
-    const parsed = await response.json();
+    const parsed = reviveReadings(await response.json());
     if (isWeatherData(parsed) && hasCurrentForecastWindow(parsed)) {
       saveCachedWeatherData(parsed, location);
       return parsed;

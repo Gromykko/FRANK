@@ -9,7 +9,6 @@
   },
   "scripts": {
     "dev": "vite",
-    "forecast:cache": "node scripts/build-forecast-cache.mjs",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
