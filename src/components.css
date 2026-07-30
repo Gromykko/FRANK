@@ -2016,23 +2016,6 @@ button.legend-toggle.is-on {
 
 /* Night overlay sits ABOVE the bars (matches the charts' NIGHT_FILL), so a
    window running past sunset visibly dims across the boundary. */
-/* The verdict word above FRANK's one-liner. Colour reinforces it; the word
-   itself is what carries the meaning when colour can't. */
-.frank-verdict {
-  display: block;
-  /* Never wraps: it is one short word-pair and the display below needs the
-     vertical room more than the verdict needs a second line. */
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  margin-bottom: 2px;
-  color: var(--frank-phosphor);
-}
-
 .gantt-night {
   position: absolute;
   top: 0;
@@ -2370,13 +2353,7 @@ button.legend-toggle.is-on {
 .frank-cell-display {
   grid-area: display;
   display: flex;
-  /* Column, so the verdict word sits ABOVE the dot-matrix display instead of
-     competing with it for width. As a row item it took half the cell at 390px
-     and wrapped to four lines, leaving the marquee unreadable on the phone
-     form factor this app is built for. */
-  flex-direction: column;
-  justify-content: center;
-  align-items: stretch;
+  align-items: center;
   min-width: 0;
   padding: 0 16px;
   border-left: 1px solid var(--frank-housing-edge);

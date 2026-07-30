@@ -142,10 +142,6 @@ export default function StatusBar({
             </span>
 
             <div className="frank-cell-display">
-              {/* The verdict as a WORD. It was previously carried by hue, the
-                  Gerty mouth curve, and an sr-only span — so a sighted
-                  colourblind user had no readable top-line answer. */}
-              <span className={`frank-verdict rating-${rating}`} aria-hidden="true">{srTitle}</span>
               <div
                 ref={displayRef}
                 className={`frank-display ${isMarquee ? 'is-marquee' : ''}`}
