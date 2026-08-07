@@ -11,10 +11,32 @@ interface WarningStripeProps {
 
 
 // "until 16:00" within today, "until Sun 16:00" once it crosses a day.
+function atLabel(iso: string): string {
+  return isSameLocationDay(iso, Date.now())
+    ? formatTime(iso)
+    : `${formatDateShort(iso)} ${formatTime(iso)}`;
+}
+
 function untilLabel(t: Translate, expires: string): string {
   return isSameLocationDay(expires, Date.now())
     ? t('until {0}', formatTime(expires))
     : t('until {0} {1}', formatDateShort(expires), formatTime(expires));
+}
+
+// DMI issues warnings AHEAD of the hazard: `effective` is when the warning was
+// published, `onset` is when the weather actually starts. The stripe read only
+// `expires`, so a warning published at 06:00 for weather starting at 12:00
+// showed at 08:00 as "Yellow warning · Østjylland · until 18:00" — indistinguishable
+// from one already in force. `onset` was parsed and stored all along and only
+// the planner used it. Upcoming warnings still show (that is useful); they just
+// say when the weather is expected.
+function periodLabel(t: Translate, warning: { onset?: string; effective: string; expires: string }, nowMs: number): string {
+  const onsetMs = Date.parse(warning.onset ?? '');
+  const fromMs = Number.isFinite(onsetMs) ? onsetMs : Date.parse(warning.effective);
+  if (Number.isFinite(fromMs) && fromMs > nowMs) {
+    return t('{0} until {1}', t('from {0}', atLabel(new Date(fromMs).toISOString())), atLabel(warning.expires));
+  }
+  return untilLabel(t, warning.expires);
 }
 
 // The Google-style official-warning stripe: the highest-severity active DMI
@@ -64,7 +86,7 @@ export default function WarningStripe({ warnings }: WarningStripeProps) {
         ? t('{0} {1}', count, t(`${LEVEL_WORD[top.colour]} weather warnings`))
         : t('{0} weather warning and {1} more', level, count - 1);
   const ariaLabel =
-    t('{0} for the {1}, {2}.', ariaCount, region, untilLabel(t, top.expires)) +
+    t('{0} for the {1}, {2}.', ariaCount, region, periodLabel(t, top, now)) +
     ' ' + t('Opens DMI warnings in a new tab for the full details.');
 
   return (
@@ -78,7 +100,7 @@ export default function WarningStripe({ warnings }: WarningStripeProps) {
       <AlertTriangle size={18} className="warning-stripe-icon" aria-hidden="true" />
       <span className="warning-stripe-body">
         <span className="warning-stripe-title">{headline}</span>
-        <span className="warning-stripe-meta">{untilLabel(t, top.expires)}</span>
+        <span className="warning-stripe-meta">{periodLabel(t, top, now)}</span>
       </span>
       <span className="warning-stripe-source" aria-hidden="true">DMI</span>
       <ChevronRight size={18} className="warning-stripe-chevron" aria-hidden="true" />

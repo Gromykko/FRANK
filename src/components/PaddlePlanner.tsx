@@ -29,8 +29,14 @@ interface PaddlePlannerProps {
 // rating === 'safe' exclusively), so a bar needs no per-hour status detail.
 interface CalBar {
   firstIdx: number;
+  // Axis geometry, in local hours on a 0-24 scale.
   startFrac: number;
   endFrac: number;
+  // Absolute span, which is what the LABEL counts. Kept separate from the axis
+  // fracs because a DST day is 23 or 25 hours long and cannot be drawn
+  // truthfully on a 24-hour axis — the drawing may compress, the number must not.
+  startMs: number;
+  endMs: number;
   label: string;
   lowConfidence: boolean;
   aria: string;
@@ -170,35 +176,50 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
       const runs: Run[] = [];
       let run: Run | null = null;
 
-      for (let idx = slot.startIndex; idx <= slot.endIndex && idx < data.length; idx++) {
-        const span = data[idx].blockSpanHours ?? 1;
-        const entryMs = new Date(data[idx].time).getTime();
-        let h = 0;
-        while (h < span) {
-          const ms = entryMs + h * 3_600_000;
-          const day = ensureDay(ms);
-          const startHour = locationHour(ms);
-          const segSpan = Math.min(span - h, 24 - startHour);
-          if (run && run.day === day && run.endFrac === startHour) {
-            run.endFrac = startHour + segSpan;
-          } else {
-            run = {
-              day,
-              firstIdx: idx,
-              startFrac: startHour,
-              endFrac: startHour + segSpan,
-              label: '',
-              lowConfidence: Boolean(slot.lowConfidence),
-              aria: '',
-            };
-            runs.push(run);
-          }
-          h += segSpan;
+      const startRow = data[slot.startIndex];
+      const endRow = data[slot.endIndex];
+      if (!startRow || !endRow) continue;
+
+      // The interval this bar must draw, in ABSOLUTE time — the same interval
+      // the list card describes for the same window. Walking row indices
+      // instead painted every hourly window an hour too long: endIndex is the
+      // window's CLOSING endpoint, so an 8-hour window covers 9 rows, and the
+      // Gantt announced "9 h" beside a card reading "8 hrs".
+      const fromMs = slot.daylightStartMs ?? new Date(startRow.time).getTime();
+      const toMs = slot.daylightEndMs
+        ?? (slot.lowConfidence
+          ? new Date(endRow.time).getTime() + (endRow.blockSpanHours ?? 1) * 3_600_000
+          : new Date(startRow.time).getTime() + slot.duration * 3_600_000);
+      if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) continue;
+
+      for (let ms = fromMs; ms < toMs; ms += 3_600_000) {
+        const day = ensureDay(ms);
+        const startHour = locationHour(ms);
+        // Continuity by absolute time, not by local hour. A DST fall-back
+        // repeats local 02:00, which made `run.endFrac === startHour` fail and
+        // split one window into two overlapping bars; spring-forward skips
+        // 02:00 and left a phantom gap.
+        if (run && run.day === day && run.endMs === ms) {
+          run.endFrac = startHour + 1;
+          run.endMs = ms + 3_600_000;
+        } else {
+          run = {
+            day,
+            firstIdx: slot.startIndex,
+            startFrac: startHour,
+            endFrac: startHour + 1,
+            startMs: ms,
+            endMs: ms + 3_600_000,
+            label: '',
+            lowConfidence: Boolean(slot.lowConfidence),
+            aria: '',
+          };
+          runs.push(run);
         }
       }
 
       for (const r of runs) {
-        const hours = r.endFrac - r.startFrac;
+        const hours = Math.round((r.endMs - r.startMs) / 3_600_000);
         const from = `${String(Math.floor(r.startFrac)).padStart(2, '0')}`;
         const to = `${String(Math.floor(r.endFrac) % 24 || 24).padStart(2, '0')}`;
         // Label by how much bar there is to write on (~12px/hour on a phone).
@@ -381,37 +402,21 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                     ? formatReading(waveHi, 2)
                     : `${formatReading(waveLo, 2)}–${formatReading(waveHi, 2)}`;
 
-                  // Outlook windows flagged daylightPartial show only their
-                  // DAYLIGHT slice — the times an hourly window would have
-                  // shown had the columns existed (sunrise 04:54 → start
-                  // 05:00). Tapping still selects the underlying block. The
-                  // slice walks the window's hour marks and keeps those the
-                  // hourly day/night rating would call daylight.
+                  // An outlook window flagged daylightPartial shows only its
+                  // DAYLIGHT slice, which findLaunchWindows computed and stored
+                  // on the window. This used to be re-derived here, and the two
+                  // could disagree: the local loop needed TWO whole daylight
+                  // hour marks before it narrowed anything, so a 6-hour block
+                  // holding 40 minutes of daylight printed its full span.
+                  // Tapping still selects the underlying block.
                   let displayStart = startLabel;
                   let displayEnd = endLabel;
-                  let displayDuration = slot.duration;
-                  if (slot.lowConfidence && slot.daylightPartial) {
-                    const windowStartMs = new Date(startHour.time).getTime();
-                    let firstDayMs: number | null = null;
-                    let lastDayMs: number | null = null;
-                    for (let ms = windowStartMs; ms < windowEndMs; ms += 3_600_000) {
-                      const key = locationDateKey(ms);
-                      const sunrise = sunrises.find((s) => locationDateKey(s) === key);
-                      const sunset = sunsets.find((s) => locationDateKey(s) === key);
-                      if (!sunrise || !sunset) continue;
-                      const h = locationHour(ms);
-                      if (h >= Math.ceil(locationHourFraction(sunrise)) && h <= Math.floor(locationHourFraction(sunset))) {
-                        if (firstDayMs === null) firstDayMs = ms;
-                        lastDayMs = ms;
-                      }
-                    }
-                    if (firstDayMs !== null && lastDayMs !== null && lastDayMs > firstDayMs) {
-                      displayStart = locationHourLabel(firstDayMs);
-                      displayEnd = isSameLocationDay(lastDayMs, firstDayMs)
-                        ? locationHourLabel(lastDayMs)
-                        : `${formatDateLabel(new Date(lastDayMs).toISOString())} ${locationHourLabel(lastDayMs)}`;
-                      displayDuration = Math.round((lastDayMs - firstDayMs) / 3_600_000);
-                    }
+                  const displayDuration = slot.duration;
+                  if (slot.daylightStartMs !== undefined && slot.daylightEndMs !== undefined) {
+                    displayStart = locationHourLabel(slot.daylightStartMs);
+                    displayEnd = isSameLocationDay(slot.daylightEndMs, slot.daylightStartMs)
+                      ? locationHourLabel(slot.daylightEndMs)
+                      : `${formatDateLabel(new Date(slot.daylightEndMs).toISOString())} ${locationHourLabel(slot.daylightEndMs)}`;
                   }
 
                   const shareText = t('{0}: {1} {2}–{3}. Wind {4} m/s, waves {5} m.', CURRENT_LOCATION.areaName, formatDateLabel(startHour.time), displayStart, displayEnd, windShare, waveShare);

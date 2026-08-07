@@ -109,9 +109,16 @@ describe('deriveCacheStatus freshness', () => {
     expect(derive(7 * 60 * 60_000).showRefreshWarning).toBe(true);
   });
 
-  it('the boundary is the worker cadence plus slack, not the forecast age', () => {
+  it('the boundary leaves room for the worker stamp throttle plus a skipped cron tick', () => {
+    // The worker only PERSISTS its "checked" stamp every 15 min
+    // (CHECKED_STAMP_MIN_WRITE_INTERVAL_MS), and writes land on a 10-min cron
+    // grid — so a healthy forecast can legitimately serve a stamp ~20 min old,
+    // and ~30 min old if a tick is skipped. Demoting the tone at 25 min (the
+    // first version of this threshold) reported a perfectly healthy forecast as
+    // "Couldn't refresh · showing older data".
     expect(derive(20 * 60_000).view.tone).toBe('fresh');
-    expect(derive(30 * 60_000).view.tone).not.toBe('fresh');
+    expect(derive(35 * 60_000).view.tone).toBe('fresh');
+    expect(derive(50 * 60_000).view.tone).not.toBe('fresh');
   });
 
   it('a genuinely fresh check on an older forecast build stays green', () => {

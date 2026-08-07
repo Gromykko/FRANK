@@ -266,6 +266,10 @@ export const da: Record<string, string> = {
   'Level': 'Niveau',
   // Screen-reader-only labels for the sunrise/sunset cell, whose icons carry
   // no accessible name (see ConditionsSnapshot).
+  // A DMI warning that has not started yet: say when the weather is expected
+  // rather than showing only an expiry, which read as "already in force".
+  // ('from {0}' is already defined further down, shared with the limits panel.)
+  '{0} until {1}': '{0} til {1}',
   'Sunrise': 'Solopgang',
   'Sunset': 'Solnedgang',
   'gusts {0}': 'vindstød {0}',

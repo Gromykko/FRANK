@@ -243,7 +243,10 @@ export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLi
               </div>
               <Stepper
                 value={settings.maxWindSpeedSafe}
-                min={0} max={25} step={0.5} decimals={1}
+                // Floored at one step: 0.0 made a glassy 0.0 m/s morning rate
+                // Take care against "your safe limit of 0.0 m/s". 0.5 still
+                // expresses the most conservative paddler there is.
+                min={0.5} max={25} step={0.5} decimals={1}
                 unit={t('m/s wind')} label={t('max wind')}
                 onChange={val => updateCriteria({ maxWindSpeedSafe: val, maxWindSpeedCaution: val + settings.gustMargin })}
                 disabled={!settings.enableWindSpeed}
@@ -499,7 +502,13 @@ export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLi
                                 <Stepper
                                   compact
                                   value={cap.safe}
-                                  min={0} max={25} step={0.5} decimals={1}
+                                  // Stop the safe cap at one gap below the shared 25 ceiling.
+                                  // At 25 the danger stepper below computed min 25.5 > max 25:
+                                  // both its buttons went permanently dead, and because
+                                  // healSectorCautions re-applies floorCaution on EVERY save,
+                                  // the sector's danger cap was ratcheted to 25.5 and stayed
+                                  // there even after the safe cap came back down.
+                                  min={0} max={25 - MIN_CAUTION_GAP} step={0.5} decimals={1}
                                   unit="m/s" label={t('{0} safe cap', t(sector.label))}
                                   onChange={val => setSectorCap(sector, val, cap.caution)}
                                 />

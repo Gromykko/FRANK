@@ -115,10 +115,18 @@ export function getCacheStatusView({ refreshing, cacheHealth, checkedAtLabel, of
 // Warn once the stale data is old enough to genuinely mislead a paddler.
 const CACHE_REFRESH_WARNING_AGE_MS = 6 * 60 * 60 * 1000;
 
-// The worker re-checks every 10 minutes, so its own stamp should never be much
-// older than that. If it is, WE did not reach the worker — whatever the payload
-// says about itself. Two missed cron ticks of slack.
-const CHECK_ASSUMED_UNREACHED_MS = 25 * 60 * 1000;
+// If the worker's own "last checked" stamp is far older than its cadence allows,
+// WE did not reach the worker — whatever the payload says about itself.
+//
+// This must stay above the worker's persisted-stamp throttle plus room for a
+// skipped cron tick, or a perfectly healthy forecast reads as a failure:
+//
+//   CHECKED_STAMP_MIN_WRITE_INTERVAL_MS (15 min, worker/index.js)
+//     + 2 x cron period (20 min)  <  this value
+//
+// 45 minutes still catches the case this exists for by a wide margin — the bug
+// was a five-and-a-half-hour-old check rendering as a green "Checked · 09:14".
+const CHECK_ASSUMED_UNREACHED_MS = 45 * 60 * 1000;
 
 function formatRelativeAge(ms: number, translate: Translate): string {
   if (!Number.isFinite(ms) || ms < 0) return '';

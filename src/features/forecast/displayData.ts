@@ -12,3 +12,17 @@ export function getDisplayHourlyData(data: WeatherData): HourlyData[] {
     isOutlook: Boolean(hour.isLowConfidence),
   }));
 }
+
+// The water level to hand analyzeSafetyConditions as "next hour", for the
+// wind-against-water-level chop rule.
+//
+// Only a true HOURLY neighbour counts. Past the hourly range the next row is a
+// 6-hour block whose tideLevel is its centre sample, hours away — reading that
+// as "next hour" can invert rising/falling and so invent, or hide, a chop
+// caution. The planner already refused to do it; the header and the timeline
+// did not, so the same hour could rate differently depending on which surface
+// you looked at. One rule, one place, so a fourth caller can't drift again.
+export function nextHourTideFor(rows: HourlyData[], index: number): number | undefined {
+  const next = rows[index + 1];
+  return next && !next.blockSpanHours ? next.tideLevel : undefined;
+}

@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { analyzeSafetyConditions, RATING_WORD } from './features/safety/analyzeSafetyConditions';
 import { getWeatherDescription } from './features/forecast/weatherCodes';
-import { getDisplayHourlyData } from './features/forecast/displayData';
+import { getDisplayHourlyData, nextHourTideFor } from './features/forecast/displayData';
 import { deriveCacheStatus } from './features/forecast/cacheStatusView';
 import { formatTime, formatDateTime, locationDateKey } from './utils/date';
 import { compassPoint } from './utils/compass';
@@ -88,10 +88,8 @@ export default function App() {
 
   const allStatuses = useMemo(() => {
     if (displayHourlyData.length === 0) return [];
-    return displayHourlyData.map((hour, idx) => {
-      const nextHour = displayHourlyData[idx + 1];
-      return analyzeSafetyConditions(hour, settings, nextHour ? nextHour.tideLevel : undefined, t).rating;
-    });
+    return displayHourlyData.map((hour, idx) =>
+      analyzeSafetyConditions(hour, settings, nextHourTideFor(displayHourlyData, idx), t).rating);
   }, [displayHourlyData, settings, t]);
 
   const launchWindows = useMemo(
@@ -166,8 +164,7 @@ export default function App() {
   }
 
   const currentHourData = displayHourlyData[selectedHourIndex] ?? displayHourlyData[0];
-  const nextHourData = displayHourlyData[selectedHourIndex + 1];
-  const safety = analyzeSafetyConditions(currentHourData, settings, nextHourData ? nextHourData.tideLevel : undefined, t);
+  const safety = analyzeSafetyConditions(currentHourData, settings, nextHourTideFor(displayHourlyData, selectedHourIndex), t);
   const activeSafetyChecks = [
     settings.enableWindSpeed,
     settings.enableWindSpeed && settings.enableWindGust,

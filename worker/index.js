@@ -75,10 +75,22 @@ const PAYLOAD_VERSION = 5;
 // allows 1000 a day. The cron (every 10 min x 4 locations = 576 runs) was
 // spending well over half the daily budget on that stamp alone, and running out
 // of writes stops the forecast updating with no user-visible error. The stamp
-// only feeds the "Checked HH:MM" line, so refreshing it hourly is plenty — a
-// real rebuild still writes immediately, and a user's manual refresh still
-// re-stamps so the button feels responsive.
-const CHECKED_STAMP_MIN_WRITE_INTERVAL_MS = 60 * 60 * 1000;
+// only feeds the "Checked HH:MM" line, so it can be coarsened — but NOT freely.
+//
+// This stamp is also what the CLIENT uses to decide whether it reached the
+// worker at all (CHECK_ASSUMED_UNREACHED_MS in cacheStatusView.ts). Throttling
+// it to an hour meant a perfectly healthy forecast served a 40-minute-old stamp
+// and the header said "Couldn't refresh · showing older data". The relation has
+// to hold, with room for a skipped cron tick:
+//
+//   this interval + 2 x cron period  <  CHECK_ASSUMED_UNREACHED_MS
+//   15 min        + 20 min           <  45 min
+//
+// Writes only land on cron ticks, so the real ceiling on stamp age is this
+// interval rounded up to the next tick. Budget is still comfortable: a rebuild
+// resets it, so this is ~2 writes per 40-minute quiet cycle, ~288/day across
+// four locations against an allowance of 1000.
+const CHECKED_STAMP_MIN_WRITE_INTERVAL_MS = 15 * 60 * 1000;
 // ...but `?refresh=1` is unauthenticated, so letting EVERY manual check bypass
 // the throttle hands anyone a 1-write-per-minute-per-location lever over the
 // same budget (4 locations x 1440 = 5760 writes/day against an allowance of
@@ -86,6 +98,10 @@ const CHECKED_STAMP_MIN_WRITE_INTERVAL_MS = 60 * 60 * 1000;
 // response already carries this check's real timestamp either way, so the
 // button still feels live — only the PERSISTED stamp is coarsened.
 const MANUAL_STAMP_MIN_WRITE_INTERVAL_MS = 10 * 60 * 1000;
+
+// How stale MET's last-good response may be and still be served (see the
+// fallback in fetchMetWeather).
+const MET_FALLBACK_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 
 const activeRefreshes = new Map();
 
@@ -348,7 +364,19 @@ async function fetchMetWeather(env, location) {
     // MET unreachable but we hold its last response: build with that rather
     // than freezing the whole payload. The NaN expires maps to a short TTL,
     // so the next check retries MET soon.
-    if (stored?.body) {
+    // ...but only while that response is still plausibly a forecast. Unbounded,
+    // a multi-day MET outage (a 403 on the UA, an IP block, a long downtime)
+    // shipped two-day-old wind and gusts as a complete, current-looking payload
+    // — the marine half kept refreshing, so nothing on screen looked wrong.
+    // Past the bound, let the error through so the build fails properly and the
+    // client's own "stale / couldn't refresh" path takes over.
+    //
+    // 6 h matches CACHE_REFRESH_WARNING_AGE_MS on the client, so the moment we
+    // stop serving a held body is the moment its banner would have fired. It
+    // must stay well above MET's ~30-min publish cadence, or an ordinary single
+    // failed fetch would start rejecting a body that is genuinely current.
+    const storedBodyAgeMs = Date.now() - Date.parse(stored?.lastModified ?? '');
+    if (stored?.body && Number.isFinite(storedBodyAgeMs) && storedBodyAgeMs < MET_FALLBACK_MAX_AGE_MS) {
       // MET always returns data when reachable, so a MET fallback is always a
       // real transport failure - degraded, not merely "not published yet".
       return { ...mapMetPayload(stored.body, stored.lastModified, Number.NaN), fallback: true, degraded: true, busy: isBusyError(error?.message) };
@@ -693,10 +721,21 @@ async function writeCachedForecast(env, location, data) {
   await env.FRANK_FORECAST_CACHE.put(cacheKey(location), JSON.stringify(data));
 }
 
-function shouldCheckInBackground(data, minIntervalMs) {
-  const lastAttemptAt = data?.sources?.cacheHealth?.lastAttemptAt;
-  const lastAttemptMs = new Date(lastAttemptAt ?? 0).getTime();
-  return !Number.isFinite(lastAttemptMs) || Date.now() - lastAttemptMs > minIntervalMs;
+// When this isolate last actually ran a check, per location. The persisted
+// stamp is deliberately coarse (see CHECKED_STAMP_MIN_WRITE_INTERVAL_MS), and
+// gating only on it meant every ungated request in the throttle window passed
+// the 60s/10min gates and re-probed upstream — the flood protection loosened by
+// exactly the amount the write throttle saved. An in-memory clock costs no KV
+// write; a stale entry after an isolate recycles just falls back to the stamp.
+const lastCheckAt = new Map();
+
+function shouldCheckInBackground(location, data, minIntervalMs) {
+  const stampMs = new Date(data?.sources?.cacheHealth?.lastAttemptAt ?? 0).getTime();
+  const memoryMs = lastCheckAt.get(cacheKey(location)) ?? 0;
+  // Whichever check was more recent decides — a fresh in-memory check must not
+  // be overridden by an older persisted stamp, and vice versa.
+  const lastMs = Math.max(Number.isFinite(stampMs) ? stampMs : 0, memoryMs);
+  return lastMs === 0 || Date.now() - lastMs > minIntervalMs;
 }
 
 async function _refreshForecastCache(env, location, options = {}) {
@@ -714,7 +753,7 @@ async function _refreshForecastCache(env, location, options = {}) {
     ? Math.min(baseIntervalMs, STALE_MANUAL_RETRY_MS)
     : baseIntervalMs;
 
-  if (cached && !shouldCheckInBackground(cached, minIntervalMs)) {
+  if (cached && !shouldCheckInBackground(location, cached, minIntervalMs)) {
     if (options.force && !cachedNeedsRecovery) {
       // No provider was contacted here, so lastAttemptAt keeps its old value.
       return withCacheHealth(cached, 'current', {
@@ -846,6 +885,7 @@ async function refreshForecastCache(env, location, options = {}) {
     return activeRefreshes.get(key);
   }
 
+  lastCheckAt.set(key, Date.now());
   const promise = _refreshForecastCache(env, location, options);
   activeRefreshes.set(key, promise);
   
@@ -920,7 +960,7 @@ async function handleForecastRequest(request, env, ctx, locationId) {
 
   const cached = await readCachedForecast(env, location);
   if (cached) {
-    if (shouldCheckInBackground(cached, USER_BACKGROUND_CHECK_MIN_INTERVAL_MS)) {
+    if (shouldCheckInBackground(location, cached, USER_BACKGROUND_CHECK_MIN_INTERVAL_MS)) {
       ctx.waitUntil(refreshForecastCache(env, location, {
         reason: 'user-background',
         minIntervalMs: USER_BACKGROUND_CHECK_MIN_INTERVAL_MS,

@@ -1229,6 +1229,12 @@
 .limit-caution-row {
   display: flex;
   align-items: center;
+  /* Wrap the mini stepper onto its own line rather than crushing the
+     explanation: at 320px the Danish copy collapsed to a 23px-wide column of
+     single words, 13 lines tall. `flex-wrap` alone is a no-op here — the copy
+     below is `flex: 1 1 auto; min-width: 0` and will happily shrink to nothing,
+     so the min-width floor there is what actually forces the wrap. */
+  flex-wrap: wrap;
   gap: 10px;
   border-top: 1px dashed var(--panel-border);
   padding-top: 10px;
@@ -1242,7 +1248,8 @@
 .limit-caution-copy {
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  /* 14ch fits "Vindstødsmargen" at 12px; below that the row wraps instead. */
+  min-width: 14ch;
   flex: 1 1 auto;
 }
 

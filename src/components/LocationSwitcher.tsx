@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
+import type { FocusEvent as ReactFocusEvent, KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { MapPin, Check, ChevronDown } from 'lucide-react';
 import { AVAILABLE_LOCATIONS, CURRENT_LOCATION, setLocation } from '../config/locations';
 import { useLang } from '../i18n';
@@ -31,9 +31,6 @@ export default function LocationSwitcher({ label }: { label: string }) {
       if (e.key === 'Escape') {
         setOpen(false);
         triggerRef.current?.focus();
-      } else if (e.key === 'Tab') {
-        // Menu pattern: Tab closes and lets focus move on naturally.
-        setOpen(false);
       }
     };
     document.addEventListener('pointerdown', onOutside);
@@ -43,6 +40,16 @@ export default function LocationSwitcher({ label }: { label: string }) {
       document.removeEventListener('keydown', onKey);
     };
   }, [open]);
+
+  // Menu pattern: Tab closes the menu. Handled as focus LEAVING the root rather
+  // than as a Tab keydown — closing on keydown unmounts the focused item before
+  // the browser resolves the default action, so focus fell to <body> and the
+  // next Tab restarted from the top of the document.
+  const onRootBlur = (e: ReactFocusEvent<HTMLDivElement>) => {
+    if (!open) return;
+    if (e.relatedTarget && rootRef.current?.contains(e.relatedTarget as Node)) return;
+    setOpen(false);
+  };
 
   // Per the menu pattern, opening moves focus to the first item.
   useEffect(() => {
@@ -74,7 +81,7 @@ export default function LocationSwitcher({ label }: { label: string }) {
   }
 
   return (
-    <div className="frank-location location-switcher" ref={rootRef}>
+    <div className="frank-location location-switcher" ref={rootRef} onBlur={onRootBlur}>
       <button
         type="button"
         ref={triggerRef}

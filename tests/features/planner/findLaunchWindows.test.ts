@@ -365,3 +365,68 @@ describe('tidePreference with no water-level readings', () => {
     expect(findLaunchWindows(rising, settings, 0).length).toBeGreaterThan(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// MET's outlook blocks sit at 00/06/12/18Z = 02:00 / 08:00 / 14:00 / 20:00
+// local in CEST, so a block straddling sunrise or sunset is the normal case for
+// roughly a third of the year. Blocks are never rated nighttime, so a calm one
+// rates safe — and it used to be offered as a FULL 6-hour window on the
+// strength of any daylight at all, while Daylight Only was ON.
+// ---------------------------------------------------------------------------
+describe('outlook blocks under Daylight Only', () => {
+  // 2026-10-04: the 00Z block covers 02:00-08:00 local, sunrise ~07:28.
+  const nightBlock: HourlyData = {
+    ...baseData,
+    time: '2026-10-04T00:00:00Z',
+    isLowConfidence: true,
+    blockSpanHours: 6,
+  };
+  const sun = { sunrise: ['2026-10-04T05:28:00Z'], sunset: ['2026-10-04T16:55:00Z'] };
+
+  it('refuses a block whose daylight is a sliver of its span', () => {
+    // Only 07:00-08:00 local is daylight, and 07:00 is before sunrise, so the
+    // paddleable slice is empty. Offering 5h20m of darkness under the setting
+    // that exists to prevent it is the failure being guarded here.
+    const settings = { ...baseSettings, minDuration: 2, daylightOnly: true } as SafetySettings;
+    expect(findLaunchWindows([nightBlock], settings, 0, sun)).toEqual([]);
+  });
+
+  it('applies minDuration to the paddleable hours, not the nominal span', () => {
+    // The 18Z block covers 20:00-02:00 local with sunset 18:55 -> no daylight
+    // marks at all. Even minDuration 1 must not produce a window.
+    const eveningBlock = { ...nightBlock, time: '2026-10-04T18:00:00Z' };
+    const settings = { ...baseSettings, minDuration: 1, daylightOnly: true } as SafetySettings;
+    expect(findLaunchWindows([eveningBlock], settings, 0, sun)).toEqual([]);
+  });
+
+  it('reports a partly-daylit block as its daylight slice, and the slice is what duration counts', () => {
+    // The 06Z block covers 08:00-14:00 local, fully inside 07:28-18:55.
+    const dayBlock = { ...nightBlock, time: '2026-10-04T06:00:00Z' };
+    const settings = { ...baseSettings, minDuration: 2, daylightOnly: true } as SafetySettings;
+    const windows = findLaunchWindows([dayBlock], settings, 0, sun);
+    expect(windows).toHaveLength(1);
+    // Fully daylit: the whole span counts, and no slice is stored.
+    expect(windows[0]).toMatchObject({ duration: 6, lowConfidence: true });
+    expect(windows[0].daylightPartial).toBeUndefined();
+  });
+
+  it('stores the slice on a genuinely partial block so the card cannot re-derive it differently', () => {
+    // The 12Z block covers 14:00-20:00 local; sunset 18:55 cuts it at 19:00.
+    const eveningBlock = { ...nightBlock, time: '2026-10-04T12:00:00Z' };
+    const settings = { ...baseSettings, minDuration: 2, daylightOnly: true } as SafetySettings;
+    const windows = findLaunchWindows([eveningBlock], settings, 0, sun);
+    expect(windows).toHaveLength(1);
+    expect(windows[0].daylightPartial).toBe(true);
+    // 14:00 through 19:00 local = 5 paddleable hours out of a 6-hour block.
+    expect(windows[0].duration).toBe(5);
+    expect(windows[0].daylightStartMs).toBe(Date.parse('2026-10-04T12:00:00Z'));
+    expect(windows[0].daylightEndMs).toBe(Date.parse('2026-10-04T17:00:00Z'));
+  });
+
+  it('daylightOnly off still offers the whole block', () => {
+    const settings = { ...baseSettings, minDuration: 2, daylightOnly: false } as SafetySettings;
+    const windows = findLaunchWindows([nightBlock], settings, 0, sun);
+    expect(windows).toHaveLength(1);
+    expect(windows[0].duration).toBe(6);
+  });
+});

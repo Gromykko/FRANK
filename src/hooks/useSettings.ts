@@ -8,7 +8,7 @@ import {
   LEGACY_CUSTOM_SETTINGS_STORAGE_KEY,
 } from '../features/safety/presets';
 import type { SafetySettings } from '../features/safety/presets';
-import { floorCaution } from '../features/safety/presets';
+import { floorCaution, MIN_CAUTION_GAP } from '../features/safety/presets';
 import { CURRENT_LOCATION, DEFAULT_LOCATION_ID } from '../config/locations';
 import type { ForecastLocation } from '../config/locations';
 import { readStorage } from '../utils/storage';
@@ -90,7 +90,7 @@ export function healSectorCautions(s: SafetySettings): SafetySettings {
 // as enabled, `activeSafetyChecks` sees nothing switched off, and FRANK reports
 // "Good to go" in a gale. Clamping closes the door the NaN guard left open.
 const NUMERIC_LIMITS: { key: keyof SafetySettings; decimals: number; min: number; max: number }[] = [
-  { key: 'maxWindSpeedSafe', decimals: 1, min: 0, max: 25 },
+  { key: 'maxWindSpeedSafe', decimals: 1, min: 0.5, max: 25 },
   { key: 'maxWindSpeedCaution', decimals: 1, min: 0, max: 35 },
   { key: 'minWaterTempSafe', decimals: 1, min: 0, max: 25 },
   { key: 'minWaterTempCaution', decimals: 1, min: 0, max: 25 },
@@ -137,12 +137,18 @@ function coerceNumericLimits(s: SafetySettings): SafetySettings {
   }
   // Sector caps come from the same untrusted blob and feed the same comparisons.
   const sectorLimits: SafetySettings['sectorLimits'] = {};
+  const inCapRange = (value: unknown, max: number) =>
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= max;
   for (const [id, cap] of Object.entries(out.sectorLimits ?? {})) {
-    const safe = Number.isFinite(cap?.safe) ? roundToDecimals(cap.safe, 1) : undefined;
-    const caution = Number.isFinite(cap?.caution) ? roundToDecimals(cap.caution, 1) : undefined;
-    // A sector whose caps are unusable is dropped, so resolveSectors falls back
-    // to the location's curated values rather than to NaN.
-    if (safe !== undefined && caution !== undefined) sectorLimits[id] = { safe, caution };
+    // A sector whose caps are unusable is DROPPED rather than clamped, so
+    // resolveSectors falls back to this location's curated values — the right
+    // fallback here is the fjord's own cap, not one global default.
+    //
+    // Range, not just type: these were the last thresholds exempt from the
+    // bounds check, so a stored `{ safe: 999, caution: 999 }` was accepted and
+    // silently switched that direction's cap off while the UI still showed it.
+    if (!inCapRange(cap?.safe, 25) || !inCapRange(cap?.caution, 25 + MIN_CAUTION_GAP)) continue;
+    sectorLimits[id] = { safe: roundToDecimals(cap.safe, 1), caution: roundToDecimals(cap.caution, 1) };
   }
   out.sectorLimits = sectorLimits;
   return out;
@@ -185,13 +191,20 @@ export function parseStoredSettings(json: string): SafetySettings {
 
 export function useSettings() {
   const customProfileRef = useRef<SafetySettings | null>(null);
-  // A stored profile we could not parse must NOT be silently replaced. The
-  // debounced write below fires on mount too, so falling back to defaults used
-  // to stamp them over the unreadable blob 250ms later: a beginner's 4.0 m/s
-  // cap became the 5.5 m/s default, permanently, with no trace. Keep the bytes
-  // so the ErrorBoundary's "Reset saved settings" stays the only thing that
-  // erases a profile.
-  const loadFailedRef = useRef(false);
+  // The raw bytes of a stored profile we could not parse, or null. A failed load
+  // must NOT be silently replaced: the debounced write below fires on mount too,
+  // so falling back to defaults used to stamp them over the unreadable blob
+  // 250ms later — a beginner's 4.0 m/s cap became the 5.5 m/s default,
+  // permanently, with no trace.
+  //
+  // But it must not block the user's own edits either. Holding the write open
+  // indefinitely meant every later change was silently dropped and reverted on
+  // each launch. So: mount never overwrites, and the first deliberate edit
+  // stashes the unreadable bytes under a _corrupt key (the only thing they were
+  // ever worth — a future build might parse them) and then writes normally.
+  const loadFailedRef = useRef<string | null>(null);
+  // Whether the user has deliberately changed anything this session.
+  const hasEditedRef = useRef(false);
 
   const [settings, setSettings] = useState<SafetySettings>(() => {
     // The unsuffixed legacy keys predate multi-location and can only have been
@@ -216,7 +229,7 @@ export function useSettings() {
         const parsed = parseStoredSettings(saved);
         return parsed.tripMode === 'custom' ? parsed : getPresetSettings(parsed.tripMode);
       } catch {
-        loadFailedRef.current = true;
+        loadFailedRef.current = saved;
         return DEFAULT_SETTINGS;
       }
     }
@@ -224,10 +237,21 @@ export function useSettings() {
   });
 
   useEffect(() => {
-    // Never persist over a profile we failed to read (see loadFailedRef).
-    if (loadFailedRef.current) return;
+    // Never persist over a profile we failed to read on MOUNT. `hasEdited`
+    // flips on the first deliberate change (see saveSettings/setTripMode).
+    if (loadFailedRef.current !== null && !hasEditedRef.current) return;
 
     const write = () => {
+      // First deliberate write after a failed load: keep the unreadable bytes
+      // aside rather than destroying them, then proceed normally.
+      if (loadFailedRef.current !== null) {
+        try {
+          localStorage.setItem(`${SETTINGS_STORAGE_KEY}_corrupt`, loadFailedRef.current);
+        } catch {
+          // Best effort; losing the corrupt copy must not block the real write.
+        }
+        loadFailedRef.current = null;
+      }
       try {
         localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
         if (settings.tripMode === 'custom') {
@@ -253,6 +277,7 @@ export function useSettings() {
   }, [settings]);
 
   const saveSettings = useCallback((newSettings: SafetySettings) => {
+    hasEditedRef.current = true;
     // Heal on the way in (idempotent for the editors, which already maintain
     // the invariants) so an inverted band can never reach the assessment.
     const healed = healSettings(newSettings);
@@ -263,6 +288,7 @@ export function useSettings() {
   }, []);
 
   const setTripMode = useCallback((mode: SafetySettings['tripMode']) => {
+    hasEditedRef.current = true;
     if (mode === 'custom') {
       setSettings(customProfileRef.current ?? getPresetSettings('custom'));
     } else {

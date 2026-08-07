@@ -11,6 +11,34 @@ const AUTO_REFRESH_THROTTLE_MS = 60 * 1000;
 // reads as broken.
 const MIN_MANUAL_SPINNER_MS = 600;
 
+// Which row is happening RIGHT NOW: the one whose span CONTAINS the clock, not
+// the one whose start is nearest it. Nearest-start rounds up from :30 onward, so
+// for half of every hour "now" pointed at the NEXT row — the snapshot described
+// an hour that had not started, and the selection-clamp below then dragged the
+// user's own choice there. Falls back to nearest when nothing contains the
+// clock (the payload starts in the future, or has run out behind us).
+//
+// Containment, not `last row <= now`: the series legitimately has gaps (an hour
+// with no marine sample within 90 minutes is dropped), and `last row <= now`
+// would then answer with a PAST row, restarting the timeline behind itself.
+function hourIndexForNow(hourly: WeatherData['hourly'], nowMs: number): number {
+  let nearest = 0;
+  let minDiff = Infinity;
+  let containing = -1;
+  for (let i = 0; i < hourly.length; i++) {
+    const startMs = new Date(hourly[i].time).getTime();
+    if (!Number.isFinite(startMs)) continue;
+    const spanMs = (hourly[i].blockSpanHours ?? 1) * 3_600_000;
+    if (nowMs >= startMs && nowMs < startMs + spanMs) containing = i;
+    const diff = Math.abs(startMs - nowMs);
+    if (diff < minDiff) {
+      minDiff = diff;
+      nearest = i;
+    }
+  }
+  return containing === -1 ? nearest : containing;
+}
+
 // Owns the forecast lifecycle: boot from cache, background refreshes,
 // clock ticks, and the selected/now hour indices. Layout stays in App.
 export function useForecast(daylightOnly: boolean) {
@@ -73,17 +101,9 @@ export function useForecast(daylightOnly: boolean) {
 
     setWeatherData(data);
 
-    const now = new Date();
-    let closestIndex = 0;
-    let minDiff = Infinity;
-
-    for (let i = 0; i < data.hourly.length; i++) {
-      const diff = Math.abs(new Date(data.hourly[i].time).getTime() - now.getTime());
-      if (diff < minDiff) {
-        minDiff = diff;
-        closestIndex = i;
-      }
-    }
+    // Same rule as the derived nowIndex below, so the hour selected on load is
+    // the hour the header calls "now".
+    const closestIndex = hourIndexForNow(data.hourly, Date.now());
 
     let initialSelected = closestIndex;
     // An empty payload leaves closestIndex pointing at nothing; the render path
@@ -119,17 +139,7 @@ export function useForecast(daylightOnly: boolean) {
   const nowIndex = useMemo(() => {
     const hourly = weatherData?.hourly;
     if (!hourly || hourly.length === 0) return 0;
-    const now = Date.now();
-    let best = 0;
-    let minDiff = Infinity;
-    for (let i = 0; i < hourly.length; i++) {
-      const diff = Math.abs(new Date(hourly[i].time).getTime() - now);
-      if (diff < minDiff) {
-        minDiff = diff;
-        best = i;
-      }
-    }
-    return best;
+    return hourIndexForNow(hourly, Date.now());
     // minuteTick is not read in the body — it IS the input: the 60s heartbeat
     // is what makes "now" advance. Without it this memo would never recompute
     // between refreshes, which is the bug it exists to fix.
