@@ -2460,7 +2460,12 @@ button.legend-toggle.is-on {
   line-height: 1.25;
   letter-spacing: 0.04em;
   text-transform: none;
-  opacity: 0.85;
+  /* NOT the phosphor colour: at 11px this is small text needing 4.5:1, and the
+     danger red on the CRT screen measures 4.0 at full strength (3.1 at the 85%
+     opacity this used to carry). The verdict word above clears its own bar
+     because at 28px+ it counts as large text. A fixed neutral is right here —
+     the screen stays near-black in both themes, like --crt-screen itself. */
+  color: #b9c4d0;
   text-shadow: none;
 }
 
