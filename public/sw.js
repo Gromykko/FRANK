@@ -4,9 +4,20 @@
 // deliberately does NOT cache the forecast API responses (those are cross-origin
 // and the client already keeps last-good data in localStorage — a stale SW copy
 // would only get in the way).
-const CACHE = 'frank-v0.3.0';
+const CACHE = 'frank-v0.4.0';
 const scope = self.registration.scope; // e.g. https://…/FRANK/
 const BASE = new URL('', scope).toString();
+
+// Every cache read MUST pass this. The Cache API honours `Vary`, and our
+// entries are stored against requests the SW made (no `Origin` header), while
+// Vite emits the asset tags with `crossorigin` — so the PAGE requests them in
+// CORS mode WITH an `Origin`. Any host that sends `Vary` (vite preview sends
+// `Vary: Origin`) then misses on every asset, falls through to the network,
+// and offline that rejects: the navigation still serves the cached shell, so
+// the user gets a correct title above a completely blank body. Verified: this
+// is exactly what `npm run preview` does today. GitHub Pages only escapes it
+// by sending `Vary: Accept-Encoding`, which happens to match.
+const MATCH = { ignoreVary: true };
 
 // Stable-named shell files (the hashed /assets/* bundles can't be listed here —
 // they're cached at runtime on first fetch instead).
@@ -37,7 +48,11 @@ self.addEventListener('install', (e) => {
   e.waitUntil(
     caches.open(CACHE)
       .then(async (cache) => {
-        await cache.addAll(SHELL);
+        // allSettled, not addAll: addAll is atomic, so ONE failed shell URL (a
+        // flaky first load, a renamed icon, a captive portal redirect) rejected
+        // the whole install — skipWaiting never ran and the user silently got
+        // no offline capability at all. Partial precache beats none.
+        await Promise.allSettled(SHELL.map((url) => cache.add(url)));
         await precacheBuildAssets(cache);
       })
       .then(() => self.skipWaiting())
@@ -64,19 +79,29 @@ self.addEventListener('fetch', (e) => {
   // App navigations: network-first so a fresh deploy is picked up, but fall back
   // to the cached shell so the app still opens with no connection.
   if (req.mode === 'navigate') {
+    const fromCache = () => caches.match(req, MATCH).then((r) => r || caches.match(BASE, MATCH));
+    const network = fetch(req).then((res) => {
+      // Only a healthy page may become the offline shell — caching a 404/500
+      // navigation response would replace the app with an error page at the
+      // one moment the cache matters (offline at the launch ramp).
+      if (res.ok) {
+        const copy = res.clone();
+        e.waitUntil(caches.open(CACHE).then((cache) => cache.put(BASE, copy)));
+      }
+      return res;
+    });
+    // A dead network REJECTS; one bar of signal or a marina captive portal
+    // that accepts the connection and then stalls does not — it just hangs,
+    // for up to ~300s in Chrome, showing a white screen while a perfectly good
+    // shell sits in the cache. Being fully offline worked better than being
+    // barely online. Race the network against the cache instead of waiting.
+    const timedFallback = new Promise((resolve) => setTimeout(resolve, 3000))
+      .then(fromCache);
     e.respondWith(
-      fetch(req)
-        .then((res) => {
-          // Only a healthy page may become the offline shell — caching a 404/500
-          // navigation response would replace the app with an error page at the
-          // one moment the cache matters (offline at the launch ramp).
-          if (res.ok) {
-            const copy = res.clone();
-            caches.open(CACHE).then((cache) => cache.put(BASE, copy));
-          }
-          return res;
-        })
-        .catch(() => caches.match(req).then((r) => r || caches.match(BASE)))
+      Promise.race([network, timedFallback])
+        // Cache miss inside the race window: keep waiting on the network.
+        .then((res) => res || network)
+        .catch(fromCache)
     );
     return;
   }
@@ -93,15 +118,16 @@ self.addEventListener('fetch', (e) => {
   // populate the cache on the first successful fetch so a later offline visit has
   // the code it needs to boot.
   e.respondWith(
-    caches.match(req).then((cached) => {
+    caches.match(req, MATCH).then((cached) => {
       if (cached) return cached;
       // No cached copy and the network failed: nothing to serve — let the
       // request reject. (A `.catch(() => cached)` here would always resolve
       // undefined, since this branch only runs when `cached` was falsy.)
       return fetch(req).then((res) => {
-        if (res.ok) {
+        // 206 is `ok` but cache.put rejects on it.
+        if (res.ok && res.status !== 206) {
           const copy = res.clone();
-          caches.open(CACHE).then((cache) => cache.put(req, copy));
+          e.waitUntil(caches.open(CACHE).then((cache) => cache.put(req, copy)));
         }
         return res;
       });

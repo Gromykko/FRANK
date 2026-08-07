@@ -26,11 +26,19 @@ export default function WarningStripe({ warnings }: WarningStripeProps) {
   // The worker filters by region and drops lapsed warnings, but a cached payload
   // can outlive one — re-check expiry here so the stripe self-heals without a
   // rebuild. Parser sorts most-severe first, so [0] is the one to headline.
-  const active = (warnings ?? []).filter((w) => Date.parse(w.expires) > now);
+  // Negated `<=`, not `>`: an unparseable expiry yields NaN, and `NaN > now` is
+  // false — which silently dropped an official DMI warning rather than showing
+  // it. Only drop what we can PROVE has lapsed.
+  const active = (warnings ?? []).filter((w) => !(Date.parse(w.expires) <= now));
   if (active.length === 0) return null;
 
   const top = active[0];
   const count = active.length;
+  // A colour outside the three known levels (a cached payload from a changed
+  // feed) made every t() below resolve to undefined, and interpolate() then
+  // threw on `undefined.replace` — taking the whole app down to the crash
+  // screen because of an advisory stripe. Rather show no stripe.
+  if (!LEVEL_WORD[top.colour]) return null;
   const level = t(LEVEL_WORD[top.colour]);
   // The feed is region-level (e.g. all of Østjylland), so name the region + the
   // level + how many — NOT the specific hazard. A "Thunderstorm" warning for the

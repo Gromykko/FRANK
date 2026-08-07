@@ -5,6 +5,8 @@ import {
   mapMetBlocks,
   aggregateBlockMarine,
   nearestPoint,
+  reviveReadings,
+  NO_READING,
 } from '../../../src/features/forecast/normalize';
 import { blockHourRange } from '../../../src/features/forecast/blockHours';
 import type { MetForecastResponse } from '../../../src/features/forecast/normalize';
@@ -190,7 +192,7 @@ describe('aggregateBlockMarine', () => {
     point(2 * HOUR, { tideLevel: 0.3, tempWater: 18, currentSpeed: 0.3, currentDirection: 30 }),
   ];
 
-  it('computes max wave, min/max ranges, centre-representative tide, and average temp', () => {
+  it('computes max wave, min/max ranges, centre-representative tide, and coldest temp', () => {
     const result = aggregateBlockMarine(waves, waters, 0, 3 * HOUR);
     expect(result).toBeDefined();
     // Wave decision value is the max; min/max carried alongside.
@@ -204,8 +206,11 @@ describe('aggregateBlockMarine', () => {
     expect(result!.tideLevel).toBe(0.1);
     expect(result!.tideLevelMin).toBe(-0.2);
     expect(result!.tideLevelMax).toBe(0.3);
-    // Temp: arithmetic mean plus range.
-    expect(result!.tempWater).toBeCloseTo(16, 10);
+    // Temp: the COLDEST sample is the block's decision value, mirroring
+    // waveHeight taking the max. Both readings put the hazard at one end of
+    // the range, and the block has to be judged on the end that can hurt you —
+    // a mean would rate 9.8/10.4 as 10.1 and clear a sub-10 °C cold-shock hour.
+    expect(result!.tempWater).toBe(14);
     expect(result!.tempWaterMin).toBe(14);
     expect(result!.tempWaterMax).toBe(18);
     // Currents from the centre water sample.
@@ -258,5 +263,57 @@ describe('nearestPoint', () => {
     expect(nearestPoint(points, 200 * MINUTE)).toBeUndefined(); // 100min from b
     // Custom tolerance widens the match.
     expect(nearestPoint(points, 200 * MINUTE, 120 * MINUTE)?.time).toBe('b');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reviveReadings is the seam that stops "no reading" becoming "flat calm".
+// JSON has no NaN — JSON.stringify(NaN) is null — so every NO_READING dies on
+// the way through KV and localStorage unless this puts it back. Until now it
+// had no test at all, and its READING_FIELDS list can silently fall out of
+// sync with HourlyData whenever a numeric field is added.
+// ---------------------------------------------------------------------------
+describe('reviveReadings', () => {
+  const overWire = <T,>(payload: T): T => JSON.parse(JSON.stringify(payload));
+
+  it('restores NaN for every numeric reading that JSON flattened to null', () => {
+    const row: Record<string, unknown> = {
+      time: '2026-08-07T12:00:00Z',
+      isDay: true,
+      symbolCode: 'clearsky_day',
+    };
+    // Every numeric field the app reads, all missing at once.
+    const numericFields = [
+      'tempAir', 'precipitation', 'weatherCode', 'windSpeed', 'windDirection', 'windGust',
+      'waveHeight', 'waveDirection', 'wavePeriod', 'tempWater', 'tideLevel',
+      'currentSpeed', 'currentDirection',
+      'windSpeedMin', 'windSpeedMax', 'windGustMax', 'waveHeightMin', 'waveHeightMax',
+      'tideLevelMin', 'tideLevelMax', 'tempWaterMin', 'tempWaterMax',
+    ];
+    for (const f of numericFields) row[f] = NO_READING;
+
+    const wire = overWire({ hourly: [row] });
+    // Confirm the hazard is real before asserting the fix.
+    expect(wire.hourly[0].waveHeight).toBeNull();
+
+    const revived = reviveReadings(wire) as { hourly: Record<string, unknown>[] };
+    for (const f of numericFields) {
+      expect(Number.isNaN(revived.hourly[0][f] as number), `${f} should revive to NaN`).toBe(true);
+    }
+  });
+
+  it('leaves real zeros alone — 0 m waves is a reading, not a gap', () => {
+    const revived = reviveReadings(overWire({
+      hourly: [{ time: 't', waveHeight: 0, windSpeed: 0, tideLevel: -0.4 }],
+    })) as { hourly: Record<string, number>[] };
+    expect(revived.hourly[0].waveHeight).toBe(0);
+    expect(revived.hourly[0].windSpeed).toBe(0);
+    expect(revived.hourly[0].tideLevel).toBe(-0.4);
+  });
+
+  it('tolerates a malformed payload rather than throwing', () => {
+    expect(() => reviveReadings({} as never)).not.toThrow();
+    expect(() => reviveReadings({ hourly: null } as never)).not.toThrow();
+    expect(() => reviveReadings({ hourly: [null] } as never)).not.toThrow();
   });
 });

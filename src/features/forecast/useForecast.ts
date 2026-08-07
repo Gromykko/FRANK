@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CURRENT_LOCATION } from '../../config/locations';
 import type { WeatherData } from './types';
 import { CAN_FETCH_FRESH_FORECAST, fetchWeatherData } from './fetchForecast';
@@ -19,11 +19,10 @@ export function useForecast(daylightOnly: boolean) {
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedHourIndex, setSelectedHourIndex] = useState<number>(0);
-  const [nowIndex, setNowIndex] = useState<number>(0);
   // 60s heartbeat: re-renders the consumer each minute so relative-age labels
-  // ("Checked · 14:32", "2 hours old") stay current. The tick value itself is
-  // unused — components read Date.now() fresh on each render.
-  const [, setMinuteTick] = useState(0);
+  // ("Checked · 14:32", "2 hours old") stay current, and so `nowIndex` below
+  // re-derives as the clock moves.
+  const [minuteTick, setMinuteTick] = useState(0);
 
   const daylightOnlyRef = useRef(daylightOnly);
   const lastRefreshAttemptRef = useRef(0);
@@ -33,6 +32,9 @@ export function useForecast(daylightOnly: boolean) {
     pickupTimersRef.current.forEach((id) => window.clearTimeout(id));
   }, []);
   const hasWeatherDataRef = useRef(false);
+  // Build time of the newest payload applied, so an out-of-order response
+  // can't overwrite a fresher one (see applyWeatherData).
+  const latestFetchedAtRef = useRef(-Infinity);
   // The timestamp of the hour the user is currently viewing, so background
   // refreshes can restore their selection instead of snapping back to "now".
   const selectedTimeRef = useRef<string | null>(null);
@@ -60,6 +62,15 @@ export function useForecast(daylightOnly: boolean) {
   }, []);
 
   const applyWeatherData = useCallback((data: WeatherData, preferDaylight: boolean) => {
+    // Refreshes overlap (the 10-min interval, focus/visibility, and the two
+    // post-refresh pickups all race), and KV is last-write-wins across edge
+    // nodes — so a later response can legitimately carry an OLDER build than
+    // one already on screen. Without this the header's timestamp walks
+    // backwards and a rebuilt forecast is replaced by the one it superseded.
+    const incomingMs = Date.parse(data.sources.fetchedAt);
+    if (Number.isFinite(incomingMs) && incomingMs < latestFetchedAtRef.current) return;
+    if (Number.isFinite(incomingMs)) latestFetchedAtRef.current = incomingMs;
+
     setWeatherData(data);
 
     const now = new Date();
@@ -98,8 +109,39 @@ export function useForecast(daylightOnly: boolean) {
 
     setSelectedHourIndex(initialSelected);
     selectedTimeRef.current = data.hourly[initialSelected]?.time ?? null;
-    setNowIndex(closestIndex);
   }, []);
+
+  // Derived from the clock, not stored at apply-time. As state it only moved
+  // when new data arrived, so with the worker unreachable "now" froze at the
+  // hour the app was opened: the timeline's now-marker sat hours in the past
+  // and findLaunchWindows kept offering windows that had already closed. The
+  // 60s heartbeat is the input, so this now advances on its own.
+  const nowIndex = useMemo(() => {
+    const hourly = weatherData?.hourly;
+    if (!hourly || hourly.length === 0) return 0;
+    const now = Date.now();
+    let best = 0;
+    let minDiff = Infinity;
+    for (let i = 0; i < hourly.length; i++) {
+      const diff = Math.abs(new Date(hourly[i].time).getTime() - now);
+      if (diff < minDiff) {
+        minDiff = diff;
+        best = i;
+      }
+    }
+    return best;
+    // minuteTick is not read in the body — it IS the input: the 60s heartbeat
+    // is what makes "now" advance. Without it this memo would never recompute
+    // between refreshes, which is the bug it exists to fix.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [weatherData, minuteTick]);
+
+  // Everything downstream assumes the selection is at or ahead of "now"
+  // (WeatherCharts derives a non-negative offset from it). Now that nowIndex
+  // advances between refreshes, carry the selection forward with it.
+  useEffect(() => {
+    setSelectedHourIndex((idx) => (idx < nowIndex ? nowIndex : idx));
+  }, [nowIndex]);
 
   const refreshForecast = useCallback(async (showBlockingLoader: boolean, force = false, forceRemoteRefresh = false) => {
     const startedAt = Date.now();

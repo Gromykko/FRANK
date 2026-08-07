@@ -115,6 +115,11 @@ export function getCacheStatusView({ refreshing, cacheHealth, checkedAtLabel, of
 // Warn once the stale data is old enough to genuinely mislead a paddler.
 const CACHE_REFRESH_WARNING_AGE_MS = 6 * 60 * 60 * 1000;
 
+// The worker re-checks every 10 minutes, so its own stamp should never be much
+// older than that. If it is, WE did not reach the worker — whatever the payload
+// says about itself. Two missed cron ticks of slack.
+const CHECK_ASSUMED_UNREACHED_MS = 25 * 60 * 1000;
+
 function formatRelativeAge(ms: number, translate: Translate): string {
   if (!Number.isFinite(ms) || ms < 0) return '';
   const minutes = Math.round(ms / 60000);
@@ -150,16 +155,29 @@ export function deriveCacheStatus(args: {
   nowMs: number;
 }, translate: Translate = interpolate): DerivedCacheStatus {
   const { sources, refreshing, online, nowMs } = args;
-  const cacheHealth = sources.cacheHealth;
-  const status = cacheHealth?.status;
-  const isPending = status === 'pending';
-  const isStale = status === 'stale' || status === 'fallback';
 
   const fetchedAtMs = new Date(sources.fetchedAt).getTime();
-  const checkedAt = cacheHealth?.lastAttemptAt ?? sources.fetchedAt;
+  const checkedAt = sources.cacheHealth?.lastAttemptAt ?? sources.fetchedAt;
   const checkedAtMs = new Date(checkedAt).getTime();
   const checkDiffersFromData =
     Number.isFinite(checkedAtMs) && Number.isFinite(fetchedAtMs) && Math.abs(checkedAtMs - fetchedAtMs) > 90_000;
+
+  // Freshness was taken entirely from the payload's own cacheHealth. But when
+  // the worker is unreachable the client quietly falls back to the browser's
+  // saved copy — which still carries the last GOOD payload's `status:'current'`.
+  // The header then read a green "Checked · 09:14" at 14:50, because nothing
+  // compared that stamp to the actual clock. `navigator.onLine` doesn't help:
+  // it stays true behind a captive portal or a dead worker. Age is the only
+  // honest test, so it overrides the payload's self-assessment.
+  const checkedAgeMs = Number.isFinite(checkedAtMs) ? nowMs - checkedAtMs : Infinity;
+  const notActuallyChecked = checkedAgeMs > CHECK_ASSUMED_UNREACHED_MS;
+  const cacheHealth = notActuallyChecked
+    ? { ...sources.cacheHealth, status: 'stale' as const, lastAttemptAt: checkedAt }
+    : sources.cacheHealth;
+
+  const status = cacheHealth?.status;
+  const isPending = status === 'pending';
+  const isStale = status === 'stale' || status === 'fallback';
 
   const cacheAgeMs = Number.isFinite(fetchedAtMs) ? nowMs - fetchedAtMs : Infinity;
   const showRefreshWarning = isStale && cacheAgeMs > CACHE_REFRESH_WARNING_AGE_MS;

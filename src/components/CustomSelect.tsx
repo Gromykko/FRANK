@@ -89,6 +89,19 @@ export default function CustomSelect<T extends string | number>({ value, onChang
           setFocusedIndex(prev => Math.max(prev - 1, 0));
         }
         break;
+      // Required by the listbox pattern, and both were missing.
+      case 'Home':
+        if (isOpen) { e.preventDefault(); setFocusedIndex(0); }
+        break;
+      case 'End':
+        if (isOpen) { e.preventDefault(); setFocusedIndex(options.length - 1); }
+        break;
+      // Deliberately NOT prevented — let Tab move focus on. Without this the
+      // popup stayed rendered at z-index 1000 over the content below, with
+      // aria-expanded="true" on a control the user had already left.
+      case 'Tab':
+        setIsOpen(false);
+        break;
     }
   };
 

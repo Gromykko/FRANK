@@ -5,6 +5,7 @@ import { useLang } from '../i18n';
 import { formatWeekday, locationHourLabel } from '../utils/date';
 import { formatReading, formatSigned, NO_READING_TEXT } from '../utils/number';
 import type { HourlyData } from '../features/forecast/types';
+import { RATING_WORD } from '../features/safety/analyzeSafetyConditions';
 import type { SafetyRating, SafetyReason } from '../features/safety/analyzeSafetyConditions';
 
 const signed = (v: number) => formatSigned(v, 2);
@@ -13,7 +14,9 @@ interface ConditionsSnapshotProps {
   data: HourlyData;
   weatherDesc: string;
   windDirectionLabel: string;
-  windRotation: number;
+  // null when there is no wind-direction reading: draw no arrow at all rather
+  // than a confident one pointing at an invented bearing.
+  windRotation: number | null;
   sunrise: string;
   sunset: string;
   reasons: SafetyReason[];
@@ -96,7 +99,9 @@ export default function ConditionsSnapshot({
             {/* Same icon + math as the meteogram's wind row: ArrowDown points
                 south at 0°, so rotating by the FROM-direction makes the arrow
                 point where the wind blows TO. */}
-            <ArrowDown size={13} className="snapshot-wind-arrow" style={{ transform: `rotate(${windRotation}deg)` }} aria-hidden="true" />
+            {windRotation !== null && (
+              <ArrowDown size={13} className="snapshot-wind-arrow" style={{ transform: `rotate(${windRotation}deg)` }} aria-hidden="true" />
+            )}
             <span className="snapshot-value">{windDirectionLabel}</span>
           </span>
         </div>
@@ -118,8 +123,12 @@ export default function ConditionsSnapshot({
             <span className="snapshot-value">{tideText}</span>
           </span>
           <span className="snapshot-cell snapshot-cell-end snapshot-sun">
-            {sunrise && <span className="snapshot-value"><Sunrise size={13} /> {sunrise}</span>}
-            {sunset && <span className="snapshot-value"><Sunset size={13} /> {sunset}</span>}
+            {/* Every other cell in this grid pairs its value with a visible
+                .snapshot-label; these two carry only a lucide <svg>, which
+                contributes no accessible name — so a screen reader announced
+                two bare numbers. Daylight is one of the verdict's rules. */}
+            {sunrise && <span className="snapshot-value"><Sunrise size={13} aria-hidden="true" /> <span className="sr-only">{t('Sunrise')} </span>{sunrise}</span>}
+            {sunset && <span className="snapshot-value"><Sunset size={13} aria-hidden="true" /> <span className="sr-only">{t('Sunset')} </span>{sunset}</span>}
           </span>
         </div>
 
@@ -132,7 +141,9 @@ export default function ConditionsSnapshot({
       )}
 
       <div className={`snapshot-reasons-container rating-${rating}`}>
-        <span className="sr-only">{t('Overall rating: {0}.', t(rating))}</span>
+        {/* RATING_WORD, not t(rating): the raw keys translate to a second
+            vocabulary ("sikker/pas på/fare") that the status bar never uses. */}
+        <span className="sr-only">{t('Overall rating: {0}.', t(RATING_WORD[rating]))}</span>
         <div className="snapshot-time-anchor">{t('Conditions for {0}:', timeAnchor)}</div>
         <ul className="snapshot-reasons">
           {reasons.map((reason, i) => (

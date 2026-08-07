@@ -104,7 +104,6 @@ export interface WeatherData {
     cacheHealth?: {
       status: 'current' | 'pending' | 'stale' | 'fresh' | 'fallback';
       lastAttemptAt: string;
-      lastSuccessfulBuildAt?: string;
       message?: string;
       // MET Norway cache headers from the run the cache was built against.
       weatherExpires?: string;

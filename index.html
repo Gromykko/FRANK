@@ -12,19 +12,29 @@
     <link rel="manifest" href="manifest.json" />
     <meta name="theme-color" content="#f5f7fa" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0c1117" media="(prefers-color-scheme: dark)" />
+    <!-- Shared in Danish kayak-club Facebook/Messenger groups, which is the
+         actual distribution channel — without these the link previews as a
+         bare URL. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="FRANK · Fjord Risk Assessment &amp; Navigation Kit" />
+    <meta property="og:description" content="Go/no-go kayak forecast for Danish fjords — wind, waves, water level and launch windows checked against your own limits. Advisory only." />
+    <meta property="og:image" content="icon-512.png" />
+    <meta name="twitter:card" content="summary" />
     <title>FRANK · Fjord Risk Assessment &amp; Navigation Kit</title>
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <p style="max-width:34em;margin:3rem auto;padding:0 1.5rem;font-family:system-ui,sans-serif;line-height:1.6">
+        FRANK har brug for JavaScript for at kunne vise en prognose. Slå det til,
+        eller tjek vejret hos <a href="https://www.dmi.dk/">DMI</a> i stedet.
+        Betragt ikke dette som en melding om, at det er sikkert at tage ud.
+        <br /><br />
+        FRANK needs JavaScript to show a forecast. Enable it, or check
+        <a href="https://www.dmi.dk/">DMI</a> instead. Do not treat this as an
+        all-clear.
+      </p>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
-    <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          const baseUrl = '%BASE_URL%';
-          navigator.serviceWorker.register(`${baseUrl}sw.js`, { scope: baseUrl })
-            .catch(err => console.error('Service Worker registration failed:', err));
-        });
-      }
-    </script>
   </body>
 </html>

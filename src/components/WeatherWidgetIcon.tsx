@@ -1,4 +1,4 @@
-import { Sun, Cloud, CloudRain, CloudSnow, CloudLightning, CloudSun, CloudDrizzle } from 'lucide-react';
+import { Sun, Cloud, CloudRain, CloudSnow, CloudLightning, CloudSun, CloudDrizzle, CloudOff } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 interface WeatherWidgetIconProps {
@@ -17,6 +17,13 @@ interface IconSpec {
 // 0-1 clear, 2-3 cloudy, 45/48 fog, 51-57 drizzle,
 // 61-67 + 80-82 rain, 71-77 + 85-86 snow, 95-99 thunderstorm.
 function getIconSpec(code: number, isNight: boolean, size: number): IconSpec {
+  // A missing reading arrives as NaN, and every comparison below is false
+  // against it — so an unknown condition fell through to the final `return`
+  // and drew a spinning sun, right next to the caption "Unknown weather".
+  // The icon is the part people actually look at. Draw the absence instead.
+  if (!Number.isFinite(code)) {
+    return { animation: '', tone: 'tone-cloud', icon: <CloudOff size={size} /> };
+  }
   if (isNight && (code === 0 || code === 1)) {
     return {
       animation: 'moon-pulse',

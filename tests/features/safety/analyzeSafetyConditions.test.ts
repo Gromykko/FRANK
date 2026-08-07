@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { analyzeSafetyConditions, resolveSectors } from '../../../src/features/safety/analyzeSafetyConditions';
+import { metSymbolToWmoCode } from '../../../src/features/forecast/weatherCodes';
 import { CURRENT_LOCATION } from '../../../src/config/locations';
 import type { HourlyData } from '../../../src/features/forecast/types';
 import type { SafetySettings } from '../../../src/features/safety/presets';
@@ -59,7 +60,10 @@ describe('analyzeSafetyConditions', () => {
   });
 
   it('rates the weather condition from the MET symbol_code', () => {
-    const withSymbol = (symbolCode: string) => ({ ...baseData, symbolCode });
+    // Mirror normalize.ts: weatherCode is ALWAYS derived from the symbol
+    // (NaN when the symbol is unrecognised). A fixture that pairs a symbol
+    // with an unrelated code tests a row the pipeline can never produce.
+    const withSymbol = (symbolCode: string) => ({ ...baseData, symbolCode, weatherCode: metSymbolToWmoCode(symbolCode) });
     // Thunder -> danger
     expect(analyzeSafetyConditions(withSymbol('heavyrainandthunder'), baseSettings).rating).toBe('danger');
     // Heavy rain -> danger
@@ -427,7 +431,8 @@ describe('rating combination rules', () => {
 // Weather severity gaps (beyond the cases already tested above).
 // ---------------------------------------------------------------------------
 describe('weather severity (additional symbol_code cases)', () => {
-  const withSymbol = (symbolCode: string) => ({ ...baseData, symbolCode });
+  // Mirror normalize.ts — see the note on the other withSymbol above.
+  const withSymbol = (symbolCode: string) => ({ ...baseData, symbolCode, weatherCode: metSymbolToWmoCode(symbolCode) });
 
   it('sleet family: caution unless heavy', () => {
     expect(analyzeSafetyConditions(withSymbol('sleet'), baseSettings).rating).toBe('caution');
@@ -445,9 +450,22 @@ describe('weather severity (additional symbol_code cases)', () => {
     expect(analyzeSafetyConditions(withSymbol('fog_night'), baseSettings).rating).toBe('caution');
   });
 
-  it('unknown symbol and unknown WMO fallback code default to safe', () => {
-    expect(analyzeSafetyConditions(withSymbol('sunshowersoffrogs'), baseSettings).rating).toBe('safe');
-    expect(analyzeSafetyConditions({ ...baseData, symbolCode: '', weatherCode: 42 }, baseSettings).rating).toBe('safe');
+  // Weather FRANK cannot identify must never produce an all-clear. This used
+  // to assert 'safe' — the engine's own header says unknown is the one verdict
+  // the app must never invent, and MET can ship a symbol we don't know at any
+  // time (a new code, a renamed variant).
+  it('unknown symbol and unknown WMO fallback code are reported as unassessable, not safe', () => {
+    const unknownSymbol = analyzeSafetyConditions(withSymbol('sunshowersoffrogs'), baseSettings);
+    expect(unknownSymbol.rating).toBe('caution');
+    expect(unknownSymbol.reasons.some((r) => /cannot clear/i.test(r.text))).toBe(true);
+
+    const unknownCode = analyzeSafetyConditions({ ...baseData, symbolCode: '', weatherCode: 42 }, baseSettings);
+    expect(unknownCode.rating).toBe('caution');
+    expect(unknownCode.reasons.some((r) => /cannot clear/i.test(r.text))).toBe(true);
+  });
+
+  it('a recognised symbol in otherwise-clear conditions still rates safe', () => {
+    expect(analyzeSafetyConditions(withSymbol('clearsky_day'), baseSettings).rating).toBe('safe');
   });
 
   it('legacy WMO fallback rates snow showers (85) as danger', () => {

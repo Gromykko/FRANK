@@ -18,6 +18,11 @@
     "jsx": "react-jsx",
 
     /* Linting */
+    // strictNullChecks is the one that matters here: without it `number | null`
+    // collapses to `number` and every "missing reading" type guard the app is
+    // built around is unenforced by the compiler. The last two data-integrity
+    // fixes in this repo were both absent-reading bugs of exactly that shape.
+    "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,

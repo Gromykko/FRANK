@@ -6,6 +6,7 @@ import { reviveReadings } from './normalize';
 const DEFAULT_FORECAST_WORKER_BASE = 'https://frank-forecast.alswatchs.workers.dev';
 const WEATHER_CACHE_KEY_PREFIX = 'frank_weather_data_v2';
 const WEATHER_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+const WORKER_FETCH_TIMEOUT_MS = 12 * 1000;
 
 const FORECAST_WORKER_BASE = (import.meta.env.VITE_FORECAST_WORKER_BASE ?? DEFAULT_FORECAST_WORKER_BASE).replace(/\/$/, '');
 
@@ -80,12 +81,21 @@ async function readWorkerCachedWeatherData(location: ForecastLocation, forceRefr
 
     const response = await fetch(`${FORECAST_WORKER_BASE}/forecast/${location.id}?${query.toString()}`, {
       cache: 'no-store',
+      // Kayakers open this on fjord-edge mobile signal, where a socket can
+      // stay open indefinitely without ever answering. Without a deadline the
+      // preferWorker path never falls through to the saved forecast and the
+      // app just spins — the one moment a cached answer matters most.
+      signal: AbortSignal.timeout(WORKER_FETCH_TIMEOUT_MS),
     });
 
     if (!response.ok) return null;
 
     const parsed = reviveReadings(await response.json());
-    if (isWeatherData(parsed) && hasCurrentForecastWindow(parsed)) {
+    // Same age policy as the local copy. Checking only for a future hour let a
+    // days-old payload through (the array still reaches forward), and it was
+    // then written to localStorage — where the local reader would immediately
+    // reject the very bytes the worker reader had just accepted.
+    if (isWeatherData(parsed) && isCacheFreshEnough(parsed)) {
       saveCachedWeatherData(parsed, location);
       return parsed;
     }

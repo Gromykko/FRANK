@@ -30,7 +30,10 @@ export const da: Record<string, string> = {
   'Limits are off — raw forecast only': 'Grænserne er slået fra — kun rå prognose',
   'Have fun out there': 'God tur derude',
   'Keep an eye out': 'Hold øje undervejs',
-  'Maybe skip today': 'Måske en dag at springe over',
+  // Now rendered directly under the big "BLIV I LAND" verdict rather than only
+  // to screen readers, so it has to back the verdict up instead of hedging it —
+  // "måske" (maybe) undercut the one call the app is firmest about.
+  'Save it for another day': 'Gem den til en anden dag',
   'Your personal limits are off. Use the raw forecast values and local judgement before launching.':
     'Dine personlige grænser er slået fra. Brug de rå prognosetal og lokal dømmekraft, før du tager på vandet.',
   'Limits are off. You are the captain now': 'Grænserne er slået fra. Du er kaptajnen nu',
@@ -75,6 +78,7 @@ export const da: Record<string, string> = {
   'Even the herring approve today': 'Selv sildene godkender i dag',
   'Grab the paddle before the weather changes its mind': 'Grib pagajen, før vejret ombestemmer sig',
   'No bad weather, only bad clothing': 'Der findes ikke dårligt vejr, kun dårligt tøj',
+  'Doable — but pick your moment': 'Til at gå til — men vælg dit tidspunkt',
   'The {0} is in a mood today': '{0} er i dårligt humør i dag',
   'Borderline. Very Jutland of it': 'På grænsen. Meget jysk af den',
   'Manageable — keep a cool head': 'Til at klare — hold hovedet koldt',
@@ -252,11 +256,18 @@ export const da: Record<string, string> = {
   'Current conditions': 'Aktuelle forhold',
   'Air': 'Luft',
   'Wind': 'Vind',
+  // Standalone label for the timeline cell's screen-reader readings (the
+  // lowercase 'gusts {0}' below is the inline snapshot form).
+  'Gusts': 'Vindstød',
   'Waves': 'Bølger',
   'Water': 'Vand',
   // "Niveau" not "Vandstand": the long label pushed the block range value
   // ("-0.01 til +0.33 m") into the sunrise/sunset cell on 390px phones.
   'Level': 'Niveau',
+  // Screen-reader-only labels for the sunrise/sunset cell, whose icons carry
+  // no accessible name (see ConditionsSnapshot).
+  'Sunrise': 'Solopgang',
+  'Sunset': 'Solnedgang',
   'gusts {0}': 'vindstød {0}',
   'gusts {0} max': 'vindstød {0} maks',
   '{0} to {1} m': '{0} til {1} m',

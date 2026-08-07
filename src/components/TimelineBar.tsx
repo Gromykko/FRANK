@@ -5,10 +5,12 @@ import { formatReading, formatSigned } from '../utils/number';
 import { blockHourRange } from '../features/forecast/blockHours';
 import { useLang } from '../i18n';
 import type { HourlyData } from '../features/forecast/types';
+import { RATING_WORD } from '../features/safety/analyzeSafetyConditions';
+import type { SafetyRating } from '../features/safety/analyzeSafetyConditions';
 
 interface TimelineBarProps {
   data: HourlyData[];
-  statuses: ('safe' | 'caution' | 'danger')[];
+  statuses: SafetyRating[];
   selectedIndex: number;
   onSelectIndex: (index: number) => void;
   startIndex: number;
@@ -16,7 +18,9 @@ interface TimelineBarProps {
 
 interface DayGroup {
   label: string;
-  hours: { data: HourlyData; actualIndex: number; status: string }[];
+  // Keep the rating union rather than widening to string — it's what lets the
+  // cell label reuse the app's shared RATING_WORD vocabulary.
+  hours: { data: HourlyData; actualIndex: number; status: SafetyRating }[];
 }
 
 const HOUR_CELL_WIDTH = 44;
@@ -514,7 +518,11 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
               {allHours.map((h) => (
                 <div key={h.actualIndex} className={meteogramCellClass(h)}>
                   <span className="meteogram-value">
-                    {formatReading(h.data.waveHeight, 1)}
+                    {/* 2dp, matching the threshold precision and every other
+                        wave surface. At 1dp both a safe 0.29 and a caution
+                        0.34 printed "0.3" against a 0.30 m limit — the digits
+                        contradicted the cell's own colour band. */}
+                    {formatReading(h.data.waveHeight, 2)}
                   </span>
                 </div>
               ))}
@@ -544,7 +552,9 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
               {allHours.map((h) => (
                 <div key={h.actualIndex} className={meteogramCellClass(h)}>
                   <span className="meteogram-value">
-                    {formatReading(h.data.tempWater, 0)}
+                    {/* 1dp: at 0dp both 9.5 °C (danger — below the 10 °C
+                        cold-shock line) and 10.4 °C (caution) printed "10". */}
+                    {formatReading(h.data.tempWater, 1)}
                   </span>
                 </div>
               ))}
@@ -565,8 +575,12 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
                 let target: number | null = null;
                 // No selection in the strip (pos === -1): both arrows land on
                 // the first cell instead of silently skipping it.
-                if (e.key === 'ArrowRight' || e.key === 'ArrowDown') target = pos === -1 ? 0 : Math.min(allHours.length - 1, pos + 1);
-                else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') target = Math.max(0, (pos === -1 ? 1 : pos) - 1);
+                // Horizontal listbox: Up/Down are deliberately NOT bound. They
+                // used to move the selection and preventDefault the event,
+                // which trapped a keyboard user inside ~130 cells with no way
+                // to scroll the page.
+                if (e.key === 'ArrowRight') target = pos === -1 ? 0 : Math.min(allHours.length - 1, pos + 1);
+                else if (e.key === 'ArrowLeft') target = Math.max(0, (pos === -1 ? 1 : pos) - 1);
                 else if (e.key === 'Home') target = 0;
                 else if (e.key === 'End') target = allHours.length - 1;
                 if (target === null) return;
@@ -582,7 +596,17 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
                 const timeLabel = isBlock
                   ? blockHourRange(hourData.time, hourData.blockSpanHours as number).short
                   : locationHourLabel(hourData.time);
-                const cellDescription = `${formatDateMedium(hourData.time)} ${timeLabel} - ${t(status).toUpperCase()}${hourData.isDay ? '' : ` ${t('(Night)')}`}${isBlock ? ` ${t('(Longer range, lower confidence)')}` : ''}`;
+                // The six data rows below the ribbon are bare divs of
+                // context-free numbers, so the readings were unreachable by
+                // screen reader — the cell label is the only place they can be
+                // announced. Same verdict vocabulary as the status bar.
+                const cellReadings = [
+                  `${t('Wind')} ${formatReading(hourData.windSpeed, 0)} m/s`,
+                  `${t('Gusts')} ${formatReading(hourData.windGust, 0)} m/s`,
+                  `${t('Waves')} ${formatReading(hourData.waveHeight, 2)} m`,
+                  `${t('Water')} ${formatReading(hourData.tempWater, 1)}°C`,
+                ].join(', ');
+                const cellDescription = `${formatDateMedium(hourData.time)} ${timeLabel} - ${t(RATING_WORD[status]).toUpperCase()}${hourData.isDay ? '' : ` ${t('(Night)')}`}${isBlock ? ` ${t('(Longer range, lower confidence)')}` : ''}. ${cellReadings}`;
                 return (
                   <button
                     key={`overlay-${actualIndex}`}

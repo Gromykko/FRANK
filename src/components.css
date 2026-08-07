@@ -133,7 +133,7 @@
 
 .day-tab-btn {
   background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
+  border: 1px solid var(--control-border);
   color: var(--text-muted);
   min-height: 44px;
   padding: 6px 16px;
@@ -322,6 +322,19 @@
   background: var(--primary) !important;
   color: var(--text-inverse) !important;
   font-weight: 600;
+}
+
+/* Roving keyboard focus signalled by an OUTLINE, not just the hover tint.
+   .is-selected sets the same background property at equal specificity and
+   wins on source order, so on the already-selected option — which is exactly
+   where the list opens — arrow-key focus had no visible indicator at all. */
+.custom-select-option.is-focused {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.custom-select-option.is-selected.is-focused {
+  outline-color: var(--text-inverse);
 }
 
 /* Scroll Navigation Chevrons */
@@ -805,6 +818,14 @@
   justify-content: space-between;
   align-items: center;
   cursor: pointer;
+  /* Also rendered as a real <button> (the charts disclosure), so reset the UA
+     button chrome and inherit typography rather than shrinking to 13px. */
+  width: 100%;
+  background: none;
+  border: none;
+  text-align: left;
+  font: inherit;
+  color: inherit;
   min-height: 62px;
   margin: -24px -24px 0 -24px;
   padding: 16px 24px;
@@ -871,6 +892,9 @@
   background: transparent;
   border: 2px solid var(--text-main);
   border-radius: 50%;
+  /* Keep the 24px ring visually — an invisible ::before extends the hit area
+     to 44px for cold, wet thumbs without disturbing the layout. */
+  position: relative;
   width: 24px;
   height: 24px;
   display: inline-flex;
@@ -884,6 +908,13 @@
   vertical-align: middle;
   padding: 0;
   position: relative;
+}
+
+/* Invisible 44px hit area around the 24px ring (see the rule above). */
+.settings-info-btn::before {
+  content: '';
+  position: absolute;
+  inset: -10px;
 }
 
 /* Instant tooltip: a native title waits out the OS hover delay, but a
@@ -1239,7 +1270,7 @@
   justify-content: space-between;
   gap: 10px;
   width: 100%;
-  border: 1px solid var(--panel-border);
+  border: 1px solid var(--control-border);
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-main);
@@ -1478,7 +1509,7 @@
   text-align: left;
   cursor: pointer;
   background: var(--bg-app);
-  border: 1px solid var(--panel-border);
+  border: 1px solid var(--control-border);
   border-radius: var(--radius-sm);
   color: var(--text-main);
   padding: 8px 12px;
@@ -1587,7 +1618,7 @@
   text-align: left;
   font-family: inherit;
   background: var(--bg-app);
-  border: 1px solid var(--panel-border);
+  border: 1px solid var(--control-border);
   border-radius: var(--radius-md);
   cursor: pointer;
   overflow: hidden;
@@ -1691,7 +1722,7 @@
   align-items: center;
   justify-content: center;
   background: var(--bg-app);
-  border: 1px solid var(--panel-border);
+  border: 1px solid var(--control-border);
   border-radius: var(--radius-md);
   color: var(--primary);
   cursor: pointer;
@@ -1735,8 +1766,10 @@
   top: 6px;
   right: 6px;
   flex: none;
-  width: 40px;
-  min-height: 40px;
+  /* The base rule sets 44px; the horizontal list is the ONLY mode ever
+     rendered, so this override was silently the real size everywhere. */
+  width: 44px;
+  min-height: 44px;
 }
 
 .tide-list.is-horizontal .tide-row {
@@ -1994,6 +2027,11 @@ button.legend-toggle.is-on {
   font-size: 11px;
   font-weight: 700;
   color: var(--text-inverse);
+  /* White on the light theme's --color-safe (#059669) is 3.77:1 — under AA for
+     11px text, and this label carries the launch window's start and end times.
+     The shadow lifts it without changing the bar colour. The sibling case is
+     already noted at .frank-mode-selected; this one was missed. */
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -2112,7 +2150,7 @@ button.legend-toggle.is-on {
   padding: 11px 0;
   background: transparent;
   color: var(--text-main);
-  border: 1px solid var(--panel-border);
+  border: 1px solid var(--control-border);
   border-radius: var(--radius-sm);
   font-weight: 700;
   font-size: 12px;
@@ -2279,8 +2317,9 @@ button.legend-toggle.is-on {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-areas:
-    'crt  display actions'
-    'name .       location';
+    'crt     display actions'
+    'verdict verdict verdict'
+    'name    .       location';
   column-gap: 16px;
   /* Air between the CRT/buttons row and the nameplate/location row — the
      location switcher is a tap target directly under the theme button, so
@@ -2367,8 +2406,11 @@ button.legend-toggle.is-on {
   min-width: 0;
   min-height: 58px;
   display: flex;
+  /* Two stacked lines: the verdict in words, then FRANK's phrase. */
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 1px;
   overflow: hidden;
   padding: 8px 12px;
   border-radius: 10px;
@@ -2382,7 +2424,62 @@ button.legend-toggle.is-on {
   letter-spacing: 0.05em;
 }
 
+/* The answer to "can I paddle?", in words — the one thing the app exists to
+   say, and until now the only thing it said exclusively to screen readers.
+   Full-width row so it can never truncate. The word carries the verdict, so
+   the colour (--frank-phosphor, swapped by .rating-*) is reinforcement, never
+   the sole signal. */
+.frank-verdict {
+  grid-area: verdict;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 10px 9px;
+  border-radius: 10px;
+  background: var(--crt-screen);
+  border: 1px solid #05080d;
+  color: var(--frank-phosphor);
+  box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.6);
+  font-family: 'VT323', var(--font-mono);
+  font-size: 32px;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: center;
+  text-shadow: 0 0 8px color-mix(in srgb, currentColor 60%, transparent);
+}
+
+/* The one-line "why" under the verdict, in the body font so it reads as prose
+   rather than instrument type. */
+.frank-verdict-sub {
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  opacity: 0.85;
+  text-shadow: none;
+}
+
+/* Own line so the marquee's padding-left: 100% travels this row's width, and
+   so a scrolling phrase can never displace the verdict above it. */
+.frank-phrase-line {
+  position: relative;
+  display: block;
+  max-width: 100%;
+  width: 100%;
+  overflow: hidden;
+  text-align: center;
+  font-size: 15px;
+  line-height: 1.2;
+  opacity: 0.82;
+}
+
 .frank-display-text {
+  display: inline-block;
   white-space: nowrap;
   text-shadow: 0 0 8px color-mix(in srgb, currentColor 60%, transparent);
 }
@@ -2397,8 +2494,8 @@ button.legend-toggle.is-on {
 /* A phrase that overflows becomes a slow walking line: enters from the right
    edge (padding-left: 100% of the display) and exits fully left (-100% of its
    own width). Duration is set inline, proportional to the travel distance. */
-.frank-display.is-marquee {
-  justify-content: flex-start;
+.frank-display.is-marquee .frank-phrase-line {
+  text-align: left;
 }
 
 .frank-display.is-marquee .frank-display-text {
@@ -2553,7 +2650,7 @@ button.legend-toggle.is-on {
   appearance: none;
   background: none;
   border: none;
-  min-height: 36px;
+  min-height: 44px;
   padding: 5px 10px;
   position: relative;
   display: flex;
@@ -2616,8 +2713,11 @@ button.legend-toggle.is-on {
 }
 
 .frank-cache-detail {
-  font-size: 10px;
-  opacity: 0.85;
+  /* This is the line that tells the user their numbers are partly stale
+     ("waves & water from an earlier update · marine service busy"). At 10px
+     with opacity 0.85 it measured 3.87:1 dark / 4.26:1 light — the app's own
+     honesty caveat rendered below AA in both themes. */
+  font-size: 11px;
 }
 
 .frank-cache::before {
@@ -2662,8 +2762,13 @@ button.legend-toggle.is-on {
   text-transform: uppercase;
   letter-spacing: 0.18em;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* No overflow/ellipsis here: the same element also carries
+     .location-switcher, whose `overflow: visible` (needed so the dropdown
+     isn't clipped) is a later rule at equal specificity and always won — so
+     the ellipsis never rendered and the label just overflowed the header.
+     Truncation moved inward to .location-switcher-btn, which has no dropdown
+     to clip. */
+  min-width: 0;
 }
 
 /* Location switcher: the readout becomes a button + city picker when more than
@@ -2685,6 +2790,10 @@ button.legend-toggle.is-on {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  /* Truncate here rather than on .frank-location (see the note there). */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   cursor: pointer;
   font: inherit;
   letter-spacing: inherit;
@@ -2821,7 +2930,27 @@ button.legend-toggle.is-on {
   .frank-display {
     min-height: 56px;
     padding: 6px 10px;
-    font-size: 21px;
+    font-size: 18px;
+  }
+
+  /* The verdict stays the biggest thing on a phone; the phrase gives way. */
+  .frank-verdict {
+    font-size: 28px;
+  }
+
+  .frank-phrase-line {
+    font-size: 13px;
+  }
+
+  /* Four uppercase labels across four 1fr tracks: at 11px + 0.08em tracking
+     "CUSTOM" overran its cell and the bank spilled past the panel at 320px. */
+  .frank-mode-label {
+    letter-spacing: 0.03em;
+  }
+
+  .frank-mode {
+    padding-left: 4px;
+    padding-right: 4px;
   }
 
   .frank-device .header-icon-btn {
@@ -2892,10 +3021,14 @@ button.legend-toggle.is-on {
   text-align: right;
 }
 
-/* Ultra-narrow screens (Galaxy Fold cover display and similar): the two-column
-   grid can no longer hold the nowrap values without them colliding, so stack
-   to a single readable column instead. */
-@media (max-width: 349px) {
+/* Narrow screens: the two-column grid can no longer hold the nowrap values
+   without them colliding, so stack to a single readable column instead.
+   Measured at 360px (Pixel/Galaxy class — the most common Android width, well
+   inside the old 349px cutoff): "VIND 6.9 m/s vindstød 11.8" overflowed its
+   cell by 35px and overlapped the wind-direction arrow by 21px, with calm
+   single-digit data. Storm values are wider on both sides, and the gust
+   reading is the number that decides whether someone launches. */
+@media (max-width: 400px) {
   .snapshot-grid {
     grid-template-columns: 1fr;
     row-gap: 10px;
@@ -3091,7 +3224,8 @@ button.legend-toggle.is-on {
   .snow-spin svg,
   .spinner,
   .gerty-eyes,
-  .header-icon-btn:disabled svg {
+  .header-icon-btn:disabled svg,
+  .header-icon-btn[aria-disabled="true"] svg {
     animation: none !important;
   }
 

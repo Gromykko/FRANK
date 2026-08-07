@@ -20,12 +20,20 @@ export default function LocationSwitcher({ label }: { label: string }) {
   useEffect(() => {
     if (!open) return;
     const onOutside = (e: PointerEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+      if (rootRef.current?.contains(e.target as Node)) return;
+      setOpen(false);
+      // Opening moved focus INTO the menu, so closing this way unmounts the
+      // focused button and focus falls to <body> — the user's next Tab
+      // restarts from the top of the document. Same restore as Escape.
+      triggerRef.current?.focus();
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setOpen(false);
         triggerRef.current?.focus();
+      } else if (e.key === 'Tab') {
+        // Menu pattern: Tab closes and lets focus move on naturally.
+        setOpen(false);
       }
     };
     document.addEventListener('pointerdown', onOutside);

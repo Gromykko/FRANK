@@ -334,3 +334,34 @@ describe('findLaunchWindows — longer-range block windows', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Water-level preference must FAIL CLOSED on missing data. Every other filter
+// in the app treats "no reading" as "cannot clear"; 'incoming' used to be the
+// one that quietly said yes.
+// ---------------------------------------------------------------------------
+describe('tidePreference with no water-level readings', () => {
+  const noTide = (hours: number) =>
+    generateData(hours).map((h) => ({ ...h, tideLevel: Number.NaN }));
+
+  it("'incoming' offers no windows when the tide series is missing", () => {
+    const settings = { ...baseSettings, tidePreference: 'incoming', minDuration: 1 } as SafetySettings;
+    // NaN <= NaN is false, so the old rejection never fired and the loop fell
+    // through to `return true` — recommending a rising-water launch built on a
+    // water level FRANK never read.
+    expect(findLaunchWindows(noTide(6), settings, 0)).toEqual([]);
+  });
+
+  it("'high' and 'low' already fail closed the same way", () => {
+    for (const tidePreference of ['high', 'low'] as const) {
+      const settings = { ...baseSettings, tidePreference, minDuration: 1 } as SafetySettings;
+      expect(findLaunchWindows(noTide(6), settings, 0)).toEqual([]);
+    }
+  });
+
+  it("'incoming' still offers a window when the water IS genuinely rising", () => {
+    const settings = { ...baseSettings, tidePreference: 'incoming', minDuration: 1 } as SafetySettings;
+    const rising = generateData(6).map((h, i) => ({ ...h, tideLevel: i * 0.05 }));
+    expect(findLaunchWindows(rising, settings, 0).length).toBeGreaterThan(0);
+  });
+});

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getCacheStatusView } from '../../../src/features/forecast/cacheStatusView';
+import { getCacheStatusView, deriveCacheStatus } from '../../../src/features/forecast/cacheStatusView';
 
 type Health = NonNullable<Parameters<typeof getCacheStatusView>[0]['cacheHealth']>;
 const view = (cacheHealth: Partial<Health> | undefined, refreshing = false) =>
@@ -65,5 +65,58 @@ describe('getCacheStatusView', () => {
   it('a routine refresh is a neutral one-liner - "Refreshing…", no second line, no amber', () => {
     const v = view({ status: 'current', degradedSources: ['water', 'waves'], providerBusy: true, lastAttemptAt: '' }, true);
     expect(v).toMatchObject({ label: 'Refreshing…', detail: '', tone: 'neutral' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deriveCacheStatus owns the wall-clock check. getCacheStatusView above is
+// pure presentation and trusts whatever status it is handed; the question
+// "did we actually reach the worker?" can only be answered against the clock.
+// ---------------------------------------------------------------------------
+describe('deriveCacheStatus freshness', () => {
+  const NOW = Date.parse('2026-08-07T14:50:00Z');
+  const at = (msAgo: number) => new Date(NOW - msAgo).toISOString();
+  const derive = (checkedMsAgo: number, fetchedMsAgo = checkedMsAgo, status = 'current' as const) =>
+    deriveCacheStatus({
+      sources: {
+        fetchedAt: at(fetchedMsAgo),
+        cacheHealth: { status, lastAttemptAt: at(checkedMsAgo) },
+      } as never,
+      refreshing: false,
+      online: true,
+      nowMs: NOW,
+    });
+
+  it('a recent check stays green', () => {
+    expect(derive(5 * 60_000).view.tone).toBe('fresh');
+  });
+
+  it('a check far older than the worker cadence is NOT green, whatever the payload claims', () => {
+    // The worker re-checks every 10 minutes. A stamp hours old means the
+    // CLIENT never reached it — the browser fell back to its saved copy, which
+    // still carries the last good payload's status:'current'. navigator.onLine
+    // stays true behind a captive portal or a dead worker, so age is the only
+    // honest test. This rendered a green "Checked · 09:14" at 14:50.
+    const v = derive(5.5 * 60 * 60_000);
+    expect(v.view.tone).not.toBe('fresh');
+    expect(v.forecastAgeLabel).toBe('6 h');
+  });
+
+  it('past the 6-hour mark it also raises the page-level banner', () => {
+    // The tone demotes as soon as the check looks unreached; the louder amber
+    // banner still waits for the forecast itself to be genuinely old.
+    expect(derive(5.5 * 60 * 60_000).showRefreshWarning).toBe(false);
+    expect(derive(7 * 60 * 60_000).showRefreshWarning).toBe(true);
+  });
+
+  it('the boundary is the worker cadence plus slack, not the forecast age', () => {
+    expect(derive(20 * 60_000).view.tone).toBe('fresh');
+    expect(derive(30 * 60_000).view.tone).not.toBe('fresh');
+  });
+
+  it('a genuinely fresh check on an older forecast build stays green', () => {
+    // The worker checked 2 min ago and found nothing new to build. That is
+    // healthy, not stale — only the CHECK age may demote the tone.
+    expect(derive(2 * 60_000, 40 * 60_000).view.tone).toBe('fresh');
   });
 });

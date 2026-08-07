@@ -6,7 +6,7 @@ import {
   ChevronDown,
   ChevronUp,
 } from 'lucide-react';
-import { analyzeSafetyConditions } from './features/safety/analyzeSafetyConditions';
+import { analyzeSafetyConditions, RATING_WORD } from './features/safety/analyzeSafetyConditions';
 import { getWeatherDescription } from './features/forecast/weatherCodes';
 import { getDisplayHourlyData } from './features/forecast/displayData';
 import { deriveCacheStatus } from './features/forecast/cacheStatusView';
@@ -177,20 +177,14 @@ export default function App() {
     settings.enableCustomWindDirs,
     settings.daylightOnly,
   ].some(Boolean);
-  const safetyBadgeTitle = t(!activeSafetyChecks
-    ? 'Weather'
-    : safety.rating === 'safe'
-      ? 'Good to go'
-      : safety.rating === 'caution'
-        ? 'Take care'
-        : 'Rough');
+  const safetyBadgeTitle = t(!activeSafetyChecks ? 'Weather' : RATING_WORD[safety.rating]);
   const safetyBadgeSubtitle = t(!activeSafetyChecks
     ? 'Limits are off — raw forecast only'
     : safety.rating === 'safe'
       ? 'Have fun out there'
       : safety.rating === 'caution'
         ? 'Keep an eye out'
-        : 'Maybe skip today');
+        : 'Save it for another day');
   const safetyDisplayRating = activeSafetyChecks ? safety.rating : 'caution';
   const safetyReasons = activeSafetyChecks
     ? safety.reasons
@@ -217,10 +211,13 @@ export default function App() {
   // empty string; the date utils themselves take ISO strings directly.
   const formatSunTime = (isoStr: string) => (isoStr ? formatTime(isoStr) : '');
 
-  // A missing wind direction must not become `rotate(NaNdeg)` or "NaN°".
+  // A missing wind direction must not become `rotate(NaNdeg)` or "NaN°" — and
+  // it must not become 0 either. Zero is a real bearing (wind from due north),
+  // so the fallback drew a crisp, confident arrow beside a label that honestly
+  // read "–". null means "draw no arrow".
   const windRotation = Number.isFinite(currentHourData.windDirection)
     ? Math.round(currentHourData.windDirection)
-    : 0;
+    : null;
   const weatherDesc = t(getWeatherDescription(currentHourData.weatherCode));
 
   const formatWindDirection = (degrees: number) =>
@@ -289,19 +286,19 @@ export default function App() {
           </div>
         )}
         {error && (
-          <div className="forecast-warning">
+          <div className="forecast-warning" role="alert">
             <AlertTriangle size={15} />
             <span>{t(error)}</span>
           </div>
         )}
         {workerOutdated && (
-          <div className="forecast-warning">
+          <div className="forecast-warning" role="alert">
             <AlertTriangle size={15} />
             <span>{t('The forecast is briefly out of date while FRANK updates behind the scenes. Please check back in a few minutes.')}</span>
           </div>
         )}
         {showCacheRefreshWarning && (
-          <div className="forecast-warning">
+          <div className="forecast-warning" role="alert">
             <AlertTriangle size={15} />
             {providerBusy ? (
               <span>{t("{0} has been busy for a while, so the forecast hasn't updated since {1}. FRANK keeps retrying automatically — you are seeing the last good forecast.", busyServiceName, formatDateTime(weatherData.sources.fetchedAt))}</span>
@@ -361,18 +358,17 @@ export default function App() {
 
           {/* ⑥ Detailed charts — power-user graphs (collapsed) */}
           <div className="panel charts-disclosure-section">
-              <div
+              {/* A real <button>, not a div with role/tabIndex and a
+                  hand-rolled Enter/Space handler — the browser gives all of
+                  that for free, and the hand-rolled version read `showDetailedCharts`
+                  from a stale closure while the click path used the updater
+                  form. Matches the sibling disclosure in SafetyLimitsPanel. */}
+              <button
+                type="button"
                 className={`panel-collapse-header module-head ${showDetailedCharts ? 'is-open' : ''}`}
                 onClick={() => setShowDetailedCharts((current) => !current)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    setShowDetailedCharts(!showDetailedCharts);
-                  }
-                }}
-                role="button"
-                tabIndex={0}
                 aria-expanded={showDetailedCharts}
+                aria-controls="charts-disclosure-body"
               >
                 <span className="charts-disclosure-copy">
                   <h2 className="charts-disclosure-title">
@@ -383,10 +379,10 @@ export default function App() {
                 <div className="settings-collapse-chevron">
                   {showDetailedCharts ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
                 </div>
-              </div>
+              </button>
 
               {showDetailedCharts && (
-                <div className="charts-disclosure-body">
+                <div className="charts-disclosure-body" id="charts-disclosure-body">
                   {/* Scoped boundary: React.lazy REJECTS (not just suspends) when
                       a hashed chunk 404s after a redeploy, so without this an
                       optional power-user panel would take the safety verdict,
@@ -416,7 +412,7 @@ export default function App() {
             {t('Advisory only — FRANK does not replace official warnings, club rules, or your own look at the water. You are responsible for the decision to launch.')}
           </p>
           <p className="footer-text">
-            {t('Weather data by MET Norway')} (<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">CC BY 4.0</a>){t(', waves & water by DMI ({0}) for {1}.', dmiModels, weatherData.sources.location?.areaName ?? CURRENT_LOCATION.areaName)}{weatherData.warnings ? <> {t('Warnings by')} <a href="https://meteoalarm.org" target="_blank" rel="noreferrer">MeteoAlarm</a>/DMI (CC BY 4.0).</> : ''} {t('Forecast built {0}. Worker checked {1}.', formatDateTime(weatherData.sources.fetchedAt), formatDateTime(cacheCheckedAt))}
+            {t('Weather data by MET Norway')} (<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">CC BY 4.0</a>){t(', waves & water by DMI ({0}) for {1}.', dmiModels, weatherData.sources.location?.areaName ?? CURRENT_LOCATION.areaName)}{weatherData.warnings?.length ? <> {t('Warnings by')} <a href="https://meteoalarm.org" target="_blank" rel="noreferrer">MeteoAlarm</a>/DMI (CC BY 4.0).</> : ''} {t('Forecast built {0}. Worker checked {1}.', formatDateTime(weatherData.sources.fetchedAt), formatDateTime(cacheCheckedAt))}
             <span className="footer-build">{appBuildLabel}</span>
           </p>
         </div>

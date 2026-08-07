@@ -5,10 +5,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Least privilege at the top; the deploy credentials are granted only to the
+# job that deploys. Workflow-level `pages: write` + `id-token: write` handed
+# them to the build job too — the job that runs `npm ci`, and therefore
+# arbitrary dependency lifecycle scripts.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -47,6 +49,10 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

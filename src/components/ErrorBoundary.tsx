@@ -67,7 +67,13 @@ export default class ErrorBoundary extends Component<Props, State> {
     }
     try {
       for (const key of Object.keys(localStorage)) {
-        if (key.startsWith('ffkajak_') || key.startsWith('frank_')) {
+        // Scoped to what the button actually promises ("erase your limits").
+        // The broader `frank_` prefix also owned `frank_location` and
+        // `frank_weather_data_v2`, so a Vejle paddler who tapped reset after a
+        // crash silently landed back on Horsens — a different fjord with
+        // different sector caps — AND lost the offline forecast, at the
+        // shoreline, on a bad connection. Theme is cosmetic and safe to clear.
+        if (key.startsWith('ffkajak_') || key === 'frank_theme_mode') {
           localStorage.removeItem(key);
         }
       }

@@ -34,6 +34,13 @@
   --bg-gradient: #0c1117;
   --panel-bg: #161d27;
   --panel-border: rgba(255, 255, 255, 0.06);
+  /* --panel-border is a hairline DIVIDER and stays whisper-quiet. A tappable
+     control needs a boundary you can actually find in bright sun on a wet
+     screen: the divider token measures ~1.2:1 against the panel, where WCAG
+     1.4.11 asks 3:1 for a UI component boundary — so every button, tab, and
+     select outline was effectively invisible outdoors, which is this app's
+     entire stated context. Controls point at this token instead. */
+  --control-border: rgba(255, 255, 255, 0.20);
   --text-main: #e8ecf1;
   --text-muted: #7a8ba0;
   --text-inverse: #0c1117;
@@ -118,6 +125,7 @@
     --bg-gradient: #f5f7fa;
     --panel-bg: #ffffff;
     --panel-border: rgba(0, 0, 0, 0.1);
+    --control-border: rgba(0, 0, 0, 0.28);
     --text-main: #1a2332;
     --text-muted: #566577;
     --text-inverse: #ffffff;
@@ -142,6 +150,7 @@
   --bg-gradient: #f5f7fa;
   --panel-bg: #ffffff;
   --panel-border: rgba(0, 0, 0, 0.1);
+  --control-border: rgba(0, 0, 0, 0.28);
   --text-main: #1a2332;
   --text-muted: #566577;
   --text-inverse: #ffffff;
@@ -169,6 +178,7 @@
   --bg-gradient: #0c1117;
   --panel-bg: #161d27;
   --panel-border: rgba(255, 255, 255, 0.06);
+  --control-border: rgba(255, 255, 255, 0.20);
   --text-main: #e8ecf1;
   --text-muted: #7a8ba0;
   --text-inverse: #0c1117;
@@ -284,6 +294,10 @@ h1, h2, h3, h4, h5, h6 {
   display: flex;
   align-items: center;
   gap: 8px;
+  /* A flex row whose children (the heading text + the "?" button) default to
+     min-width: auto and therefore refuse to shrink — the row overran the panel
+     at 320px. */
+  min-width: 0;
   margin: 0;
 }
 
@@ -323,7 +337,7 @@ h1, h2, h3, h4, h5, h6 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--panel-border);
+  border: 1px solid var(--control-border);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-main);
@@ -342,12 +356,16 @@ h1, h2, h3, h4, h5, h6 {
   outline-offset: 2px;
 }
 
-.header-icon-btn:disabled {
+/* aria-disabled, not :disabled — the button stays focusable so activating
+   it never drops keyboard focus to <body> (see StatusBar.tsx). */
+.header-icon-btn:disabled,
+.header-icon-btn[aria-disabled="true"] {
   cursor: wait;
   opacity: 0.55;
 }
 
-.header-icon-btn:disabled svg {
+.header-icon-btn:disabled svg,
+.header-icon-btn[aria-disabled="true"] svg {
   animation: spin 0.9s linear infinite;
 }
 

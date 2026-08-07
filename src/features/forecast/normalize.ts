@@ -308,7 +308,12 @@ export function aggregateBlockMarine(
     tideLevel: centre.tideLevel ?? NO_READING,
     tideLevelMin: Math.min(...tideLevels),
     tideLevelMax: Math.max(...tideLevels),
-    tempWater: temps.reduce((a, b) => a + b, 0) / temps.length,
+    // Coldest sample, not the mean — matching waveHeight's Math.max. For both
+    // readings the hazard sits at one end of the range, and the block's
+    // decision value has to be the end that can hurt you: a 6-hour block of
+    // 9.8/9.9/10.1/10.2/10.3/10.4 averages 10.12 and rates caution, while its
+    // coldest hour is below the 10 °C cold-shock danger line.
+    tempWater: Math.min(...temps),
     tempWaterMin: Math.min(...temps),
     tempWaterMax: Math.max(...temps),
     currentSpeed: centre.currentSpeed ?? NO_READING,

@@ -5,6 +5,16 @@ import type { ForecastLocation, WindSector } from '../../config/locations';
 
 export type SafetyRating = 'safe' | 'caution' | 'danger';
 
+// The one place a rating becomes a word for the user. Shared so the header and
+// the timeline's screen-reader labels can't drift apart — they used to, and a
+// screen-reader user arrowing the timeline heard "DANGER" while the status bar
+// said "Rough": two vocabularies for one verdict.
+export const RATING_WORD: Record<SafetyRating, string> = {
+  safe: 'Good to go',
+  caution: 'Take care',
+  danger: 'Rough',
+};
+
 // Below this sustained wind speed, wind-against-water-level chop is negligible,
 // so the tide-conflict rule stays quiet. A gentle breeze opposing the tide
 // doesn't build the short steep waves the rule warns about.
@@ -304,7 +314,23 @@ export function analyzeSafetyConditions(
   // the human-readable description (via the symbol's mapped WMO code). No custom
   // derivation, no lightning probability, no configurable rain limit. The
   // weather_code path is a fallback for any pre-symbol_code cache entry.
-  if (!data.symbolCode && !isReading(data.weatherCode)) missing.push('weather');
+  // Unknown weather is not safe weather — on either path.
+  //
+  // The old guard (`!data.symbolCode && !isReading(data.weatherCode)`) was
+  // unreachable in production: normalize.ts drops any MET entry without a
+  // symbol_code, so every live row HAS one and the first half was never true.
+  // An unrecognised symbol therefore fell through severityFromMetSymbol's
+  // closing `return 'safe'` straight into a genuine all-clear that read
+  // "Everything's within your limits — …, unknown weather."
+  //
+  // On the live path `weatherCode` is metSymbolToWmoCode(symbolCode), i.e. NaN
+  // exactly when the symbol was unrecognised. On the legacy pre-symbol_code
+  // path the code is real but may not be in our table, which defaults to
+  // 'safe' — so check for presence there instead.
+  const weatherKnown = data.symbolCode
+    ? isReading(data.weatherCode)
+    : data.weatherCode in WEATHER_CODE_SEVERITY;
+  if (!weatherKnown) missing.push('weather');
   const weatherSeverity = data.symbolCode
     ? severityFromMetSymbol(data.symbolCode)
     : WEATHER_CODE_SEVERITY[data.weatherCode] ?? 'safe';

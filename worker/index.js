@@ -79,6 +79,13 @@ const PAYLOAD_VERSION = 5;
 // real rebuild still writes immediately, and a user's manual refresh still
 // re-stamps so the button feels responsive.
 const CHECKED_STAMP_MIN_WRITE_INTERVAL_MS = 60 * 60 * 1000;
+// ...but `?refresh=1` is unauthenticated, so letting EVERY manual check bypass
+// the throttle hands anyone a 1-write-per-minute-per-location lever over the
+// same budget (4 locations x 1440 = 5760 writes/day against an allowance of
+// 1000). Manual gets its own, shorter throttle instead of a free pass: the
+// response already carries this check's real timestamp either way, so the
+// button still feels live — only the PERSISTED stamp is coarsened.
+const MANUAL_STAMP_MIN_WRITE_INTERVAL_MS = 10 * 60 * 1000;
 
 const activeRefreshes = new Map();
 
@@ -109,7 +116,7 @@ function buildMetUrl(location) {
 function corsHeaders() {
   return {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Max-Age': '86400',
   };
@@ -121,6 +128,7 @@ function jsonResponse(body, status = 200, extraHeaders = {}) {
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
       ...corsHeaders(),
       ...extraHeaders,
     },
@@ -135,18 +143,13 @@ function retryDelay(attempt) {
   return RETRY_BASE_DELAY_MS * 2 ** attempt + Math.floor(Math.random() * 500);
 }
 
-async function fetchWithTimeout(url, init = {}) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
-  try {
-    return await fetch(url, {
-      ...init,
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeoutId);
-  }
+// AbortSignal.timeout stays armed for the whole exchange, body included. A
+// manual controller cleared in a `finally` would disarm the moment headers
+// arrive, leaving every `.json()`/`.text()` below able to hang indefinitely on
+// an upstream that answers 200 and then stalls the stream — which in the cron's
+// sequential loop starves every location after it.
+function fetchWithTimeout(url, init = {}) {
+  return fetch(url, { ...init, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
 }
 
 async function fetchJsonWithRetries(url, label) {
@@ -360,7 +363,7 @@ async function fetchMetWeather(env, location) {
 // combined object where every hour has both weather and marine data).
 const MARINE_INGREDIENT_KEY_PREFIX = 'frank-marine-ingredient';
 
-export async function fetchMarineSeriesWithFallback(env, location, kind, instance, parameters, mapFeatures, seedSeries) {
+export async function fetchMarineSeriesWithFallback(env, location, kind, instance, parameters, mapFeatures, seedSeries, seedInstance) {
   const key = `${MARINE_INGREDIENT_KEY_PREFIX}:${kind}:${location.id}`;
 
   let stored = null;
@@ -385,7 +388,13 @@ export async function fetchMarineSeriesWithFallback(env, location, kind, instanc
       return { series: stored.series, instance: { collection: stored.collection, id: stored.id }, fallback: true, ...extra };
     }
     if (Array.isArray(seedSeries) && seedSeries.length > 0) {
-      return { series: seedSeries, instance, fallback: true, ...extra };
+      // `seedInstance`, NOT `instance`: the seed came from the cached payload,
+      // i.e. the PREVIOUS run. Reporting the run we just failed to fetch wrote
+      // a false provenance into cacheHealth.marineInstances, and both
+      // marineInstancesEqual (which then thinks the cache is current) and
+      // marineRunAgeMs (which then suppresses the catalog probe for 5h) read
+      // it back as fact. Fall back to `instance` only if we have nothing.
+      return { series: seedSeries, instance: seedInstance ?? instance, fallback: true, ...extra };
     }
     return null;
   };
@@ -442,6 +451,9 @@ export function deriveMarineSeedsFromPayload(cached) {
       waveDirection: row.waveDirection,
       wavePeriod: row.wavePeriod,
     })),
+    // Which model runs these seeds actually came from, so a seed fallback can
+    // report its real provenance instead of the run it failed to fetch.
+    instances: cached?.sources?.cacheHealth?.marineInstances,
   };
 }
 
@@ -478,10 +490,11 @@ async function fetchWarnings(location, seedWarnings, now = Date.now()) {
 }
 
 async function buildForecastCache(env, location, marineInstances, marineSeeds, warningSeed) {
+  const seedInstances = marineSeeds?.instances;
   const results = await Promise.allSettled([
     fetchMetWeather(env, location),
-    fetchMarineSeriesWithFallback(env, location, 'water', marineInstances.water, DKSS_PARAMETERS, mapWaterFeatures, marineSeeds?.water),
-    fetchMarineSeriesWithFallback(env, location, 'waves', marineInstances.waves, WAM_PARAMETERS, mapWaveFeatures, marineSeeds?.waves),
+    fetchMarineSeriesWithFallback(env, location, 'water', marineInstances.water, DKSS_PARAMETERS, mapWaterFeatures, marineSeeds?.water, seedInstances?.water),
+    fetchMarineSeriesWithFallback(env, location, 'waves', marineInstances.waves, WAM_PARAMETERS, mapWaveFeatures, marineSeeds?.waves, seedInstances?.waves),
     fetchWarnings(location, warningSeed),
   ]);
 
@@ -622,10 +635,6 @@ function buildCacheHealth(status, data, options = {}) {
     lastAttemptAt: options.preserveAttemptAt && previousHealth?.lastAttemptAt
       ? previousHealth.lastAttemptAt
       : now.toISOString(),
-    lastSuccessfulBuildAt:
-      status === 'current' && data?.sources?.fetchedAt
-        ? data.sources.fetchedAt
-        : previousHealth?.lastSuccessfulBuildAt ?? data?.sources?.fetchedAt,
     ...(marineInstances ? { marineInstances } : {}),
     ...(weatherExpires ? { weatherExpires } : {}),
     ...(weatherLastModified ? { weatherLastModified } : {}),
@@ -776,10 +785,11 @@ async function _refreshForecastCache(env, location, options = {}) {
       // is throttled. Nothing about the forecast itself has changed, so a
       // skipped write costs the stored stamp some precision and nothing else.
       const storedStampMs = Date.parse(cachedHealth?.lastAttemptAt ?? '');
-      const stampIsStale =
-        !Number.isFinite(storedStampMs) ||
-        Date.now() - storedStampMs >= CHECKED_STAMP_MIN_WRITE_INTERVAL_MS;
-      if (stampIsStale || options.reason === 'manual') {
+      const stampAgeMs = Date.now() - storedStampMs;
+      const minIntervalMs = options.reason === 'manual'
+        ? MANUAL_STAMP_MIN_WRITE_INTERVAL_MS
+        : CHECKED_STAMP_MIN_WRITE_INTERVAL_MS;
+      if (!Number.isFinite(storedStampMs) || stampAgeMs >= minIntervalMs) {
         await writeCachedForecast(env, location, checkedCache);
       }
       return checkedCache;
@@ -880,13 +890,21 @@ async function handleForecastRequest(request, env, ctx, locationId) {
         reason: 'manual',
         minIntervalMs: MANUAL_CHECK_MIN_INTERVAL_MS,
       }));
+      // Only re-stamp a HEALTHY cache. Advancing lastAttemptAt while keeping a
+      // 'stale' status re-dated the previous failure, so the client rendered
+      // "the forecast could not be refreshed on the last try (14:35)" against a
+      // time at which nothing had been tried yet. The failure's own timestamp
+      // is the truthful one; the background rebuild will move it when it
+      // actually completes.
+      const cachedHealth = cached.sources?.cacheHealth;
+      const failed = cachedHealth?.status === 'stale' || cachedHealth?.status === 'fallback';
       return jsonResponse({
         ...cached,
         sources: {
           ...cached.sources,
           cacheHealth: {
-            ...cached.sources?.cacheHealth,
-            lastAttemptAt: new Date().toISOString(),
+            ...cachedHealth,
+            ...(failed ? {} : { lastAttemptAt: new Date().toISOString() }),
             checkedBy: 'manual',
           },
         },

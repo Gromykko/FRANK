@@ -9,10 +9,10 @@ import {
 } from '../features/safety/presets';
 import type { SafetySettings } from '../features/safety/presets';
 import { floorCaution } from '../features/safety/presets';
-import { CURRENT_LOCATION } from '../config/locations';
+import { CURRENT_LOCATION, DEFAULT_LOCATION_ID } from '../config/locations';
 import type { ForecastLocation } from '../config/locations';
 import { readStorage } from '../utils/storage';
-import { roundToDecimals } from '../utils/number';
+import { clampNumber, roundToDecimals } from '../utils/number';
 
 export type { SafetySettings } from '../features/safety/presets';
 
@@ -82,25 +82,58 @@ export function healSectorCautions(s: SafetySettings): SafetySettings {
 // reports "Good to go" — so each one falls back to its default instead.
 // Rounding here also kills the 0.1 + 0.2 = 0.30000000000000004 artifact that
 // derived caps otherwise carry into the reason text and back into storage.
-const NUMERIC_LIMITS: { key: keyof SafetySettings; decimals: number }[] = [
-  { key: 'maxWindSpeedSafe', decimals: 1 },
-  { key: 'maxWindSpeedCaution', decimals: 1 },
-  { key: 'minWaterTempSafe', decimals: 1 },
-  { key: 'minWaterTempCaution', decimals: 1 },
-  { key: 'maxWaveHeightSafe', decimals: 2 },
-  { key: 'maxWaveHeightCaution', decimals: 2 },
-  { key: 'gustMargin', decimals: 1 },
-  { key: 'waveCautionMargin', decimals: 2 },
-  { key: 'minDuration', decimals: 0 },
+//
+// `min`/`max` mirror the bounds the Stepper controls already enforce. Type
+// alone was not enough: any FINITE number used to pass, so a stored
+// `maxWindSpeedSafe: 999` (a stale profile, a hand-edit, a future writer that
+// skips the Stepper) made `windSpeed >= 999` permanently false. The check reads
+// as enabled, `activeSafetyChecks` sees nothing switched off, and FRANK reports
+// "Good to go" in a gale. Clamping closes the door the NaN guard left open.
+const NUMERIC_LIMITS: { key: keyof SafetySettings; decimals: number; min: number; max: number }[] = [
+  { key: 'maxWindSpeedSafe', decimals: 1, min: 0, max: 25 },
+  { key: 'maxWindSpeedCaution', decimals: 1, min: 0, max: 35 },
+  { key: 'minWaterTempSafe', decimals: 1, min: 0, max: 25 },
+  { key: 'minWaterTempCaution', decimals: 1, min: 0, max: 25 },
+  { key: 'maxWaveHeightSafe', decimals: 2, min: 0.1, max: 3.0 },
+  { key: 'maxWaveHeightCaution', decimals: 2, min: 0.1, max: 5.0 },
+  { key: 'gustMargin', decimals: 1, min: 1, max: 10 },
+  { key: 'waveCautionMargin', decimals: 2, min: 0.05, max: 2.0 },
+  { key: 'minDuration', decimals: 0, min: 1, max: 12 },
 ];
+
+// Every boolean toggle, for the same reason as the numbers above. `??` in the
+// engine only rescues null/undefined, so a stored `0` or `""` reads as "check
+// disabled" — and with the other toggles still on, `activeSafetyChecks` never
+// shows the "limits are off" escape hatch. Only the falsy direction is
+// dangerous, and it was the one direction nothing guarded.
+const BOOLEAN_FLAGS = [
+  'enableWindSpeed', 'enableWindGust', 'enableWaveHeight', 'enableWaveCaution',
+  'enableWaterTemp', 'enableCustomWindDirs', 'daylightOnly',
+] as const;
 
 function coerceNumericLimits(s: SafetySettings): SafetySettings {
   const out = { ...s };
-  for (const { key, decimals } of NUMERIC_LIMITS) {
-    const value = out[key];
-    (out[key] as number) = typeof value === 'number' && Number.isFinite(value)
-      ? roundToDecimals(value, decimals)
-      : (DEFAULT_SETTINGS[key] as number);
+  for (const { key, decimals, min, max } of NUMERIC_LIMITS) {
+    // clampNumber already returns the fallback for non-finite input.
+    (out[key] as number) = roundToDecimals(
+      clampNumber(out[key] as number, min, max, DEFAULT_SETTINGS[key] as number),
+      decimals
+    );
+  }
+  for (const flag of BOOLEAN_FLAGS) {
+    if (typeof out[flag] !== 'boolean') (out[flag] as boolean) = DEFAULT_SETTINGS[flag];
+  }
+  // Angles are the one field `??` in resolveSectors can't defend: a string
+  // survives it and `"abc" >= 90` is false, so the sector silently never
+  // matches and its stricter directional cap vanishes. Drop anything that
+  // isn't a real bearing so the curated geometry is used instead.
+  if (out.sectorAngles) {
+    const sectorAngles: NonNullable<SafetySettings['sectorAngles']> = {};
+    for (const [id, angle] of Object.entries(out.sectorAngles)) {
+      const inRange = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v < 360;
+      if (inRange(angle?.min) && inRange(angle?.max)) sectorAngles[id] = { min: angle.min, max: angle.max };
+    }
+    out.sectorAngles = sectorAngles;
   }
   // Sector caps come from the same untrusted blob and feed the same comparisons.
   const sectorLimits: SafetySettings['sectorLimits'] = {};
@@ -128,8 +161,18 @@ export function healSettings(s: SafetySettings): SafetySettings {
   const healed = healSectorCautions(coerceNumericLimits(s));
   return {
     ...healed,
-    maxWindSpeedCaution: floorCaution(healed.maxWindSpeedSafe, healed.maxWindSpeedCaution),
-    maxWaveHeightCaution: Math.max(healed.maxWaveHeightSafe, healed.maxWaveHeightCaution),
+    // DERIVED, not merely floored. The settings panel, the ZoneBar, and the
+    // manual all state one rule — "danger = safe limit + your margin", with no
+    // separate danger control for average wind or waves. Storing the danger cap
+    // independently and only flooring it at safe + 0.5 let the two drift: a
+    // profile carrying safe 5.5 / danger 12 / margin 2.5 was TOLD 8.0 was the
+    // red line while the engine still waited for 12. Deriving it here gives the
+    // threshold one source of truth. Every built-in preset already satisfies
+    // this exactly (5.5+2.5=8, 4+2=6, 7+3=10; 0.3+0.3=0.6, 0.2+0.2=0.4,
+    // 0.5+0.3=0.8), so no preset user's verdict moves — only a drifted stored
+    // profile is pulled back, and always toward the stricter number.
+    maxWindSpeedCaution: floorCaution(healed.maxWindSpeedSafe, healed.maxWindSpeedSafe + healed.gustMargin),
+    maxWaveHeightCaution: Math.max(healed.maxWaveHeightSafe, healed.maxWaveHeightSafe + healed.waveCautionMargin),
     minWaterTempCaution: Math.min(healed.minWaterTempSafe, healed.minWaterTempCaution),
   };
 }
@@ -142,9 +185,21 @@ export function parseStoredSettings(json: string): SafetySettings {
 
 export function useSettings() {
   const customProfileRef = useRef<SafetySettings | null>(null);
+  // A stored profile we could not parse must NOT be silently replaced. The
+  // debounced write below fires on mount too, so falling back to defaults used
+  // to stamp them over the unreadable blob 250ms later: a beginner's 4.0 m/s
+  // cap became the 5.5 m/s default, permanently, with no trace. Keep the bytes
+  // so the ErrorBoundary's "Reset saved settings" stays the only thing that
+  // erases a profile.
+  const loadFailedRef = useRef(false);
 
   const [settings, setSettings] = useState<SafetySettings>(() => {
-    const savedCustom = readStorage(CUSTOM_SETTINGS_STORAGE_KEY) ?? readStorage(LEGACY_CUSTOM_SETTINGS_STORAGE_KEY);
+    // The unsuffixed legacy keys predate multi-location and can only have been
+    // written by the Horsens-only build. Reading them for every city
+    // transplanted inner-fjord caps onto open-water sectors (Aarhus Bugt).
+    const legacyOwnsThisLocation = CURRENT_LOCATION.id === DEFAULT_LOCATION_ID;
+    const savedCustom = readStorage(CUSTOM_SETTINGS_STORAGE_KEY)
+      ?? (legacyOwnsThisLocation ? readStorage(LEGACY_CUSTOM_SETTINGS_STORAGE_KEY) : null);
     if (savedCustom) {
       try {
         customProfileRef.current = { ...parseStoredSettings(savedCustom), tripMode: 'custom' };
@@ -154,12 +209,14 @@ export function useSettings() {
       customProfileRef.current = getPresetSettings('custom');
     }
 
-    const saved = readStorage(SETTINGS_STORAGE_KEY) ?? readStorage(LEGACY_SETTINGS_STORAGE_KEY);
+    const saved = readStorage(SETTINGS_STORAGE_KEY)
+      ?? (legacyOwnsThisLocation ? readStorage(LEGACY_SETTINGS_STORAGE_KEY) : null);
     if (saved) {
       try {
         const parsed = parseStoredSettings(saved);
         return parsed.tripMode === 'custom' ? parsed : getPresetSettings(parsed.tripMode);
       } catch {
+        loadFailedRef.current = true;
         return DEFAULT_SETTINGS;
       }
     }
@@ -167,7 +224,10 @@ export function useSettings() {
   });
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
+    // Never persist over a profile we failed to read (see loadFailedRef).
+    if (loadFailedRef.current) return;
+
+    const write = () => {
       try {
         localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
         if (settings.tripMode === 'custom') {
@@ -176,9 +236,20 @@ export function useSettings() {
       } catch {
         // Ignore storage failures so slider interaction stays responsive.
       }
-    }, 250);
+    };
 
-    return () => window.clearTimeout(timeoutId);
+    const timeoutId = window.setTimeout(write, 250);
+    // An edit made in the last 250ms before the phone is pocketed (tab hidden,
+    // bfcache, iOS killing the page) would otherwise never reach storage —
+    // exactly when someone adjusts a limit at the launch site. setTripMode
+    // already flushes for this reason; the main write needs it too.
+    const flush = () => { window.clearTimeout(timeoutId); write(); };
+    window.addEventListener('pagehide', flush);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      window.removeEventListener('pagehide', flush);
+    };
   }, [settings]);
 
   const saveSettings = useCallback((newSettings: SafetySettings) => {

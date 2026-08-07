@@ -77,7 +77,11 @@ export function findLaunchWindows(
         return endpoints.every((hour) => hour.tideLevel <= -0.1);
       case 'incoming':
         for (let i = start; i < end; i++) {
-          if (!data[i + 1] || data[i + 1].tideLevel <= data[i].tideLevel) {
+          // Negated `>` rather than `<=`: with no water-level reading both
+          // sides are NaN, and `NaN <= NaN` is false — the window would have
+          // passed, asserting rising water FRANK never read. The 'high' and
+          // 'low' cases already reject NaN for the same reason.
+          if (!data[i + 1] || !(data[i + 1].tideLevel > data[i].tideLevel)) {
             return false;
           }
         }
@@ -90,8 +94,12 @@ export function findLaunchWindows(
 
   const isSafe = (idx: number): boolean => {
     if (idx < startIndex) return false;
+    // Only a true hourly row is "next hour". At the hourly/outlook seam the
+    // next entry is a 6-hour block whose tide is its centre sample, hours away
+    // — using it can invert rising/falling and invent (or hide) a chop warning.
     const nextHour = data[idx + 1];
-    return analyzeSafetyConditions(data[idx], settings, nextHour ? nextHour.tideLevel : undefined).rating === 'safe';
+    const nextTide = nextHour && !nextHour.blockSpanHours ? nextHour.tideLevel : undefined;
+    return analyzeSafetyConditions(data[idx], settings, nextTide).rating === 'safe';
   };
 
   // First longer-range block index (blocks are appended after the hourly range).

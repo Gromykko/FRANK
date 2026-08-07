@@ -111,8 +111,16 @@ export default function StatusBar({
     };
 
     measure();
+    // Observe BOTH: the display for layout changes, and the measure span
+    // itself — its width changes when the VT323 webfont swaps in (font-display
+    // is swap), and that is the element whose width decides the marquee. With
+    // only the display observed, the first measurement was taken in the wider
+    // fallback mono font and never revisited, so a phrase that now fits kept
+    // scrolling forever (and, the other way, a long Danish phrase measured
+    // narrow was clipped and never scrolled at all).
     const observer = new ResizeObserver(measure);
     observer.observe(display);
+    observer.observe(measureEl);
     return () => observer.disconnect();
   }, [phrase]);
 
@@ -125,6 +133,13 @@ export default function StatusBar({
           <div
             className={`frank-cache ${cacheClass}`}
             aria-busy={refreshing}
+            // role is required: aria-label is PROHIBITED on a generic element,
+            // so screen readers dropped it — and with it the whole long-form
+            // honesty sentence ("You're offline, so FRANK is showing your last
+            // saved forecast from …"), which is computed and rendered nowhere
+            // else. `group` rather than `status` so it doesn't compete with the
+            // verdict's live region for announcements.
+            role="group"
             aria-label={cacheAriaLabel}
           >
             <span className="frank-cache-text">
@@ -151,15 +166,21 @@ export default function StatusBar({
                 {/* Live regions announce CONTENT changes, not aria-label
                     changes - the announcement must be a real text node */}
                 <span className="sr-only">{t('{0}. {1}. FRANK says: {2}.', srTitle, srSubtitle, phrase)}</span>
-                <span
-                  className="frank-display-text"
-                  style={isMarquee ? { animationDuration: `${marqueeDuration}s` } : undefined}
-                  aria-hidden="true"
-                >
-                  {phrase}
-                </span>
-                <span ref={measureRef} className="frank-display-measure" aria-hidden="true">
-                  {phrase}
+                {/* The verdict, in words. It was computed and passed in as
+                    srTitle but rendered ONLY inside .sr-only — so the literal
+                    answer to "can I paddle?" reached screen readers and nobody
+                    else, while the largest text on screen was a joke. The
+                    phrase keeps its slot underneath. */}
+                <span className="frank-phrase-line" aria-hidden="true">
+                  <span
+                    className="frank-display-text"
+                    style={isMarquee ? { animationDuration: `${marqueeDuration}s` } : undefined}
+                  >
+                    {phrase}
+                  </span>
+                  <span ref={measureRef} className="frank-display-measure">
+                    {phrase}
+                  </span>
                 </span>
               </div>
             </div>
@@ -179,8 +200,13 @@ export default function StatusBar({
                 <button
                   type="button"
                   className="header-icon-btn header-refresh-btn"
-                  onClick={onRefresh}
-                  disabled={refreshing}
+                  // aria-disabled, not disabled: disabling the element the user
+                  // just activated makes the browser blur it, dropping keyboard
+                  // focus to <body> and losing a screen reader's place at the
+                  // top of the page. The refresh state is already announced via
+                  // aria-busy on the cache group above.
+                  onClick={() => { if (!refreshing) onRefresh(); }}
+                  aria-disabled={refreshing}
                   aria-label={t('Refresh forecast')}
                 >
                   <RefreshCw size={16} />
@@ -195,6 +221,16 @@ export default function StatusBar({
                 </button>
               </div>
             </div>
+
+            {/* Full-width row of its own. Squeezed into the middle column
+                between the CRT and the button cluster it had ~96px on a
+                390px phone and truncated to "BLIV I…" — the one line that
+                must never be cut. aria-hidden because the live region above
+                already announces it in full. */}
+            <span className="frank-verdict" aria-hidden="true">
+              {srTitle}
+              <span className="frank-verdict-sub">{srSubtitle}</span>
+            </span>
 
             <span className="frank-nameplate" aria-hidden="true">FRANK</span>
 

@@ -73,3 +73,67 @@ describe('parseStoredSettings', () => {
     expect(parsed.maxWindSpeedCaution).toBeGreaterThanOrEqual(parsed.maxWindSpeedSafe + 0.5);
   });
 });
+
+// ---------------------------------------------------------------------------
+// A stored profile is untrusted input: it outlives app versions, can be
+// hand-edited, and `{...DEFAULT_SETTINGS, ...JSON.parse(blob)}` will happily
+// overwrite a number with anything. Each case below silently DISABLED a safety
+// check before it was guarded.
+// ---------------------------------------------------------------------------
+describe('parseStoredSettings hardening', () => {
+  const parse = (o: Record<string, unknown>) => parseStoredSettings(JSON.stringify({ tripMode: 'custom', ...o }));
+
+  it('clamps an absurd-but-finite threshold instead of accepting it', () => {
+    // 999 is finite, so the type guard passed it. `windSpeed >= 999` is then
+    // permanently false: the check reads as ON, nothing warns, and FRANK
+    // reports "Good to go" in a gale.
+    const parsed = parse({ maxWindSpeedSafe: 999 });
+    expect(parsed.maxWindSpeedSafe).toBeLessThanOrEqual(25);
+    expect(analyzeSafetyConditions({ ...baseData, windSpeed: 30 }, parsed).rating).toBe('danger');
+  });
+
+  it('derives the wind danger cap from safe + gustMargin so the panel cannot promise a threshold the engine ignores', () => {
+    // The settings panel and the manual both state one rule: danger = safe
+    // limit + your margin. Storing the danger cap independently let a profile
+    // display "8.0" while the engine still waited for 12.
+    const parsed = parse({ maxWindSpeedSafe: 5.5, gustMargin: 2.5, maxWindSpeedCaution: 12 });
+    expect(parsed.maxWindSpeedCaution).toBe(8);
+    expect(analyzeSafetyConditions({ ...baseData, windSpeed: 10 }, parsed).rating).toBe('danger');
+  });
+
+  it('derives the wave danger cap the same way', () => {
+    const parsed = parse({ maxWaveHeightSafe: 0.3, waveCautionMargin: 0.3, maxWaveHeightCaution: 2.5 });
+    expect(parsed.maxWaveHeightCaution).toBeCloseTo(0.6, 10);
+  });
+
+  it('restores a boolean toggle stored as a falsy non-boolean', () => {
+    // `settings.enableWindSpeed ?? true` only rescues null/undefined, so a
+    // stored 0 turned the wind check off — while the other toggles stayed on,
+    // so the "limits are off" notice never appeared either.
+    const parsed = parse({ enableWindSpeed: 0 });
+    expect(parsed.enableWindSpeed).toBe(true);
+    expect(analyzeSafetyConditions({ ...baseData, windSpeed: 30 }, parsed).rating).toBe('danger');
+  });
+
+  it('drops a sector angle that is not a real bearing, falling back to curated geometry', () => {
+    // `angle?.min ?? sector.min` lets a string through, and `"abc" >= 90` is
+    // false — so the sector never matched any wind and its stricter
+    // directional cap silently vanished.
+    const parsed = parse({
+      enableCustomWindDirs: true,
+      sectorAngles: { onshore: { min: 'abc', max: 'def' } },
+    });
+    expect(parsed.sectorAngles?.onshore).toBeUndefined();
+    // 90 deg is inside the curated onshore sector (45-135); its cap still bites.
+    const verdict = analyzeSafetyConditions(
+      { ...baseData, windDirection: 90, windSpeed: onshore.cautionLimit },
+      parsed
+    );
+    expect(verdict.rating).toBe('danger');
+  });
+
+  it('rejects an out-of-range bearing too', () => {
+    const parsed = parse({ sectorAngles: { onshore: { min: -10, max: 400 } } });
+    expect(parsed.sectorAngles?.onshore).toBeUndefined();
+  });
+});

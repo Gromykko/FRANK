@@ -12,9 +12,13 @@ const PHRASES: Record<SafetyRating, string[]> = {
     'Smooth as smørrebrød out there',
     'Even the herring approve today',
     'Grab the paddle before the weather changes its mind',
+    // Moved out of the caution pool: "there's no bad weather" is a harmless
+    // quip next to an all-clear, but under a CAUTION verdict it dismissed the
+    // very warning it was sitting beneath.
+    'No bad weather, only bad clothing',
   ],
   caution: [
-    'No bad weather, only bad clothing',
+    'Doable — but pick your moment',
     'The {0} is in a mood today',
     'Borderline. Very Jutland of it',
     'Manageable — keep a cool head',

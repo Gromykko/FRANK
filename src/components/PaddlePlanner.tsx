@@ -269,12 +269,18 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
     }
   };
 
+  // A window whose indices no longer resolve (a refresh shortened the payload
+  // between the launchWindows memo and this render) used to render as null
+  // while still being counted, so the header could read "(4)" above three
+  // cards. Filter once and drive both the count and the list from it.
+  const renderableWindows = windows.filter((slot) => data[slot.startIndex] && data[slot.endIndex]);
+
   const windowsPanel = (
     <div className="panel launch-panel">
       <div className="launch-results-head">
         <div className="launch-panel-header module-head">
           <h2 className="launch-panel-title">
-            <CalendarClock size={16} color="var(--primary)" /> {t('Available Launch Windows')} ({windows.length})
+            <CalendarClock size={16} color="var(--primary)" /> {t('Available Launch Windows')} ({renderableWindows.length})
           </h2>
 
           <div className="view-toggle" role="group" aria-label={t('Launch window view')}>
@@ -293,7 +299,7 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
           </div>
         </div>
 
-            {windows.length === 0 ? (
+            {renderableWindows.length === 0 ? (
               <div className="launch-empty">
                 {t(statuses.some((s, i) => i >= startIndex && s === 'safe')
                   ? 'No windows match your criteria — there are safe hours, but not a long enough run for your minimum duration and water-level preference. Try another trip mode or loosen the Advanced settings.'
@@ -312,7 +318,7 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                 onMouseLeave={endListDrag}
                 onClickCapture={suppressDraggedClick}
               >
-                {windows.map((slot) => {
+                {renderableWindows.map((slot) => {
                   const startHour = data[slot.startIndex];
                   const endHour = data[slot.endIndex];
                   if (!startHour || !endHour) return null;
@@ -365,7 +371,12 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                   const windHi = winds.length ? Math.round(Math.max(...winds)) : NaN;
                   const waveLo = waveLos.length ? Math.min(...waveLos) : NaN;
                   const waveHi = waveHis.length ? Math.max(...waveHis) : NaN;
-                  const windShare = windLo === windHi ? formatReading(windHi, 0) : `${formatReading(windLo, 0)}–${formatReading(windHi, 0)}`;
+                  // Compare the FORMATTED values, as waveShare below does: comparing
+                  // the raw numbers meant NaN !== NaN with no wind readings, so the
+                  // card rendered "––– m/s" where waves correctly showed a single "–".
+                  const windShare = formatReading(windLo, 0) === formatReading(windHi, 0)
+                    ? formatReading(windHi, 0)
+                    : `${formatReading(windLo, 0)}–${formatReading(windHi, 0)}`;
                   const waveShare = formatReading(waveLo, 2) === formatReading(waveHi, 2)
                     ? formatReading(waveHi, 2)
                     : `${formatReading(waveLo, 2)}–${formatReading(waveHi, 2)}`;
@@ -502,9 +513,11 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                   <div className="gantt-axis" aria-hidden="true">
                     <span className="gantt-day" />
                     <div className="gantt-axis-track">
-                      {[0, 6, 12, 18, 24].map((t) => (
-                        <span key={t} className="gantt-tick" style={{ left: `${(t / 24) * 100}%` }}>
-                          {String(t).padStart(2, '0')}
+                      {/* `hour`, not `t` — that shadowed the translate function
+                          from useLang() for the whole block. */}
+                      {[0, 6, 12, 18, 24].map((hour) => (
+                        <span key={hour} className="gantt-tick" style={{ left: `${(hour / 24) * 100}%` }}>
+                          {String(hour).padStart(2, '0')}
                         </span>
                       ))}
                     </div>

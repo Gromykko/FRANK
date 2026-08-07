@@ -269,7 +269,13 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
     Math.ceil(Math.max(
       windEnabled ? windDanger + 1 : 0,
       gustEnabled ? gustCeil + 1 : 0,
-      ...chartData.map((d) => d.gustBand?.[1] ?? 0),
+      // gustBand alone was not enough: it is null whenever EITHER wind or gust
+      // is missing, so the only data term dropped out exactly when gust was
+      // absent — and the sustained-wind series was never considered at all.
+      // An 18 m/s hour with no gust reading then left the domain at 10 and
+      // Recharts clipped the wind line clean off the top of the plot, with no
+      // limit lines drawn (showLimits defaults off) to hint it was off-scale.
+      ...chartData.map((d) => Math.max(d.gustBand?.[1] ?? 0, d.windDisplay ?? 0)),
     ) / 5) * 5,
   );
   const waveAxisMax = Math.max(

@@ -63,7 +63,9 @@ export interface WindSector {
 }
 
 const FORECAST_LOCATIONS = locations as ForecastLocation[];
-const DEFAULT_LOCATION_ID = 'horsens';
+// Also the only city the app supported before it became multi-location, so it
+// is the one location the unsuffixed legacy storage keys can have belonged to.
+export const DEFAULT_LOCATION_ID = 'horsens';
 const LOCATION_STORAGE_KEY = 'frank_location';
 
 function getForecastLocation(id = DEFAULT_LOCATION_ID): ForecastLocation {
