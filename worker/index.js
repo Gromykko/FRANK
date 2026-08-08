@@ -50,12 +50,31 @@ const CRON_FETCH_TIMEOUT_MS = 50_000;
 // between locations, well inside the 10-minute cron period.
 const CRON_TICK_BUDGET_MS = 5 * 60 * 1000;
 
-// How stale the freshest-should-be location may get before /health reports a
-// failure for an external uptime monitor to catch. The cron runs every 10 min,
-// so 40 min is four missed ticks — long enough never to false-alarm on one slow
-// upstream, short enough that the 11-hour silent stall of 2026-08-08 would have
-// paged within the hour instead of being spotted in the UI the next morning.
-const HEALTH_MAX_STALE_MS = 40 * 60 * 1000;
+// /health judges TWO different clocks, because "the worker is dead" and "the
+// data is old" are different failures with different normal ranges. The first
+// version of this measured only `fetchedAt` and was simply wrong:
+//
+//   lastAttemptAt = when the Worker last CHECKED upstream.   -> liveness
+//   fetchedAt     = when it last successfully REBUILT.       -> data age
+//
+// A Worker that checks every 10 minutes and finds nothing new is perfectly
+// healthy, and `fetchedAt` legitimately does not move: `cacheAlreadyCurrent`
+// deliberately skips the rebuild while MET's Expires window holds and DMI's run
+// ids are unchanged. MET's Expires is consistently ~30 min, so a 40-minute bound
+// on `fetchedAt` left one cron tick of headroom and would have false-alarmed on
+// an ordinary quiet half hour.
+//
+// Liveness is the signal that actually caught nothing on 2026-08-08 (the cron
+// stalled and lastAttemptAt froze for 11 hours). The persisted stamp is written
+// at most every 15 min on a 10-min grid, so ~30 min is normal; 60 min is four
+// missed ticks past that and still pages within the hour of a real stall.
+const HEALTH_MAX_CHECK_AGE_MS = 60 * 60 * 1000;
+
+// Data age is the backstop for "checking fine, but every rebuild fails" — a
+// state the status field alone under-reports, since one transient failure should
+// not page anyone. Far above any plausible MET cadence, so only a genuine
+// multi-hour build failure trips it.
+const HEALTH_MAX_DATA_AGE_MS = 3 * 60 * 60 * 1000;
 const MAX_FETCH_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 1_500;
 const MANUAL_CHECK_MIN_INTERVAL_MS = 60 * 1000;
@@ -1068,16 +1087,26 @@ async function healthPayload(env) {
   // Deliberately external rather than self-reported: a cron that has stopped
   // firing cannot notice that it stopped. The watcher has to live outside.
   const now = Date.now();
-  const ages = entries.map((entry) => {
-    const fetchedMs = Date.parse(entry.fetchedAt ?? '');
-    return {
-      id: entry.id,
-      ageMs: Number.isFinite(fetchedMs) ? now - fetchedMs : Number.POSITIVE_INFINITY,
-    };
-  });
-  const stalled = ages.filter((a) => a.ageMs > HEALTH_MAX_STALE_MS).map((a) => a.id);
-  const oldestAgeMs = ages.reduce((worst, a) => Math.max(worst, a.ageMs), 0);
+  const age = (iso) => {
+    const ms = Date.parse(iso ?? '');
+    return Number.isFinite(ms) ? now - ms : Number.POSITIVE_INFINITY;
+  };
+  const ages = entries.map((entry) => ({
+    id: entry.id,
+    // Data age: when this location's forecast was last BUILT.
+    ageMs: age(entry.fetchedAt),
+    // Liveness: when the Worker last CHECKED upstream for this location.
+    checkAgeMs: age(entry.cacheHealth?.lastAttemptAt ?? entry.fetchedAt),
+  }));
+
+  const notChecking = ages.filter((a) => a.checkAgeMs > HEALTH_MAX_CHECK_AGE_MS).map((a) => a.id);
+  const notRebuilding = ages.filter((a) => a.ageMs > HEALTH_MAX_DATA_AGE_MS).map((a) => a.id);
+  const stalled = [...new Set([...notChecking, ...notRebuilding])];
+  const worst = (key) => ages.reduce((acc, a) => Math.max(acc, a[key]), 0);
+  const oldestAgeMs = worst('ageMs');
+  const oldestCheckAgeMs = worst('checkAgeMs');
   const ok = stalled.length === 0;
+  const asMin = (ms) => (Number.isFinite(ms) ? Math.round(ms / 60000) : null);
 
   return {
     ok,
@@ -1085,8 +1114,15 @@ async function healthPayload(env) {
     checkedAt: new Date().toISOString(),
     // Flat, machine-readable fields first so a monitor can key on them without
     // walking the per-location detail below.
-    oldestAgeMin: Number.isFinite(oldestAgeMs) ? Math.round(oldestAgeMs / 60000) : null,
-    staleAfterMin: Math.round(HEALTH_MAX_STALE_MS / 60000),
+    oldestCheckAgeMin: asMin(oldestCheckAgeMs),
+    checkStaleAfterMin: Math.round(HEALTH_MAX_CHECK_AGE_MS / 60000),
+    oldestAgeMin: asMin(oldestAgeMs),
+    dataStaleAfterMin: Math.round(HEALTH_MAX_DATA_AGE_MS / 60000),
+    // Which clock tripped, so the alert email says what to look at.
+    reason: ok ? null : [
+      ...(notChecking.length ? [`not checking: ${notChecking.join(', ')}`] : []),
+      ...(notRebuilding.length ? [`not rebuilding: ${notRebuilding.join(', ')}`] : []),
+    ].join(' | '),
     stalled,
     locations: entries,
     ages,
@@ -1131,32 +1167,33 @@ function formatAge(ageMs) {
 
 async function handleStatusRequest(env) {
   const health = await healthPayload(env);
-  const ageById = new Map(health.ages.map((a) => [a.id, a.ageMs]));
-  const staleAfterMs = HEALTH_MAX_STALE_MS;
+  const byId = new Map(health.ages.map((a) => [a.id, a]));
+
+  // Two columns for two clocks, each judged against its own budget — a single
+  // "age" column conflated "the Worker is dead" with "MET has published nothing
+  // new lately", which are a crisis and a quiet Tuesday respectively.
+  const level = (ms, budget) => (ms > budget ? 'bad' : ms > budget * 0.75 ? 'warn' : 'good');
 
   const rows = health.locations.map((loc) => {
-    const ageMs = ageById.get(loc.id) ?? Number.POSITIVE_INFINITY;
+    const a = byId.get(loc.id) ?? { ageMs: Number.POSITIVE_INFINITY, checkAgeMs: Number.POSITIVE_INFINITY };
     const h = loc.cacheHealth ?? {};
     const degraded = (h.degradedSources ?? []).join(', ');
-    // Amber at half the stale budget: "still fine, but drifting" is the state
-    // worth seeing BEFORE the alarm, which is the whole point of a panel.
-    const level = ageMs > staleAfterMs ? 'bad' : ageMs > staleAfterMs / 2 ? 'warn' : 'good';
     const runs = h.marineInstances
       ? `${escapeHtml(h.marineInstances.water?.id ?? '—')}<br><span class="dim">${escapeHtml(h.marineInstances.waves?.id ?? '—')}</span>`
       : '—';
     return `<tr>
       <td><strong>${escapeHtml(loc.areaName)}</strong><br><span class="dim">${escapeHtml(loc.id)}</span></td>
-      <td class="${level}"><strong>${escapeHtml(formatAge(ageMs))}</strong></td>
+      <td class="${level(a.checkAgeMs, HEALTH_MAX_CHECK_AGE_MS)}"><strong>${escapeHtml(formatAge(a.checkAgeMs))}</strong><br><span class="dim">${escapeHtml(h.checkedBy ?? '—')}</span></td>
+      <td class="${level(a.ageMs, HEALTH_MAX_DATA_AGE_MS)}"><strong>${escapeHtml(formatAge(a.ageMs))}</strong></td>
       <td>${escapeHtml(h.status ?? (loc.hasCache ? 'unknown' : 'NO CACHE'))}${h.providerBusy ? '<br><span class="warn">provider busy</span>' : ''}</td>
       <td>${degraded ? `<span class="warn">${escapeHtml(degraded)}</span>` : '<span class="dim">none</span>'}</td>
       <td class="dim mono">${runs}</td>
-      <td class="dim mono">${escapeHtml((h.lastAttemptAt ?? '').replace('T', ' ').replace(/\.\d+Z$/, 'Z'))}<br>${escapeHtml(h.checkedBy ?? '—')}</td>
     </tr>`;
   }).join('');
 
   const banner = health.ok
-    ? '<div class="banner good">ALL LOCATIONS CURRENT</div>'
-    : `<div class="banner bad">STALE — ${escapeHtml(health.stalled.join(', '))}</div>`;
+    ? '<div class="banner good">WORKER LIVE · ALL LOCATIONS CURRENT</div>'
+    : `<div class="banner bad">ATTENTION — ${escapeHtml(health.reason ?? health.stalled.join(', '))}</div>`;
 
   return htmlResponse(`<!doctype html>
 <html lang="en"><head>
@@ -1179,21 +1216,32 @@ async function handleStatusRequest(env) {
   td { padding:10px 10px 10px 0; border-bottom:1px solid rgba(255,255,255,.06); vertical-align:top }
   .good { color:#34d399 } .warn { color:#fbbf24 } .bad { color:#f87171 }
   .dim { color:#7a8ba0 } .mono { font-size:12px }
+  .hdr-sub { font-weight:400; text-transform:none; letter-spacing:0; opacity:.7 }
+  footer p { margin:0 0 8px }
   footer { margin-top:20px; color:#7a8ba0; font-size:12px; max-width:900px }
   a { color:#4b9eff }
 </style></head><body>
 <h1>FRANK · forecast worker</h1>
 ${banner}
 <table>
-  <tr><th>Location</th><th>Data age</th><th>Status</th><th>Degraded</th><th>Water / wave run</th><th>Last check</th></tr>
+  <tr><th>Location</th><th>Last check<br><span class="hdr-sub">worker alive?</span></th><th>Data age<br><span class="hdr-sub">rebuilt when?</span></th><th>Status</th><th>Degraded</th><th>Water / wave run</th></tr>
   ${rows}
 </table>
 <footer>
-  Stale after <strong>${escapeHtml(health.staleAfterMin)} min</strong> · oldest now
-  <strong>${escapeHtml(health.oldestAgeMin ?? '—')} min</strong> · cron runs every 10 min ·
-  page reloads every 30s.<br>
-  This page is for reading. The alarm your uptime monitor should poll is
-  <a href="/health">/health</a>, which returns 503 when stale.
+  <p><strong>Last check</strong> is the liveness signal: the Worker asks MET and DMI
+  every 10 minutes whether anything is new. Alarms past
+  <strong>${escapeHtml(health.checkStaleAfterMin)} min</strong> (currently
+  ${escapeHtml(health.oldestCheckAgeMin ?? '—')} min at worst). This is the one that
+  matters — a Worker that has stopped asking is broken.</p>
+  <p><strong>Data age</strong> is when the forecast was last rebuilt, and it is
+  <em>normal</em> for this to sit still: MET's own Expires header says the forecast is
+  valid for ~30 minutes, so between reissues there is genuinely nothing new to build.
+  Only alarms past <strong>${escapeHtml(health.dataStaleAfterMin / 60)} h</strong>
+  (currently ${escapeHtml(health.oldestAgeMin ?? '—')} min at worst), which would mean
+  checks are succeeding but every rebuild is failing.</p>
+  <p>Page reloads every 30s. This page is for reading — the alarm your uptime monitor
+  should poll is <a href="/health">/health</a>, which returns 503 with a
+  <code>reason</code> when either clock trips.</p>
 </footer>
 </body></html>
 `);
