@@ -131,4 +131,16 @@ describe('deriveCacheStatus freshness', () => {
     expect(old.showRefreshWarning).toBe(true);
     expect(old.forecastAgeLabel).toBe('7 h');
   });
+
+  it('an alive but non-updating Worker is still caught', () => {
+    // The gap the contact test cannot see. If the Worker exhausts its KV write
+    // budget it stays perfectly reachable and keeps serving a payload stamped
+    // status:'current' — contact is fresh, nothing errors, and the forecast
+    // underneath silently stops advancing. Data age is an independent detector
+    // precisely so this cannot render as a green "Checked".
+    const v = derive(NOW - 60_000, { fetchedMsAgo: 8 * 60 * 60_000 });
+    expect(v.view.tone).not.toBe('fresh');
+    expect(v.showRefreshWarning).toBe(true);
+    expect(v.forecastAgeLabel).toBe('8 h');
+  });
 });

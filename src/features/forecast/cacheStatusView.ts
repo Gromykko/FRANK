@@ -190,7 +190,20 @@ export function deriveCacheStatus(args: {
     : workerContactedAtMs === null
       ? true
       : nowMs - workerContactedAtMs > WORKER_CONTACT_STALE_MS;
-  const cacheHealth = notActuallyChecked
+  // Old data is old, whatever the payload claims about itself. `fetchedAt` is
+  // precise (it only moves on a real rebuild), so unlike the check stamp it can
+  // be trusted arithmetically.
+  //
+  // This is a second, independent detector, and it exists because the contact
+  // test above cannot see this failure: if the Worker exhausts its KV write
+  // budget it stays perfectly reachable and keeps serving a payload still
+  // stamped `status:'current'`, so contact is fresh and nothing looks wrong. The
+  // forecast underneath simply stops advancing. MET reissues about every 30
+  // minutes, so six hours without a rebuild is never normal.
+  const cacheAgeMs = Number.isFinite(fetchedAtMs) ? nowMs - fetchedAtMs : Infinity;
+  const dataStale = cacheAgeMs > CACHE_REFRESH_WARNING_AGE_MS;
+
+  const cacheHealth = notActuallyChecked || dataStale
     ? { ...sources.cacheHealth, status: 'stale' as const, lastAttemptAt: checkedAt }
     : sources.cacheHealth;
 
@@ -198,8 +211,7 @@ export function deriveCacheStatus(args: {
   const isPending = status === 'pending';
   const isStale = status === 'stale' || status === 'fallback';
 
-  const cacheAgeMs = Number.isFinite(fetchedAtMs) ? nowMs - fetchedAtMs : Infinity;
-  const showRefreshWarning = isStale && cacheAgeMs > CACHE_REFRESH_WARNING_AGE_MS;
+  const showRefreshWarning = dataStale;
   // A payload stamped with an older version was built by outdated worker
   // logic — surface it instead of silently rendering mismatched data.
   const workerOutdated = (sources.payloadVersion ?? 0) < FORECAST_PAYLOAD_VERSION;
