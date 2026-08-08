@@ -276,7 +276,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLi
                 />
                 <div className="limit-caution-copy">
                   <span className="limit-caution-name">{t('Gust margin')}</span>
-                  <span className="limit-caution-hint">{t('Danger at {0} m/s and above — for gusts and average wind alike', windCautionAt.toFixed(1))}</span>
+                  <span className="limit-caution-hint">{t('Danger from {0} m/s for gusts and average wind alike', windCautionAt.toFixed(1))}</span>
                 </div>
                 <Stepper
                   compact

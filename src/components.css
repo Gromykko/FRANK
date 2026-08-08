@@ -2729,6 +2729,10 @@ button.legend-toggle.is-on {
   display: flex;
   flex-direction: column;
   line-height: 1.3;
+  /* Stays centered even when a long caveat stretches the box to full width —
+     a centered box with left-aligned text reads as "jumped to the left". */
+  align-items: center;
+  text-align: center;
 }
 
 .frank-cache-source {
@@ -2745,29 +2749,33 @@ button.legend-toggle.is-on {
   font-size: 11px;
 }
 
-.frank-cache::before {
+/* The dot rides inside the label line, not beside the whole box: as a flex
+   sibling it stayed pinned to the box's left edge while the centered text
+   moved, leaving it orphaned whenever the caveat stretched the box. */
+.frank-cache-source::before {
   content: '';
+  display: inline-block;
   width: 7px;
   height: 7px;
-  margin-top: 3px;
+  margin-right: 6px;
   border-radius: 50%;
+  vertical-align: 1px;
   background: var(--color-safe);
   box-shadow: 0 0 4px var(--color-safe);
-  flex: 0 0 auto;
 }
 
-.frank-cache.watch::before {
+.frank-cache.watch .frank-cache-source::before {
   background: var(--color-caution);
   box-shadow: 0 0 4px var(--color-caution);
 }
 
 /* In-flight refresh: a calm neutral dot, no glow - not a status, just "working" */
-.frank-cache.neutral::before {
+.frank-cache.neutral .frank-cache-source::before {
   background: var(--text-muted);
   box-shadow: none;
 }
 
-.frank-cache.late::before {
+.frank-cache.late .frank-cache-source::before {
   background: var(--color-danger);
   box-shadow: 0 0 4px var(--color-danger);
 }

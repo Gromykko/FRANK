@@ -162,8 +162,8 @@ export const da: Record<string, string> = {
   'Unknown': 'Ukendt',
   'sea state unknown': 'ukendt søtilstand',
   'danger from {0}': 'fare fra {0}',
-  'Danger at {0} m/s and above — for gusts and average wind alike':
-    'Fare ved {0} m/s og derover — både for vindstød og middelvind',
+  'Danger from {0} m/s for gusts and average wind alike':
+    'Fare fra {0} m/s for både vindstød og middelvind',
   'Danger at {0} m and above': 'Fare ved {0} m og derover',
   'Forecast days': 'Prognosedage',
 
