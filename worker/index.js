@@ -69,7 +69,7 @@ const MET_RAW_KEY_PREFIX = 'met-raw';
 // serving forecasts built by previous logic. The app checks the same number
 // and warns when the deployed worker lags behind it — keep this in sync with
 // FORECAST_PAYLOAD_VERSION in src/features/forecast/types.ts.
-const PAYLOAD_VERSION = 5;
+const PAYLOAD_VERSION = 6;
 
 // Re-stamping "we checked, nothing changed" costs a KV WRITE, and the free tier
 // allows 1000 a day. The cron (every 10 min x 4 locations = 576 runs) was

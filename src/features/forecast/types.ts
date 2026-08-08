@@ -77,7 +77,7 @@ export interface WeatherWarning {
 // into every payload it builds; when the app receives an older stamp it warns
 // that the deployed worker is out of date instead of silently rendering data
 // built by previous logic.
-export const FORECAST_PAYLOAD_VERSION = 5;
+export const FORECAST_PAYLOAD_VERSION = 6;
 
 export interface WeatherData {
   hourly: HourlyData[];
