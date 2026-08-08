@@ -114,6 +114,17 @@
   opacity: 0.78;
 }
 
+/* Caption under the matrix explaining the outlook columns. Sits outside the
+   scrollport so it does not scroll away from the thing it describes. */
+.timeline-outlook-note {
+  margin: 10px 0 0;
+  padding: 0 2px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  max-width: 68ch;
+}
+
 .meteogram-cell.is-low-confidence .meteogram-value {
   font-style: italic;
 }

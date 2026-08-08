@@ -116,6 +116,9 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
     activeDayIndexRef.current = activeDayIndex;
   }, [activeDayIndex]);
 
+  // Only worth explaining when the forecast actually reaches that far.
+  const hasOutlookColumns = displayData.some((h) => Boolean(h.blockSpanHours));
+
   const meteogramCellClass = (h: { data: HourlyData; isDayStart: boolean; isOutlookStart: boolean }) =>
     [
       'meteogram-cell',
@@ -552,7 +555,15 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
               {allHours.map((h) => (
                 <div key={h.actualIndex} className={meteogramCellClass(h)}>
                   <span className="meteogram-value">
-                    {formatReading(h.data.tempAir, 0)}
+                    {/* 1 decimal, like every other numeric row. Nothing in the
+                        safety engine reads air temperature, so there is no
+                        threshold for its digits to contradict — but "not needed"
+                        is not the same as "should not". MET delivers it at one
+                        decimal (21.8, 21.7, 21.5), so 0dp was discarding real
+                        precision, and it left this the only row 16px wide against
+                        27-34px everywhere else, which is what made the matrix
+                        look arbitrary. */}
+                    {formatReading(h.data.tempAir, 1)}
                   </span>
                 </div>
               ))}
@@ -635,6 +646,18 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
           </div>
         </div>
       </div>
+
+      {/* Nothing explained the columns that stop being hourly. Past MET's hourly
+          range the matrix continues in 6-hour blocks: those columns are striped,
+          their values italic, and their header reads a span like "02-08" instead
+          of a single hour. All of that is visual only, so a reader had no way to
+          learn what it meant. It also states where the block ranges live, since
+          one column cannot show a min and a max in 44px. */}
+      {hasOutlookColumns && (
+        <p className="timeline-outlook-note">
+          {t('Striped columns with a time span (like 02–08) are 6-hour outlook blocks, not single hours: MET publishes no hourly detail that far ahead. Each shows one decision value — the roughest wave, the coldest water. Tap one to see its full min–max range above.')}
+        </p>
+      )}
     </div>
   );
 });

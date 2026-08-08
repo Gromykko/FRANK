@@ -49,6 +49,9 @@ export const da: Record<string, string> = {
   'Forecast refresh keeps failing (last try {0}). You are seeing data from {1} — {2} old, so treat it with extra caution.{3} FRANK retries by itself roughly every 10 minutes.':
     'Prognoseopdateringen fejler fortsat (sidste forsøg {0}). Du ser data fra {1} — {2} gamle, så brug dem med ekstra forsigtighed.{3} FRANK prøver selv igen cirka hvert 10. minut.',
   'Hourly forecast timeline': 'Timeprognosens tidslinje',
+  // Explains the striped, time-span columns where the matrix stops being hourly.
+  'Striped columns with a time span (like 02–08) are 6-hour outlook blocks, not single hours: MET publishes no hourly detail that far ahead. Each shows one decision value — the roughest wave, the coldest water. Tap one to see its full min–max range above.':
+    'Stribede kolonner med et tidsrum (fx 02–08) er 6-timers udsigtsblokke, ikke enkelte timer: MET udgiver ikke timedetaljer så langt frem. Hver viser én beslutningsværdi — den groveste bølge, det koldeste vand. Tryk på en for at se hele dens min–maks-interval ovenfor.',
   'Detailed Graphs': 'Detaljerede grafer',
   'Wind, waves, water level, and temperature': 'Vind, bølger, vandstand og temperatur',
   'Loading charts...': 'Indlæser grafer...',
