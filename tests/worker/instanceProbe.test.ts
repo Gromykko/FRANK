@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 // @ts-expect-error - the Worker is plain JS with no type declarations
-import { fetchLatestInstanceForCollections, resetInstanceProbeCache } from '../../worker/index.js';
+import { fetchLatestInstanceForCollections, resetInstanceProbeCache, tickOrder } from '../../worker/index.js';
 
 // Which DMI model run is newest is a fact about DMI, not about a fjord, and all
 // four configured fjords probe the identical collection lists. Unmemoised, one
@@ -73,5 +73,42 @@ describe('fetchLatestInstanceForCollections memo', () => {
     resetInstanceProbeCache();                    // stands in for the 60s TTL
     await fetchLatestInstanceForCollections(WATER);
     expect(calls).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A slow upstream can spend the 5-minute tick budget before the loop reaches
+// the last locations. With a fixed order that starved the same fjords every
+// tick for as long as the provider stayed slow.
+// ---------------------------------------------------------------------------
+describe('tickOrder', () => {
+  const fjords = ['horsens', 'vejle', 'kolding', 'aarhus'];
+  const at = (iso: string) => Date.parse(iso);
+
+  it('advances the starting fjord by one every tick', () => {
+    expect(tickOrder(at('2026-08-08T15:40:00Z'), fjords)[0]).toBe('kolding');
+    expect(tickOrder(at('2026-08-08T15:50:00Z'), fjords)[0]).toBe('aarhus');
+    expect(tickOrder(at('2026-08-08T16:00:00Z'), fjords)[0]).toBe('horsens');
+  });
+
+  it('keeps every fjord in the tick, just rotated', () => {
+    const order = tickOrder(at('2026-08-08T15:50:00Z'), fjords);
+    expect(order).toEqual(['aarhus', 'horsens', 'vejle', 'kolding']);
+    expect([...order].sort()).toEqual([...fjords].sort());
+  });
+
+  it('gives each fjord the first slot equally often over a day', () => {
+    const firsts = new Map<string, number>();
+    for (let t = 0; t < 144; t++) {
+      const first = tickOrder(at('2026-08-08T00:00:00Z') + t * 10 * 60 * 1000, fjords)[0];
+      firsts.set(first, (firsts.get(first) ?? 0) + 1);
+    }
+    expect([...firsts.values()]).toEqual([36, 36, 36, 36]);
+  });
+
+  it('falls back to the plain order when the tick clock is unusable', () => {
+    expect(tickOrder(undefined, fjords)).toEqual(fjords);
+    expect(tickOrder(Number.NaN, fjords)).toEqual(fjords);
+    expect(tickOrder(at('2026-08-08T15:40:00Z'), [])).toEqual([]);
   });
 });

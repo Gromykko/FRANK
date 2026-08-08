@@ -323,6 +323,26 @@ function latestInstanceFromResponse(data) {
 const instanceProbeCache = new Map();
 const INSTANCE_PROBE_TTL_MS = 60 * 1000;
 
+// Which fjord the cron visits first, rotated by tick.
+//
+// The tick has a 5-minute budget and the locations are refreshed one after
+// another, so a slow upstream can spend the budget before the loop reaches the
+// end. A timeout is retried, which makes one fetch worth up to 3 x 50s, so two
+// slow locations can consume the whole tick. With a fixed order that starved the
+// SAME fjords every tick for as long as the provider stayed slow - their data
+// just aged until /health alarmed an hour later.
+//
+// Rotating by the scheduled minute turns a permanent starvation into an
+// occasional missed tick, spread evenly. Derived from the tick's own clock so it
+// needs no stored state and no KV write, and stays stable if the isolate
+// recycles mid-tick. An unparseable scheduledTime falls back to the plain order.
+export function tickOrder(scheduledTime, list = locations) {
+  const tickIndex = Math.floor(Number(scheduledTime) / (10 * 60 * 1000));
+  if (!Number.isFinite(tickIndex) || list.length === 0) return list;
+  const offset = ((tickIndex % list.length) + list.length) % list.length;
+  return [...list.slice(offset), ...list.slice(0, offset)];
+}
+
 // Exported for tests: a per-isolate memo has no other way to be reset between
 // cases, and a stale entry leaking across them would hide the very thing the
 // test is checking.
@@ -1416,7 +1436,7 @@ export default {
     }
   },
 
-  async scheduled(_event, env, _ctx) {
+  async scheduled(event, env, _ctx) {
     // Nobody is waiting on a cron tick, so it can afford to wait out a slow
     // provider rather than call it broken (see CRON_FETCH_TIMEOUT_MS).
     const tickStartedAt = Date.now();
@@ -1425,7 +1445,7 @@ export default {
       // Isolate failures per location: a rebuild throw (no cached payload + a
       // provider outage) must not starve the remaining locations of their cron
       // refresh for the whole tick.
-      for (const location of locations) {
+      for (const location of tickOrder(event?.scheduledTime)) {
         // ...and neither must a location that merely takes a very long time.
         // The per-location try/catch below isolates THROWS, not the shared
         // wall clock, so one hanging upstream could consume the tick and leave
