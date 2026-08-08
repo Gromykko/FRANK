@@ -533,12 +533,12 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
               {allHours.map((h) => (
                 <div key={h.actualIndex} className={meteogramCellClass(h)}>
                   <span className="meteogram-value">
-                    {/* The one row that keeps a decimal, because metres is what
+                    {/* The one row that keeps decimals, because metres is what
                         DMI publishes wave height in ("den signifikante
                         bølgehøjde ... 4 meter") and integer metres would print
-                        "0" for every kayak-relevant sea state. 1dp, down from
-                        the 2dp this row used to carry. */}
-                    {formatReading(h.data.waveHeight, 1)}
+                        "0" for every kayak-relevant sea state. 2dp, matching
+                        the snapshot and chart readouts. */}
+                    {formatReading(h.data.waveHeight, 2)}
                   </span>
                 </div>
               ))}

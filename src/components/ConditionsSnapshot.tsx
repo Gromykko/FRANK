@@ -65,9 +65,11 @@ export default function ConditionsSnapshot({
   const windText = `${formatReading(data.windSpeed, 1)} m/s`;
   // MET publishes no gust for the longer-range blocks. Show the no-reading
   // dash rather than repeating the sustained wind under a "gusts" label.
+  // One label for both cases: the outlook note already says a block carries
+  // its worst-case values, so a "max" suffix here only read as inconsistency.
   const blockGust = data.windGustMax ?? data.windGust;
   const gustText = isBlock
-    ? (Number.isFinite(blockGust) ? t('gusts {0} max', formatReading(blockGust, 1)) : t('gusts {0}', NO_READING_TEXT))
+    ? t('gusts {0}', Number.isFinite(blockGust) ? formatReading(blockGust, 1) : NO_READING_TEXT)
     : t('gusts {0}', formatReading(data.windGust, 1));
 
   return (

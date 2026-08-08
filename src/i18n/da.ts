@@ -290,7 +290,6 @@ export const da: Record<string, string> = {
   'Sunrise': 'Solopgang',
   'Sunset': 'Solnedgang',
   'gusts {0}': 'vindstød {0}',
-  'gusts {0} max': 'vindstød {0} maks',
   '{0} to {1} cm': '{0} til {1} cm',
   'Wind from {0}. The arrow points downwind (where the wind is heading).':
     'Vind fra {0}. Pilen peger med vinden (derhen hvor vinden blæser).',

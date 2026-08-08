@@ -3100,6 +3100,16 @@ button.legend-toggle.is-on {
   white-space: nowrap;
 }
 
+/* Phones: always stack wind over gusts. Left to flex-wrap alone, the cell
+   flipped between one and two lines depending on how wide the hour's numbers
+   happened to be, which read as a glitch rather than a layout. */
+@media (max-width: 480px) {
+  .snapshot-value.snapshot-wind {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
 .snapshot-sub {
   color: var(--text-muted);
   font-weight: 500;
