@@ -2324,9 +2324,9 @@ button.legend-toggle.is-on {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-areas:
-    'crt     display actions'
+    'crt     name    actions'
     'verdict verdict verdict'
-    'name    .       location';
+    '.       .       location';
   column-gap: 16px;
   /* Air between the CRT/buttons row and the nameplate/location row — the
      location switcher is a tap target directly under the theme button, so
@@ -2365,7 +2365,7 @@ button.legend-toggle.is-on {
 
 /* Faint scanlines on both screens keep the CRT vibe without heavy chrome */
 .frank-crt::after,
-.frank-display::after {
+.frank-verdict::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -2396,41 +2396,6 @@ button.legend-toggle.is-on {
 /* Middle cell carries the seams that divide the three columns; the display
    keeps its natural height, centered on the band's midline, so the eye-line
    runs CRT center → display center → between the two buttons. */
-.frank-cell-display {
-  grid-area: display;
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  padding: 0 16px;
-  border-left: 1px solid var(--frank-housing-edge);
-  border-right: 1px solid var(--frank-housing-edge);
-}
-
-
-.frank-display {
-  position: relative;
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 58px;
-  display: flex;
-  /* Two stacked lines: the verdict in words, then FRANK's phrase. */
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
-  overflow: hidden;
-  padding: 8px 12px;
-  border-radius: 10px;
-  background: var(--crt-screen);
-  border: 1px solid #05080d;
-  color: var(--frank-phosphor);
-  box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.6);
-  /* Type set on the display so the marquee measure span always matches */
-  font-family: 'VT323', var(--font-mono);
-  font-size: 25px;
-  letter-spacing: 0.05em;
-}
-
 /* The answer to "can I paddle?", in words — the one thing the app exists to
    say, and until now the only thing it said exclusively to screen readers.
    Full-width row so it can never truncate. The word carries the verdict, so
@@ -2438,23 +2403,31 @@ button.legend-toggle.is-on {
    the sole signal. */
 .frank-verdict {
   grid-area: verdict;
+  position: relative;
   min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  padding: 8px 10px 9px;
+  padding: 9px 10px 10px;
   border-radius: 10px;
   background: var(--crt-screen);
   border: 1px solid #05080d;
   color: var(--frank-phosphor);
   box-shadow: inset 0 3px 8px rgba(0, 0, 0, 0.6);
   font-family: 'VT323', var(--font-mono);
+  letter-spacing: 0.05em;
+  text-align: center;
+}
+
+/* Line 1: the answer. Sized above the other two because it is the one thing
+   the app exists to say. */
+.frank-verdict-word {
+  max-width: 100%;
   font-size: 32px;
   line-height: 1;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  text-align: center;
   text-shadow: 0 0 8px color-mix(in srgb, currentColor 60%, transparent);
 }
 
@@ -2476,18 +2449,20 @@ button.legend-toggle.is-on {
   text-shadow: none;
 }
 
-/* Own line so the marquee's padding-left: 100% travels this row's width, and
-   so a scrolling phrase can never displace the verdict above it. */
+/* Line 3: FRANK's one-liner, in the same screen as the verdict. Its own block
+   so the marquee's padding-left: 100% travels THIS row's width, and so a
+   scrolling phrase can never displace the two lines above it. At full width
+   most phrases now fit outright and never scroll. */
 .frank-phrase-line {
   position: relative;
   display: block;
-  max-width: 100%;
   width: 100%;
+  margin-top: 1px;
   overflow: hidden;
   text-align: center;
-  font-size: 15px;
-  line-height: 1.2;
-  opacity: 0.82;
+  font-size: 17px;
+  line-height: 1.15;
+  opacity: 0.72;
 }
 
 .frank-display-text {
@@ -2506,11 +2481,11 @@ button.legend-toggle.is-on {
 /* A phrase that overflows becomes a slow walking line: enters from the right
    edge (padding-left: 100% of the display) and exits fully left (-100% of its
    own width). Duration is set inline, proportional to the travel distance. */
-.frank-display.is-marquee .frank-phrase-line {
+.frank-phrase-line.is-marquee {
   text-align: left;
 }
 
-.frank-display.is-marquee .frank-display-text {
+.frank-phrase-line.is-marquee .frank-display-text {
   padding-left: 100%;
   animation: frank-marquee 12s linear infinite;
   will-change: transform;
@@ -2916,10 +2891,6 @@ button.legend-toggle.is-on {
 
   .frank-device-columns {
     column-gap: 12px;
-    /* Pin the left column at the old 72px CRT footprint even though the CRT
-       itself shrank to 64px — otherwise the seams and the phrase display sit
-       visibly left of the header's centre. */
-    grid-template-columns: minmax(72px, auto) minmax(0, 1fr) auto;
   }
 
   /* Slightly smaller CRT on phones: every saved pixel goes to the phrase
@@ -2934,24 +2905,13 @@ button.legend-toggle.is-on {
     height: 42px;
   }
 
-  .frank-cell-display {
-    padding-left: 12px;
-    padding-right: 12px;
-  }
-
-  .frank-display {
-    min-height: 56px;
-    padding: 6px 10px;
-    font-size: 18px;
-  }
-
   /* The verdict stays the biggest thing on a phone; the phrase gives way. */
-  .frank-verdict {
+  .frank-verdict-word {
     font-size: 28px;
   }
 
   .frank-phrase-line {
-    font-size: 13px;
+    font-size: 15px;
   }
 
   /* Four uppercase labels across four 1fr tracks: at 11px + 0.08em tracking
@@ -3245,7 +3205,7 @@ button.legend-toggle.is-on {
      padding-left:100% (off the right edge), so without the walk it would sit
      invisible. Reset the offset so the phrase's start shows (clipped at the
      edge, but readable) instead of a blank display. */
-  .frank-display.is-marquee .frank-display-text {
+  .frank-phrase-line.is-marquee .frank-display-text {
     animation: none !important;
     padding-left: 0 !important;
   }
@@ -3253,7 +3213,7 @@ button.legend-toggle.is-on {
 
 /* WCAG 2.2.2 Pause/Stop/Hide: the looping marquee can be paused by
    pointing at it or focusing anything in the display */
-.frank-display.is-marquee:hover .frank-display-text,
-.frank-display.is-marquee:focus-within .frank-display-text {
+.frank-phrase-line.is-marquee:hover .frank-display-text,
+.frank-verdict:focus-within .frank-phrase-line.is-marquee .frank-display-text {
   animation-play-state: paused;
 }
