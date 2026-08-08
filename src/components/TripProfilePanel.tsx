@@ -71,19 +71,6 @@ export default function TripProfilePanel({ tripMode, onTripModeChange }: TripPro
         </h2>
         <span className="trip-profile-subtitle">{t('How cautious should FRANK be for you?')}</span>
 
-        {showInfo && (
-          <div className="trip-profile-info" id="trip-profile-info-pop" role="note" ref={popRef}>
-            <p>
-              <strong>Chill</strong>, <strong>Normal</strong> {t('and')} <strong>Pro</strong> {t('are presets — from the most cautious limits for beginners and easy trips to the loosest limits for experienced paddlers.')}
-            </p>
-            <p>
-              <strong>Custom</strong> {t('is your own set: change anything in Your Limits below and it lands there.')}
-            </p>
-            <p className="trip-profile-info-note">
-              {t('Picking a mode updates the exact numbers in Your Limits — the manual explains every rule.')}
-            </p>
-          </div>
-        )}
       </div>
 
       <div
@@ -120,6 +107,26 @@ export default function TripProfilePanel({ tripMode, onTripModeChange }: TripPro
           );
         })}
       </div>
+
+      {/* BELOW the mode bank, and in normal flow rather than floating over it.
+          As an absolutely-positioned popover hanging off the header it covered
+          the four buttons it exists to describe (Chill and Normal were hidden
+          entirely) and spilled past the panel edge onto the conditions card
+          underneath. An explainer must not hide its own subject; growing the
+          panel while it is open is the smaller cost. */}
+      {showInfo && (
+        <div className="trip-profile-info" id="trip-profile-info-pop" role="note" ref={popRef}>
+          <p>
+            <strong>Chill</strong>, <strong>Normal</strong> {t('and')} <strong>Pro</strong> {t('are presets — from the most cautious limits for beginners and easy trips to the loosest limits for experienced paddlers.')}
+          </p>
+          <p>
+            <strong>Custom</strong> {t('is your own set: change anything in Your Limits below and it lands there.')}
+          </p>
+          <p className="trip-profile-info-note">
+            {t('Picking a mode updates the exact numbers in Your Limits — the manual explains every rule.')}
+          </p>
+        </div>
+      )}
     </div>
   );
 }

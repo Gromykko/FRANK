@@ -2508,7 +2508,6 @@ button.legend-toggle.is-on {
 }
 
 .trip-profile-head {
-  position: relative;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -2527,17 +2526,14 @@ button.legend-toggle.is-on {
 
 /* The "?" popover: all four modes side by side, dismissed by outside
    click or Escape. Overlays the selector - it is a transient reading. */
+/* In flow, under the mode bank it describes — not floating over it. */
 .trip-profile-info {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  z-index: 40;
-  width: min(380px, 100%);
-  background: var(--panel-bg);
+  margin-top: 12px;
+  width: 100%;
+  background: color-mix(in srgb, var(--text-main) 4%, var(--panel-bg));
   border: 1px solid var(--panel-border);
   border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-lg);
-  padding: 10px 12px;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
   gap: 6px;
