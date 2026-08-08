@@ -125,27 +125,52 @@
   max-width: 68ch;
 }
 
-/* Rows whose values change WIDTH from hour to hour get a fixed slot with the
-   digits right-aligned, so the ones column lands at the same x in every cell —
-   the way numbers align in any table. Centring cannot do this: it splits the
-   difference, so "+3" sat 3.9px right of "+22" and the row visibly wobbled.
-   (An earlier version of this rule padded the right side by 1ch to cancel the
-   sign's half-character shift. That fixed the sign and not the digit count; a
-   fixed slot fixes both, and a missing-reading dash right-aligns harmlessly.)
-   The widths are worst cases: water level reaches +/-200 cm in a surge, so sign
-   plus three digits; wind prints "25/35". 1ch is exact because these cells are
-   tabular-nums, where every character is one digit wide. */
-.meteogram-value.is-slotted,
+/* Every number in the matrix ends at the same distance from its cell's right
+   edge, so the digits form one straight vertical line down the whole grid.
+   Nothing else aligns them: values differ in width both along a row (+3 / +22 /
+   -105) and down a column (4/8, 0.2, -14, 22), and centring splits the leftover
+   space, which puts each row's digits somewhere different. Two earlier attempts
+   at this each fixed one axis and broke the other — a 1ch pad cancelled the
+   sign's half-character shift but not the digit count, then per-row fixed slots
+   aligned each row internally while leaving five different edges down a column
+   (measured 2.8 / 12.0 / 5.2 / 13.6 / 13.6px). One shared gutter fixes both,
+   which is how numbers are aligned in any table.
+   The gutter has to clear the widest content: the wind cell prints "25/35" at
+   11px (38px wide) in a 44px cell, so 5px is the ceiling. */
+.meteogram-value,
 .meteogram-wind-value {
-  display: inline-block;
+  display: block;
+  width: 100%;
   text-align: right;
-  width: var(--num-slot);
+  padding-right: 5px;
 }
 
-.meteogram-value.is-slotted { --num-slot: 4ch; }
-.meteogram-wind-value { --num-slot: 5ch; }
+/* A block's water level is a range, stacked so both ends fit a 44px cell. */
+.meteogram-level-range {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 1px;
+  width: 100%;
+  padding-right: 5px;
+  line-height: 1;
+}
 
-.meteogram-cell.is-low-confidence .meteogram-value {
+.meteogram-level-range span {
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The lower end is the quieter number: it is the same water, not a second
+   reading, and the pair has to read as one cell at a glance. */
+.meteogram-level-range .is-low {
+  color: var(--text-muted);
+}
+
+.meteogram-cell.is-low-confidence .meteogram-value,
+.meteogram-cell.is-low-confidence .meteogram-level-range span {
   font-style: italic;
 }
 
@@ -573,6 +598,12 @@
 
 .meteogram-wind-stack {
   height: 100%;
+  /* Full width, or the stack shrinks to its widest child (the 14px arrow) and
+     the number's own width:100% resolves against THAT instead of the cell —
+     which quietly reinstated centring for this row alone while every other row
+     had moved to the shared right gutter. The arrow stays centred via
+     align-items; only the digits align with the rows below. */
+  width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;

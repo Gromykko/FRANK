@@ -541,17 +541,41 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
             </div>
 
             <div className="meteogram-row" title={t('Water level (cm)')}>
-              {/* is-slotted: this row's values change width between hours
-                  (+3 / +22 / -105) and a leading sign eats half a character on
-                  top of that, so centring made the digits wander. The slot
-                  right-aligns them instead — see components.css. */}
-              {allHours.map((h) => (
-                <div key={h.actualIndex} className={meteogramCellClass(h)}>
-                  <span className="meteogram-value is-slotted">
-                    {formatLevelCm(h.data.tideLevel)}
-                  </span>
-                </div>
-              ))}
+              {allHours.map((h) => {
+                // An outlook block shows its HIGHEST and LOWEST water level,
+                // not one number. Every other row's block value is a defensible
+                // single figure — the roughest wave, the coldest water, MET's
+                // one wind reading for the period — but water level had no such
+                // end to pick, so it showed the sample nearest the block's
+                // centre. Six hours of water level summarised by whatever it
+                // happened to be in the middle tells a paddler nothing: the
+                // whole point of a level is the swing, and a block spanning +44
+                // to -2 cm printed "+5". The pair reads as "it moves between
+                // these", which is the honest answer at three days out.
+                if (h.data.blockSpanHours) {
+                  const high = formatLevelCm(h.data.tideLevelMax);
+                  const low = formatLevelCm(h.data.tideLevelMin);
+                  // A flat block (both ends round to the same centimetre, or one
+                  // end never arrived) prints one number instead of the same
+                  // number twice — but still inside the range container, so it
+                  // keeps the smaller type its neighbours use. Rendering it as a
+                  // normal cell made a flat block look bigger than the blocks
+                  // either side of it.
+                  return (
+                    <div key={h.actualIndex} className={meteogramCellClass(h)}>
+                      <span className="meteogram-level-range">
+                        <span>{high}</span>
+                        {low !== high && <span className="is-low">{low}</span>}
+                      </span>
+                    </div>
+                  );
+                }
+                return (
+                  <div key={h.actualIndex} className={meteogramCellClass(h)}>
+                    <span className="meteogram-value">{formatLevelCm(h.data.tideLevel)}</span>
+                  </div>
+                );
+              })}
             </div>
 
             <div className="meteogram-row" title={t('Air temperature (°C)')}>
@@ -622,10 +646,19 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
                 // context-free numbers, so the readings were unreachable by
                 // screen reader — the cell label is the only place they can be
                 // announced. Same verdict vocabulary as the status bar.
+                // A block's water level is a range on screen, so it has to be a
+                // range here too — announcing the centre sample would tell a
+                // screen-reader user a number no sighted user can see.
+                const levelReading = isBlock
+                  && formatLevelCm(hourData.tideLevelMax) !== formatLevelCm(hourData.tideLevelMin)
+                  ? t('{0} to {1} cm', formatLevelCm(hourData.tideLevelMin), formatLevelCm(hourData.tideLevelMax))
+                  : `${formatLevelCm(isBlock ? hourData.tideLevelMax : hourData.tideLevel)} cm`;
                 const cellReadings = [
                   `${t('Wind')} ${formatReading(hourData.windSpeed, 1)} m/s`,
                   `${t('Gusts')} ${formatReading(hourData.windGust, 1)} m/s`,
-                  `${t('Waves')} ${formatReading(hourData.waveHeight, 2)} m`, `${t('Level')} ${formatLevelCm(hourData.tideLevel)} cm`, `${t('Air')} ${formatReading(hourData.tempAir, 1)}°C`,
+                  `${t('Waves')} ${formatReading(hourData.waveHeight, 2)} m`,
+                  `${t('Level')} ${levelReading}`,
+                  `${t('Air')} ${formatReading(hourData.tempAir, 1)}°C`,
                   `${t('Water')} ${formatReading(hourData.tempWater, 1)}°C`,
                 ].join(', ');
                 const cellDescription = `${formatDateMedium(hourData.time)} ${timeLabel} - ${t(RATING_WORD[status]).toUpperCase()}${hourData.isDay ? '' : ` ${t('(Night)')}`}${isBlock ? ` ${t('(Longer range, lower confidence)')}` : ''}. ${cellReadings}`;
@@ -656,7 +689,10 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
           one column cannot show a min and a max in 44px. */}
       {hasOutlookColumns && (
         <p className="timeline-outlook-note">
-          {t('Striped columns with a time span (like 02–08) are 6-hour outlook blocks, not single hours: MET publishes no hourly detail that far ahead. Each shows one decision value — the roughest wave, the coldest water. Tap one to see its full min–max range above.')}
+          {t('Striped columns with a time span (like 02–08) are 6-hour outlook blocks, not single hours: MET publishes no hourly detail that far ahead.')}{' '}
+          {t('Each row shows the end of the range that can hurt you: the block’s roughest wave and its coldest water. Wind and air show MET’s single reading for the period, because that is all it publishes.')}{' '}
+          {t('Water level shows both ends, highest above lowest, because a level only means something as a swing.')}{' '}
+          {t('Tap any block to see its full range.')}
         </p>
       )}
     </div>
