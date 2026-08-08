@@ -508,7 +508,17 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
                 <div key={h.actualIndex} className={`${meteogramCellClass(h)} tall`}>
                   <div className="meteogram-wind-stack">
                     <WindArrow direction={h.data.windDirection} size={WIND_ARROW_SIZE} />
-                    <span className="meteogram-wind-value">{formatReading(h.data.windSpeed, 0)}/{formatReading(h.data.windGust, 0)}</span>
+                    {/* Speed at 1 decimal, gusts at 0. Not cosmetic symmetry:
+                        sustained wind is judged against limits that move in 0.5
+                        steps, so at 0 decimals two hours with DIFFERENT verdicts
+                        print the same digit. With a 6.0 m/s safe limit, 5.5
+                        (green) and 6.0 (amber) both showed "6" — the same defect
+                        already fixed for water temperature. The ribbon colour was
+                        always right; only the printed number could contradict it.
+                        Gusts stay at 0 because both at 1 decimal does not fit:
+                        measured at 11px in a 43.3px usable cell, "25.5/35" is
+                        42.2px but "25.5/35.0" is 52.7px. */}
+                    <span className="meteogram-wind-value">{formatReading(h.data.windSpeed, 1)}/{formatReading(h.data.windGust, 0)}</span>
                   </div>
                 </div>
               ))}

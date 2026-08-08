@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { ChevronDown, ChevronUp, Clock, Navigation, Settings, Sun, Thermometer, Waves, Wind } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronUp, Clock, Navigation, Settings, Sun, Thermometer, Waves, Wind } from 'lucide-react';
 import { getWindSpeedLabel, getWaveHeightLabel } from '../features/safety/analyzeSafetyConditions';
 import SafetyManualModal from './SafetyManualModal';
 import CustomSelect from './CustomSelect';
@@ -196,9 +196,16 @@ export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLi
             >
               <Settings size={16} color="var(--primary)" /> {t('Your Limits')}
             </button>
+            {/* A book, not a "?". The two info affordances in the app behave
+                differently on purpose: this one opens the full manual, every
+                formula filled in with the reader's own numbers, in a scrolling
+                modal, while the trip-profile "?" expands three sentences inline.
+                Both are right for what they hold, but rendered as identical "?"
+                circles nothing told the reader which they would get. The glyph
+                now says "document" rather than "note". */}
             <button
               type="button"
-              className="settings-info-btn"
+              className="settings-info-btn is-manual"
               onClick={(e) => {
                 e.stopPropagation();
                 setShowInfoModal(true);
@@ -206,7 +213,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLi
               data-tip={t('How FRANK Decides')}
               aria-label={t('How FRANK Decides')}
             >
-              ?
+              <BookOpen size={15} aria-hidden="true" />
             </button>
           </h2>
           <span className="settings-subtitle">{t('Your personal limits')}</span>

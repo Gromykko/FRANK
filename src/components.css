@@ -910,6 +910,16 @@
   position: relative;
 }
 
+/* The manual trigger carries an icon rather than a "?" glyph, so it needs the
+   ring to sit a touch wider and the stroke to breathe. Same ring, different
+   glyph: still recognisably the same family of affordance, but it no longer
+   promises the same behaviour as the inline "?" next to Trip Profile. */
+.settings-info-btn.is-manual {
+  width: 26px;
+  height: 26px;
+  border-width: 1.5px;
+}
+
 /* Invisible 44px hit area around the 24px ring (see the rule above). */
 .settings-info-btn::before {
   content: '';
