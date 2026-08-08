@@ -309,7 +309,48 @@ function latestInstanceFromResponse(data) {
   return best;
 }
 
-async function fetchLatestInstanceForCollections(collections) {
+// Which model run is newest is a property of DMI, not of a fjord, and every
+// location currently configured probes the identical two collection lists. So a
+// cron tick that loops 4 locations asked DMI the same two questions 8 times,
+// ~2.1s of the tick, against the one provider that actively rate-limits us.
+//
+// Memoised per collection list for a minute: shorter than the 10-minute tick, so
+// each tick still asks fresh, and far shorter than DMI's 6-hourly publishing, so
+// nothing is missed. Module-global, therefore per isolate, therefore a cold
+// start just pays full price once. It also makes a tick self-consistent: without
+// it, DMI publishing mid-loop left some fjords on the new run and some on the
+// old, which reads as a fault in /health when it is only probe timing.
+const instanceProbeCache = new Map();
+const INSTANCE_PROBE_TTL_MS = 60 * 1000;
+
+// Exported for tests: a per-isolate memo has no other way to be reset between
+// cases, and a stale entry leaking across them would hide the very thing the
+// test is checking.
+export function resetInstanceProbeCache() {
+  instanceProbeCache.clear();
+}
+
+export function fetchLatestInstanceForCollections(collections) {
+  const key = collections.join(',');
+  const memo = instanceProbeCache.get(key);
+  if (memo && Date.now() - memo.at < INSTANCE_PROBE_TTL_MS) return memo.promise;
+
+  // The PROMISE is cached, not its result. Caching the result only would have
+  // deduplicated nothing here: water and waves are probed with Promise.allSettled
+  // and the locations are looped, so four callers can all miss the cache before
+  // the first response lands, and all four would still hit DMI. Sharing the
+  // in-flight promise is what actually collapses them into one request.
+  //
+  // A rejection is cached on the same terms, deliberately: a 429 means "stop
+  // asking", and re-probing once per location is exactly the hammering that
+  // earned it. The first caller always awaits, so the stored rejection is never
+  // an unhandled one.
+  const promise = probeLatestInstanceForCollections(collections);
+  instanceProbeCache.set(key, { at: Date.now(), promise });
+  return promise;
+}
+
+async function probeLatestInstanceForCollections(collections) {
   let lastError;
 
   for (const collection of collections) {
