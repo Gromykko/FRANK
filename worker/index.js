@@ -31,7 +31,31 @@ export {
   currentDirectionFromComponents,
 } from '../src/features/forecast/normalize';
 
-const FETCH_TIMEOUT_MS = 25_000;
+// One timeout served two callers with opposite needs. Measured 2026-08-08:
+// DMI's position queries were answering in 22-23s while this sat at 25s, so a
+// merely SLOW provider was 2s from being reported as a broken one.
+//
+//   CRON has ten minutes and nobody waiting -> be patient.
+//   A USER request already answers instantly from cache and rebuilds in
+//   waitUntil, so a long wait there buys nothing -> be impatient.
+//
+// Deliberately NOT paired with running the four locations in parallel: DMI is
+// the provider that rate-limits us (429 "Server is busy"), and eight concurrent
+// requests would turn a slowdown into a refusal. Sequential-and-patient beats
+// parallel-and-throttled against a struggling upstream.
+const FETCH_TIMEOUT_MS = 15_000;
+const CRON_FETCH_TIMEOUT_MS = 50_000;
+
+// A single hanging location must not eat the tick and starve the rest. Checked
+// between locations, well inside the 10-minute cron period.
+const CRON_TICK_BUDGET_MS = 5 * 60 * 1000;
+
+// How stale the freshest-should-be location may get before /health reports a
+// failure for an external uptime monitor to catch. The cron runs every 10 min,
+// so 40 min is four missed ticks — long enough never to false-alarm on one slow
+// upstream, short enough that the 11-hour silent stall of 2026-08-08 would have
+// paged within the hour instead of being spotted in the UI the next morning.
+const HEALTH_MAX_STALE_MS = 40 * 60 * 1000;
 const MAX_FETCH_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 1_500;
 const MANUAL_CHECK_MIN_INTERVAL_MS = 60 * 1000;
@@ -164,23 +188,42 @@ function retryDelay(attempt) {
 // arrive, leaving every `.json()`/`.text()` below able to hang indefinitely on
 // an upstream that answers 200 and then stalls the stream — which in the cron's
 // sequential loop starves every location after it.
-function fetchWithTimeout(url, init = {}) {
-  return fetch(url, { ...init, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+function fetchWithTimeout(url, init = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+  return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+}
+
+// Set for the duration of a cron tick so the fetch helpers below pick the
+// patient timeout without threading it through eight call signatures.
+let currentFetchTimeoutMs = FETCH_TIMEOUT_MS;
+
+// One structured line per upstream call: which source, how long, what happened.
+// Without this, "is DMI slow or is our timeout wrong?" could only be answered by
+// hand-timing curl from a laptop — which is how the 22-23s latency above was
+// found. Visible in `npm run worker:tail` and Workers Logs.
+function logUpstream(source, startedAt, outcome, extra = '') {
+  const ms = Date.now() - startedAt;
+  console.log(`upstream ${source} ${outcome} ${ms}ms${extra ? ' ' + extra : ''}`);
 }
 
 async function fetchJsonWithRetries(url, label) {
   let lastError;
 
   for (let attempt = 0; attempt < MAX_FETCH_ATTEMPTS; attempt++) {
+    const startedAt = Date.now();
     try {
       const response = await fetchWithTimeout(url, {
         headers: {
           Accept: 'application/geo+json, application/json',
         },
-      });
+      }, currentFetchTimeoutMs);
 
-      if (response.ok) return await response.json();
+      if (response.ok) {
+        const json = await response.json();
+        logUpstream(label, startedAt, 'ok');
+        return json;
+      }
 
+      logUpstream(label, startedAt, `http-${response.status}`);
       const message = await response.text();
       lastError = new Error(`${label} failed: ${response.status} ${message.slice(0, 180)}`);
       lastError.status = response.status;
@@ -192,6 +235,11 @@ async function fetchJsonWithRetries(url, label) {
       if (response.status < 500) break;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
+      // A timeout arrives here as a TimeoutError DOMException, so name it
+      // explicitly — "slow upstream" and "upstream refused" need different
+      // responses from a human and used to look identical in the logs.
+      logUpstream(label, startedAt, lastError.name === 'TimeoutError' ? 'timeout' : 'error',
+        String(lastError.message ?? '').slice(0, 120));
     }
 
     if (attempt < MAX_FETCH_ATTEMPTS - 1) {
@@ -331,7 +379,9 @@ async function fetchMetWeather(env, location) {
   }
 
   try {
-    const response = await fetchWithTimeout(buildMetUrl(location), { headers });
+    const metStartedAt = Date.now();
+    const response = await fetchWithTimeout(buildMetUrl(location), { headers }, currentFetchTimeoutMs);
+    logUpstream(`met:${location.id}`, metStartedAt, response.status === 304 ? 'not-modified' : `http-${response.status}`);
 
     if (response.status === 304 && stored?.body) {
       // Unchanged on MET's side: reuse the stored body. A 304 can still extend
@@ -498,7 +548,7 @@ async function fetchWarnings(location, seedWarnings, now = Date.now()) {
     const response = await fetchWithTimeout(METEOALARM_DENMARK_FEED, {
       headers: { Accept: '*/*' },
       cf: { cacheTtl: 300, cacheEverything: true },
-    });
+    }, currentFetchTimeoutMs);
     if (!response.ok) throw new Error(`MeteoAlarm feed failed: ${response.status}`);
     const warnings = parseMeteoalarmFeed(await response.text(), location.emmaId);
     // Kommune-coverage soft filter (public CAP detail per warning): may only
@@ -508,7 +558,7 @@ async function fetchWarnings(location, seedWarnings, now = Date.now()) {
       const detail = await fetchWithTimeout(url, {
         headers: { Accept: '*/*' },
         cf: { cacheTtl: 300, cacheEverything: true },
-      });
+      }, currentFetchTimeoutMs);
       if (!detail.ok) throw new Error(`CAP detail failed: ${detail.status}`);
       return detail.text();
     });
@@ -997,12 +1047,40 @@ async function handleHealthRequest(env) {
     })
   );
 
+  // A dead man's switch, for an external uptime monitor to poll.
+  //
+  // On 2026-08-08 the cron silently stopped rebuilding and the forecast sat
+  // frozen for ELEVEN HOURS. Every endpoint answered 200, this endpoint said
+  // ok:true, and nothing was logged — the stall was eventually noticed in the
+  // UI. The tell was never an error; it was a timestamp that had stopped
+  // moving. So this endpoint now judges itself on that timestamp and returns
+  // 503 when it goes stale, which is a signal a monitor can actually alarm on.
+  //
+  // Deliberately external rather than self-reported: a cron that has stopped
+  // firing cannot notice that it stopped. The watcher has to live outside.
+  const now = Date.now();
+  const ages = entries.map((entry) => {
+    const fetchedMs = Date.parse(entry.fetchedAt ?? '');
+    return {
+      id: entry.id,
+      ageMs: Number.isFinite(fetchedMs) ? now - fetchedMs : Number.POSITIVE_INFINITY,
+    };
+  });
+  const stalled = ages.filter((a) => a.ageMs > HEALTH_MAX_STALE_MS).map((a) => a.id);
+  const oldestAgeMs = ages.reduce((worst, a) => Math.max(worst, a.ageMs), 0);
+  const ok = stalled.length === 0;
+
   return jsonResponse({
-    ok: true,
+    ok,
     service: 'frank-forecast',
     checkedAt: new Date().toISOString(),
+    // Flat, machine-readable fields first so a monitor can key on them without
+    // walking the per-location detail below.
+    oldestAgeMin: Number.isFinite(oldestAgeMs) ? Math.round(oldestAgeMs / 60000) : null,
+    staleAfterMin: Math.round(HEALTH_MAX_STALE_MS / 60000),
+    stalled,
     locations: entries,
-  });
+  }, ok ? 200 : 503);
 }
 
 export default {
@@ -1046,18 +1124,35 @@ export default {
   },
 
   async scheduled(_event, env, _ctx) {
-    // Isolate failures per location: a rebuild throw (no cached payload + a
-    // provider outage) must not starve the remaining locations of their cron
-    // refresh for the whole tick.
-    for (const location of locations) {
-      try {
-        await refreshForecastCache(env, location, {
-          reason: 'cron',
-          minIntervalMs: CRON_CHECK_MIN_INTERVAL_MS,
-        });
-      } catch (error) {
-        console.error(`Cron refresh failed for ${location.id}:`, error);
+    // Nobody is waiting on a cron tick, so it can afford to wait out a slow
+    // provider rather than call it broken (see CRON_FETCH_TIMEOUT_MS).
+    const tickStartedAt = Date.now();
+    currentFetchTimeoutMs = CRON_FETCH_TIMEOUT_MS;
+    try {
+      // Isolate failures per location: a rebuild throw (no cached payload + a
+      // provider outage) must not starve the remaining locations of their cron
+      // refresh for the whole tick.
+      for (const location of locations) {
+        // ...and neither must a location that merely takes a very long time.
+        // The per-location try/catch below isolates THROWS, not the shared
+        // wall clock, so one hanging upstream could consume the tick and leave
+        // the last locations silently unrefreshed every time.
+        if (Date.now() - tickStartedAt > CRON_TICK_BUDGET_MS) {
+          console.error(`Cron tick budget spent; skipping ${location.id} until the next tick`);
+          continue;
+        }
+        try {
+          await refreshForecastCache(env, location, {
+            reason: 'cron',
+            minIntervalMs: CRON_CHECK_MIN_INTERVAL_MS,
+          });
+        } catch (error) {
+          console.error(`Cron refresh failed for ${location.id}:`, error);
+        }
       }
+    } finally {
+      currentFetchTimeoutMs = FETCH_TIMEOUT_MS;
+      console.log(`cron tick done in ${Date.now() - tickStartedAt}ms`);
     }
   },
 };
