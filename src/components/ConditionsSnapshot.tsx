@@ -67,8 +67,8 @@ export default function ConditionsSnapshot({
   // dash rather than repeating the sustained wind under a "gusts" label.
   const blockGust = data.windGustMax ?? data.windGust;
   const gustText = isBlock
-    ? (Number.isFinite(blockGust) ? ` ${t('gusts {0} max', formatReading(blockGust, 1))}` : ` ${t('gusts {0}', NO_READING_TEXT)}`)
-    : ` ${t('gusts {0}', formatReading(data.windGust, 1))}`;
+    ? (Number.isFinite(blockGust) ? t('gusts {0} max', formatReading(blockGust, 1)) : t('gusts {0}', NO_READING_TEXT))
+    : t('gusts {0}', formatReading(data.windGust, 1));
 
   return (
     <section className="panel snapshot" aria-label={t('Current conditions')}>
@@ -88,8 +88,13 @@ export default function ConditionsSnapshot({
         <div className="snapshot-row">
           <span className="snapshot-cell">
             <span className="snapshot-label">{t('Wind')}</span>
-            <span className="snapshot-value">
-              {windText}
+            {/* Two spans, so the gust can drop to its own line on a narrow
+                phone while each part stays intact. Storm values make this the
+                widest cell in the panel: "25.5 m/s vindstod 35.0" overflowed a
+                180px cell by 23px, which is what used to force the entire grid
+                into one column below 400px. */}
+            <span className="snapshot-value snapshot-wind">
+              <span>{windText}</span>
               <span className="snapshot-sub">{gustText}</span>
             </span>
           </span>

@@ -1026,7 +1026,17 @@
   }
 }
 
-.settings-info-btn:hover::after,
+/* Hover only where hover exists, plus keyboard focus. A tap leaves :hover
+   stuck on a touch device, so tapping the "?" to open the panel and tapping
+   again to close it left the tip stranded under the button with nothing to
+   dismiss it. :focus-visible stays outside the query because a keyboard user
+   asking for focus is asking for the tip. */
+@media (hover: hover) and (pointer: fine) {
+  .settings-info-btn:hover::after {
+    opacity: 1;
+  }
+}
+
 .settings-info-btn:focus-visible::after {
   opacity: 1;
 }
@@ -3032,14 +3042,13 @@ button.legend-toggle.is-on {
   text-align: right;
 }
 
-/* Narrow screens: the two-column grid can no longer hold the nowrap values
-   without them colliding, so stack to a single readable column instead.
-   Measured at 360px (Pixel/Galaxy class — the most common Android width, well
-   inside the old 349px cutoff): "VIND 6.9 m/s vindstød 11.8" overflowed its
-   cell by 35px and overlapped the wind-direction arrow by 21px, with calm
-   single-digit data. Storm values are wider on both sides, and the gust
-   reading is the number that decides whether someone launches. */
-@media (max-width: 400px) {
+/* Ultra-narrow only (Galaxy Fold cover display and similar). This cutoff was
+   briefly 400px, which cost every 360-400px phone — most Android handsets and
+   every iPhone since the 12 — its second column. The collision that justified it
+   was real but came from ONE cell: the wind value with storm numbers. That cell
+   now wraps its gust onto a second line (.snapshot-wind), so two columns hold
+   down to here. Stacking six rows to fix one of them was the wrong trade. */
+@media (max-width: 340px) {
   .snapshot-grid {
     grid-template-columns: 1fr;
     row-gap: 10px;
@@ -3075,6 +3084,19 @@ button.legend-toggle.is-on {
   display: inline-flex;
   align-items: baseline;
   gap: 5px;
+  white-space: nowrap;
+}
+
+/* The only value in the panel that may wrap, and only between its two parts:
+   sustained wind on one line, gusts on the next. Each part keeps nowrap so a
+   number never splits from its unit. */
+.snapshot-value.snapshot-wind {
+  flex-wrap: wrap;
+  white-space: normal;
+  row-gap: 0;
+}
+
+.snapshot-value.snapshot-wind > span {
   white-space: nowrap;
 }
 

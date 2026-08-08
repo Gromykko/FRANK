@@ -55,8 +55,8 @@ export const da: Record<string, string> = {
   'Hourly forecast timeline': 'Timeprognosens tidslinje',
   // Explains the striped, time-span columns where the matrix stops being hourly.
   // ── Meteogram outlook legend ──────────────────────────────────────────────
-  'Striped columns show a span like 02–08. They are 6-hour blocks, because MET stops publishing hour by hour this far out.':
-    'Stribede kolonner viser et tidsrum som 02–08. Det er 6-timers blokke, fordi MET holder op med at udgive time for time så langt frem.',
+  'Columns headed with a time span, like 02–08, are 6-hour blocks. MET stops publishing hour by hour this far out.':
+    'Kolonner med et tidsrum i overskriften, fx 02–08, er 6-timers blokke. MET holder op med at udgive time for time så langt frem.',
   'Waves and water: the block’s roughest and coldest hour.':
     'Bølger og vand: blokkens groveste og koldeste time.',
   'Wind and air: MET’s one reading for the whole block.':

@@ -722,7 +722,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
       {hasOutlookColumns && (
         <div className="timeline-outlook-note">
           <p className="outlook-note-lead">
-            {t('Striped columns show a span like 02–08. They are 6-hour blocks, because MET stops publishing hour by hour this far out.')}
+            {t('Columns headed with a time span, like 02–08, are 6-hour blocks. MET stops publishing hour by hour this far out.')}
           </p>
           <ul className="outlook-note-list">
             <li>{t('Waves and water: the block’s roughest and coldest hour.')}</li>
