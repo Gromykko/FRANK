@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 // @ts-expect-error - the worker is plain JS with no type declarations
-import { fetchMarineSeriesWithFallback, deriveMarineSeedsFromPayload, classifyBuildFailure, marineRunAgeMs } from '../../worker/index.js';
+import { fetchMarineSeriesWithFallback, deriveMarineSeedsFromPayload, classifyBuildFailure, marineRunAgeMs, shouldCheckInBackground } from '../../worker/index.js';
 
 // An in-memory stand-in for the KV binding (get(key,'json') / put(key,string)).
 function makeEnv(seed: Record<string, unknown> = {}) {
@@ -167,5 +167,52 @@ describe('deriveMarineSeedsFromPayload', () => {
     expect(deriveMarineSeedsFromPayload({ hourly: [{ time: '2026-07-11T14:00:00Z', blockSpanHours: 6 }] })).toBeNull();
     expect(deriveMarineSeedsFromPayload({})).toBeNull();
     expect(deriveMarineSeedsFromPayload(null)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The gate that decides whether the Worker contacts upstream at all. It reads
+// both the persisted stamp and an in-memory "when did THIS isolate last check"
+// clock. Stamping that clock BEFORE the gate read it (in the caller, rather
+// than after the gate passed) made every call see "checked 0 ms ago" and
+// short-circuit — the 10-minute cron silently became a no-op and nothing
+// rebuilt for as long as the isolate lived. Caught in production after 11 hours
+// of a frozen forecast.
+// ---------------------------------------------------------------------------
+describe('shouldCheckInBackground', () => {
+  const loc = { id: 'horsens' } as never;
+  const TEN_MIN = 10 * 60 * 1000;
+  const withStamp = (msAgo: number) => ({
+    sources: { cacheHealth: { lastAttemptAt: new Date(Date.now() - msAgo).toISOString() } },
+  }) as never;
+
+  it('checks when the last check is older than the interval', () => {
+    expect(shouldCheckInBackground(loc, withStamp(30 * 60 * 1000), TEN_MIN, 0)).toBe(true);
+  });
+
+  it('skips when a check just happened', () => {
+    expect(shouldCheckInBackground(loc, withStamp(60 * 1000), TEN_MIN, 0)).toBe(false);
+  });
+
+  it('a fresh memory clock suppresses the check even against an ancient stamp', () => {
+    // This IS the gate's contract, and it is also why the caller's placement
+    // matters so much: recording the check before the gate reads it hands the
+    // gate a memory clock of `now` on every call, so this correct behaviour
+    // becomes a permanent short-circuit. The outage was the placement, not this
+    // rule — the rule is what makes the placement load-bearing.
+    expect(shouldCheckInBackground(loc, withStamp(6 * 60 * 60 * 1000), TEN_MIN, Date.now())).toBe(false);
+    // Once a correctly-placed clock ages past the interval, checking resumes.
+    expect(shouldCheckInBackground(loc, withStamp(6 * 60 * 60 * 1000), TEN_MIN, Date.now() - 11 * 60 * 1000)).toBe(true);
+  });
+
+  it('takes whichever of stamp and memory is more recent', () => {
+    // Fresh memory, stale stamp -> skip. Stale memory, fresh stamp -> skip.
+    expect(shouldCheckInBackground(loc, withStamp(60 * 60 * 1000), TEN_MIN, Date.now() - 60 * 1000)).toBe(false);
+    expect(shouldCheckInBackground(loc, withStamp(60 * 1000), TEN_MIN, Date.now() - 60 * 60 * 1000)).toBe(false);
+  });
+
+  it('checks when nothing is known at all', () => {
+    expect(shouldCheckInBackground(loc, undefined as never, TEN_MIN, 0)).toBe(true);
+    expect(shouldCheckInBackground(loc, { sources: { cacheHealth: { lastAttemptAt: 'garbage' } } } as never, TEN_MIN, 0)).toBe(true);
   });
 });

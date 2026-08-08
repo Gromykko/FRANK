@@ -127,3 +127,35 @@ describe('deriveCacheStatus freshness', () => {
     expect(derive(2 * 60_000, 40 * 60_000).view.tone).toBe('fresh');
   });
 });
+
+// ---------------------------------------------------------------------------
+// The division of labour that a real outage taught us: cache.ts decides whether
+// a payload is USABLE, this module decides how fresh it LOOKS. When the worker's
+// cron stalled for 11 hours, cache.ts was (wrongly) applying a 6-hour age cap
+// and refused a payload whose hourly rows still ran days ahead — so the app
+// showed a dead "Kan ikke nå prognosen" screen instead of the forecast plus an
+// honest "Viser ældre data". These assertions pin that an 11-hour-old payload is
+// reported as stale rather than being treated as unusable.
+// ---------------------------------------------------------------------------
+describe('an 11-hour-old payload is reported honestly, not discarded', () => {
+  const NOW = Date.parse('2026-08-08T11:13:00Z');
+  const v = deriveCacheStatus({
+    sources: {
+      fetchedAt: '2026-08-08T00:16:52Z',
+      cacheHealth: { status: 'current', lastAttemptAt: '2026-08-08T00:16:52Z' },
+    } as never,
+    refreshing: false,
+    online: true,
+    nowMs: NOW,
+  });
+
+  it('demotes the tone rather than claiming it was just checked', () => {
+    expect(v.view.tone).not.toBe('fresh');
+    expect(v.view.label).not.toMatch(/Checked/);
+  });
+
+  it('raises the page banner and names the age', () => {
+    expect(v.showRefreshWarning).toBe(true);
+    expect(v.forecastAgeLabel).toBe('11 h');
+  });
+});

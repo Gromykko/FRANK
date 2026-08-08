@@ -729,9 +729,9 @@ async function writeCachedForecast(env, location, data) {
 // write; a stale entry after an isolate recycles just falls back to the stamp.
 const lastCheckAt = new Map();
 
-function shouldCheckInBackground(location, data, minIntervalMs) {
+export function shouldCheckInBackground(location, data, minIntervalMs, memoryMsOverride) {
   const stampMs = new Date(data?.sources?.cacheHealth?.lastAttemptAt ?? 0).getTime();
-  const memoryMs = lastCheckAt.get(cacheKey(location)) ?? 0;
+  const memoryMs = memoryMsOverride ?? lastCheckAt.get(cacheKey(location)) ?? 0;
   // Whichever check was more recent decides — a fresh in-memory check must not
   // be overridden by an older persisted stamp, and vice versa.
   const lastMs = Math.max(Number.isFinite(stampMs) ? stampMs : 0, memoryMs);
@@ -764,6 +764,13 @@ async function _refreshForecastCache(env, location, options = {}) {
     }
     return cached;
   }
+
+  // Past the gate: we are genuinely about to contact upstream, so this is the
+  // moment to record the check. Setting it in the refreshForecastCache wrapper
+  // instead — BEFORE the gate above reads it — made the gate see "checked 0 ms
+  // ago" on every single call and short-circuit forever: the 10-minute cron
+  // became a no-op and nothing rebuilt for as long as the isolate lived.
+  lastCheckAt.set(cacheKey(location), Date.now());
 
   let latestMarine;
 
@@ -885,7 +892,6 @@ async function refreshForecastCache(env, location, options = {}) {
     return activeRefreshes.get(key);
   }
 
-  lastCheckAt.set(key, Date.now());
   const promise = _refreshForecastCache(env, location, options);
   activeRefreshes.set(key, promise);
   

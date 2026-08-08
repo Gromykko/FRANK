@@ -91,11 +91,19 @@ async function readWorkerCachedWeatherData(location: ForecastLocation, forceRefr
     if (!response.ok) return null;
 
     const parsed = reviveReadings(await response.json());
-    // Same age policy as the local copy. Checking only for a future hour let a
-    // days-old payload through (the array still reaches forward), and it was
-    // then written to localStorage — where the local reader would immediately
-    // reject the very bytes the worker reader had just accepted.
-    if (isWeatherData(parsed) && isCacheFreshEnough(parsed)) {
+    // USABILITY, not freshness: does this payload still cover the hours the app
+    // needs to render? How OLD it is belongs to the status layer, which reports
+    // it honestly (deriveCacheStatus demotes the tone by wall clock, and the
+    // page banner fires past 6 h).
+    //
+    // Gating this on the local copy's 6-hour age cap instead was a real outage:
+    // when the worker's cron stalled, an 11-hour-old but perfectly renderable
+    // forecast — hourly rows running days ahead — was refused here, so
+    // loadCachedWeatherData returned null and users got the dead "Kan ikke nå
+    // prognosen" screen instead of the forecast plus "Viser ældre data". Same
+    // mistake the payloadVersion check already documents: degrading with a
+    // warning beats failing shut.
+    if (isWeatherData(parsed) && hasCurrentForecastWindow(parsed)) {
       saveCachedWeatherData(parsed, location);
       return parsed;
     }
