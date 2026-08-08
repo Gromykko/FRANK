@@ -1225,17 +1225,23 @@ async function handleStatusRequest(env) {
 <h1>FRANK · forecast worker</h1>
 ${banner}
 <table>
-  <tr><th>Location</th><th>Last check<br><span class="hdr-sub">recorded every ~15 min</span></th><th>Data age<br><span class="hdr-sub">last rebuild</span></th><th>Status</th><th>Degraded</th><th>Water / wave run</th></tr>
+  <tr><th>Location</th><th>Last check<br><span class="hdr-sub">own cycle per location</span></th><th>Data age<br><span class="hdr-sub">last rebuild</span></th><th>Status</th><th>Degraded</th><th>Water / wave run</th></tr>
   ${rows}
 </table>
 <footer>
   <p>Last check counts from the most recent time the worker asked MET and DMI whether
   anything had changed. The schedule runs every 10 minutes, but the timestamp is only
-  written to storage every 15 minutes while nothing changes, because each write costs
-  quota. The figure therefore drifts up to roughly 20 minutes and then drops back, and
-  a reading of 15 or 20 minutes does not mean a check was missed. It alarms past
-  ${escapeHtml(health.checkStaleAfterMin)} minutes, which sits well clear of that
-  drift. Worst right now: ${escapeHtml(health.oldestCheckAgeMin ?? '?')} minutes.</p>
+  written to storage once it is 15 minutes old, because each write comes out of a daily
+  quota. A figure of 15 or 20 minutes therefore does not mean a check was missed.</p>
+
+  <p>Each location also runs that cycle independently, so the four rows are normally out
+  of step with each other. One city reading 2 minutes while another reads 11 is the
+  expected picture, not a fault: a location's stamp is also rewritten whenever that
+  location rebuilds, which follows its own MET validity window, and again whenever a
+  visitor's request prompts a check for it. The rows only line up right after a deploy,
+  when all four are built at once. The alarm sits at
+  ${escapeHtml(health.checkStaleAfterMin)} minutes, well clear of the whole cycle.
+  Worst right now: ${escapeHtml(health.oldestCheckAgeMin ?? '?')} minutes.</p>
 
   <p>Data age counts from the last successful rebuild, and a figure that sits still is
   normal here. MET declares each forecast valid for about 30 minutes through its

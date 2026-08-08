@@ -138,7 +138,7 @@ export default function StatusBar({
             // honesty sentence ("You're offline, so FRANK is showing your last
             // saved forecast from …"), which is computed and rendered nowhere
             // else. `group` rather than `status` so it doesn't compete with the
-            // verdict's live region for announcements.
+            // display's live region for announcements.
             role="group"
             aria-label={cacheAriaLabel}
           >
@@ -155,6 +155,33 @@ export default function StatusBar({
             <span className="frank-crt">
               <GertyFace rating={rating} />
             </span>
+
+            <div className="frank-cell-display">
+              <div
+                ref={displayRef}
+                className={`frank-display ${isMarquee ? 'is-marquee' : ''}`}
+                role="status"
+                aria-live="polite"
+              >
+                {/* Live regions announce CONTENT changes, not aria-label
+                    changes - the announcement must be a real text node. The
+                    verdict words live here for screen readers; on screen the
+                    GertyFace expression and the rating-coloured phosphor carry
+                    the rating, and the reason bullets in the conditions card
+                    below state it in words. */}
+                <span className="sr-only">{t('{0}. {1}. FRANK says: {2}.', srTitle, srSubtitle, phrase)}</span>
+                <span
+                  className="frank-display-text"
+                  style={isMarquee ? { animationDuration: `${marqueeDuration}s` } : undefined}
+                  aria-hidden="true"
+                >
+                  {phrase}
+                </span>
+                <span ref={measureRef} className="frank-display-measure" aria-hidden="true">
+                  {phrase}
+                </span>
+              </div>
+            </div>
 
             <div className="frank-actions">
               {/* Triangle: flag + refresh side by side, theme centered below
@@ -191,42 +218,6 @@ export default function StatusBar({
                   {themeMode === 'light' ? <Moon size={16} /> : <Sun size={16} />}
                 </button>
               </div>
-            </div>
-
-            {/* ONE screen, full width. This started as two: a 96px dot-matrix
-                cell wedged between the CRT and the buttons, plus a wide verdict
-                row added later. Two identical-looking dark panels, and the
-                narrow one showed 36% of a 262px phrase at a time, scrolling
-                forever — a layout accident rather than a design. The verdict
-                needs the full width (in the middle column it truncated to
-                "BLIV I…" on a 390px phone), and the phrase is far happier with
-                313px than 96px: it mostly stops needing to scroll at all. */}
-            <div
-              className="frank-verdict"
-              role="status"
-              aria-live="polite"
-            >
-              {/* Live regions announce CONTENT changes, not aria-label changes —
-                  the announcement must be a real text node. The visible lines
-                  below are aria-hidden so it is not read twice. */}
-              <span className="sr-only">{t('{0}. {1}. FRANK says: {2}.', srTitle, srSubtitle, phrase)}</span>
-              <span className="frank-verdict-word" aria-hidden="true">{srTitle}</span>
-              <span className="frank-verdict-sub" aria-hidden="true">{srSubtitle}</span>
-              <span
-                ref={displayRef}
-                className={`frank-phrase-line ${isMarquee ? 'is-marquee' : ''}`}
-                aria-hidden="true"
-              >
-                <span
-                  className="frank-display-text"
-                  style={isMarquee ? { animationDuration: `${marqueeDuration}s` } : undefined}
-                >
-                  {phrase}
-                </span>
-                <span ref={measureRef} className="frank-display-measure">
-                  {phrase}
-                </span>
-              </span>
             </div>
 
             <span className="frank-nameplate" aria-hidden="true">FRANK</span>
