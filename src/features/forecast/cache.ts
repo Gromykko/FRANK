@@ -110,6 +110,13 @@ async function readWorkerCachedWeatherData(location: ForecastLocation, forceRefr
     }
   } catch {
     return null;
+  } finally {
+    // In the `finally`, not before the fetch. Setting it up front collapsed the
+    // documented "in flight" state (undefined) into "attempted and not reached"
+    // (null) for the whole duration of the request, so on every boot
+    // deriveCacheStatus briefly concluded the worker was unreachable and the
+    // status aria-label announced a refresh failure that had not happened.
+    workerAttempted = true;
   }
 
   return null;

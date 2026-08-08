@@ -21,7 +21,7 @@ const MIN_MANUAL_SPINNER_MS = 600;
 // Containment, not `last row <= now`: the series legitimately has gaps (an hour
 // with no marine sample within 90 minutes is dropped), and `last row <= now`
 // would then answer with a PAST row, restarting the timeline behind itself.
-function hourIndexForNow(hourly: WeatherData['hourly'], nowMs: number): number {
+export function hourIndexForNow(hourly: WeatherData['hourly'], nowMs: number): number {
   let nearest = 0;
   let minDiff = Infinity;
   let containing = -1;

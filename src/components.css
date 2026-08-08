@@ -125,6 +125,15 @@
   max-width: 68ch;
 }
 
+/* A signed value centres its sign along with its digits, which pushes the digits
+   half a character to the right of every unsigned row (measured: 12.3px vs
+   8.4px). Reserving an equal slot on the right cancels the shift exactly, so the
+   water-level numbers line up with waves, air and water. 1ch is precise here
+   because tabular-nums makes every character one digit wide. */
+.meteogram-value.is-signed {
+  padding-right: 1ch;
+}
+
 .meteogram-cell.is-low-confidence .meteogram-value {
   font-style: italic;
 }

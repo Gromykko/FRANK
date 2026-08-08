@@ -48,6 +48,10 @@ export const da: Record<string, string> = {
     '{0} har været optaget et stykke tid, så prognosen er ikke opdateret siden {1}. FRANK prøver igen automatisk — du ser den seneste gode prognose.',
   'Forecast refresh keeps failing (last try {0}). You are seeing data from {1} — {2} old, so treat it with extra caution.{3} FRANK retries by itself roughly every 10 minutes.':
     'Prognoseopdateringen fejler fortsat (sidste forsøg {0}). Du ser data fra {1} — {2} gamle, så brug dem med ekstra forsigtighed.{3} FRANK prøver selv igen cirka hvert 10. minut.',
+  // Offline AND old: the age warning still fires (a paddler on the water needs
+  // it), but nothing is "failing" — there is no connection to try over.
+  'You have been offline for a while, so this forecast is from {0} — {1} old. Treat it with extra caution; it will update by itself once you are back online.':
+    'Du har været offline et stykke tid, så denne prognose er fra {0} — {1} gammel. Brug den med ekstra forsigtighed; den opdateres af sig selv, når du er online igen.',
   'Hourly forecast timeline': 'Timeprognosens tidslinje',
   // Explains the striped, time-span columns where the matrix stops being hourly.
   'Striped columns with a time span (like 02–08) are 6-hour outlook blocks, not single hours: MET publishes no hourly detail that far ahead. Each shows one decision value — the roughest wave, the coldest water. Tap one to see its full min–max range above.':

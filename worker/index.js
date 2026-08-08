@@ -82,6 +82,10 @@ const MANUAL_CHECK_MIN_INTERVAL_MS = 60 * 1000;
 // a retry — allow it much sooner than the normal manual gate. 20s still keeps
 // spam-taps from hammering the providers.
 const STALE_MANUAL_RETRY_MS = 20 * 1000;
+// How long after a recorded failure the fast 20s retry above stays available.
+// Past this the normal gate applies, so a long outage cannot be turned into a
+// sustained 3-checks-per-minute lever by anyone tapping refresh.
+const STALE_MANUAL_RETRY_GRACE_MS = 3 * 60 * 1000;
 const USER_BACKGROUND_CHECK_MIN_INTERVAL_MS = 10 * 60 * 1000;
 const CRON_CHECK_MIN_INTERVAL_MS = 4 * 60 * 1000;
 // DMI marine runs are 6h apart (measured 2026-07-11: dkss_idw & wam_nsb run
@@ -790,6 +794,30 @@ async function writeCachedForecast(env, location, data) {
   await env.FRANK_FORECAST_CACHE.put(cacheKey(location), JSON.stringify(data));
 }
 
+// Whether a failed check is worth a KV write. Exported only so the decision has
+// a test: it is a pure comparison of the old cacheHealth against the new one.
+//
+// The first failure and any CHANGE in it write immediately, because that is the
+// information /status and the client need. An identical repeat writes at most
+// once per CHECKED_STAMP_MIN_WRITE_INTERVAL_MS, because re-stamping the same
+// verdict every 20 seconds tells nobody anything. Unthrottled, this was 3
+// writes/min/location on the path a hammering user reaches (see the caller), so
+// a provider outage plus a refresh-tapping crowd emptied the day's allowance in
+// about 90 minutes. Leading with !Number.isFinite mirrors the cacheAlreadyCurrent
+// guard: a payload with no stamp yet would otherwise compare NaN and never get one.
+export function shouldPersistFailureState(prev, next, nowMs = Date.now()) {
+  const sameFailure =
+    prev?.status === next?.status &&
+    prev?.message === next?.message &&
+    Boolean(prev?.needsRebuild) === Boolean(next?.needsRebuild) &&
+    Boolean(prev?.providerBusy) === Boolean(next?.providerBusy) &&
+    marineInstancesEqual(prev?.marineInstances, next?.marineInstances);
+  if (!sameFailure) return true;
+
+  const prevStampMs = Date.parse(prev?.lastAttemptAt ?? '');
+  return !Number.isFinite(prevStampMs) || nowMs - prevStampMs >= CHECKED_STAMP_MIN_WRITE_INTERVAL_MS;
+}
+
 // When this isolate last actually ran a check, per location. The persisted
 // stamp is deliberately coarse (see CHECKED_STAMP_MIN_WRITE_INTERVAL_MS), and
 // gating only on it meant every ungated request in the throttle window passed
@@ -817,8 +845,19 @@ async function _refreshForecastCache(env, location, options = {}) {
   // A forced (user-initiated) refresh of a stale cache retries after 20s
   // instead of the normal gate — a gated no-op here is what used to make the
   // refresh button feel dead right after a failure.
+  //
+  // But only while the failure is still NEW. Left open for the whole outage it
+  // becomes an unauthenticated 20-second lever on the upstream providers and
+  // (before the throttle below) on the KV write budget. Once we have already
+  // recorded a failed check, a forced tap falls back to the normal 60s gate:
+  // the button still answers instantly from cache either way.
+  const failedRecently = (() => {
+    const stampMs = Date.parse(cached?.sources?.cacheHealth?.lastAttemptAt ?? '');
+    if (!Number.isFinite(stampMs)) return false;
+    return Date.now() - stampMs < STALE_MANUAL_RETRY_GRACE_MS;
+  })();
   const baseIntervalMs = options.minIntervalMs ?? CRON_CHECK_MIN_INTERVAL_MS;
-  const minIntervalMs = options.force && cachedNeedsRecovery
+  const minIntervalMs = options.force && cachedNeedsRecovery && !failedRecently
     ? Math.min(baseIntervalMs, STALE_MANUAL_RETRY_MS)
     : baseIntervalMs;
 
@@ -932,7 +971,16 @@ async function _refreshForecastCache(env, location, options = {}) {
         ? { message: `Provider partly unavailable; using last good data for: ${fallbackNotes.join(', ')}.` }
         : {}),
     });
-    await writeCachedForecast(env, location, fresh);
+    // Persisting is best-effort HERE and nowhere else. If this throws (an
+    // exhausted KV write budget is the realistic cause) the catch below would
+    // re-enter with a perfectly good freshly-built payload and turn it into a
+    // 'stale' verdict, then try to write THAT too and propagate. So the caller
+    // gets the real forecast either way; only the persistence is lost.
+    try {
+      await writeCachedForecast(env, location, fresh);
+    } catch (writeError) {
+      console.error(`Could not persist rebuilt forecast for ${location.id}:`, writeError);
+    }
     return fresh;
   } catch (error) {
     if (cached) {
@@ -946,7 +994,22 @@ async function _refreshForecastCache(env, location, options = {}) {
         ...(busy ? { providerBusy: true, busyProvider } : {}),
         error,
       });
-      await writeCachedForecast(env, location, failedCache);
+
+      // This was the one KV write with no throttle at all, and it sits on the
+      // path a hammering user actually reaches: once the cache is 'stale',
+      // cachedNeedsRecovery drops the forced-refresh gate to
+      // STALE_MANUAL_RETRY_MS (20s), `?refresh=1` is unauthenticated, and the
+      // refresh button deliberately has no client-side throttle. See
+      // shouldPersistFailureState for what survives that.
+      if (shouldPersistFailureState(cached.sources?.cacheHealth, failedCache.sources?.cacheHealth)) {
+        try {
+          await writeCachedForecast(env, location, failedCache);
+        } catch (writeError) {
+          console.error(`Could not persist failure state for ${location.id}:`, writeError);
+        }
+      }
+      // Returned regardless of whether it was persisted: the response always
+      // carries this attempt's real state.
       return failedCache;
     }
 
@@ -1287,20 +1350,23 @@ export default {
       }
 
       if (normalizedPath === '/health') {
-        return handleHealthRequest(env);
+        return await handleHealthRequest(env);
       }
 
       if (normalizedPath === '/status') {
-        return handleStatusRequest(env);
+        return await handleStatusRequest(env);
       }
 
       const forecastMatch = normalizedPath.match(/^\/forecast\/([a-z0-9-]+)$/);
       if (forecastMatch) {
-        return handleForecastRequest(request, env, ctx, forecastMatch[1]);
+        return await handleForecastRequest(request, env, ctx, forecastMatch[1]);
       }
 
       return jsonResponse({ error: 'Not found' }, 404);
     } catch (error) {
+      // Reachable only because the handlers above are AWAITED. Returning their
+      // promises un-awaited let a rejection escape this try entirely, so a
+      // failure surfaced as an opaque 5xx with no CORS headers and no log line.
       console.error('Worker request failed:', error);
       return jsonResponse({
         error: 'Forecast service failed',

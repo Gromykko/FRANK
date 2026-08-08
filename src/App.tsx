@@ -300,7 +300,15 @@ export default function App() {
         {showCacheRefreshWarning && (
           <div className="forecast-warning" role="alert">
             <AlertTriangle size={15} />
-            {providerBusy ? (
+            {!online ? (
+              // Offline needs its own sentence. The banner keys on DATA AGE, which
+              // is right — a paddler on the water with a six-hour-old forecast
+              // must be told, connection or not — but the "refresh keeps failing"
+              // wording then contradicted the header one line above, which
+              // correctly said "Offline". Nothing is failing; there is simply no
+              // connection to try over.
+              <span>{t('You have been offline for a while, so this forecast is from {0} — {1} old. Treat it with extra caution; it will update by itself once you are back online.', formatDateTime(weatherData.sources.fetchedAt), forecastAgeLabel)}</span>
+            ) : providerBusy ? (
               <span>{t("{0} has been busy for a while, so the forecast hasn't updated since {1}. FRANK keeps retrying automatically — you are seeing the last good forecast.", busyServiceName, formatDateTime(weatherData.sources.fetchedAt))}</span>
             ) : (
               <span>{t('Forecast refresh keeps failing (last try {0}). You are seeing data from {1} — {2} old, so treat it with extra caution.{3} FRANK retries by itself roughly every 10 minutes.', formatDateTime(cacheCheckedAt), formatDateTime(weatherData.sources.fetchedAt), forecastAgeLabel, cacheFailureDetail)}</span>

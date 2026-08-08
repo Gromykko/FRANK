@@ -542,13 +542,23 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
             </div>
 
             <div className="meteogram-row" title={t('Water level (m)')}>
-              {allHours.map((h) => (
-                <div key={h.actualIndex} className={meteogramCellClass(h)}>
-                  <span className="meteogram-value">
-                    {formatSigned(h.data.tideLevel, 2)}
-                  </span>
-                </div>
-              ))}
+              {allHours.map((h) => {
+                const level = formatSigned(h.data.tideLevel, 2);
+                // The leading +/- takes part in centring, so it pushes the
+                // DIGITS half a character right and this row's numbers sat 3.9px
+                // out of line with every other row. is-signed reserves a
+                // matching slot on the right to cancel that. Only applied when
+                // there really is a sign: a missing reading renders as a bare
+                // dash, which should centre normally.
+                const signed = /^[+-]/.test(level);
+                return (
+                  <div key={h.actualIndex} className={meteogramCellClass(h)}>
+                    <span className={signed ? 'meteogram-value is-signed' : 'meteogram-value'}>
+                      {level}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
 
             <div className="meteogram-row" title={t('Air temperature (°C)')}>
