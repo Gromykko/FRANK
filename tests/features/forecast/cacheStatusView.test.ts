@@ -69,93 +69,66 @@ describe('getCacheStatusView', () => {
 });
 
 // ---------------------------------------------------------------------------
-// deriveCacheStatus owns the wall-clock check. getCacheStatusView above is
-// pure presentation and trusts whatever status it is handed; the question
-// "did we actually reach the worker?" can only be answered against the clock.
+// Whether the header may claim freshness is decided by OUR OWN record of
+// reaching the worker, not by the worker's `lastAttemptAt` stamp. That stamp is
+// deliberately coarse (persisted at most every 15 min to save KV writes, drifts
+// to ~20), and deriving client honesty from it produced three separate bugs: a
+// healthy forecast reported as "Couldn't refresh", a false "Could not reach the
+// forecast service" banner on cold boot, and a misleading /status column.
 // ---------------------------------------------------------------------------
 describe('deriveCacheStatus freshness', () => {
-  const NOW = Date.parse('2026-08-07T14:50:00Z');
+  const NOW = Date.parse('2026-08-08T14:50:00Z');
   const at = (msAgo: number) => new Date(NOW - msAgo).toISOString();
-  const derive = (checkedMsAgo: number, fetchedMsAgo = checkedMsAgo, status = 'current' as const) =>
+  const derive = (
+    contact: number | null | undefined,
+    { fetchedMsAgo = 5 * 60_000, status = 'current' as const } = {}
+  ) =>
     deriveCacheStatus({
       sources: {
         fetchedAt: at(fetchedMsAgo),
-        cacheHealth: { status, lastAttemptAt: at(checkedMsAgo) },
+        cacheHealth: { status, lastAttemptAt: at(fetchedMsAgo) },
       } as never,
       refreshing: false,
       online: true,
       nowMs: NOW,
+      workerContactedAtMs: contact,
     });
 
-  it('a recent check stays green', () => {
-    expect(derive(5 * 60_000).view.tone).toBe('fresh');
+  it('reached the worker just now: green', () => {
+    expect(derive(NOW - 60_000).view.tone).toBe('fresh');
   });
 
-  it('a check far older than the worker cadence is NOT green, whatever the payload claims', () => {
-    // The worker re-checks every 10 minutes. A stamp hours old means the
-    // CLIENT never reached it — the browser fell back to its saved copy, which
-    // still carries the last good payload's status:'current'. navigator.onLine
-    // stays true behind a captive portal or a dead worker, so age is the only
-    // honest test. This rendered a green "Checked · 09:14" at 14:50.
-    const v = derive(5.5 * 60 * 60_000);
-    expect(v.view.tone).not.toBe('fresh');
-    expect(v.forecastAgeLabel).toBe('6 h');
+  it('reached it long ago: NOT green, whatever the payload claims about itself', () => {
+    // The saved copy still carries the last good payload's status:'current'.
+    expect(derive(NOW - 3 * 60 * 60_000).view.tone).not.toBe('fresh');
   });
 
-  it('past the 6-hour mark it also raises the page-level banner', () => {
-    // The tone demotes as soon as the check looks unreached; the louder amber
-    // banner still waits for the forecast itself to be genuinely old.
-    expect(derive(5.5 * 60 * 60_000).showRefreshWarning).toBe(false);
-    expect(derive(7 * 60 * 60_000).showRefreshWarning).toBe(true);
-  });
-
-  it('the boundary leaves room for the worker stamp throttle plus a skipped cron tick', () => {
-    // The worker only PERSISTS its "checked" stamp every 15 min
-    // (CHECKED_STAMP_MIN_WRITE_INTERVAL_MS), and writes land on a 10-min cron
-    // grid — so a healthy forecast can legitimately serve a stamp ~20 min old,
-    // and ~30 min old if a tick is skipped. Demoting the tone at 25 min (the
-    // first version of this threshold) reported a perfectly healthy forecast as
-    // "Couldn't refresh · showing older data".
-    expect(derive(20 * 60_000).view.tone).toBe('fresh');
-    expect(derive(35 * 60_000).view.tone).toBe('fresh');
-    expect(derive(50 * 60_000).view.tone).not.toBe('fresh');
-  });
-
-  it('a genuinely fresh check on an older forecast build stays green', () => {
-    // The worker checked 2 min ago and found nothing new to build. That is
-    // healthy, not stale — only the CHECK age may demote the tone.
-    expect(derive(2 * 60_000, 40 * 60_000).view.tone).toBe('fresh');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The division of labour that a real outage taught us: cache.ts decides whether
-// a payload is USABLE, this module decides how fresh it LOOKS. When the worker's
-// cron stalled for 11 hours, cache.ts was (wrongly) applying a 6-hour age cap
-// and refused a payload whose hourly rows still ran days ahead — so the app
-// showed a dead "Kan ikke nå prognosen" screen instead of the forecast plus an
-// honest "Viser ældre data". These assertions pin that an 11-hour-old payload is
-// reported as stale rather than being treated as unusable.
-// ---------------------------------------------------------------------------
-describe('an 11-hour-old payload is reported honestly, not discarded', () => {
-  const NOW = Date.parse('2026-08-08T11:13:00Z');
-  const v = deriveCacheStatus({
-    sources: {
-      fetchedAt: '2026-08-08T00:16:52Z',
-      cacheHealth: { status: 'current', lastAttemptAt: '2026-08-08T00:16:52Z' },
-    } as never,
-    refreshing: false,
-    online: true,
-    nowMs: NOW,
-  });
-
-  it('demotes the tone rather than claiming it was just checked', () => {
+  it('attempted and never reached it: NOT green', () => {
+    // The case that must not collapse into "unknown". Boot with a live
+    // connection and a dead worker, fall back to the saved copy — its stale
+    // status:'current' rendered as a green "Checked · 09:14" at 14:50.
+    const v = derive(null);
     expect(v.view.tone).not.toBe('fresh');
     expect(v.view.label).not.toMatch(/Checked/);
   });
 
-  it('raises the page banner and names the age', () => {
-    expect(v.showRefreshWarning).toBe(true);
-    expect(v.forecastAgeLabel).toBe('11 h');
+  it('no attempt finished yet: judge nothing', () => {
+    // Boot renders the saved copy before the first fetch resolves. Demoting the
+    // tone here would flash a warning that is not (yet) true.
+    expect(derive(undefined).view.tone).toBe('fresh');
+  });
+
+  it('the worker stamp no longer influences the tone at all', () => {
+    // The whole point of the refactor: an ancient stamp with fresh contact is
+    // a healthy worker that simply had nothing new to build.
+    const v = derive(NOW - 60_000, { fetchedMsAgo: 90 * 60_000 });
+    expect(v.view.tone).toBe('fresh');
+  });
+
+  it('still raises the page banner once the forecast itself is genuinely old', () => {
+    expect(derive(null, { fetchedMsAgo: 5 * 60 * 60_000 }).showRefreshWarning).toBe(false);
+    const old = derive(null, { fetchedMsAgo: 7 * 60 * 60_000 });
+    expect(old.showRefreshWarning).toBe(true);
+    expect(old.forecastAgeLabel).toBe('7 h');
   });
 });

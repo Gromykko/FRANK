@@ -10,6 +10,7 @@ import { analyzeSafetyConditions, RATING_WORD } from './features/safety/analyzeS
 import { getWeatherDescription } from './features/forecast/weatherCodes';
 import { getDisplayHourlyData, nextHourTideFor } from './features/forecast/displayData';
 import { deriveCacheStatus } from './features/forecast/cacheStatusView';
+import { getWorkerContactMs } from './features/forecast/cache';
 import { formatTime, formatDateTime, locationDateKey } from './utils/date';
 import { compassPoint } from './utils/compass';
 import { NO_READING_TEXT } from './utils/number';
@@ -236,6 +237,8 @@ export default function App() {
     refreshing,
     online,
     nowMs: Date.now(),
+    // Our own record of reaching the worker, not the worker's throttled stamp.
+    workerContactedAtMs: getWorkerContactMs(),
   }, t);
   const { providerBusy, busyServiceName } = statusView;
   const cacheStatusClass = statusView.tone;

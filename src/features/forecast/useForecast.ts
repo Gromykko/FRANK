@@ -172,9 +172,10 @@ export function useForecast(daylightOnly: boolean) {
     setError(null);
 
     try {
-      const data = CAN_FETCH_FRESH_FORECAST
-        ? await fetchWeatherData()
+      const loaded = CAN_FETCH_FRESH_FORECAST
+        ? { data: await fetchWeatherData(), from: 'worker' as const }
         : await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true, forceWorkerRefresh: forceRemoteRefresh });
+      const data = loaded.data;
 
       if (!data) {
         throw new Error('No forecast data is available yet.');
@@ -183,15 +184,19 @@ export function useForecast(daylightOnly: boolean) {
       applyWeatherData(data, daylightOnlyRef.current);
 
       // A remote refresh that quietly fell back to the browser's saved copy
-      // (worker unreachable) still "succeeds" above. If the payload's own
-      // last-check stamp is far older than the worker's cadence allows, the
-      // service wasn't actually reached — say so instead of showing a fresh-
-      // looking "Checked" line.
+      // (worker unreachable) still "succeeds" above, so say so.
+      //
+      // This asks the fetch layer, which KNOWS. It used to compare the worker's
+      // own `lastAttemptAt` stamp against a 12-minute bound — but that stamp is
+      // persisted at most every 15 minutes to save KV writes and drifts to ~20,
+      // so an ordinary cold boot could show "Could not reach the forecast
+      // service" seconds after reaching it perfectly well. Never re-derive a
+      // fact from someone else's throttled bookkeeping when the caller has it.
+      if (forceRemoteRefresh && !CAN_FETCH_FRESH_FORECAST && loaded.from === 'local') {
+        setError('Could not reach the forecast service — showing the last saved forecast.');
+      }
+
       if (forceRemoteRefresh && !CAN_FETCH_FRESH_FORECAST) {
-        const attemptAt = new Date(data.sources.cacheHealth?.lastAttemptAt ?? data.sources.fetchedAt).getTime();
-        if (Number.isFinite(attemptAt) && Date.now() - attemptAt > 12 * 60 * 1000) {
-          setError('Could not reach the forecast service — showing the last saved forecast.');
-        }
 
         // The worker answers a forced refresh from cache instantly and
         // rebuilds in the background. Pick the rebuilt forecast up with two
@@ -201,7 +206,7 @@ export function useForecast(daylightOnly: boolean) {
         pickupTimersRef.current = [8_000, 30_000].map((delayMs) =>
           window.setTimeout(async () => {
             try {
-              const fresh = await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
+              const fresh = (await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true })).data;
               if (fresh && fresh.sources.fetchedAt !== data.sources.fetchedAt) {
                 applyWeatherData(fresh, daylightOnlyRef.current);
               }
@@ -230,7 +235,7 @@ export function useForecast(daylightOnly: boolean) {
     let cancelled = false;
 
     async function bootForecast() {
-      const cached = await loadCachedWeatherData();
+      const cached = (await loadCachedWeatherData()).data;
       if (cancelled) return;
 
       const forceRemoteRefresh = true;

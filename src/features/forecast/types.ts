@@ -100,9 +100,25 @@ export interface WeatherData {
       name: string;
       areaName: string;
     };
+    // When the Worker last successfully BUILT this payload. Precise.
     fetchedAt: string;
     cacheHealth?: {
       status: 'current' | 'pending' | 'stale' | 'fresh' | 'fallback';
+      // When the Worker last checked upstream — but COARSE, and safe to display
+      // rather than to compute with.
+      //
+      // The Worker persists this at most every 15 minutes while nothing changes,
+      // because each KV write comes out of a 1000/day budget. It therefore drifts
+      // up to ~20 minutes behind reality and then snaps back, and a reading of 20
+      // minutes does not mean 20 minutes passed without a check.
+      //
+      // Three separate bugs came from treating it as precise: a healthy forecast
+      // reported as "Couldn't refresh", a false "Could not reach the forecast
+      // service" banner on an ordinary cold boot, and a /status column that
+      // looked like a missed cron tick. For "did WE reach the Worker?" use
+      // getWorkerContactMs() from cache.ts, which is exact and ours. For "is the
+      // Worker alive?" the Worker's own /health owns that, with a threshold set
+      // well above this drift.
       lastAttemptAt: string;
       message?: string;
       // MET Norway cache headers from the run the cache was built against.

@@ -69,6 +69,7 @@ function readLocalCachedWeatherData(location: ForecastLocation): WeatherData | n
 
 async function readWorkerCachedWeatherData(location: ForecastLocation, forceRefresh = false): Promise<WeatherData | null> {
   if (!FORECAST_WORKER_BASE) return null;
+  workerAttempted = true;
 
   try {
     const query = new URLSearchParams({
@@ -119,19 +120,58 @@ export interface LoadCacheOptions {
   forceWorkerRefresh?: boolean;
 }
 
+// Where the payload came from, and therefore whether the worker was reachable.
+//
+// This is reported rather than inferred on purpose. Callers used to answer "did
+// we reach the worker?" by reading the worker's OWN `lastAttemptAt` stamp out of
+// the payload and comparing it to the clock — but that stamp is deliberately
+// coarse (the worker persists it at most every 15 minutes to save KV writes, so
+// it drifts to ~20), and the check tripped at 12. The result was an amber
+// "Could not reach the forecast service" banner shown immediately after a
+// perfectly successful fetch. The fetch layer knows the answer exactly; nothing
+// downstream should be deducing it from someone else's throttled bookkeeping.
+export type CacheSource = 'worker' | 'local' | null;
+
+export interface LoadCacheResult {
+  data: WeatherData | null;
+  from: CacheSource;
+}
+
+// Contact record for this browser session. Three states, and the difference
+// between the last two matters:
+//
+//   undefined -> no attempt has finished yet (boot, in flight). Judge nothing.
+//   null      -> an attempt finished and the worker was NOT reached.
+//   number    -> the worker was last reached at this time.
+//
+// Collapsing the middle case into "unknown" would put the original bug straight
+// back: boot with a dead worker but a live connection, fall back to the saved
+// copy, and its stale `status:'current'` would render as a green "Checked".
+let workerAttempted = false;
+let lastWorkerContactMs: number | null = null;
+export function getWorkerContactMs(): number | null | undefined {
+  return workerAttempted ? lastWorkerContactMs : undefined;
+}
+
 export async function loadCachedWeatherData(
   location = CURRENT_LOCATION,
   options: LoadCacheOptions = {}
-): Promise<WeatherData | null> {
+): Promise<LoadCacheResult> {
   if (options.preferWorker) {
     const workerData = await readWorkerCachedWeatherData(location, options.forceWorkerRefresh);
-    if (workerData) return workerData;
+    if (workerData) {
+      lastWorkerContactMs = Date.now();
+      return { data: workerData, from: 'worker' };
+    }
 
-    return readLocalCachedWeatherData(location);
+    const local = readLocalCachedWeatherData(location);
+    return { data: local, from: local ? 'local' : null };
   }
 
   const local = readLocalCachedWeatherData(location);
-  if (local) return local;
+  if (local) return { data: local, from: 'local' };
 
-  return readWorkerCachedWeatherData(location, options.forceWorkerRefresh);
+  const workerData = await readWorkerCachedWeatherData(location, options.forceWorkerRefresh);
+  if (workerData) lastWorkerContactMs = Date.now();
+  return { data: workerData, from: workerData ? 'worker' : null };
 }

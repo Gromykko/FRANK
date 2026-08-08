@@ -115,18 +115,16 @@ export function getCacheStatusView({ refreshing, cacheHealth, checkedAtLabel, of
 // Warn once the stale data is old enough to genuinely mislead a paddler.
 const CACHE_REFRESH_WARNING_AGE_MS = 6 * 60 * 60 * 1000;
 
-// If the worker's own "last checked" stamp is far older than its cadence allows,
-// WE did not reach the worker — whatever the payload says about itself.
+// How long since the browser last reached the worker before its status line stops
+// claiming freshness. Measured against OUR OWN record of contact, not against the
+// worker's `lastAttemptAt` stamp.
 //
-// This must stay above the worker's persisted-stamp throttle plus room for a
-// skipped cron tick, or a perfectly healthy forecast reads as a failure:
-//
-//   CHECKED_STAMP_MIN_WRITE_INTERVAL_MS (15 min, worker/index.js)
-//     + 2 x cron period (20 min)  <  this value
-//
-// 45 minutes still catches the case this exists for by a wide margin — the bug
-// was a five-and-a-half-hour-old check rendering as a green "Checked · 09:14".
-const CHECK_ASSUMED_UNREACHED_MS = 45 * 60 * 1000;
+// The stamp version of this needed a comment explaining that it had to stay above
+// the worker's KV write throttle plus a skipped cron tick, and it got that
+// arithmetic wrong twice. Our own contact time carries no such coupling: it is
+// exact, it is ours, and changing the worker's write policy cannot break it.
+// 20 minutes is simply two auto-refresh intervals.
+const WORKER_CONTACT_STALE_MS = 20 * 60 * 1000;
 
 function formatRelativeAge(ms: number, translate: Translate): string {
   if (!Number.isFinite(ms) || ms < 0) return '';
@@ -161,8 +159,12 @@ export function deriveCacheStatus(args: {
   refreshing: boolean;
   online: boolean;
   nowMs: number;
+  // When this browser last got an answer from the worker, or null if it never
+  // has this session. Supplied by the fetch layer rather than read out of the
+  // payload — see WORKER_CONTACT_STALE_MS.
+  workerContactedAtMs?: number | null;
 }, translate: Translate = interpolate): DerivedCacheStatus {
-  const { sources, refreshing, online, nowMs } = args;
+  const { sources, refreshing, online, nowMs, workerContactedAtMs } = args;
 
   const fetchedAtMs = new Date(sources.fetchedAt).getTime();
   const checkedAt = sources.cacheHealth?.lastAttemptAt ?? sources.fetchedAt;
@@ -173,12 +175,21 @@ export function deriveCacheStatus(args: {
   // Freshness was taken entirely from the payload's own cacheHealth. But when
   // the worker is unreachable the client quietly falls back to the browser's
   // saved copy — which still carries the last GOOD payload's `status:'current'`.
-  // The header then read a green "Checked · 09:14" at 14:50, because nothing
-  // compared that stamp to the actual clock. `navigator.onLine` doesn't help:
-  // it stays true behind a captive portal or a dead worker. Age is the only
-  // honest test, so it overrides the payload's self-assessment.
-  const checkedAgeMs = Number.isFinite(checkedAtMs) ? nowMs - checkedAtMs : Infinity;
-  const notActuallyChecked = checkedAgeMs > CHECK_ASSUMED_UNREACHED_MS;
+  // The header then read a green "Checked · 09:14" at 14:50. `navigator.onLine`
+  // doesn't help: it stays true behind a captive portal or a dead worker.
+  //
+  // The honest test is whether WE have heard from the worker lately. Before, this
+  // asked the payload's own throttled stamp instead, which coupled the client's
+  // honesty to the worker's KV write budget and got the arithmetic wrong twice.
+  // `undefined` means the caller doesn't track contact (tests, older callers), in
+  // which case don't override anything.
+  // undefined: no attempt has finished yet, so there is nothing to judge.
+  // null: an attempt finished and the worker was not reached.
+  const notActuallyChecked = workerContactedAtMs === undefined
+    ? false
+    : workerContactedAtMs === null
+      ? true
+      : nowMs - workerContactedAtMs > WORKER_CONTACT_STALE_MS;
   const cacheHealth = notActuallyChecked
     ? { ...sources.cacheHealth, status: 'stale' as const, lastAttemptAt: checkedAt }
     : sources.cacheHealth;
