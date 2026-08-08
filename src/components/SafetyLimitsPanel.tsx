@@ -305,11 +305,16 @@ export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLi
                   label={t('Max wave limit enabled')}
                 />
               </div>
+              {/* Metres, because that is the unit DMI publishes wave height in
+                  and therefore the unit the meteogram's Waves row shows. */}
               <Stepper
                 value={settings.maxWaveHeightSafe}
                 min={0.1} max={3.0} step={0.05} decimals={2}
                 unit={t('m waves')} label={t('max wave')}
-                onChange={val => updateCriteria({ maxWaveHeightSafe: val, maxWaveHeightCaution: val + settings.waveCautionMargin })}
+                onChange={val => updateCriteria({
+                  maxWaveHeightSafe: val,
+                  maxWaveHeightCaution: roundToDecimals(val + settings.waveCautionMargin, 2),
+                })}
                 disabled={!settings.enableWaveHeight}
               />
               <ZoneBar
@@ -337,7 +342,10 @@ export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLi
                   value={settings.waveCautionMargin}
                   min={0.05} max={2.0} step={0.05} decimals={2}
                   unit="+m" label={t('wave caution margin')}
-                  onChange={margin => updateCriteria({ waveCautionMargin: margin, maxWaveHeightCaution: settings.maxWaveHeightSafe + margin })}
+                  onChange={margin => updateCriteria({
+                    waveCautionMargin: margin,
+                    maxWaveHeightCaution: roundToDecimals(settings.maxWaveHeightSafe + margin, 2),
+                  })}
                   disabled={!settings.enableWaveHeight || !settings.enableWaveCaution}
                 />
               </div>

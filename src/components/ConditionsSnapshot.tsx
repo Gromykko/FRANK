@@ -3,12 +3,13 @@ import WeatherWidgetIcon from './WeatherWidgetIcon';
 import { blockHourRange } from '../features/forecast/blockHours';
 import { useLang } from '../i18n';
 import { formatWeekday, locationHourLabel } from '../utils/date';
-import { formatReading, formatSigned, NO_READING_TEXT } from '../utils/number';
+import { formatReading, formatLevelCm, NO_READING_TEXT } from '../utils/number';
 import type { HourlyData } from '../features/forecast/types';
 import { RATING_WORD } from '../features/safety/analyzeSafetyConditions';
 import type { SafetyRating, SafetyReason } from '../features/safety/analyzeSafetyConditions';
 
-const signed = (v: number) => formatSigned(v, 2);
+// Centimetres, matching DMI and the meteogram's Level row. See formatLevelCm.
+const signed = (v: number) => formatLevelCm(v);
 
 interface ConditionsSnapshotProps {
   data: HourlyData;
@@ -57,8 +58,8 @@ export default function ConditionsSnapshot({
   const tideLo = signed(data.tideLevelMin ?? data.tideLevel);
   const tideHi = signed(data.tideLevelMax ?? data.tideLevel);
   const tideText = isBlock
-    ? (tideLo === tideHi ? `${tideHi} m` : t('{0} to {1} m', tideLo, tideHi))
-    : `${formatSigned(data.tideLevel, 2)} m`;
+    ? (tideLo === tideHi ? `${tideHi} cm` : t('{0} to {1} cm', tideLo, tideHi))
+    : `${formatLevelCm(data.tideLevel)} cm`;
   // MET supplies one instant wind value for an outlook block. Ignore legacy
   // percentile fields that may still exist in an older cached payload.
   const windText = `${formatReading(data.windSpeed, 1)} m/s`;

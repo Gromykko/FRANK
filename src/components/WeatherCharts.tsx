@@ -11,7 +11,7 @@ import {
   Line,
 } from 'recharts';
 import { formatDateShort, formatWeekday, locationHourLabel } from '../utils/date';
-import { formatReading, formatSigned } from '../utils/number';
+import { formatReading, formatLevelCm } from '../utils/number';
 import { useLang } from '../i18n';
 import type { HourlyData } from '../features/forecast/types';
 import type { SafetySettings } from '../features/safety/presets';
@@ -99,7 +99,10 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
         // second line to mentally subtract.
         gustBand: (wind === null || gust === null ? null : [wind, gust]) as [number, number] | null,
         waveDisplay: plot(item.waveHeight, 2),
-        tideDisplay: plot(item.tideLevel, 2),
+        // Centimetres, like every other water-level surface (see formatLevelCm).
+        // Plotting metres left the axis reading -0.5 / 0 / 0.5 next to a matrix
+        // row saying -26, which is the same quantity in two units on one screen.
+        tideDisplay: plot(item.tideLevel === null || !Number.isFinite(item.tideLevel) ? item.tideLevel : item.tideLevel * 100, 0),
         tempWaterDisplay: plot(item.tempWater, 1),
         tempDisplay: plot(item.tempAir, 1),
       };
@@ -283,7 +286,8 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
     waveEnabled ? waveDanger + 0.1 : 0,
     Math.ceil(Math.max(...chartData.map((d) => d.waveDisplay ?? 0)) * 10) / 10,
   );
-  const tideAbsMax = Math.max(0.5, Math.ceil(Math.max(...chartData.map((d) => Math.abs(d.tideDisplay ?? 0))) * 2) / 2);
+  // Rounded up to the next 25 cm so the axis labels stay round numbers.
+  const tideAbsMax = Math.max(50, Math.ceil(Math.max(...chartData.map((d) => Math.abs(d.tideDisplay ?? 0))) / 25) * 25);
   const tideAxisMin = -tideAbsMax;
   const tideAxisMax = tideAbsMax;
   const tempMinValue = Math.min(
@@ -466,7 +470,7 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
 
           {/* 3 — WATER LEVEL */}
           {inlineHeader(<ArrowDownUp size={16} />, t('Water level'), activeMetric(
-            <span className="tone-tide">{formatSigned(activeItem.tideLevel, 2)} m</span>
+            <span className="tone-tide">{formatLevelCm(activeItem.tideLevel)} cm</span>
           ))}
           <div className="chart-plot-wrap" style={{ width: `${chartWidth}px` }}>
             <AreaChart width={chartWidth} height={130} data={chartData} accessibilityLayer={false} onClick={handleChartClick} margin={CHART_MARGIN}>

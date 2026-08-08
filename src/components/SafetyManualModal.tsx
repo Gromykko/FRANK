@@ -137,8 +137,8 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
               {t('Water level comes from a storm-surge forecast model, not an astronomical tide table. The value shown is the forecast water level relative to mean sea level at the nearest model grid point, including wind setup and pressure effects.')}
             </p>
             <ul className="manual-list">
-              <li><strong>{t('High Water Filter:')}</strong> {t('Water level ≥ +0.1 m. Useful for shallow areas.')}</li>
-              <li><strong>{t('Low Water Filter:')}</strong> {t('Water level ≤ -0.1 m.')}</li>
+              <li><strong>{t('High Water Filter:')}</strong> {t('Water level ≥ +10 cm. Useful for shallow areas.')}</li>
+              <li><strong>{t('Low Water Filter:')}</strong> {t('Water level ≤ -10 cm.')}</li>
               <li><strong>{t('Rising Only:')}</strong> {t('Water level rises through the whole launch window.')}</li>
             </ul>
           </div>

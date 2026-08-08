@@ -125,14 +125,25 @@
   max-width: 68ch;
 }
 
-/* A signed value centres its sign along with its digits, which pushes the digits
-   half a character to the right of every unsigned row (measured: 12.3px vs
-   8.4px). Reserving an equal slot on the right cancels the shift exactly, so the
-   water-level numbers line up with waves, air and water. 1ch is precise here
-   because tabular-nums makes every character one digit wide. */
-.meteogram-value.is-signed {
-  padding-right: 1ch;
+/* Rows whose values change WIDTH from hour to hour get a fixed slot with the
+   digits right-aligned, so the ones column lands at the same x in every cell —
+   the way numbers align in any table. Centring cannot do this: it splits the
+   difference, so "+3" sat 3.9px right of "+22" and the row visibly wobbled.
+   (An earlier version of this rule padded the right side by 1ch to cancel the
+   sign's half-character shift. That fixed the sign and not the digit count; a
+   fixed slot fixes both, and a missing-reading dash right-aligns harmlessly.)
+   The widths are worst cases: water level reaches +/-200 cm in a surge, so sign
+   plus three digits; wind prints "25/35". 1ch is exact because these cells are
+   tabular-nums, where every character is one digit wide. */
+.meteogram-value.is-slotted,
+.meteogram-wind-value {
+  display: inline-block;
+  text-align: right;
+  width: var(--num-slot);
 }
+
+.meteogram-value.is-slotted { --num-slot: 4ch; }
+.meteogram-wind-value { --num-slot: 5ch; }
 
 .meteogram-cell.is-low-confidence .meteogram-value {
   font-style: italic;

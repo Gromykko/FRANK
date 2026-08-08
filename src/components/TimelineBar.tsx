@@ -1,7 +1,7 @@
 import { memo, useState, useEffect, useMemo, useRef } from 'react';
 import { Sun, Cloud, CloudRain, CloudLightning, CloudSnow, CloudSun, ArrowDown } from 'lucide-react';
 import { formatDateMedium, isSameLocationDay, locationHourLabel } from '../utils/date';
-import { formatReading, formatSigned } from '../utils/number';
+import { formatReading, formatLevelCm } from '../utils/number';
 import { blockHourRange } from '../features/forecast/blockHours';
 import { useLang } from '../i18n';
 import type { HourlyData } from '../features/forecast/types';
@@ -453,7 +453,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
           <div className="timeline-legend-label">{t('Weather')}</div>
           <div className="timeline-legend-label tall">{t('Wind')} (m/s)</div>
           <div className="timeline-legend-label">{t('Waves')} (m)</div>
-          <div className="timeline-legend-label">{t('Level')} (m)</div>
+          <div className="timeline-legend-label">{t('Level')} (cm)</div>
           <div className="timeline-legend-label">{t('Air')} (&deg;C)</div>
           <div className="timeline-legend-label">{t('Water')} (&deg;C)</div>
         </div>
@@ -511,17 +511,15 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
                 <div key={h.actualIndex} className={`${meteogramCellClass(h)} tall`}>
                   <div className="meteogram-wind-stack">
                     <WindArrow direction={h.data.windDirection} size={WIND_ARROW_SIZE} />
-                    {/* Speed at 1 decimal, gusts at 0. Not cosmetic symmetry:
-                        sustained wind is judged against limits that move in 0.5
-                        steps, so at 0 decimals two hours with DIFFERENT verdicts
-                        print the same digit. With a 6.0 m/s safe limit, 5.5
-                        (green) and 6.0 (amber) both showed "6" — the same defect
-                        already fixed for water temperature. The ribbon colour was
-                        always right; only the printed number could contradict it.
-                        Gusts stay at 0 because both at 1 decimal does not fit:
-                        measured at 11px in a 43.3px usable cell, "25.5/35" is
-                        42.2px but "25.5/35.0" is 52.7px. */}
-                    <span className="meteogram-wind-value">{formatReading(h.data.windSpeed, 1)}/{formatReading(h.data.windGust, 0)}</span>
+                    {/* Whole m/s, as yr.no and DMI print it. This row carried a
+                        decimal for a while on the argument that limits move in
+                        0.5 steps, so 5.5 (green) and 6.0 (amber) both print "6"
+                        against a 6.0 cap. That is true, and it is the price of
+                        this table: the matrix is for scanning, the CELL COLOUR
+                        is the verdict, and the exact value is one tap away in
+                        the snapshot. A decision the user made explicitly after
+                        seeing both. Applies to the temperature rows below too. */}
+                    <span className="meteogram-wind-value">{formatReading(h.data.windSpeed, 0)}/{formatReading(h.data.windGust, 0)}</span>
                   </div>
                 </div>
               ))}
@@ -531,49 +529,40 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
               {allHours.map((h) => (
                 <div key={h.actualIndex} className={meteogramCellClass(h)}>
                   <span className="meteogram-value">
-                    {/* 2dp, matching the threshold precision and every other
-                        wave surface. At 1dp both a safe 0.29 and a caution
-                        0.34 printed "0.3" against a 0.30 m limit — the digits
-                        contradicted the cell's own colour band. */}
-                    {formatReading(h.data.waveHeight, 2)}
+                    {/* The one row that keeps a decimal, because metres is what
+                        DMI publishes wave height in ("den signifikante
+                        bølgehøjde ... 4 meter") and integer metres would print
+                        "0" for every kayak-relevant sea state. 1dp, down from
+                        the 2dp this row used to carry. */}
+                    {formatReading(h.data.waveHeight, 1)}
                   </span>
                 </div>
               ))}
             </div>
 
-            <div className="meteogram-row" title={t('Water level (m)')}>
-              {allHours.map((h) => {
-                const level = formatSigned(h.data.tideLevel, 2);
-                // The leading +/- takes part in centring, so it pushes the
-                // DIGITS half a character right and this row's numbers sat 3.9px
-                // out of line with every other row. is-signed reserves a
-                // matching slot on the right to cancel that. Only applied when
-                // there really is a sign: a missing reading renders as a bare
-                // dash, which should centre normally.
-                const signed = /^[+-]/.test(level);
-                return (
-                  <div key={h.actualIndex} className={meteogramCellClass(h)}>
-                    <span className={signed ? 'meteogram-value is-signed' : 'meteogram-value'}>
-                      {level}
-                    </span>
-                  </div>
-                );
-              })}
+            <div className="meteogram-row" title={t('Water level (cm)')}>
+              {/* is-slotted: this row's values change width between hours
+                  (+3 / +22 / -105) and a leading sign eats half a character on
+                  top of that, so centring made the digits wander. The slot
+                  right-aligns them instead — see components.css. */}
+              {allHours.map((h) => (
+                <div key={h.actualIndex} className={meteogramCellClass(h)}>
+                  <span className="meteogram-value is-slotted">
+                    {formatLevelCm(h.data.tideLevel)}
+                  </span>
+                </div>
+              ))}
             </div>
 
             <div className="meteogram-row" title={t('Air temperature (°C)')}>
               {allHours.map((h) => (
                 <div key={h.actualIndex} className={meteogramCellClass(h)}>
                   <span className="meteogram-value">
-                    {/* 1 decimal, like every other numeric row. Nothing in the
-                        safety engine reads air temperature, so there is no
-                        threshold for its digits to contradict — but "not needed"
-                        is not the same as "should not". MET delivers it at one
-                        decimal (21.8, 21.7, 21.5), so 0dp was discarding real
-                        precision, and it left this the only row 16px wide against
-                        27-34px everywhere else, which is what made the matrix
-                        look arbitrary. */}
-                    {formatReading(h.data.tempAir, 1)}
+                    {/* Whole degrees, as every weather app prints air
+                        temperature. Nothing in the safety engine reads it, so
+                        unlike the rows above there is not even a threshold to
+                        argue about. */}
+                    {formatReading(h.data.tempAir, 0)}
                   </span>
                 </div>
               ))}
@@ -583,9 +572,11 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
               {allHours.map((h) => (
                 <div key={h.actualIndex} className={meteogramCellClass(h)}>
                   <span className="meteogram-value">
-                    {/* 1dp: at 0dp both 9.5 °C (danger — below the 10 °C
-                        cold-shock line) and 10.4 °C (caution) printed "10". */}
-                    {formatReading(h.data.tempWater, 1)}
+                    {/* Whole degrees. The cold-shock lines sit at 10 and 15 °C,
+                        so 9.5 (danger) and 10.4 (caution) both print "10" here —
+                        told apart by the cell colour, and exactly in the
+                        snapshot. Same trade as the wind row. */}
+                    {formatReading(h.data.tempWater, 0)}
                   </span>
                 </div>
               ))}
@@ -632,9 +623,9 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
                 // screen reader — the cell label is the only place they can be
                 // announced. Same verdict vocabulary as the status bar.
                 const cellReadings = [
-                  `${t('Wind')} ${formatReading(hourData.windSpeed, 0)} m/s`,
-                  `${t('Gusts')} ${formatReading(hourData.windGust, 0)} m/s`,
-                  `${t('Waves')} ${formatReading(hourData.waveHeight, 2)} m`,
+                  `${t('Wind')} ${formatReading(hourData.windSpeed, 1)} m/s`,
+                  `${t('Gusts')} ${formatReading(hourData.windGust, 1)} m/s`,
+                  `${t('Waves')} ${formatReading(hourData.waveHeight, 2)} m`, `${t('Level')} ${formatLevelCm(hourData.tideLevel)} cm`, `${t('Air')} ${formatReading(hourData.tempAir, 1)}°C`,
                   `${t('Water')} ${formatReading(hourData.tempWater, 1)}°C`,
                 ].join(', ');
                 const cellDescription = `${formatDateMedium(hourData.time)} ${timeLabel} - ${t(RATING_WORD[status]).toUpperCase()}${hourData.isDay ? '' : ` ${t('(Night)')}`}${isBlock ? ` ${t('(Longer range, lower confidence)')}` : ''}. ${cellReadings}`;
