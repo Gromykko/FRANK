@@ -125,52 +125,49 @@
   max-width: 68ch;
 }
 
-/* Every number in the matrix ends at the same distance from its cell's right
-   edge, so the digits form one straight vertical line down the whole grid.
-   Nothing else aligns them: values differ in width both along a row (+3 / +22 /
-   -105) and down a column (4/8, 0.2, -14, 22), and centring splits the leftover
-   space, which puts each row's digits somewhere different. Two earlier attempts
-   at this each fixed one axis and broke the other — a 1ch pad cancelled the
-   sign's half-character shift but not the digit count, then per-row fixed slots
-   aligned each row internally while leaving five different edges down a column
-   (measured 2.8 / 12.0 / 5.2 / 13.6 / 13.6px). One shared gutter fixes both,
-   which is how numbers are aligned in any table.
-   The gutter has to clear the widest content: the wind cell prints "25/35" at
-   11px (38px wide) in a 44px cell, so 5px is the ceiling. */
-.meteogram-value,
-.meteogram-wind-value {
-  display: block;
-  width: 100%;
-  text-align: right;
-  padding-right: 5px;
+.outlook-note-lead {
+  margin: 0;
 }
 
-/* A block's water level is a range, stacked so both ends fit a 44px cell. */
-.meteogram-level-range {
+.outlook-note-list {
+  margin: 4px 0 4px;
+  padding-left: 16px;
+  list-style: disc;
+}
+
+/* The arrows sit in running text, so they need the baseline nudge an inline SVG
+   does not get on its own. */
+.outlook-note-list svg {
+  vertical-align: -2px;
+}
+
+/* Numbers are CENTRED, like the weather icon and the wind arrow above them.
+   Everything in a column shares one vertical axis that way.
+
+   This row has now been adjusted three times, and the middle attempt was a
+   mistake worth recording. Centring a signed value centres the sign along with
+   the digits, which pushes the digits half a character right of every unsigned
+   row (measured 12.3px against 8.4px) — the 1ch pad below cancels that exactly,
+   and it is the real fix. The mistake was then reading a "+3" whose digits START
+   further right than "+22"'s as a second misalignment: of course they do, it is
+   a shorter number, and their CENTRES were already 0.25px apart. Chasing it with
+   a shared right-hand gutter aligned the digits into a straight line down the
+   grid and pulled every number off the column's centre, which is visible
+   immediately next to the centred icons.
+   Compare left edges of unequal-length strings and everything looks broken. */
+.meteogram-value.is-signed {
+  padding-right: 1ch;
+}
+
+/* A block's water level is a direction, not a number. See TimelineBar. */
+.meteogram-level-trend {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
-  gap: 1px;
-  width: 100%;
-  padding-right: 5px;
-  line-height: 1;
-}
-
-.meteogram-level-range span {
-  font-size: 10px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-/* The lower end is the quieter number: it is the same water, not a second
-   reading, and the pair has to read as one cell at a glance. */
-.meteogram-level-range .is-low {
   color: var(--text-muted);
 }
 
-.meteogram-cell.is-low-confidence .meteogram-value,
-.meteogram-cell.is-low-confidence .meteogram-level-range span {
+.meteogram-cell.is-low-confidence .meteogram-value {
   font-style: italic;
 }
 
@@ -598,17 +595,14 @@
 
 .meteogram-wind-stack {
   height: 100%;
-  /* Full width, or the stack shrinks to its widest child (the 14px arrow) and
-     the number's own width:100% resolves against THAT instead of the cell —
-     which quietly reinstated centring for this row alone while every other row
-     had moved to the shared right gutter. The arrow stays centred via
-     align-items; only the digits align with the rows below. */
-  width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  /* The arrow is a 14px glyph inside a 14px box with no internal padding, so a
+     2px gap read as the number touching the arrowhead. The row is 44px tall and
+     holds 14 + 11px of content, so the space was there to give. */
+  gap: 4px;
 }
 
 .meteogram-wind-value {
@@ -881,8 +875,12 @@
   align-items: center;
   cursor: pointer;
   /* Also rendered as a real <button> (the charts disclosure), so reset the UA
-     button chrome and inherit typography rather than shrinking to 13px. */
-  width: 100%;
+     button chrome and inherit typography rather than shrinking to 13px.
+     The width has to include both negative margins. At width:100% the box was
+     the panel's CONTENT width while the left margin pulled it 24px outward, so
+     the hover tint reached the panel's left edge and stopped 24px short on the
+     right — just past the chevron, which is what made it look broken. */
+  width: calc(100% + 48px);
   background: none;
   border: none;
   text-align: left;
@@ -904,6 +902,7 @@
   .panel-collapse-header {
     margin: -16px -16px 16px -16px;
     padding: 14px 16px;
+    width: calc(100% + 32px);
   }
   .panel-collapse-header:not(.is-open) {
     margin-bottom: -16px;

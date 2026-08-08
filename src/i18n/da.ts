@@ -54,14 +54,18 @@ export const da: Record<string, string> = {
     'Du har været offline et stykke tid, så denne prognose er fra {0} — {1} gammel. Brug den med ekstra forsigtighed; den opdateres af sig selv, når du er online igen.',
   'Hourly forecast timeline': 'Timeprognosens tidslinje',
   // Explains the striped, time-span columns where the matrix stops being hourly.
-  'Striped columns with a time span (like 02–08) are 6-hour outlook blocks, not single hours: MET publishes no hourly detail that far ahead.':
-    'Stribede kolonner med et tidsrum (fx 02–08) er 6-timers udsigtsblokke, ikke enkelte timer: MET udgiver ikke timedetaljer så langt frem.',
-  'Each row shows the end of the range that can hurt you: the block’s roughest wave and its coldest water. Wind and air show MET’s single reading for the period, because that is all it publishes.':
-    'Hver række viser den ende af intervallet, der kan gøre ondt: blokkens groveste bølge og dens koldeste vand. Vind og luft viser MET’s ene måling for perioden, for det er alt, hvad de udgiver.',
-  'Water level shows both ends, highest above lowest, because a level only means something as a swing.':
-    'Vandstand viser begge yderpunkter, højeste over laveste, for en vandstand betyder kun noget som en udsving.',
-  'Tap any block to see its full range.':
-    'Tryk på en blok for at se hele dens interval.',
+  // ── Meteogram outlook legend ──────────────────────────────────────────────
+  'Striped columns show a span like 02–08. They are 6-hour blocks, because MET stops publishing hour by hour this far out.':
+    'Stribede kolonner viser et tidsrum som 02–08. Det er 6-timers blokke, fordi MET holder op med at udgive time for time så langt frem.',
+  'Waves and water: the block’s roughest and coldest hour.':
+    'Bølger og vand: blokkens groveste og koldeste time.',
+  'Wind and air: MET’s one reading for the whole block.':
+    'Vind og luft: MET’s ene måling for hele blokken.',
+  'Water level: reaches high water': 'Vandstand: når højvande',
+  'low water': 'lavvande',
+  'both': 'begge',
+  'or stays near mean': 'eller holder sig omkring middel',
+  'Tap a block for its numbers.': 'Tryk på en blok for at se tallene.',
   'Detailed Graphs': 'Detaljerede grafer',
   'Wind, waves, water level, and temperature': 'Vind, bølger, vandstand og temperatur',
   'Loading charts...': 'Indlæser grafer...',

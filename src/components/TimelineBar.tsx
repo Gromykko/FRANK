@@ -1,7 +1,8 @@
 import { memo, useState, useEffect, useMemo, useRef } from 'react';
-import { Sun, Cloud, CloudRain, CloudLightning, CloudSnow, CloudSun, ArrowDown } from 'lucide-react';
+import { Sun, Cloud, CloudRain, CloudLightning, CloudSnow, CloudSun, ArrowDown, ArrowUp, ArrowUpDown, Minus } from 'lucide-react';
 import { formatDateMedium, isSameLocationDay, locationHourLabel } from '../utils/date';
-import { formatReading, formatLevelCm } from '../utils/number';
+import { formatReading, formatLevelCm, NO_READING_TEXT } from '../utils/number';
+import { HIGH_WATER_M } from '../features/planner/findLaunchWindows';
 import { blockHourRange } from '../features/forecast/blockHours';
 import { useLang } from '../i18n';
 import type { HourlyData } from '../features/forecast/types';
@@ -26,6 +27,9 @@ interface DayGroup {
 const HOUR_CELL_WIDTH = 44;
 const WEATHER_ICON_SIZE = 15;
 const WIND_ARROW_SIZE = 14;
+// Bigger than the 10px text it replaced: legibility was half the reason the
+// block water level stopped being a pair of numbers.
+const LEVEL_TREND_SIZE = 15;
 
 function getWeatherIcon(code: number, size: number) {
   if (code === 0 || code === 1) return <Sun size={size} className="tl-icon-sun" />;
@@ -552,27 +556,55 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
                 // whole point of a level is the swing, and a block spanning +44
                 // to -2 cm printed "+5". The pair reads as "it moves between
                 // these", which is the honest answer at three days out.
+                // A 6-hour block gets a direction, not a number.
+                //
+                // It first showed the sample nearest the block's centre, which
+                // summarised six hours of moving water by whatever it happened
+                // to be in the middle. Then both ends, which was accurate and
+                // unreadable: two 10px numbers in a 44px cell, and a block whose
+                // series held a single sample printed one number while its
+                // neighbours printed two, which looks like a fault.
+                //
+                // Nobody plans around a water level four days out anyway. What
+                // is worth knowing is whether the block reaches the marks this
+                // app already uses for high and low water (HIGH_WATER_M, the
+                // same +/-10 cm the Launch Windows tide filter tests), so that
+                // is what the arrow says. The numbers are one tap away.
                 if (h.data.blockSpanHours) {
-                  const high = formatLevelCm(h.data.tideLevelMax);
-                  const low = formatLevelCm(h.data.tideLevelMin);
-                  // A flat block (both ends round to the same centimetre, or one
-                  // end never arrived) prints one number instead of the same
-                  // number twice — but still inside the range container, so it
-                  // keeps the smaller type its neighbours use. Rendering it as a
-                  // normal cell made a flat block look bigger than the blocks
-                  // either side of it.
+                  // NaN comparisons are false either way, so a missing end
+                  // simply never trips its arrow.
+                  const top = h.data.tideLevelMax ?? Number.NaN;
+                  const bottom = h.data.tideLevelMin ?? Number.NaN;
+                  const high = top >= HIGH_WATER_M;
+                  const low = bottom <= -HIGH_WATER_M;
+                  const known = Number.isFinite(top) || Number.isFinite(bottom);
                   return (
                     <div key={h.actualIndex} className={meteogramCellClass(h)}>
-                      <span className="meteogram-level-range">
-                        <span>{high}</span>
-                        {low !== high && <span className="is-low">{low}</span>}
-                      </span>
+                      {known ? (
+                        <span className="meteogram-level-trend">
+                          {high && low
+                            ? <ArrowUpDown size={LEVEL_TREND_SIZE} aria-hidden="true" />
+                            : high ? <ArrowUp size={LEVEL_TREND_SIZE} aria-hidden="true" />
+                            : low ? <ArrowDown size={LEVEL_TREND_SIZE} aria-hidden="true" />
+                            // Stays inside +/-10 cm for the whole block: near
+                            // mean water, which is its own answer and not the
+                            // same as "no reading" (that keeps the dash).
+                            : <Minus size={LEVEL_TREND_SIZE} aria-hidden="true" />}
+                        </span>
+                      ) : (
+                        <span className="meteogram-value">{NO_READING_TEXT}</span>
+                      )}
                     </div>
                   );
                 }
+                const level = formatLevelCm(h.data.tideLevel);
                 return (
                   <div key={h.actualIndex} className={meteogramCellClass(h)}>
-                    <span className="meteogram-value">{formatLevelCm(h.data.tideLevel)}</span>
+                    {/* is-signed: a centred sign pushes the digits half a
+                        character right of every unsigned row. */}
+                    <span className={/^[+-]/.test(level) ? 'meteogram-value is-signed' : 'meteogram-value'}>
+                      {level}
+                    </span>
                   </div>
                 );
               })}
@@ -682,18 +714,28 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
       </div>
 
       {/* Nothing explained the columns that stop being hourly. Past MET's hourly
-          range the matrix continues in 6-hour blocks: those columns are striped,
-          their values italic, and their header reads a span like "02-08" instead
-          of a single hour. All of that is visual only, so a reader had no way to
-          learn what it meant. It also states where the block ranges live, since
-          one column cannot show a min and a max in 44px. */}
+          range the matrix continues in 6-hour blocks: striped, italic values,
+          and a header reading a span like "02-08" instead of a single hour. All
+          of it visual only, so a reader had no way to learn what it meant.
+          A legend, not a paragraph: the first version said the same things in
+          four sentences and nobody reads four sentences under a table. */}
       {hasOutlookColumns && (
-        <p className="timeline-outlook-note">
-          {t('Striped columns with a time span (like 02–08) are 6-hour outlook blocks, not single hours: MET publishes no hourly detail that far ahead.')}{' '}
-          {t('Each row shows the end of the range that can hurt you: the block’s roughest wave and its coldest water. Wind and air show MET’s single reading for the period, because that is all it publishes.')}{' '}
-          {t('Water level shows both ends, highest above lowest, because a level only means something as a swing.')}{' '}
-          {t('Tap any block to see its full range.')}
-        </p>
+        <div className="timeline-outlook-note">
+          <p className="outlook-note-lead">
+            {t('Striped columns show a span like 02–08. They are 6-hour blocks, because MET stops publishing hour by hour this far out.')}
+          </p>
+          <ul className="outlook-note-list">
+            <li>{t('Waves and water: the block’s roughest and coldest hour.')}</li>
+            <li>{t('Wind and air: MET’s one reading for the whole block.')}</li>
+            <li>
+              {t('Water level: reaches high water')} <ArrowUp size={12} aria-hidden="true" />,{' '}
+              {t('low water')} <ArrowDown size={12} aria-hidden="true" />,{' '}
+              {t('both')} <ArrowUpDown size={12} aria-hidden="true" />,{' '}
+              {t('or stays near mean')} <Minus size={12} aria-hidden="true" />.
+            </li>
+          </ul>
+          <p className="outlook-note-lead">{t('Tap a block for its numbers.')}</p>
+        </div>
       )}
     </div>
   );

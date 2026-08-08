@@ -4,6 +4,13 @@ import type { SafetySettings } from '../safety/presets';
 import type { HourlyData } from '../forecast/types';
 import { nextHourTideFor } from '../forecast/displayData';
 
+// What this app calls high or low water: 10 cm either side of mean, in metres
+// because that is the unit the model carries. Exported because the meteogram's
+// outlook blocks mark the same threshold, and two definitions of "high water"
+// in one app is one too many — the Launch Windows filter and the block arrows
+// have to agree or the planner offers a window the matrix calls low.
+export const HIGH_WATER_M = 0.1;
+
 export interface LaunchWindow {
   startIndex: number;
   endIndex: number;
@@ -112,9 +119,9 @@ export function findLaunchWindows(
 
     switch (settings.tidePreference) {
       case 'high':
-        return endpoints.every((hour) => hour.tideLevel >= 0.1);
+        return endpoints.every((hour) => hour.tideLevel >= HIGH_WATER_M);
       case 'low':
-        return endpoints.every((hour) => hour.tideLevel <= -0.1);
+        return endpoints.every((hour) => hour.tideLevel <= -HIGH_WATER_M);
       case 'incoming':
         for (let i = start; i < end; i++) {
           // Negated `>` rather than `<=`: with no water-level reading both
