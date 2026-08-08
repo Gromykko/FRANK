@@ -1034,6 +1034,15 @@ async function handleForecastRequest(request, env, ctx, locationId) {
 }
 
 async function handleHealthRequest(env) {
+  const { ages, ...body } = await healthPayload(env);
+  void ages; // internal only; the wire shape stays as documented
+  return jsonResponse(body, body.ok ? 200 : 503);
+}
+
+// The single source of truth behind BOTH /health (the machine alarm) and
+// /status (the human panel). Splitting it means the page can never disagree
+// with the thing that pages you.
+async function healthPayload(env) {
   const entries = await Promise.all(
     locations.map(async (location) => {
       const data = await readCachedForecast(env, location);
@@ -1070,7 +1079,7 @@ async function handleHealthRequest(env) {
   const oldestAgeMs = ages.reduce((worst, a) => Math.max(worst, a.ageMs), 0);
   const ok = stalled.length === 0;
 
-  return jsonResponse({
+  return {
     ok,
     service: 'frank-forecast',
     checkedAt: new Date().toISOString(),
@@ -1080,7 +1089,114 @@ async function handleHealthRequest(env) {
     staleAfterMin: Math.round(HEALTH_MAX_STALE_MS / 60000),
     stalled,
     locations: entries,
-  }, ok ? 200 : 503);
+    ages,
+  };
+}
+
+
+// ── /status: the human panel ─────────────────────────────────────────────────
+//
+// /health is the ALARM: one job, machine-readable, 503 when stale, and its shape
+// must never change because a monitor depends on it. This is the diagnostic view
+// you open AFTER the alarm fires, to answer "what exactly is wrong". Same
+// healthPayload() behind both, so the page can never disagree with the pager.
+//
+// Always answers 200, even when everything is stale — a page that returns 503
+// is a page some browsers and proxies will refuse to render, and this one exists
+// precisely for the broken case. Point the monitor at /health, never at this.
+//
+// Self-contained: no scripts (so no CSP exception), no fonts, no external CSS.
+// Refreshes itself with a meta tag so it can be left open on a second screen.
+const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]);
+
+function htmlResponse(html, status = 200) {
+  return new Response(html, {
+    status,
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+    },
+  });
+}
+
+function formatAge(ageMs) {
+  if (!Number.isFinite(ageMs)) return 'no data';
+  const min = Math.round(ageMs / 60000);
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  return `${h}h ${String(min % 60).padStart(2, '0')}m`;
+}
+
+async function handleStatusRequest(env) {
+  const health = await healthPayload(env);
+  const ageById = new Map(health.ages.map((a) => [a.id, a.ageMs]));
+  const staleAfterMs = HEALTH_MAX_STALE_MS;
+
+  const rows = health.locations.map((loc) => {
+    const ageMs = ageById.get(loc.id) ?? Number.POSITIVE_INFINITY;
+    const h = loc.cacheHealth ?? {};
+    const degraded = (h.degradedSources ?? []).join(', ');
+    // Amber at half the stale budget: "still fine, but drifting" is the state
+    // worth seeing BEFORE the alarm, which is the whole point of a panel.
+    const level = ageMs > staleAfterMs ? 'bad' : ageMs > staleAfterMs / 2 ? 'warn' : 'good';
+    const runs = h.marineInstances
+      ? `${escapeHtml(h.marineInstances.water?.id ?? '—')}<br><span class="dim">${escapeHtml(h.marineInstances.waves?.id ?? '—')}</span>`
+      : '—';
+    return `<tr>
+      <td><strong>${escapeHtml(loc.areaName)}</strong><br><span class="dim">${escapeHtml(loc.id)}</span></td>
+      <td class="${level}"><strong>${escapeHtml(formatAge(ageMs))}</strong></td>
+      <td>${escapeHtml(h.status ?? (loc.hasCache ? 'unknown' : 'NO CACHE'))}${h.providerBusy ? '<br><span class="warn">provider busy</span>' : ''}</td>
+      <td>${degraded ? `<span class="warn">${escapeHtml(degraded)}</span>` : '<span class="dim">none</span>'}</td>
+      <td class="dim mono">${runs}</td>
+      <td class="dim mono">${escapeHtml((h.lastAttemptAt ?? '').replace('T', ' ').replace(/\.\d+Z$/, 'Z'))}<br>${escapeHtml(h.checkedBy ?? '—')}</td>
+    </tr>`;
+  }).join('');
+
+  const banner = health.ok
+    ? '<div class="banner good">ALL LOCATIONS CURRENT</div>'
+    : `<div class="banner bad">STALE — ${escapeHtml(health.stalled.join(', '))}</div>`;
+
+  return htmlResponse(`<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="30">
+<title>FRANK worker status</title>
+<style>
+  :root { color-scheme: dark }
+  body { margin:0; padding:20px; background:#0c1117; color:#e8ecf1;
+         font:14px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace }
+  h1 { font-size:13px; letter-spacing:.18em; text-transform:uppercase; color:#7a8ba0; margin:0 0 16px }
+  .banner { padding:14px 16px; border-radius:8px; font-size:18px; letter-spacing:.06em;
+            margin-bottom:18px; border:1px solid }
+  .banner.good { background:#0f2a1f; border-color:#34d399; color:#34d399 }
+  .banner.bad  { background:#2a1010; border-color:#f87171; color:#f87171 }
+  table { border-collapse:collapse; width:100%; max-width:900px }
+  th { text-align:left; font-size:10px; letter-spacing:.12em; text-transform:uppercase;
+       color:#7a8ba0; border-bottom:1px solid rgba(255,255,255,.18); padding:6px 10px 6px 0; font-weight:600 }
+  td { padding:10px 10px 10px 0; border-bottom:1px solid rgba(255,255,255,.06); vertical-align:top }
+  .good { color:#34d399 } .warn { color:#fbbf24 } .bad { color:#f87171 }
+  .dim { color:#7a8ba0 } .mono { font-size:12px }
+  footer { margin-top:20px; color:#7a8ba0; font-size:12px; max-width:900px }
+  a { color:#4b9eff }
+</style></head><body>
+<h1>FRANK · forecast worker</h1>
+${banner}
+<table>
+  <tr><th>Location</th><th>Data age</th><th>Status</th><th>Degraded</th><th>Water / wave run</th><th>Last check</th></tr>
+  ${rows}
+</table>
+<footer>
+  Stale after <strong>${escapeHtml(health.staleAfterMin)} min</strong> · oldest now
+  <strong>${escapeHtml(health.oldestAgeMin ?? '—')} min</strong> · cron runs every 10 min ·
+  page reloads every 30s.<br>
+  This page is for reading. The alarm your uptime monitor should poll is
+  <a href="/health">/health</a>, which returns 503 when stale.
+</footer>
+</body></html>
+`);
 }
 
 export default {
@@ -1100,12 +1216,16 @@ export default {
         return jsonResponse({
           ok: true,
           service: 'frank-forecast',
-          endpoints: [...locations.map((l) => `/forecast/${l.id}`), '/health'],
+          endpoints: [...locations.map((l) => `/forecast/${l.id}`), '/health', '/status'],
         });
       }
 
       if (normalizedPath === '/health') {
         return handleHealthRequest(env);
+      }
+
+      if (normalizedPath === '/status') {
+        return handleStatusRequest(env);
       }
 
       const forecastMatch = normalizedPath.match(/^\/forecast\/([a-z0-9-]+)$/);
