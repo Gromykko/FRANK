@@ -922,8 +922,12 @@
 .settings-info-btn::after {
   content: attr(data-tip);
   position: absolute;
+  /* Default: below and right-anchored. Not ideal (it covers the panel subtitle
+     underneath) but it never runs off the screen edge, and an unreadable tip is
+     worse than an overlapping one. Measured at 320px: "Sadan vurderer FRANK" is
+     122px wide starting 228px in, so placing it beside the trigger there would
+     put 30px of it past the viewport. */
   top: calc(100% + 8px);
-  /* right-anchored: a centered tip clips at the screen edge on phones */
   right: -8px;
   background: var(--panel-bg);
   color: var(--text-main);
@@ -936,6 +940,19 @@
   pointer-events: none;
   opacity: 0;
   z-index: 30;
+}
+
+/* Where there is room, put it BESIDE the trigger so it covers nothing. This is
+   the case the user actually sees: hover only exists on pointer devices, and the
+   overlap complaint came from desktop. Narrow screens keep the placement above,
+   where clipping is the greater risk. */
+@media (hover: hover) and (min-width: 560px) {
+  .settings-info-btn::after {
+    top: 50%;
+    right: auto;
+    left: calc(100% + 8px);
+    transform: translateY(-50%);
+  }
 }
 
 .settings-info-btn:hover::after,
