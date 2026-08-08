@@ -1327,7 +1327,9 @@ async function handleStatusRequest(env) {
 <title>FRANK worker status</title>
 <style>
   :root { color-scheme: dark }
-  body { margin:0; padding:20px; background:#0c1117; color:#e8ecf1;
+  /* Centered column: without the auto margins a wide monitor pins everything
+     to the left edge with three quarters of the screen empty. */
+  body { margin:0 auto; padding:20px; max-width:940px; background:#0c1117; color:#e8ecf1;
          font:14px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace }
   h1 { font-size:13px; letter-spacing:.18em; text-transform:uppercase; color:#7a8ba0; margin:0 0 16px }
   .banner { padding:14px 16px; border-radius:8px; font-size:18px; letter-spacing:.06em;
