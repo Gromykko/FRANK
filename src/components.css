@@ -54,7 +54,6 @@
 .timeline-block {
   height: 100%;
   border-right: 1px solid var(--panel-border);
-  cursor: pointer;
   transition: all 0.2s ease;
   position: relative;
   display: flex;
@@ -66,9 +65,8 @@
   border-right: none;
 }
 
-.timeline-block:hover {
-  background-color: var(--primary-bg);
-}
+/* Hover and cursor live on .timeline-overlay-cell: the overlay grid covers
+   the full column and wins every hit-test, so rules here could never fire. */
 
 /* Selection is drawn once, by the full-column overlay border
    (.timeline-overlay-cell.is-selected) — the header cell adds nothing. */
@@ -732,9 +730,6 @@
   font-weight: 600;
 }
 
-.chart-header-metric.tone-wind { color: var(--data-wind); }
-.chart-header-metric.tone-wave { color: var(--data-wave); }
-.chart-header-metric.tone-tide { color: var(--data-tide); }
 /* Air/water readouts wear their line's color; the separator stays neutral */
 .chart-metric-air { color: var(--data-air-temp); }
 .chart-metric-water { color: var(--data-water-temp); }

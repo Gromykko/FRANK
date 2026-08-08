@@ -159,12 +159,15 @@ async function fetchFirstAvailableCollection(
     try {
       const data = await fetchDmiGeoJson(collection, parameters, location);
 
-      const hasValidData = data.features.length === 0 || data.features.some((f) =>
+      // An empty FeatureCollection can never succeed downstream (the mappers
+      // yield an empty series and fetchWeatherData throws), so treat it like
+      // the all-null case and let the next collection in the list try.
+      const hasValidData = data.features.length > 0 && data.features.some((f) =>
         parameters.some((p) => f.properties[p] !== null && f.properties[p] !== undefined)
       );
 
       if (!hasValidData) {
-        throw new Error(`DMI ${collection} returned only null values for requested parameters.`);
+        throw new Error(`DMI ${collection} returned no usable values for requested parameters.`);
       }
 
       return { collection, data };

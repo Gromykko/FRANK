@@ -909,16 +909,16 @@ async function _refreshForecastCache(env, location, options = {}) {
   //
   // But only while the failure is still NEW. Left open for the whole outage it
   // becomes an unauthenticated 20-second lever on the upstream providers and
-  // (before the throttle below) on the KV write budget. Once we have already
-  // recorded a failed check, a forced tap falls back to the normal 60s gate:
-  // the button still answers instantly from cache either way.
+  // (before the throttle below) on the KV write budget. Past the grace window
+  // a forced tap falls back to the normal 60s gate: the button still answers
+  // instantly from cache either way.
   const failedRecently = (() => {
     const stampMs = Date.parse(cached?.sources?.cacheHealth?.lastAttemptAt ?? '');
     if (!Number.isFinite(stampMs)) return false;
     return Date.now() - stampMs < STALE_MANUAL_RETRY_GRACE_MS;
   })();
   const baseIntervalMs = options.minIntervalMs ?? CRON_CHECK_MIN_INTERVAL_MS;
-  const minIntervalMs = options.force && cachedNeedsRecovery && !failedRecently
+  const minIntervalMs = options.force && cachedNeedsRecovery && failedRecently
     ? Math.min(baseIntervalMs, STALE_MANUAL_RETRY_MS)
     : baseIntervalMs;
 
@@ -995,6 +995,13 @@ async function _refreshForecastCache(env, location, options = {}) {
       const checkedCache = withCacheHealth(cached, 'current', {
         marineInstances: latestMarine,
         checkedBy: options.reason ?? 'check',
+        // No provider was contacted and the hourly rows are unchanged, so any
+        // degradation the last real build recorded still describes this
+        // payload — a no-op check must not silently re-bless fallback data.
+        degradedSources: cachedHealth?.degradedSources,
+        providerBusy: cachedHealth?.providerBusy,
+        busyProvider: cachedHealth?.busyProvider,
+        message: cachedHealth?.message,
       });
       // The response always carries this check's timestamp; only PERSISTING it
       // is throttled. Nothing about the forecast itself has changed, so a
@@ -1343,7 +1350,7 @@ async function handleStatusRequest(env) {
   .good { color:#34d399 } .warn { color:#fbbf24 } .bad { color:#f87171 }
   .dim { color:#7a8ba0 } .mono { font-size:12px }
   .hdr-sub { font-weight:400; text-transform:none; letter-spacing:0; opacity:.7 }
-  footer p { margin:0 0 12px; max-width:78ch }
+  footer p { margin:0 0 12px }
   code { color:#e8ecf1; background:rgba(255,255,255,.07); padding:1px 4px; border-radius:3px }
   footer { margin-top:20px; color:#7a8ba0; font-size:12px; max-width:900px }
   a { color:#4b9eff }

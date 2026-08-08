@@ -123,6 +123,13 @@ export function findLaunchWindows(
       case 'low':
         return endpoints.every((hour) => hour.tideLevel <= -HIGH_WATER_M);
       case 'incoming':
+        // A single-sample window (one safe outlook block) has no pair inside
+        // it to compare, and the zero-iteration loop below would pass it as
+        // "rising" unread. Judge it against the next sample instead, and
+        // reject it when the forecast ends here.
+        if (start === end) {
+          return Boolean(data[end + 1]) && data[end + 1].tideLevel > data[end].tideLevel;
+        }
         for (let i = start; i < end; i++) {
           // Negated `>` rather than `<=`: with no water-level reading both
           // sides are NaN, and `NaN <= NaN` is false — the window would have

@@ -73,7 +73,9 @@ export default class ErrorBoundary extends Component<Props, State> {
         // crash silently landed back on Horsens — a different fjord with
         // different sector caps — AND lost the offline forecast, at the
         // shoreline, on a bad connection. Theme is cosmetic and safe to clear.
-        if (key.startsWith('ffkajak_') || key === 'frank_theme_mode') {
+        // The language choice is spared too: it shares the ffkajak_ prefix
+        // but is not a limit, and wiping it flipped English users to Danish.
+        if ((key.startsWith('ffkajak_') && key !== 'ffkajak_lang') || key === 'frank_theme_mode') {
           localStorage.removeItem(key);
         }
       }

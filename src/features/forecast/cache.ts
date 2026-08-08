@@ -69,7 +69,6 @@ function readLocalCachedWeatherData(location: ForecastLocation): WeatherData | n
 
 async function readWorkerCachedWeatherData(location: ForecastLocation, forceRefresh = false): Promise<WeatherData | null> {
   if (!FORECAST_WORKER_BASE) return null;
-  workerAttempted = true;
 
   try {
     const query = new URLSearchParams({

@@ -65,7 +65,10 @@ const WEATHER_CODE_SEVERITY: Record<number, SafetyRating> = {
   51: 'safe', 53: 'caution', 55: 'caution',     // drizzle
   56: 'caution', 57: 'caution',                 // freezing drizzle
   61: 'safe', 63: 'caution', 65: 'danger',      // rain ('lightrain' is safe)
-  66: 'caution', 67: 'danger',                  // freezing rain / sleet
+  // 66 hosts both plain/light sleet (caution live) AND sleet showers (danger
+  // live) — metSymbolToWmoCode folds all four into it, so exact agreement is
+  // impossible. Take the stricter band: a legacy row must never under-warn.
+  66: 'danger', 67: 'danger',                   // freezing rain / sleet
   71: 'caution', 73: 'caution', 75: 'danger',   // snow ('snow' is caution)
   77: 'caution',                                // snow grains
   80: 'caution', 81: 'caution', 82: 'danger',   // rain showers

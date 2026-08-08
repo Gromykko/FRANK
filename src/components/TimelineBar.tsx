@@ -663,7 +663,11 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
                 else if (e.key === 'End') target = allHours.length - 1;
                 if (target === null) return;
                 e.preventDefault();
-                handleBlockClick(allHours[target].actualIndex);
+                // Not handleBlockClick: its drag-suppression flag is a mouse
+                // concern, and a stale flag after a cross-cell drag swallowed
+                // the first keypress while focus still moved — breaking the
+                // "selection follows focus" contract promised above.
+                onSelectIndex(allHours[target].actualIndex);
                 (e.currentTarget.children[target] as HTMLElement | undefined)?.focus();
               }}
             >
