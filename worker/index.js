@@ -1217,30 +1217,42 @@ async function handleStatusRequest(env) {
   .good { color:#34d399 } .warn { color:#fbbf24 } .bad { color:#f87171 }
   .dim { color:#7a8ba0 } .mono { font-size:12px }
   .hdr-sub { font-weight:400; text-transform:none; letter-spacing:0; opacity:.7 }
-  footer p { margin:0 0 8px }
+  footer p { margin:0 0 12px; max-width:78ch }
+  code { color:#e8ecf1; background:rgba(255,255,255,.07); padding:1px 4px; border-radius:3px }
   footer { margin-top:20px; color:#7a8ba0; font-size:12px; max-width:900px }
   a { color:#4b9eff }
 </style></head><body>
 <h1>FRANK · forecast worker</h1>
 ${banner}
 <table>
-  <tr><th>Location</th><th>Last check<br><span class="hdr-sub">worker alive?</span></th><th>Data age<br><span class="hdr-sub">rebuilt when?</span></th><th>Status</th><th>Degraded</th><th>Water / wave run</th></tr>
+  <tr><th>Location</th><th>Last check<br><span class="hdr-sub">recorded every ~15 min</span></th><th>Data age<br><span class="hdr-sub">last rebuild</span></th><th>Status</th><th>Degraded</th><th>Water / wave run</th></tr>
   ${rows}
 </table>
 <footer>
-  <p><strong>Last check</strong> is the liveness signal: the Worker asks MET and DMI
-  every 10 minutes whether anything is new. Alarms past
-  <strong>${escapeHtml(health.checkStaleAfterMin)} min</strong> (currently
-  ${escapeHtml(health.oldestCheckAgeMin ?? '—')} min at worst). This is the one that
-  matters — a Worker that has stopped asking is broken.</p>
-  <p><strong>Data age</strong> is when the forecast was last rebuilt, and it is
-  <em>normal</em> for this to sit still: MET's own Expires header says the forecast is
-  valid for ~30 minutes, so between reissues there is genuinely nothing new to build.
-  Only alarms past <strong>${escapeHtml(health.dataStaleAfterMin / 60)} h</strong>
-  (currently ${escapeHtml(health.oldestAgeMin ?? '—')} min at worst), which would mean
-  checks are succeeding but every rebuild is failing.</p>
-  <p>Page reloads every 30s. This page is for reading — the alarm your uptime monitor
-  should poll is <a href="/health">/health</a>, which returns 503 with a
+  <p>Last check counts from the most recent time the worker asked MET and DMI whether
+  anything had changed. The schedule runs every 10 minutes, but the timestamp is only
+  written to storage every 15 minutes while nothing changes, because each write costs
+  quota. The figure therefore drifts up to roughly 20 minutes and then drops back, and
+  a reading of 15 or 20 minutes does not mean a check was missed. It alarms past
+  ${escapeHtml(health.checkStaleAfterMin)} minutes, which sits well clear of that
+  drift. Worst right now: ${escapeHtml(health.oldestCheckAgeMin ?? '?')} minutes.</p>
+
+  <p>Data age counts from the last successful rebuild, and a figure that sits still is
+  normal here. MET declares each forecast valid for about 30 minutes through its
+  Expires header, so between reissues there is nothing new to build and the worker
+  skips the work on purpose. It alarms only past
+  ${escapeHtml(health.dataStaleAfterMin / 60)} hours, which would mean the checks are
+  succeeding while every rebuild fails. Worst right now:
+  ${escapeHtml(health.oldestAgeMin ?? '?')} minutes.</p>
+
+  <p>The word under Last check names what triggered it. <code>cron</code> is the
+  10-minute schedule. <code>user-background</code> is a visitor opening the app, which
+  prompts a check after the response has already gone out. <code>manual</code> is the
+  refresh button. <code>cold-start</code> means no cached forecast existed and one had
+  to be built on the spot.</p>
+
+  <p>This page reloads every 30 seconds and is meant for reading. The machine-readable
+  alarm lives at <a href="/health">/health</a>, which returns 503 and a
   <code>reason</code> when either clock trips.</p>
 </footer>
 </body></html>
