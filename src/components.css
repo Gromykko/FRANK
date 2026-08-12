@@ -3242,10 +3242,10 @@ button.legend-toggle.is-on {
   display: none;
 }
 
-/* A selected outlook contains real min–max ranges. At phone widths those
-   values need an intentional two-tier matrix, not smaller type or collisions:
-   two equal columns, with both sides using the same label/value rhythm. */
-@media (max-width: 600px) {
+/* A selected outlook contains real min–max ranges. Only canvases below the
+   measured 385px content threshold need the two-tier matrix; Pixel 5 and
+   standard iPhone 13/14 widths have room for the ordinary inline ledger. */
+@media (max-width: 384px) {
   .snapshot.is-outlook .snapshot-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: start;
