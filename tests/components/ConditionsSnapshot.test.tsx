@@ -80,6 +80,8 @@ describe('ConditionsSnapshot', () => {
 
     expect(container.querySelector('.snapshot-weather-compact')?.textContent)
       .toBe('Torden/hagl');
+    expect([...container.querySelectorAll('.snapshot-label')].map((el) => el.textContent))
+      .toContain('Niveau');
     expect(container.querySelector('.snapshot-gust-full')?.textContent).toBe('vindstød 35.0');
     expect(container.querySelector('.snapshot-gust-compact')?.textContent).toBe('stød 35.0');
     expect([...container.querySelectorAll('.snapshot-context-label')].map((el) => el.textContent))

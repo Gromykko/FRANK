@@ -61,4 +61,13 @@ describe('Danish dictionary covers every translated literal', () => {
     const stale = Object.keys(da).filter((k) => /water level.*\(m\)/i.test(k));
     expect(stale).toEqual([]);
   });
+
+  it('uses the compact Niveau term consistently for water-level labels', () => {
+    expect(da.Level).toBe('Niveau');
+    expect(da['Water level']).toBe('Niveau');
+    expect(da['Water level (cm)']).toBe('Niveau (cm)');
+    expect(da['Water level: high water']).toBe('Niveau: højvande');
+    expect(da['Water level: high water, low water, both, or near mean.'])
+      .toBe('Niveau: højvande, lavvande, begge eller omkring middel.');
+  });
 });
