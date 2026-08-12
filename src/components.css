@@ -2560,12 +2560,11 @@ button.legend-toggle.is-on {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-areas:
+    '.    cache   .'
     'crt  display actions'
     'name .       location';
   column-gap: 16px;
-  /* Air between the CRT/buttons row and the nameplate/location row — the
-     location switcher is a tap target directly under the theme button, so
-     this gap doubles as touch separation. */
+  /* Air between rows (between cache and screens, and screens and labels) */
   row-gap: 10px;
   min-width: 0;
 }
@@ -2853,6 +2852,8 @@ button.legend-toggle.is-on {
 
 /* Check status: one centered line along the housing top */
 .frank-cache {
+  grid-area: cache;
+  justify-self: center;
   align-self: center;
   color: var(--text-muted);
   display: inline-flex;
