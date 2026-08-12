@@ -75,7 +75,7 @@ export default function LocationSwitcher({ label }: { label: string }) {
     return (
       <span className="frank-location">
         <MapPin size={12} />
-        {label}
+        <span className="location-switcher-label">{label}</span>
       </span>
     );
   }
@@ -91,7 +91,7 @@ export default function LocationSwitcher({ label }: { label: string }) {
         onClick={() => setOpen((v) => !v)}
       >
         <MapPin size={12} />
-        {label}
+        <span className="location-switcher-label">{label}</span>
         <ChevronDown size={12} className="location-switcher-chevron" aria-hidden="true" />
       </button>
 

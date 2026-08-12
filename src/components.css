@@ -2531,57 +2531,49 @@ button.legend-toggle.is-on {
    Clean Instrument — new mobile-first shell
    ========================================================================== */
 
-/* ① FRANK device header — a physical instrument housing in the same surface
-   family as the other panels. The check status is centered along the top,
-   then three seam-divided columns: round CRT with the GERTY face over the
-   nameplate | the dot-matrix phrase display |
-   the refresh/theme buttons stacked over the location. Both screens glow in
-   the rating's phosphor color. Spacing scale inside: 4 / 8 / 12 / 16. */
+/* ① FRANK header — the phone is the source composition. Identity, place,
+   freshness and utilities form one clear information band; FRANK's voice gets
+   a full-width screen below on phones and the available middle span on wider
+   screens. Controls are grouped by purpose instead of mimicking hardware
+   seams, so the layout can breathe without losing the instrument character. */
 .frank-device {
   padding-top: max(10px, env(safe-area-inset-top));
 }
 
 .frank-device-shell {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 10px 16px 14px;
-  /* Same corner tier as every other .panel card */
+  display: grid;
+  grid-template-columns: 82px minmax(220px, 260px) minmax(0, 1fr) 48px;
+  grid-template-areas: 'identity context voice utility';
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+  padding: 14px 18px;
   border-radius: var(--radius-md);
   background: var(--frank-housing);
   border: 1px solid var(--frank-housing-edge);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), var(--shadow-lg);
 }
 
-/* One shared 3×2 grid: row 1 is the "screen band" (CRT, display, and the
-   button stack all span it), row 2 is the "label line" (nameplate, switch
-   bank, location). The middle cells carry the seams on both sides. */
-.frank-device-columns {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  grid-template-areas:
-    'crt  display actions'
-    'name .       location';
-  column-gap: 16px;
-  /* Air between the CRT/buttons row and the nameplate/location row — the
-     location switcher is a tap target directly under the theme button, so
-     this gap doubles as touch separation. */
-  row-gap: 10px;
-  min-width: 0;
-}
-
 .frank-device-shell.rating-safe { --frank-phosphor: var(--crt-safe); }
 .frank-device-shell.rating-caution { --frank-phosphor: var(--crt-caution); }
 .frank-device-shell.rating-danger { --frank-phosphor: var(--crt-danger); }
 
+.frank-identity {
+  grid-area: identity;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .frank-crt {
-  grid-area: crt;
-  justify-self: center;
-  align-self: center;
   position: relative;
   overflow: hidden;
-  width: 82px;
-  height: 82px;
+  width: 68px;
+  height: 68px;
+  flex: 0 0 auto;
   border-radius: 50%;
   background: var(--crt-screen);
   border: 1px solid #05080d;
@@ -2593,40 +2585,71 @@ button.legend-toggle.is-on {
 }
 
 .frank-crt .gerty-face {
-  width: 56px;
-  height: 56px;
+  width: 46px;
+  height: 46px;
   filter: drop-shadow(0 0 4px color-mix(in srgb, currentColor 55%, transparent));
 }
 
-/* Faint scanlines on both screens keep the CRT vibe without heavy chrome */
-.frank-crt::after,
+/* A restrained scanline texture keeps FRANK recognisable without adding a
+   second frame or divider cage around the information. */
+.frank-crt::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 3px,
+    rgba(255, 255, 255, 0.025) 3px,
+    rgba(255, 255, 255, 0.025) 4px
+  );
+}
+
 .frank-nameplate {
-  grid-area: name;
-  justify-self: center;
-  align-self: center;
   font-family: var(--font-heading);
   font-size: var(--text-instrument);
   font-weight: 700;
   line-height: 1;
-  /* Wide, even inter-letter tracking evoking the spaced-out sci-fi title logo */
-  letter-spacing: 0.6em;
-  text-indent: 0.6em;
+  letter-spacing: 0.48em;
+  text-indent: 0.48em;
   text-transform: uppercase;
   color: var(--frank-housing-text);
   opacity: 0.9;
 }
 
-/* Middle cell carries the seams that divide the three columns; the display
-   keeps its natural height, centered on the band's midline, so the eye-line
-   runs CRT center → display center → between the two buttons. */
+.frank-context {
+  grid-area: context;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.frank-device-shell.has-cache-detail {
+  grid-template-areas:
+    'identity context voice  utility'
+    'notice   notice  notice notice';
+  row-gap: 8px;
+}
+
+.frank-cache-notice {
+  grid-area: notice;
+  min-width: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--panel-border);
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  line-height: 1.35;
+  text-align: center;
+}
+
 .frank-cell-display {
-  grid-area: display;
+  grid-area: voice;
   display: flex;
   align-items: center;
   min-width: 0;
-  padding: 0 16px;
-  border-left: 1px solid var(--frank-housing-edge);
-  border-right: 1px solid var(--frank-housing-edge);
 }
 
 .frank-display {
@@ -2680,56 +2703,129 @@ button.legend-toggle.is-on {
   to { transform: translateX(-100%); }
 }
 
-/* Button cluster column: centered in the same band as the CRT and display. */
-.frank-actions {
-  grid-area: actions;
-  justify-self: center;
-  align-self: stretch;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 6px;
-  align-items: center;
+/* One quiet utility entry replaces three equally prominent header buttons.
+   The hit area is 48px; the visible disc stays 40px so it doesn't compete with
+   the selected city or FRANK's face. */
+.frank-utility {
+  grid-area: utility;
+  position: relative;
+  justify-self: end;
+  align-self: center;
 }
 
-/* Physical push-buttons: round, raised a touch off the housing */
-.frank-device .header-icon-btn {
-  width: 44px;
-  height: 44px;
+.frank-utility-trigger {
+  appearance: none;
+  width: 48px;
+  height: 48px;
+  padding: 4px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--frank-housing-text);
+  cursor: pointer;
+}
+
+.frank-utility-disc {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 50%;
   background: color-mix(in srgb, var(--frank-housing) 88%, white);
   border: 1px solid var(--frank-housing-edge);
-  color: var(--frank-housing-text);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
 }
 
-.frank-device .header-icon-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--frank-housing) 88%, white);
-  border-color: color-mix(in srgb, var(--text-main) 32%, transparent);
-  color: var(--frank-housing-text);
+.frank-utility-trigger:hover .frank-utility-disc,
+.frank-utility-trigger[aria-expanded='true'] .frank-utility-disc {
+  background: color-mix(in srgb, var(--primary) 9%, var(--frank-housing));
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--frank-housing-edge));
 }
 
-.frank-device .header-icon-btn:active:not(:disabled) {
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.25);
+.frank-utility-trigger:active .frank-utility-disc {
   transform: translateY(1px);
 }
 
-/* Triangle button cluster (per the owner's sketch): flag + refresh side by
-   side on top, theme centered underneath — a two-buttons-wide flex-wrap box. */
-.frank-device .header-btn-cluster {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: var(--space-2);
-  width: calc(44px * 2 + var(--space-2));
+.frank-utility-trigger:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
 }
 
-/* The language flag inside its round push-button (SVG, not emoji — emoji
-   flags render as plain letters on Windows). */
-.header-icon-btn .flag-icon {
-  width: 20px;
-  height: 14px;
-  display: block;
+.frank-utility-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  width: 232px;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-bg);
+  border: 1px solid var(--control-border);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-main);
+}
+
+.frank-utility-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.frank-utility-group + .frank-utility-group {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.frank-utility-label {
+  grid-column: 1 / -1;
+  padding: 2px 6px 4px;
+  font-size: var(--text-caption);
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.frank-utility-option {
+  appearance: none;
+  min-height: 48px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-main);
+  font: inherit;
+  font-size: var(--text-body);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.frank-utility-option:hover {
+  background: var(--bg-app);
+}
+
+.frank-utility-option:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.frank-utility-option.is-selected {
+  border-color: color-mix(in srgb, var(--primary) 28%, transparent);
+  background: var(--primary-bg);
+  color: var(--primary);
+}
+
+.frank-utility-check {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
 }
 
 /* Trip profile panel: the mode is one variable with four positions, so it
@@ -2851,50 +2947,126 @@ button.legend-toggle.is-on {
   color: var(--text-inverse);
 }
 
-/* Check status: one centered line along the housing top */
-.frank-cache {
-  align-self: center;
-  color: var(--text-muted);
-  display: inline-flex;
-  align-items: flex-start;
-  gap: 6px;
-  max-width: 100%;
+/* Place is the primary context. The whole 48px row opens the city picker —
+   never make someone aim for the small chevron on a wet, moving phone. */
+.frank-location {
+  position: relative;
   min-width: 0;
-  font-size: var(--text-caption);
+}
+
+.location-switcher {
+  overflow: visible;
+}
+
+.location-switcher-btn {
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--frank-housing-text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 18px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.location-switcher-btn:hover,
+.location-switcher-btn[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--primary) 7%, transparent);
+  color: var(--primary);
+}
+
+.location-switcher-btn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.location-switcher-btn > svg:first-child {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.location-switcher-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.location-switcher-chevron {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  margin-left: auto;
+  opacity: 0.65;
+}
+
+/* Freshness is also the refresh control. One combined target makes the
+   relationship explicit, keeps the status in a stable location, and gives a
+   full 48px hit region without inflating the visible icon. */
+.frank-cache {
+  appearance: none;
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-ui);
   font-variant-numeric: tabular-nums;
 }
 
-/* Label on line 1, the (optional) caveat on line 2. The caveat can be long
-   ("waves & water from an earlier update · marine service busy") - stacking
-   keeps it readable on a phone instead of truncating it to nothing. */
+.frank-cache:hover:not([aria-disabled='true']) {
+  background: color-mix(in srgb, var(--primary) 7%, transparent);
+  color: var(--primary);
+}
+
+.frank-cache:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.frank-cache[aria-disabled='true'] {
+  cursor: wait;
+}
+
 .frank-cache-text {
+  flex: 1 1 auto;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  line-height: 1.3;
-  /* Stays centered even when a long caveat stretches the box to full width —
-     a centered box with left-aligned text reads as "jumped to the left". */
-  align-items: center;
-  text-align: center;
+  justify-content: center;
+  align-items: flex-start;
+  line-height: 1.25;
 }
 
 .frank-cache-source {
+  max-width: 100%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.frank-cache-detail {
-  /* This is the line that tells the user their numbers are partly stale
-     ("waves & water from an earlier update · marine service busy"). At 10px
-     with opacity 0.85 it measured 3.87:1 dark / 4.26:1 light — the app's own
-     honesty caveat rendered below AA in both themes. */
-  font-size: var(--text-caption);
-}
-
-/* The dot rides inside the label line, not beside the whole box: as a flex
-   sibling it stayed pinned to the box's left edge while the centered text
-   moved, leaving it orphaned whenever the caveat stretched the box. */
 .frank-cache-source::before {
   content: '';
   display: inline-block;
@@ -2904,12 +3076,12 @@ button.legend-toggle.is-on {
   border-radius: 50%;
   vertical-align: 1px;
   background: var(--color-safe);
-  box-shadow: 0 0 4px var(--color-safe);
+  box-shadow: none;
 }
 
 .frank-cache.watch .frank-cache-source::before {
   background: var(--color-caution);
-  box-shadow: 0 0 4px var(--color-caution);
+  box-shadow: none;
 }
 
 /* In-flight refresh: a calm neutral dot, no glow - not a status, just "working" */
@@ -2918,88 +3090,24 @@ button.legend-toggle.is-on {
   box-shadow: none;
 }
 
-.frank-cache.late .frank-cache-source::before {
-  background: var(--color-danger);
-  box-shadow: 0 0 4px var(--color-danger);
+.frank-cache-refresh {
+  flex: 0 0 auto;
+  color: currentColor;
 }
 
-/* Location: shares the label line with the nameplate */
-.frank-location {
-  grid-area: location;
-  justify-self: center;
-  align-self: center;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  max-width: 100%;
-  font-size: var(--text-caption);
-  font-weight: 700;
-  color: var(--frank-housing-text);
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
-  white-space: nowrap;
-  /* No overflow/ellipsis here: the same element also carries
-     .location-switcher, whose `overflow: visible` (needed so the dropdown
-     isn't clipped) is a later rule at equal specificity and always won — so
-     the ellipsis never rendered and the label just overflowed the header.
-     Truncation moved inward to .location-switcher-btn, which has no dropdown
-     to clip. */
-  min-width: 0;
-}
-
-/* Location switcher: the readout becomes a button + city picker when more than
-   one location is configured. Positioned so the menu drops below-right. */
-.location-switcher {
-  position: relative;
-  overflow: visible;
-}
-
-.location-switcher-btn {
-  appearance: none;
-  background: none;
-  border: none;
-  /* Generous tap padding (negative margin keeps the visual footprint): the
-     visible label is ~17px tall, but the touch target must clear the 24px
-     floor — it sits one row-gap under the 44px theme button. */
-  padding: 6px;
-  margin: -6px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  /* Truncate here rather than on .frank-location (see the note there). */
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: pointer;
-  font: inherit;
-  letter-spacing: inherit;
-  text-transform: inherit;
-  color: inherit;
-  border-radius: var(--radius-xs);
-}
-
-.location-switcher-btn:hover {
-  color: var(--primary);
-}
-
-.location-switcher-btn:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
-}
-
-.location-switcher-chevron {
-  opacity: 0.7;
+.frank-cache[aria-disabled='true'] .frank-cache-refresh {
+  animation: spin 0.9s linear infinite;
 }
 
 .location-switcher-menu {
   position: absolute;
   top: calc(100% + 6px);
-  right: 0;
+  left: 0;
   z-index: 40;
   margin: 0;
   padding: 4px;
   list-style: none;
-  min-width: 160px;
+  min-width: min(260px, calc(100vw - 52px));
   background: var(--panel-bg);
   border: 1px solid var(--panel-border);
   border-radius: var(--radius-sm);
@@ -3015,7 +3123,7 @@ button.legend-toggle.is-on {
   background: none;
   border: none;
   border-radius: var(--radius-xs);
-  min-height: 44px;
+  min-height: 48px;
   padding: 8px 10px;
   display: flex;
   align-items: center;
@@ -3071,74 +3179,75 @@ button.legend-toggle.is-on {
   font-weight: 500;
 }
 
-/* Narrow phones: shrink the CRT, buttons and labels so the middle column
-   keeps room for the display */
-@media (max-width: 480px) {
+/* Phone source composition: a 100px information band over a full-width voice
+   display. The outer columns are deliberately unequal in visible mass (FRANK
+   is character; More is utility) but share the same vertical centre. */
+@media (max-width: 720px) {
   .frank-device-shell {
-    gap: 10px;
-    padding: 10px 12px 12px;
-  }
-
-  .frank-device-columns {
+    grid-template-columns: 64px minmax(0, 1fr) 48px;
+    grid-template-areas:
+      'identity context utility'
+      'voice    voice   voice';
+    grid-template-rows: 100px auto;
     column-gap: 12px;
-    /* Pin the left column at the old 72px CRT footprint even though the CRT
-       itself shrank to 64px — otherwise the seams and the phrase display sit
-       visibly left of the header's centre. */
-    grid-template-columns: minmax(72px, auto) minmax(0, 1fr) auto;
+    row-gap: 10px;
+    padding: 14px;
   }
 
-  /* Slightly smaller CRT on phones: every saved pixel goes to the phrase
-     display, which is squeezed between the CRT and the button column. */
+  .frank-device-shell.has-cache-detail {
+    grid-template-areas:
+      'identity context utility'
+      'notice   notice  notice'
+      'voice    voice   voice';
+    grid-template-rows: 100px auto auto;
+    row-gap: 8px;
+  }
+
+  .frank-cache-notice {
+    padding: 7px 4px 1px;
+  }
+
+  .frank-identity {
+    gap: 8px;
+  }
+
   .frank-crt {
-    width: 64px;
-    height: 64px;
+    width: 56px;
+    height: 56px;
   }
 
   .frank-crt .gerty-face {
-    width: 42px;
-    height: 42px;
+    width: 38px;
+    height: 38px;
   }
 
-  .frank-cell-display {
-    padding-left: 12px;
-    padding-right: 12px;
+  .frank-nameplate {
+    font-size: var(--text-instrument);
+    letter-spacing: 0.36em;
+    text-indent: 0.36em;
+  }
+
+  .frank-context {
+    gap: 4px;
+  }
+
+  .location-switcher-btn {
+    padding-left: 6px;
+    padding-right: 6px;
+    font-size: 18px;
+    letter-spacing: 0.035em;
+  }
+
+  .frank-cache {
+    padding-left: 6px;
+    padding-right: 6px;
   }
 
   .frank-display {
-    min-height: 56px;
+    min-height: 44px;
     padding: 6px 10px;
-    font-size: 21px;
-  }
-
-  /* Four uppercase labels across four 1fr tracks: wide tracking made
-     "CUSTOM" overrun its cell at 320px, so phones keep tighter tracking. */
-  .frank-mode-label {
-    letter-spacing: 0.03em;
-  }
-
-  .frank-mode {
-    padding-left: 4px;
-    padding-right: 4px;
-  }
-
-  .frank-device .header-icon-btn {
-    width: 44px;
-    height: 44px;
-  }
-
-  /* The location label is a tappable control, so keep it at the 12px caption
-     step on mobile instead of shrinking it like decorative device copy. */
-  .frank-location {
-    font-size: var(--text-caption);
-    letter-spacing: 0.08em;
-  }
-
-  /* FRANK is a logotype rather than operating information. It stays on the
-     11px instrument floor, with tracking tightened to fit the mobile CRT. */
-  .frank-nameplate {
-    font-size: var(--text-instrument);
-    letter-spacing: 0.45em;
-    text-indent: 0.45em;
+    border-radius: 9px;
+    font-size: 20px;
   }
 }
 
@@ -3507,37 +3616,76 @@ button.legend-toggle.is-on {
   display: block;
 }
 
-/* The phrase CRT is decorative personality, not the safety assessment. On
-   legacy 320–360px phones it collapsed to a 26px slit, so remove that middle
-   column and let the face/actions remain useful instead of showing fragments. */
+/* Compact phones keep all four header jobs. Identity and More share the first
+   row, place/freshness take the second column, and the voice remains a readable
+   full-width strip instead of disappearing as it did in the old 3-column grid. */
 @media (max-width: 360px) {
-  .frank-device-columns {
-    grid-template-columns: 64px minmax(0, 1fr);
+  .frank-device-shell {
+    grid-template-columns: 56px minmax(0, 1fr) 48px;
     grid-template-areas:
-      'crt  actions'
-      'name location';
-    column-gap: 16px;
+      'identity context utility'
+      'voice    voice   voice';
+    column-gap: 8px;
+    padding: 12px;
   }
 
-  .frank-cell-display {
-    display: none;
+  .frank-device-shell.has-cache-detail {
+    grid-template-areas:
+      'identity context utility'
+      'notice   notice  notice'
+      'voice    voice   voice';
   }
 
-  /* The triangular cluster wastes most of the instrument face on a 320px
-     phone. Keep the three 44px touch targets, but arrange them as one compact
-     toolbar opposite the face so both sides share the same visual centre. */
-  .frank-actions {
-    justify-self: end;
-    align-self: center;
+  .frank-crt {
+    width: 52px;
+    height: 52px;
   }
 
-  .frank-device .header-btn-cluster {
-    width: auto;
-    flex-wrap: nowrap;
+  .frank-crt .gerty-face {
+    width: 35px;
+    height: 35px;
   }
 
-  .frank-location {
-    justify-self: end;
+  .frank-nameplate {
+    letter-spacing: 0.26em;
+    text-indent: 0.26em;
+  }
+
+  .location-switcher-btn {
+    padding-left: 2px;
+    padding-right: 2px;
+    font-size: 15px;
+    gap: 4px;
+    letter-spacing: 0.02em;
+  }
+
+  .location-switcher-btn > svg:first-child {
+    width: 15px;
+    height: 15px;
+  }
+
+  .location-switcher-chevron {
+    width: 14px;
+    height: 14px;
+  }
+
+  .frank-cache {
+    gap: 5px;
+    font-size: var(--text-caption);
+  }
+
+  .frank-cache-refresh {
+    width: 16px;
+    height: 16px;
+  }
+
+  .frank-display {
+    font-size: 19px;
+  }
+
+  .frank-utility-panel {
+    right: -2px;
+    width: min(232px, calc(100vw - 48px));
   }
 
   .snapshot-grid {
@@ -3599,6 +3747,7 @@ button.legend-toggle.is-on {
   .snow-spin svg,
   .spinner,
   .gerty-eyes,
+  .frank-cache-refresh,
   .header-icon-btn:disabled svg,
   .header-icon-btn[aria-disabled="true"] svg {
     animation: none !important;

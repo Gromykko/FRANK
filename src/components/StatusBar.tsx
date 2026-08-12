@@ -1,52 +1,13 @@
 import { useLayoutEffect, useRef, useState } from 'react';
-import { Moon, RefreshCw, Sun } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import GertyFace from './GertyFace';
+import HeaderUtilityMenu from './HeaderUtilityMenu';
 import LocationSwitcher from './LocationSwitcher';
 import { useLang } from '../i18n';
 import type { SafetyRating } from '../features/safety/analyzeSafetyConditions';
+import type { ThemeMode } from '../hooks/useTheme';
 
-// How fast the marquee walks when a phrase overflows the display (px/second).
 const MARQUEE_SPEED = 42;
-
-// Inline SVG flags (emoji flags render as plain letters on Windows), clipped
-// to a rounded rect so they sit nicely inside the round push-button.
-// Dannebrog: white cross arms 2/7 of the height, vertical arm centered at
-// 3/7 of the width (toward the hoist).
-function FlagDK() {
-  return (
-    <svg className="flag-icon" viewBox="0 0 20 14" aria-hidden="true">
-      <clipPath id="flag-dk-clip">
-        <rect width="20" height="14" rx="2.5" />
-      </clipPath>
-      <g clipPath="url(#flag-dk-clip)">
-        <rect width="20" height="14" fill="#C8102E" />
-        <rect x="6.57" width="4" height="14" fill="#FFFFFF" />
-        <rect y="5" width="20" height="4" fill="#FFFFFF" />
-      </g>
-    </svg>
-  );
-}
-
-// Simplified Union Jack: blue field, white diagonals with thinner red
-// diagonals, red central cross with a white fringe.
-function FlagUK() {
-  return (
-    <svg className="flag-icon" viewBox="0 0 20 14" aria-hidden="true">
-      <clipPath id="flag-uk-clip">
-        <rect width="20" height="14" rx="2.5" />
-      </clipPath>
-      <g clipPath="url(#flag-uk-clip)">
-        <rect width="20" height="14" fill="#012169" />
-        <path d="M0 0 L20 14 M20 0 L0 14" stroke="#FFFFFF" strokeWidth="3" />
-        <path d="M0 0 L20 14 M20 0 L0 14" stroke="#C8102E" strokeWidth="1.2" />
-        <rect x="7.5" width="5" height="14" fill="#FFFFFF" />
-        <rect y="4.5" width="20" height="5" fill="#FFFFFF" />
-        <rect x="8.5" width="3" height="14" fill="#C8102E" />
-        <rect y="5.5" width="20" height="3" fill="#C8102E" />
-      </g>
-    </svg>
-  );
-}
 
 interface StatusBarProps {
   rating: SafetyRating;
@@ -60,16 +21,14 @@ interface StatusBarProps {
   cacheAriaLabel: string;
   refreshing: boolean;
   onRefresh: () => void;
-  themeMode: 'light' | 'dark';
-  themeTitle: string;
-  onToggleTheme: () => void;
+  themeMode: ThemeMode;
+  onThemeChange: (mode: ThemeMode) => void;
 }
 
-// FRANK as a physical instrument: the check status centered along the top,
-// then three seam-divided columns — round CRT with the GERTY face and the
-// nameplate on the left, the dot-matrix phrase display in the middle, and
-// the refresh/theme buttons stacked over the location on the right. Both
-// screens glow in the rating's phosphor color.
+// The phone is the source layout: identity, place, freshness and utilities form
+// one calm information band; FRANK's voice gets the full-width screen below.
+// Wide screens use the same hierarchy in one row instead of stretching the
+// phone composition into oversized empty columns.
 export default function StatusBar({
   rating,
   phrase,
@@ -83,17 +42,13 @@ export default function StatusBar({
   refreshing,
   onRefresh,
   themeMode,
-  themeTitle,
-  onToggleTheme,
+  onThemeChange,
 }: StatusBarProps) {
   const displayRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLSpanElement>(null);
   const [marqueeDuration, setMarqueeDuration] = useState(0);
-  const { lang, setLang, t } = useLang();
+  const { t } = useLang();
 
-  // A phrase that fits stays solid; one that overflows becomes a slow walking
-  // line. Measured off a hidden twin span so the marquee padding on the live
-  // text never skews the measurement.
   useLayoutEffect(() => {
     const display = displayRef.current;
     const measureEl = measureRef.current;
@@ -102,22 +57,12 @@ export default function StatusBar({
     const measure = () => {
       const textWidth = measureEl.offsetWidth;
       const displayWidth = display.clientWidth;
-      if (textWidth > displayWidth) {
-        // The marquee travels its own width plus the display width per loop.
-        setMarqueeDuration((textWidth + displayWidth) / MARQUEE_SPEED);
-      } else {
-        setMarqueeDuration(0);
-      }
+      setMarqueeDuration(textWidth > displayWidth
+        ? (textWidth + displayWidth) / MARQUEE_SPEED
+        : 0);
     };
 
     measure();
-    // Observe BOTH: the display for layout changes, and the measure span
-    // itself — its width changes when the VT323 webfont swaps in (font-display
-    // is swap), and that is the element whose width decides the marquee. With
-    // only the display observed, the first measurement was taken in the wider
-    // fallback mono font and never revisited, so a phrase that now fits kept
-    // scrolling forever (and, the other way, a long Danish phrase measured
-    // narrow was clipped and never scrolled at all).
     const observer = new ResizeObserver(measure);
     observer.observe(display);
     observer.observe(measureEl);
@@ -129,100 +74,61 @@ export default function StatusBar({
   return (
     <header className="frank-device">
       <div className="container">
-        <div className={`frank-device-shell rating-${rating}`}>
-          <div
-            className={`frank-cache ${cacheClass}`}
-            aria-busy={refreshing}
-            // role is required: aria-label is PROHIBITED on a generic element,
-            // so screen readers dropped it — and with it the whole long-form
-            // honesty sentence ("You're offline, so FRANK is showing your last
-            // saved forecast from …"), which is computed and rendered nowhere
-            // else. `group` rather than `status` so it doesn't compete with the
-            // display's live region for announcements.
-            role="group"
-            aria-label={cacheAriaLabel}
-          >
-            <span className="frank-cache-text">
-              <span className="frank-cache-source">{sourceLabel}</span>
-              {cacheDetail && <span className="frank-cache-detail">{cacheDetail}</span>}
-            </span>
-          </div>
-
-          {/* One shared grid so the columns line up across rows: the CRT,
-              display, and button stack all span the same top band, and the
-              nameplate and location share the bottom line. */}
-          <div className="frank-device-columns">
+        <div className={`frank-device-shell rating-${rating} ${cacheDetail ? 'has-cache-detail' : ''}`}>
+          <div className="frank-identity" aria-hidden="true">
             <span className="frank-crt">
               <GertyFace rating={rating} />
             </span>
+            <span className="frank-nameplate">FRANK</span>
+          </div>
 
-            <div className="frank-cell-display">
-              <div
-                ref={displayRef}
-                className={`frank-display ${isMarquee ? 'is-marquee' : ''}`}
-                role="status"
-                aria-live="polite"
-              >
-                {/* Live regions announce CONTENT changes, not aria-label
-                    changes - the announcement must be a real text node. The
-                    verdict words live here for screen readers; on screen the
-                    GertyFace expression and the rating-coloured phosphor carry
-                    the rating, and the reason bullets in the conditions card
-                    below state it in words. */}
-                <span className="sr-only">{t('{0}. {1}. FRANK says: {2}.', srTitle, srSubtitle, phrase)}</span>
-                <span
-                  className="frank-display-text"
-                  style={isMarquee ? { animationDuration: `${marqueeDuration}s` } : undefined}
-                  aria-hidden="true"
-                >
-                  {phrase}
-                </span>
-                <span ref={measureRef} className="frank-display-measure" aria-hidden="true">
-                  {phrase}
-                </span>
-              </div>
-            </div>
-
-            <div className="frank-actions">
-              {/* Triangle: flag + refresh side by side, theme centered below
-                  (flex-wrap in a two-buttons-wide cluster). */}
-              <div className="header-btn-cluster">
-                <button
-                  type="button"
-                  className="header-icon-btn"
-                  onClick={() => setLang(lang === 'da' ? 'en' : 'da')}
-                  aria-label={t('Switch to Danish')}
-                >
-                  {lang === 'da' ? <FlagDK /> : <FlagUK />}
-                </button>
-                <button
-                  type="button"
-                  className="header-icon-btn header-refresh-btn"
-                  // aria-disabled, not disabled: disabling the element the user
-                  // just activated makes the browser blur it, dropping keyboard
-                  // focus to <body> and losing a screen reader's place at the
-                  // top of the page. The refresh state is already announced via
-                  // aria-busy on the cache group above.
-                  onClick={() => { if (!refreshing) onRefresh(); }}
-                  aria-disabled={refreshing}
-                  aria-label={t('Refresh forecast')}
-                >
-                  <RefreshCw size={16} />
-                </button>
-                <button
-                  type="button"
-                  className="header-icon-btn"
-                  onClick={onToggleTheme}
-                  aria-label={themeTitle}
-                >
-                  {themeMode === 'light' ? <Moon size={16} /> : <Sun size={16} />}
-                </button>
-              </div>
-            </div>
-
-            <span className="frank-nameplate" aria-hidden="true">FRANK</span>
-
+          <div className="frank-context">
             <LocationSwitcher label={location} />
+
+            <button
+              type="button"
+              className={`frank-cache ${cacheClass}`}
+              aria-busy={refreshing}
+              aria-disabled={refreshing}
+              aria-label={`${t('Refresh forecast')}. ${cacheAriaLabel}`}
+              onClick={() => { if (!refreshing) onRefresh(); }}
+            >
+              <span className="frank-cache-text">
+                <span className="frank-cache-source">{sourceLabel}</span>
+              </span>
+              <RefreshCw className="frank-cache-refresh" size={17} aria-hidden="true" />
+            </button>
+
+            <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+              {cacheAriaLabel}
+            </span>
+          </div>
+
+          <HeaderUtilityMenu themeMode={themeMode} onThemeChange={onThemeChange} />
+
+          {cacheDetail && (
+            <div className="frank-cache-notice" aria-hidden="true">{cacheDetail}</div>
+          )}
+
+          <div className="frank-cell-display">
+            <div
+              ref={displayRef}
+              className={`frank-display ${isMarquee ? 'is-marquee' : ''}`}
+              role="status"
+              aria-live="polite"
+            >
+              <span className="sr-only">{t('{0}. {1}. FRANK says: {2}.', srTitle, srSubtitle, phrase)}</span>
+              <span
+                className="frank-display-text"
+                style={isMarquee ? { animationDuration: `${marqueeDuration}s` } : undefined}
+                aria-hidden="true"
+              >
+                {phrase}
+              </span>
+              <span ref={measureRef} className="frank-display-measure" aria-hidden="true">
+                {phrase}
+              </span>
+            </div>
           </div>
         </div>
       </div>
