@@ -2862,6 +2862,10 @@ button.legend-toggle.is-on {
   min-width: 0;
   font-size: var(--text-caption);
   font-variant-numeric: tabular-nums;
+  /* The right column (Buttons + Location) is slightly wider than the left column (CRT),
+     which naturally shifts the middle display column to the left. 
+     This padding perfectly counter-balances that, aligning the text center with the display! */
+  padding-right: 18px;
 }
 
 /* Label on line 1, the (optional) caveat on line 2. The caveat can be long
