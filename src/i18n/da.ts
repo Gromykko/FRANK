@@ -86,11 +86,9 @@ export const da: Record<string, string> = {
   // ── StatusBar ──────────────────────────────────────────────────────────────
   '{0}. {1}. FRANK says: {2}.': '{0}. {1}. FRANK siger: {2}.',
   'Refresh forecast': 'Opdater prognosen',
-  'Language and appearance': 'Sprog og udseende',
-  'Language': 'Sprog',
-  'Appearance': 'Udseende',
-  'Light': 'Lys',
-  'Dark': 'Mørk',
+  // The flag button shows the CURRENT language; its label names the switch
+  // action — so the Danish rendering is "switch to English".
+  'Switch to Danish': 'Skift til engelsk',
 
   // ── FRANK's dot-matrix phrases ─────────────────────────────────────────────
   'Good weather, go ahead!': 'Godt vejr — af sted med dig!',

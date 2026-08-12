@@ -43,7 +43,7 @@ export default function App() {
   const [showDetailedCharts, setShowDetailedCharts] = useState(false);
 
   const { settings, saveSettings, setTripMode } = useSettings();
-  const { themeMode, setThemeMode } = useTheme();
+  const { themeMode, cycleThemeMode } = useTheme();
   const { t, lang } = useLang();
   const online = useOnline();
   const {
@@ -225,17 +225,14 @@ export default function App() {
   const { providerBusy, busyServiceName } = statusView;
   const cacheStatusClass = statusView.tone;
   const sourceLabel = statusView.label;
-  // Once the page-level stale warning is present it already carries the full
-  // recovery explanation. Repeating its short detail inside the header makes
-  // the exceptional header taller and says the same thing twice. Partial or
-  // recent degradation has no banner, so it keeps the compact header notice.
-  const cacheStatusDetail = showCacheRefreshWarning ? '' : statusView.detail;
+  const cacheStatusDetail = statusView.detail;
   // One attribution per provider: MET carries the license, DMI lists the
   // marine models in parentheses.
   const dmiModels = [weatherData.sources.waves, weatherData.sources.water]
     .filter((source): source is string => Boolean(source))
     .map((source) => source.replace(/^DMI\s+/, ''))
     .join(', ');
+  const themeTitle = t(themeMode === 'light' ? 'Switch to dark theme' : 'Switch to light theme');
   const appBuildLabel = `App v${APP_VERSION} · ${APP_BUILD_COMMIT}${APP_BUILD_TIME ? ` · ${t('built {0}', formatDateTime(APP_BUILD_TIME))}` : ''}`;
 
   return (
@@ -256,7 +253,8 @@ export default function App() {
         refreshing={refreshing}
         onRefresh={() => refreshForecast(false, true, true)}
         themeMode={themeMode}
-        onThemeChange={setThemeMode}
+        themeTitle={themeTitle}
+        onToggleTheme={cycleThemeMode}
       />
 
       {/* Main Container */}

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CURRENT_LOCATION } from '../../config/locations';
 import type { WeatherData } from './types';
 import { CAN_FETCH_FRESH_FORECAST, fetchWeatherData } from './fetchForecast';
-import { loadCachedWeatherData, readLocalCachedWeatherData } from './cache';
+import { loadCachedWeatherData } from './cache';
 
 const AUTO_REFRESH_MS = 10 * 60 * 1000;
 const AUTO_REFRESH_THROTTLE_MS = 60 * 1000;
@@ -42,28 +42,11 @@ export function hourIndexForNow(hourly: WeatherData['hourly'], nowMs: number): n
 // Owns the forecast lifecycle: boot from cache, background refreshes,
 // clock ticks, and the selected/now hour indices. Layout stays in App.
 export function useForecast(daylightOnly: boolean) {
-  // localStorage is synchronous. Read it in the initial render so a reload with
-  // a usable forecast paints the dashboard immediately, rather than flashing a
-  // full-page spinner for one frame before an async wrapper returns the same
-  // local value. Network revalidation still begins in the boot effect below.
-  const initialWeatherDataRef = useRef<WeatherData | null | undefined>(undefined);
-  if (initialWeatherDataRef.current === undefined) {
-    initialWeatherDataRef.current = readLocalCachedWeatherData(CURRENT_LOCATION);
-  }
-  const initialWeatherData = initialWeatherDataRef.current;
-  const [weatherData, setWeatherData] = useState<WeatherData | null>(initialWeatherData);
-  const [loading, setLoading] = useState<boolean>(!initialWeatherData);
+  const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedHourIndex, setSelectedHourIndex] = useState<number>(() => {
-    if (!initialWeatherData) return 0;
-    const closestIndex = hourIndexForNow(initialWeatherData.hourly, Date.now());
-    if (daylightOnly && initialWeatherData.hourly[closestIndex] && !initialWeatherData.hourly[closestIndex].isDay) {
-      const firstDaylight = initialWeatherData.hourly.findIndex((hour, index) => index >= closestIndex && hour.isDay);
-      if (firstDaylight !== -1) return firstDaylight;
-    }
-    return closestIndex;
-  });
+  const [selectedHourIndex, setSelectedHourIndex] = useState<number>(0);
   // 60s heartbeat: re-renders the consumer each minute so relative-age labels
   // ("Checked · 14:32", "2 hours old") stay current, and so `nowIndex` below
   // re-derives as the clock moves.
@@ -79,14 +62,10 @@ export function useForecast(daylightOnly: boolean) {
   const hasWeatherDataRef = useRef(false);
   // Build time of the newest payload applied, so an out-of-order response
   // can't overwrite a fresher one (see applyWeatherData).
-  const latestFetchedAtRef = useRef(initialWeatherData
-    ? Date.parse(initialWeatherData.sources.fetchedAt)
-    : -Infinity);
+  const latestFetchedAtRef = useRef(-Infinity);
   // The timestamp of the hour the user is currently viewing, so background
   // refreshes can restore their selection instead of snapping back to "now".
-  const selectedTimeRef = useRef<string | null>(
-    initialWeatherData?.hourly[selectedHourIndex]?.time ?? null
-  );
+  const selectedTimeRef = useRef<string | null>(null);
 
   useEffect(() => {
     daylightOnlyRef.current = daylightOnly;
@@ -256,13 +235,6 @@ export function useForecast(daylightOnly: boolean) {
     let cancelled = false;
 
     async function bootForecast() {
-      // The initial local copy was already applied before first paint. Do not
-      // read/apply it a second time; move straight to background validation.
-      if (initialWeatherData) {
-        await refreshForecast(false, true, true);
-        return;
-      }
-
       const cached = (await loadCachedWeatherData()).data;
       if (cancelled) return;
 
@@ -289,7 +261,7 @@ export function useForecast(daylightOnly: boolean) {
     return () => {
       cancelled = true;
     };
-  }, [applyWeatherData, initialWeatherData, refreshForecast]);
+  }, [applyWeatherData, refreshForecast]);
 
   // Steady 10-min cadence: keyed on WHETHER data exists, not the data itself —
   // depending on weatherData would tear the timer down on every refresh/pickup

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { readStorage } from '../utils/storage';
 
 const THEME_STORAGE_KEY = 'frank_theme_mode';
@@ -31,7 +31,7 @@ function readInitialThemeMode(): ThemeMode {
 }
 
 export function useTheme() {
-  const [themeMode, setThemeModeState] = useState<ThemeMode>(readInitialThemeMode);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(readInitialThemeMode);
   // Persist only once the user has chosen (had a saved value, or toggled).
   const hasExplicitChoice = useRef<boolean>(readSavedThemeMode() !== null);
 
@@ -55,14 +55,10 @@ export function useTheme() {
     }
   }, [themeMode]);
 
-  const setThemeMode = useCallback((next: ThemeMode) => {
+  const cycleThemeMode = () => {
     hasExplicitChoice.current = true;
-    setThemeModeState(next);
-  }, []);
+    setThemeMode((current) => (current === 'light' ? 'dark' : 'light'));
+  };
 
-  const cycleThemeMode = useCallback(() => {
-    setThemeMode(themeMode === 'light' ? 'dark' : 'light');
-  }, [setThemeMode, themeMode]);
-
-  return { themeMode, setThemeMode, cycleThemeMode };
+  return { themeMode, cycleThemeMode };
 }

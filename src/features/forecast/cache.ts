@@ -54,7 +54,7 @@ export function saveCachedWeatherData(data: WeatherData, location: ForecastLocat
   }
 }
 
-export function readLocalCachedWeatherData(location: ForecastLocation): WeatherData | null {
+function readLocalCachedWeatherData(location: ForecastLocation): WeatherData | null {
   try {
     const raw = localStorage.getItem(getWeatherCacheKey(location));
     if (!raw) return null;
