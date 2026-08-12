@@ -61,8 +61,8 @@ const COMPACT_WEATHER_CODE_DESCRIPTIONS: Record<number, string> = {
   85: 'Snow showers',
   86: 'Heavy snow',
   95: 'Thunder risk',
-  96: 'Thunder & hail',
-  99: 'Thunder & hail',
+  96: 'Thunder/hail',
+  99: 'Thunder/hail',
 };
 
 export function getWeatherDescription(code: number): string {

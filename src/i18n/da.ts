@@ -291,7 +291,7 @@ export const da: Record<string, string> = {
   'Heavy showers': 'Kraftige byger',
   'Snow showers': 'Snebyger',
   'Thunder risk': 'Tordenrisiko',
-  'Thunder & hail': 'Torden og hagl',
+  'Thunder/hail': 'Torden/hagl',
 
   // ── ConditionsSnapshot ────────────────────────────────────────────────────
   'Current conditions': 'Aktuelle forhold',

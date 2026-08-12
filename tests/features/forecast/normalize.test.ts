@@ -74,7 +74,7 @@ describe('metSymbolToWmoCode', () => {
   it('keeps compact ledger labels short without hiding the hazard family', () => {
     expect(getCompactWeatherDescription(2)).toBe('Partly cloudy');
     expect(getCompactWeatherDescription(67)).toBe('Heavy icy rain');
-    expect(getCompactWeatherDescription(99)).toBe('Thunder & hail');
+    expect(getCompactWeatherDescription(99)).toBe('Thunder/hail');
     expect(getCompactWeatherDescription(42)).toBe('Unknown');
   });
 });

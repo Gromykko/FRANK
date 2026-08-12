@@ -3544,11 +3544,15 @@ button.legend-toggle.is-on {
   }
 
   .snapshot-row {
-    column-gap: 8px;
+    column-gap: 6px;
   }
 
   .snapshot-cell {
-    gap: 6px;
+    gap: 4px;
+  }
+
+  .snapshot-wind-visual {
+    gap: 2px;
   }
 
   .snapshot-sun {
@@ -3561,6 +3565,12 @@ button.legend-toggle.is-on {
 
   .snapshot-sun-range {
     display: inline-flex;
+    gap: 2px;
+  }
+
+  .snapshot-sun-range svg {
+    width: 10px;
+    height: 10px;
   }
 
   /* The word already names the condition. At 320px the decorative icon is

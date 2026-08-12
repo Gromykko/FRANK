@@ -64,7 +64,7 @@ describe('ConditionsSnapshot', () => {
     const container = renderSnapshot();
 
     expect(container.querySelector('.snapshot-weather-compact')?.textContent)
-      .toBe('Thunder & hail');
+      .toBe('Thunder/hail');
     expect(container.querySelector('.snapshot-weather-full')?.textContent)
       .toBe('Thunderstorm with heavy hail');
     expect(container.querySelector('.snapshot-desc .sr-only')?.textContent)
@@ -79,7 +79,7 @@ describe('ConditionsSnapshot', () => {
     const container = renderSnapshot(true);
 
     expect(container.querySelector('.snapshot-weather-compact')?.textContent)
-      .toBe('Torden og hagl');
+      .toBe('Torden/hagl');
     expect(container.querySelector('.snapshot-gust-full')?.textContent).toBe('vindstød 35.0');
     expect(container.querySelector('.snapshot-gust-compact')?.textContent).toBe('stød 35.0');
     expect([...container.querySelectorAll('.snapshot-context-label')].map((el) => el.textContent))
