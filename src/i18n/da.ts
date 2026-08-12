@@ -272,6 +272,27 @@ export const da: Record<string, string> = {
   'Thunderstorm with heavy hail': 'Tordenvejr med kraftig hagl',
   'Unknown weather': 'Ukendt vejr',
 
+  // Compact weather categories for the phone-sized conditions ledger. The
+  // full forecast description remains in the assessment below it.
+  'Clear': 'Klart',
+  'Mostly clear': 'Mest klart',
+  'Rime fog': 'Rimtåge',
+  'Drizzle': 'Støvregn',
+  'Heavy drizzle': 'Tæt støvregn',
+  'Icy drizzle': 'Isslag',
+  'Rain': 'Regn',
+  'Icy rain': 'Isslag',
+  'Heavy icy rain': 'Kraftigt isslag',
+  'Light snow': 'Let sne',
+  'Snow': 'Sne',
+  'Heavy snow': 'Kraftig sne',
+  'Light showers': 'Lette byger',
+  'Rain showers': 'Regnbyger',
+  'Heavy showers': 'Kraftige byger',
+  'Snow showers': 'Snebyger',
+  'Thunder risk': 'Tordenrisiko',
+  'Thunder & hail': 'Torden og hagl',
+
   // ── ConditionsSnapshot ────────────────────────────────────────────────────
   'Current conditions': 'Aktuelle forhold',
   'Air': 'Luft',
@@ -282,6 +303,8 @@ export const da: Record<string, string> = {
   'Waves': 'Bølger',
   'Water': 'Vand',
   'Level': 'Vandstand',
+  'Direction': 'Retning',
+  'Daylight': 'Dagslys',
   // Screen-reader-only labels for the sunrise/sunset cell, whose icons carry
   // no accessible name (see ConditionsSnapshot).
   // A DMI warning that has not started yet: say when the weather is expected
@@ -291,6 +314,7 @@ export const da: Record<string, string> = {
   'Sunrise': 'Solopgang',
   'Sunset': 'Solnedgang',
   'gusts {0}': 'vindstød {0}',
+  'gust {0}': 'stød {0}',
   '{0} to {1} cm': '{0} til {1} cm',
   'Wind from {0}. The arrow points downwind (where the wind is heading).':
     'Vind fra {0}. Pilen peger med vinden (derhen hvor vinden blæser).',

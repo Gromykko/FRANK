@@ -1,6 +1,7 @@
-import { ArrowDown, Sunrise, Sunset } from 'lucide-react';
+import { ArrowDown, Sun, Sunrise, Sunset } from 'lucide-react';
 import WeatherWidgetIcon from './WeatherWidgetIcon';
 import { blockHourRange } from '../features/forecast/blockHours';
+import { getCompactWeatherDescription } from '../features/forecast/weatherCodes';
 import { useLang } from '../i18n';
 import { formatWeekday, locationHourLabel } from '../utils/date';
 import { formatReading, formatLevelCm, NO_READING_TEXT } from '../utils/number';
@@ -68,18 +69,26 @@ export default function ConditionsSnapshot({
   // One label for both cases: the outlook note already says a block carries
   // its worst-case values, so a "max" suffix here only read as inconsistency.
   const blockGust = data.windGustMax ?? data.windGust;
-  const gustText = isBlock
-    ? t('gusts {0}', Number.isFinite(blockGust) ? formatReading(blockGust, 1) : NO_READING_TEXT)
-    : t('gusts {0}', formatReading(data.windGust, 1));
+  const gustValue = isBlock
+    ? (Number.isFinite(blockGust) ? formatReading(blockGust, 1) : NO_READING_TEXT)
+    : formatReading(data.windGust, 1);
+  const gustText = t('gusts {0}', gustValue);
+  const compactGustText = t('gust {0}', gustValue);
+  const compactWeatherDesc = t(getCompactWeatherDescription(data.weatherCode));
+  const daylightRange = [sunrise, sunset].filter(Boolean).join('–');
 
   return (
-    <section className="panel snapshot" aria-label={t('Current conditions')}>
+    <section className={`panel snapshot${isBlock ? ' is-outlook' : ''}`} aria-label={t('Current conditions')}>
       <div className="snapshot-grid">
         <div className="snapshot-row">
           <span className="snapshot-cell">
             <span className="snapshot-label">{t('Weather')}</span>
             <WeatherWidgetIcon code={data.weatherCode} isNight={!data.isDay} size={18} />
-            <span className="snapshot-value snapshot-desc">{weatherDesc}</span>
+            <span className="snapshot-value snapshot-desc" title={weatherDesc}>
+              <span className="snapshot-weather-full" aria-hidden="true">{weatherDesc}</span>
+              <span className="snapshot-weather-compact" aria-hidden="true">{compactWeatherDesc}</span>
+              <span className="sr-only">{weatherDesc}</span>
+            </span>
           </span>
           <span className="snapshot-cell snapshot-cell-end">
             <span className="snapshot-label">{t('Air')}</span>
@@ -90,20 +99,24 @@ export default function ConditionsSnapshot({
         <div className="snapshot-row">
           <span className="snapshot-cell">
             <span className="snapshot-label">{t('Wind')}</span>
-            {/* Two spans, so the gust can drop to its own line on a narrow
-                phone while each part stays intact. Storm values make this the
-                widest cell in the panel: "25.5 m/s vindstod 35.0" overflowed a
-                180px cell by 23px, which is what used to force the entire grid
-                into one column below 400px. */}
+            {/* The full wording remains available to assistive technology;
+                the visible phone label is intentionally shorter so a gust
+                never creates an accidental second row in the ledger. */}
             <span className="snapshot-value snapshot-wind">
-              <span>{windText}</span>
-              <span className="snapshot-sub">{gustText}</span>
+              <span className="snapshot-wind-visual" aria-hidden="true">
+                <span>{windText}</span>
+                <span className="snapshot-wind-separator">&middot;</span>
+                <span className="snapshot-sub snapshot-gust-full">{gustText}</span>
+                <span className="snapshot-sub snapshot-gust-compact">{compactGustText}</span>
+              </span>
+              <span className="sr-only">{windText}, {gustText}</span>
             </span>
           </span>
           <span
             className="snapshot-cell snapshot-cell-end"
             title={t('Wind from {0}. The arrow points downwind (where the wind is heading).', windDirectionLabel)}
           >
+            <span className="snapshot-label snapshot-context-label">{t('Direction')}</span>
             {/* Same icon + math as the meteogram's wind row: ArrowDown points
                 south at 0°, so rotating by the FROM-direction makes the arrow
                 point where the wind blows TO. */}
@@ -131,12 +144,25 @@ export default function ConditionsSnapshot({
             <span className="snapshot-value">{tideText}</span>
           </span>
           <span className="snapshot-cell snapshot-cell-end snapshot-sun">
-            {/* Every other cell in this grid pairs its value with a visible
-                .snapshot-label; these two carry only a lucide <svg>, which
-                contributes no accessible name — so a screen reader announced
-                two bare numbers. Daylight is one of the verdict's rules. */}
-            {sunrise && <span className="snapshot-value"><Sunrise size={13} aria-hidden="true" /> <span className="sr-only">{t('Sunrise')} </span>{sunrise}</span>}
-            {sunset && <span className="snapshot-value"><Sunset size={13} aria-hidden="true" /> <span className="sr-only">{t('Sunset')} </span>{sunset}</span>}
+            <span className="snapshot-label snapshot-context-label">{t('Daylight')}</span>
+            {/* Wider screens keep the separately illustrated times. A 320px
+                phone uses one Sun + daylight range so this pair stays aligned
+                with Water level; the complete meaning remains below for
+                assistive technology. */}
+            <span className="snapshot-sun-times" aria-hidden="true">
+              {sunrise && <span className="snapshot-value"><Sunrise size={13} />{sunrise}</span>}
+              {sunset && <span className="snapshot-value"><Sunset size={13} />{sunset}</span>}
+            </span>
+            {daylightRange && (
+              <span className="snapshot-sun-range" aria-hidden="true">
+                <Sun size={13} />
+                <span>{daylightRange}</span>
+              </span>
+            )}
+            <span className="sr-only">
+              {sunrise && `${t('Sunrise')} ${sunrise}. `}
+              {sunset && `${t('Sunset')} ${sunset}.`}
+            </span>
           </span>
         </div>
 

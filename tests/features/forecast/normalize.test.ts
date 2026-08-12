@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { metSymbolToWmoCode, getWeatherDescription } from '../../../src/features/forecast/weatherCodes';
+import {
+  metSymbolToWmoCode,
+  getWeatherDescription,
+  getCompactWeatherDescription,
+} from '../../../src/features/forecast/weatherCodes';
 import {
   mapMetTimeseries,
   mapMetBlocks,
@@ -65,6 +69,13 @@ describe('metSymbolToWmoCode', () => {
   it('getWeatherDescription falls back for unknown codes', () => {
     expect(getWeatherDescription(42)).toBe('Unknown weather');
     expect(getWeatherDescription(95)).toBe('Thunderstorm risk');
+  });
+
+  it('keeps compact ledger labels short without hiding the hazard family', () => {
+    expect(getCompactWeatherDescription(2)).toBe('Partly cloudy');
+    expect(getCompactWeatherDescription(67)).toBe('Heavy icy rain');
+    expect(getCompactWeatherDescription(99)).toBe('Thunder & hail');
+    expect(getCompactWeatherDescription(42)).toBe('Unknown');
   });
 });
 

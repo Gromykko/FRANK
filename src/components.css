@@ -3158,9 +3158,9 @@ button.legend-toggle.is-on {
   gap: 14px;
 }
 
-/* A real 2-column grid (rows use display:contents) so the left/right split
-   sits on one shared vertical line across every row — reads as an instrument
-   panel instead of four independently-splitting flex rows. */
+/* Wider layouts use one shared centre seam; phones switch to independently
+   sized ledger rows so short right-hand readings return their unused width to
+   weather and wind. */
 .snapshot-grid {
   display: grid;
   /* Left column a touch wider — its values (wind + gusts, descriptions) are
@@ -3187,14 +3187,30 @@ button.legend-toggle.is-on {
   text-align: right;
 }
 
-/* Ultra-narrow only (Galaxy Fold cover display and similar). This cutoff was
-   briefly 400px, which cost every 360-400px phone — most Android handsets and
-   every iPhone since the 12 — its second column. The collision that justified it
-   was real but came from ONE cell: the wind value with storm numbers. That cell
-   now wraps its gust onto a second line (.snapshot-wind), so two columns hold
-   down to here. Stacking six rows to fix one of them was the wrong trade. */
-@media (max-width: 300px) {
+/* A phone is not a smaller desktop table. Each measurement row sizes its own
+   right-hand value and gives every remaining pixel to the left-hand reading.
+   Outer edges and row rhythm provide the symmetry without an inflexible
+   centre seam. */
+@media (max-width: 600px) {
   .snapshot-grid {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .snapshot-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    column-gap: 12px;
+    align-items: center;
+  }
+}
+
+/* Below the 320px phone floor, or under substantial text enlargement, honest
+   reflow is preferable to clipped safety data. */
+@media (max-width: 300px) {
+  .snapshot-row {
     grid-template-columns: 1fr;
     row-gap: 10px;
   }
@@ -3222,6 +3238,59 @@ button.legend-toggle.is-on {
   min-width: 0;
 }
 
+.snapshot-context-label {
+  display: none;
+}
+
+/* A selected outlook contains real min–max ranges. At phone widths those
+   values need an intentional two-tier matrix, not smaller type or collisions:
+   two equal columns, with both sides using the same label/value rhythm. */
+@media (max-width: 600px) {
+  .snapshot.is-outlook .snapshot-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  .snapshot.is-outlook .snapshot-cell {
+    display: flex;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    column-gap: 6px;
+    row-gap: 3px;
+  }
+
+  .snapshot.is-outlook .snapshot-cell > .snapshot-label {
+    flex: 0 0 100%;
+    min-width: 0;
+  }
+
+  .snapshot.is-outlook .snapshot-cell-end {
+    justify-content: flex-end;
+  }
+
+  .snapshot.is-outlook .snapshot-cell-end > .snapshot-label {
+    text-align: right;
+  }
+
+  .snapshot.is-outlook .snapshot-context-label {
+    display: block;
+  }
+}
+
+@media (max-width: 300px) {
+  .snapshot.is-outlook .snapshot-row {
+    grid-template-columns: 1fr;
+  }
+
+  .snapshot.is-outlook .snapshot-cell-end {
+    justify-content: flex-start;
+  }
+
+  .snapshot.is-outlook .snapshot-cell-end > .snapshot-label {
+    text-align: left;
+  }
+}
+
 .snapshot-value {
   font-size: 14px;
   font-weight: 600;
@@ -3232,26 +3301,33 @@ button.legend-toggle.is-on {
   white-space: nowrap;
 }
 
-/* The only value in the panel that may wrap, and only between its two parts:
-   sustained wind on one line, gusts on the next. Each part keeps nowrap so a
-   number never splits from its unit. */
+/* Wind and gust are one deliberate reading, not two accidental phone rows. */
 .snapshot-value.snapshot-wind {
-  flex-wrap: wrap;
-  white-space: normal;
-  row-gap: 0;
-}
-
-.snapshot-value.snapshot-wind > span {
   white-space: nowrap;
 }
 
-/* Phones: always stack wind over gusts. Left to flex-wrap alone, the cell
-   flipped between one and two lines depending on how wide the hour's numbers
-   happened to be, which read as a glitch rather than a layout. */
-@media (max-width: 480px) {
-  .snapshot-value.snapshot-wind {
-    flex-direction: column;
-    align-items: flex-start;
+.snapshot-wind-visual {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.snapshot-wind-separator {
+  color: var(--text-muted);
+}
+
+.snapshot-gust-compact {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  .snapshot-gust-full {
+    display: none;
+  }
+
+  .snapshot-gust-compact {
+    display: inline;
   }
 }
 
@@ -3269,9 +3345,40 @@ button.legend-toggle.is-on {
   gap: 12px;
 }
 
+.snapshot-sun-times {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.snapshot-sun-range {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .snapshot-sun .snapshot-value {
   color: var(--text-muted);
   font-weight: 500;
+}
+
+.snapshot-weather-compact {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  .snapshot-weather-full {
+    display: none;
+  }
+
+  .snapshot-weather-compact {
+    display: inline;
+  }
 }
 
 /* Longer-range block detail: a calm note that this is lower-confidence data. */
@@ -3389,8 +3496,9 @@ button.legend-toggle.is-on {
   background: var(--color-danger);
 }
 
-/* The weather description can be long ("Thunderstorm with slight hail"); let it
-   shrink and ellipsize instead of pushing the Air reading off a 320px row. */
+/* Full descriptions can wrap on wider canvases. Phones render the compact,
+   hazard-preserving category; text enlargement may still reflow rather than
+   clipping safety information. */
 .snapshot-value.snapshot-desc {
   min-width: 0;
   white-space: normal;
@@ -3432,22 +3540,34 @@ button.legend-toggle.is-on {
   }
 
   .snapshot-grid {
+    gap: 10px;
+  }
+
+  .snapshot-row {
     column-gap: 8px;
-    row-gap: 10px;
   }
 
   .snapshot-cell {
     gap: 6px;
   }
 
-  /* The two daylight times cannot share the narrow right-hand track with the
-     water-level reading at 320px. Keep the useful two-column readings above,
-     then give sunrise/sunset one calm, right-aligned line of their own. */
   .snapshot-sun {
-    grid-column: 1 / -1;
-    justify-content: flex-end;
-    padding-left: 0;
-    text-align: right;
+    gap: 8px;
+  }
+
+  .snapshot-sun-times {
+    display: none;
+  }
+
+  .snapshot-sun-range {
+    display: inline-flex;
+  }
+
+  /* The word already names the condition. At 320px the decorative icon is
+     the difference between an intact "Delvist skyet" and an accidental wrap;
+     larger phones retain it. */
+  .snapshot .weather-widget-wrap {
+    display: none;
   }
 
   .manual-header {

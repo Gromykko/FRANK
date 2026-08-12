@@ -29,8 +29,48 @@ const WEATHER_CODE_DESCRIPTIONS: Record<number, string> = {
   99: 'Thunderstorm with heavy hail',
 };
 
+// The full MET-derived wording belongs in the safety explanation, where the
+// exact condition has room to breathe. The compact current-conditions ledger
+// needs a stable one-line category at phone widths. These labels deliberately
+// preserve the hazard family (freezing rain, thunder, hail, etc.) rather than
+// clipping a longer safety-relevant phrase with an ellipsis.
+const COMPACT_WEATHER_CODE_DESCRIPTIONS: Record<number, string> = {
+  0: 'Clear',
+  1: 'Mostly clear',
+  2: 'Partly cloudy',
+  3: 'Overcast',
+  45: 'Fog',
+  48: 'Rime fog',
+  51: 'Light drizzle',
+  53: 'Drizzle',
+  55: 'Heavy drizzle',
+  56: 'Icy drizzle',
+  57: 'Icy drizzle',
+  61: 'Light rain',
+  63: 'Rain',
+  65: 'Heavy rain',
+  66: 'Icy rain',
+  67: 'Heavy icy rain',
+  71: 'Light snow',
+  73: 'Snow',
+  75: 'Heavy snow',
+  77: 'Snow grains',
+  80: 'Light showers',
+  81: 'Rain showers',
+  82: 'Heavy showers',
+  85: 'Snow showers',
+  86: 'Heavy snow',
+  95: 'Thunder risk',
+  96: 'Thunder & hail',
+  99: 'Thunder & hail',
+};
+
 export function getWeatherDescription(code: number): string {
   return WEATHER_CODE_DESCRIPTIONS[code] || 'Unknown weather';
+}
+
+export function getCompactWeatherDescription(code: number): string {
+  return COMPACT_WEATHER_CODE_DESCRIPTIONS[code] || 'Unknown';
 }
 
 // MET Norway Locationforecast reports the condition as a symbol_code string
