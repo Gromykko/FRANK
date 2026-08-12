@@ -519,6 +519,16 @@ h1, h2, h3, h4, h5, h6 {
   }
 }
 
+/* The 18px phone gutter makes the already narrow 320px iPhone canvas feel
+   pinched. Twelve pixels keeps cards comfortably off the edge while returning
+   enough room for paired readings and horizontal forecast controls. */
+@media (max-width: 360px) {
+  .container {
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+}
+
 .forecast-warning {
   display: flex;
   align-items: center;

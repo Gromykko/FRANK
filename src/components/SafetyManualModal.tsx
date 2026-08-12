@@ -85,7 +85,7 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
             onClick={onClose}
             aria-label={t('Close')}
           >
-            <X size={20} aria-hidden="true" />
+            <X size={18} aria-hidden="true" />
           </button>
         </div>
 

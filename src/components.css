@@ -2305,7 +2305,7 @@ button.legend-toggle.is-on {
   border-bottom: 2px solid var(--panel-border);
   padding: 20px 24px 12px 24px;
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  grid-template-columns: 36px minmax(0, 1fr) 36px;
   align-items: center;
   margin-bottom: 0;
 }
@@ -2321,8 +2321,8 @@ button.legend-toggle.is-on {
 
 .manual-header-close {
   grid-column: 3;
-  width: 44px;
-  height: 44px;
+  width: 36px;
+  height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3193,7 +3193,7 @@ button.legend-toggle.is-on {
    was real but came from ONE cell: the wind value with storm numbers. That cell
    now wraps its gust onto a second line (.snapshot-wind), so two columns hold
    down to here. Stacking six rows to fix one of them was the wrong trade. */
-@media (max-width: 340px) {
+@media (max-width: 300px) {
   .snapshot-grid {
     grid-template-columns: 1fr;
     row-gap: 10px;
@@ -3403,15 +3403,55 @@ button.legend-toggle.is-on {
    column and let the face/actions remain useful instead of showing fragments. */
 @media (max-width: 360px) {
   .frank-device-columns {
-    grid-template-columns: 72px auto;
+    grid-template-columns: 64px minmax(0, 1fr);
     grid-template-areas:
       'crt  actions'
       'name location';
-    justify-content: space-between;
+    column-gap: 16px;
   }
 
   .frank-cell-display {
     display: none;
+  }
+
+  /* The triangular cluster wastes most of the instrument face on a 320px
+     phone. Keep the three 44px touch targets, but arrange them as one compact
+     toolbar opposite the face so both sides share the same visual centre. */
+  .frank-actions {
+    justify-self: end;
+    align-self: center;
+  }
+
+  .frank-device .header-btn-cluster {
+    width: auto;
+    flex-wrap: nowrap;
+  }
+
+  .frank-location {
+    justify-self: end;
+  }
+
+  .snapshot-grid {
+    column-gap: 8px;
+    row-gap: 10px;
+  }
+
+  .snapshot-cell {
+    gap: 6px;
+  }
+
+  /* The two daylight times cannot share the narrow right-hand track with the
+     water-level reading at 320px. Keep the useful two-column readings above,
+     then give sunrise/sunset one calm, right-aligned line of their own. */
+  .snapshot-sun {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+    padding-left: 0;
+    text-align: right;
+  }
+
+  .manual-header {
+    padding: 16px;
   }
 }
 
