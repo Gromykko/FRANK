@@ -718,7 +718,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
       </div>
 
       {/* Nothing explained the columns that stop being hourly. Past MET's hourly
-          range the matrix continues in 6-hour blocks: striped, italic values,
+          range the matrix continues in 6-hour blocks: striped values,
           and a header reading a span like "02-08" instead of a single hour. All
           of it visual only, so a reader had no way to learn what it meant.
           A legend, not a paragraph: the first version said the same things in
