@@ -130,24 +130,6 @@ export default function StatusBar({
     <header className="frank-device">
       <div className="container">
         <div className={`frank-device-shell rating-${rating}`}>
-          <div
-            className={`frank-cache ${cacheClass}`}
-            aria-busy={refreshing}
-            // role is required: aria-label is PROHIBITED on a generic element,
-            // so screen readers dropped it — and with it the whole long-form
-            // honesty sentence ("You're offline, so FRANK is showing your last
-            // saved forecast from …"), which is computed and rendered nowhere
-            // else. `group` rather than `status` so it doesn't compete with the
-            // display's live region for announcements.
-            role="group"
-            aria-label={cacheAriaLabel}
-          >
-            <span className="frank-cache-text">
-              <span className="frank-cache-source">{sourceLabel}</span>
-              {cacheDetail && <span className="frank-cache-detail">{cacheDetail}</span>}
-            </span>
-          </div>
-
           {/* One shared grid so the columns line up across rows: the CRT,
               display, and button stack all span the same top band, and the
               nameplate and location share the bottom line. */}
@@ -157,6 +139,17 @@ export default function StatusBar({
             </span>
 
             <div className="frank-cell-display">
+              <div
+                className={`frank-cache ${cacheClass}`}
+                aria-busy={refreshing}
+                role="group"
+                aria-label={cacheAriaLabel}
+              >
+                <span className="frank-cache-text">
+                  <span className="frank-cache-source">{sourceLabel}</span>
+                  {cacheDetail && <span className="frank-cache-detail">{cacheDetail}</span>}
+                </span>
+              </div>
               <div
                 ref={displayRef}
                 className={`frank-display ${isMarquee ? 'is-marquee' : ''}`}

@@ -2544,8 +2544,7 @@ button.legend-toggle.is-on {
 .frank-device-shell {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 10px 16px 14px;
+  padding: 40px 16px 14px;
   /* Same corner tier as every other .panel card */
   border-radius: var(--radius-md);
   background: var(--frank-housing);
@@ -2623,6 +2622,7 @@ button.legend-toggle.is-on {
   grid-area: display;
   display: flex;
   align-items: center;
+  position: relative;
   min-width: 0;
   padding: 0 16px;
   border-left: 1px solid var(--frank-housing-edge);
@@ -2853,13 +2853,18 @@ button.legend-toggle.is-on {
 
 /* Check status: one centered line along the housing top */
 .frank-cache {
-  align-self: center;
+  position: absolute;
+  top: -30px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 280px;
+  text-align: center;
+  justify-content: center;
   color: var(--text-muted);
   display: inline-flex;
   align-items: flex-start;
   gap: 6px;
-  max-width: 100%;
-  min-width: 0;
   font-size: var(--text-caption);
   font-variant-numeric: tabular-nums;
 }
