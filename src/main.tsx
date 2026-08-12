@@ -19,11 +19,16 @@ createRoot(document.getElementById('root')!).render(
 // can't send response headers, so a <meta> CSP is the only one available, and
 // an inline script would force 'unsafe-inline' on script-src — which is most
 // of what a CSP is for. Registration is not on the critical path anyway.
-if ('serviceWorker' in navigator) {
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     const baseUrl = import.meta.env.BASE_URL;
+    const workerUrl = new URL(`${baseUrl}sw.js`, window.location.origin);
+    // Changing the script URL forces an update check for every production
+    // build. The worker verifies this id against frank-precache.json before it
+    // activates, so a partial deployment cannot replace the last good shell.
+    workerUrl.searchParams.set('build', import.meta.env.VITE_APP_BUILD_ID);
     navigator.serviceWorker
-      .register(`${baseUrl}sw.js`, { scope: baseUrl })
+      .register(workerUrl.toString(), { scope: baseUrl, updateViaCache: 'none' })
       .catch((err) => console.error('Service Worker registration failed:', err));
   });
 }

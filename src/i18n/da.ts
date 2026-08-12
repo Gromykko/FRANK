@@ -387,6 +387,7 @@ export const da: Record<string, string> = {
 
   // ── LocationSwitcher ──────────────────────────────────────────────────────
   'Choose location': 'Vælg sted',
+  'Or choose another location:': 'Eller vælg et andet sted:',
   'provisional': 'foreløbig',
   'Provisional — limits not yet locally calibrated': 'Foreløbig — grænserne er endnu ikke lokalt kalibreret',
 

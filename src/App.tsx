@@ -1,7 +1,6 @@
 import { lazy, Suspense, useState, useEffect, useMemo } from 'react';
 import {
   ChartLine,
-  RefreshCw,
   AlertTriangle,
   ChevronDown,
   ChevronUp,
@@ -24,7 +23,9 @@ import ConditionsSnapshot from './components/ConditionsSnapshot';
 import TripProfilePanel from './components/TripProfilePanel';
 import WarningStripe from './components/WarningStripe';
 import ErrorBoundary from './components/ErrorBoundary';
+import ForecastErrorScreen from './components/ForecastErrorScreen';
 import { getFrankPhrase } from './features/safety/frankPhrases';
+import { getSafetyDisplay, hasActiveSafetyChecks } from './features/safety/safetyDisplay';
 import { useSettings } from './hooks/useSettings';
 import { useTheme } from './hooks/useTheme';
 import { useOnline } from './hooks/useOnline';
@@ -119,18 +120,10 @@ export default function App() {
 
   if (error && !weatherData) {
     return (
-      <div className="loader-container error-screen">
-        <AlertTriangle size={48} className="error-screen-icon" />
-        <h2 className="error-screen-title">{t("Can't reach the forecast right now")}</h2>
-        <p className="error-screen-text">{t(error)}</p>
-        <button
-          type="button"
-          className="btn-control error-screen-retry"
-          onClick={() => refreshForecast(true, true, true)}
-        >
-          <RefreshCw size={16} /> {t('Try Again')}
-        </button>
-      </div>
+      <ForecastErrorScreen
+        message={error}
+        onRetry={() => refreshForecast(true, true, true)}
+      />
     );
   }
 
@@ -149,44 +142,33 @@ export default function App() {
   // weatherData.hourly, so it is empty exactly when that is.
   if (displayHourlyData.length === 0) {
     return (
-      <div className="loader-container error-screen">
-        <AlertTriangle size={48} className="error-screen-icon" />
-        <h2 className="error-screen-title">{t("Can't reach the forecast right now")}</h2>
-        <p className="error-screen-text">{t('The forecast came back with no hours in it.')}</p>
-        <button
-          type="button"
-          className="btn-control error-screen-retry"
-          onClick={() => refreshForecast(true, true, true)}
-        >
-          <RefreshCw size={16} /> {t('Try Again')}
-        </button>
-      </div>
+      <ForecastErrorScreen
+        message="The forecast came back with no hours in it."
+        onRetry={() => refreshForecast(true, true, true)}
+      />
     );
   }
 
   const currentHourData = displayHourlyData[selectedHourIndex] ?? displayHourlyData[0];
   const safety = analyzeSafetyConditions(currentHourData, settings, nextHourTideFor(displayHourlyData, selectedHourIndex), t);
-  const activeSafetyChecks = [
-    settings.enableWindSpeed,
-    settings.enableWindSpeed && settings.enableWindGust,
-    settings.enableWaveHeight,
-    settings.enableWaveHeight && settings.enableWaveCaution,
-    settings.enableWaterTemp,
-    settings.enableCustomWindDirs,
-    settings.daylightOnly,
-  ].some(Boolean);
-  const safetyBadgeTitle = t(!activeSafetyChecks ? 'Weather' : RATING_WORD[safety.rating]);
-  const safetyBadgeSubtitle = t(!activeSafetyChecks
+  const activeSafetyChecks = hasActiveSafetyChecks(settings);
+  const {
+    rating: safetyDisplayRating,
+    reasons: safetyReasons,
+    usesLimitsOffFallback,
+  } = getSafetyDisplay(
+    safety,
+    activeSafetyChecks,
+    t('Your personal limits are off. Use the raw forecast values and local judgement before launching.'),
+  );
+  const safetyBadgeTitle = t(usesLimitsOffFallback ? 'Weather' : RATING_WORD[safetyDisplayRating]);
+  const safetyBadgeSubtitle = t(usesLimitsOffFallback
     ? 'Limits are off — raw forecast only'
-    : safety.rating === 'safe'
+    : safetyDisplayRating === 'safe'
       ? 'Have fun out there'
-      : safety.rating === 'caution'
+      : safetyDisplayRating === 'caution'
         ? 'Keep an eye out'
         : 'Save it for another day');
-  const safetyDisplayRating = activeSafetyChecks ? safety.rating : 'caution';
-  const safetyReasons = activeSafetyChecks
-    ? safety.reasons
-    : [{ text: t('Your personal limits are off. Use the raw forecast values and local judgement before launching.'), severity: 'caution' as const }];
 
   // Find daily sunrise and sunset for the selected hour's date
   const selectedDateStr = locationDateKey(currentHourData.time);
@@ -201,9 +183,9 @@ export default function App() {
   // definite form ("Fjorden"/"Bugten").
   const isBugt = CURRENT_LOCATION.areaName.toLowerCase().includes('bugt');
   const waterWord = lang === 'da' ? (isBugt ? 'Bugten' : 'Fjorden') : (isBugt ? 'bay' : 'fjord');
-  const frankPhrase = activeSafetyChecks
-    ? t(getFrankPhrase(safetyDisplayRating, selectedDateStr), waterWord)
-    : t('Limits are off. You are the captain now');
+  const frankPhrase = usesLimitsOffFallback
+    ? t('Limits are off. You are the captain now')
+    : t(getFrankPhrase(safetyDisplayRating, selectedDateStr), waterWord);
 
   // Sunrise/sunset can legitimately be absent (polar edge cases) — guard the
   // empty string; the date utils themselves take ISO strings directly.

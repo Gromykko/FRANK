@@ -5,7 +5,6 @@ import { reviveReadings } from './normalize';
 
 const DEFAULT_FORECAST_WORKER_BASE = 'https://frank-forecast.alswatchs.workers.dev';
 const WEATHER_CACHE_KEY_PREFIX = 'frank_weather_data_v2';
-const WEATHER_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const WORKER_FETCH_TIMEOUT_MS = 12 * 1000;
 
 const FORECAST_WORKER_BASE = (import.meta.env.VITE_FORECAST_WORKER_BASE ?? DEFAULT_FORECAST_WORKER_BASE).replace(/\/$/, '');
@@ -34,20 +33,24 @@ function isWeatherData(value: unknown): value is WeatherData {
 }
 
 function hasCurrentForecastWindow(data: WeatherData): boolean {
-  const oneHourAgo = Date.now() - 60 * 60 * 1000;
-  return data.hourly.some((hour) => new Date(hour.time).getTime() >= oneHourAgo);
-}
-
-function isCacheFreshEnough(data: WeatherData, maxAgeMs = WEATHER_CACHE_MAX_AGE_MS): boolean {
-  const fetchedAt = new Date(data.sources.fetchedAt).getTime();
-  return Number.isFinite(fetchedAt) && Date.now() - fetchedAt <= maxAgeMs && hasCurrentForecastWindow(data);
+  const nowMs = Date.now();
+  return data.hourly.some((hour) => {
+    const startMs = new Date(hour.time).getTime();
+    if (!Number.isFinite(startMs)) return false;
+    const configuredSpanHours = hour.blockSpanHours ?? 1;
+    const spanHours = Number.isFinite(configuredSpanHours) && configuredSpanHours > 0
+      ? configuredSpanHours
+      : 1;
+    return startMs + spanHours * 60 * 60 * 1000 > nowMs;
+  });
 }
 
 export function saveCachedWeatherData(data: WeatherData, location: ForecastLocation) {
   try {
     localStorage.setItem(getWeatherCacheKey(location), JSON.stringify(data));
   } catch {
-    // Forecast caching is a speed optimization; ignore storage failures.
+    // Caching also provides the offline fallback, but storage can be blocked;
+    // the live forecast remains usable for the current session.
   }
 }
 
@@ -57,7 +60,12 @@ function readLocalCachedWeatherData(location: ForecastLocation): WeatherData | n
     if (!raw) return null;
 
     const parsed = reviveReadings(JSON.parse(raw));
-    if (isWeatherData(parsed) && isCacheFreshEnough(parsed)) {
+    // Accept any structurally usable saved forecast that still covers now or
+    // the future. Its build age is presentation state, not a load gate:
+    // deriveCacheStatus marks data older than six hours as stale and App shows
+    // the caution banner. Rejecting it here instead strands an offline paddler
+    // on the no-forecast screen despite having actionable hours on the device.
+    if (isWeatherData(parsed) && hasCurrentForecastWindow(parsed)) {
       return parsed;
     }
   } catch {

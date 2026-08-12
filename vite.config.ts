@@ -3,6 +3,7 @@ import { execSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
+import type { Plugin } from 'vite'
 
 const packageJson = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version?: string }
 
@@ -13,6 +14,16 @@ function getGitCommit() {
     return 'local'
   }
 }
+
+const APP_VERSION = packageJson.version ?? '0.0.0'
+const APP_COMMIT = getGitCommit()
+const APP_BUILD_TIME = new Date().toISOString()
+// This is intentionally unique for every production build, even when the
+// source commit and package version are unchanged (for example, a manual
+// redeploy). The client passes it in the service-worker script URL and the
+// generated precache manifest repeats it, so a worker can never bless assets
+// assembled from two different deployments.
+const APP_BUILD_ID = `${APP_VERSION}-${APP_COMMIT}-${APP_BUILD_TIME}`
 
 const WORKER_ORIGIN = process.env.VITE_FORECAST_WORKER_BASE ?? 'https://frank-forecast.alswatchs.workers.dev'
 
@@ -50,14 +61,37 @@ function cspMeta() {
   }
 }
 
+// The service worker is copied verbatim from public/, so it cannot know Vite's
+// content-hashed output names at authoring time. Emit a small build manifest
+// containing every generated asset (including lazy chunks) and let the worker
+// install that exact, self-consistent set transactionally.
+function serviceWorkerPrecacheManifest(): Plugin {
+  return {
+    name: 'frank-service-worker-precache-manifest',
+    apply: 'build' as const,
+    generateBundle(_options, bundle) {
+      const assets = Object.keys(bundle)
+        .filter((fileName) => fileName.startsWith('assets/'))
+        .sort()
+
+      this.emitFile({
+        type: 'asset',
+        fileName: 'frank-precache.json',
+        source: `${JSON.stringify({ buildId: APP_BUILD_ID, assets }, null, 2)}\n`,
+      })
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), cspMeta()],
+  plugins: [react(), cspMeta(), serviceWorkerPrecacheManifest()],
   base: '/FRANK/',
   define: {
-    'import.meta.env.VITE_APP_VERSION': JSON.stringify(packageJson.version ?? '0.0.0'),
-    'import.meta.env.VITE_APP_COMMIT': JSON.stringify(getGitCommit()),
-    'import.meta.env.VITE_APP_BUILD_TIME': JSON.stringify(new Date().toISOString()),
+    'import.meta.env.VITE_APP_VERSION': JSON.stringify(APP_VERSION),
+    'import.meta.env.VITE_APP_COMMIT': JSON.stringify(APP_COMMIT),
+    'import.meta.env.VITE_APP_BUILD_TIME': JSON.stringify(APP_BUILD_TIME),
+    'import.meta.env.VITE_APP_BUILD_ID': JSON.stringify(APP_BUILD_ID),
   },
   // No manualChunks. The hand-rolled buckets did the opposite of their intent:
   // `id.includes('react')` swallowed lucide-react (so the 'icons' bucket never
