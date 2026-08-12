@@ -29,7 +29,9 @@ const HOUR_CELL_WIDTH = 44;
 // Shared by all charts; the click-to-hour math depends on left/right + Y-axis.
 const CHART_MARGIN = { top: 18, right: 20, left: 0, bottom: 0 };
 const Y_AXIS_WIDTH = 34;
-const TICK_FONT_SIZE = 10;
+// The charts are data-dense, but their axis is still operating information.
+// Keep it on the same 11px minimum as the meteogram rather than microcopy.
+const TICK_FONT_SIZE = 11;
 
 // Series colors resolve through the theme's data-series tokens so the
 // charts follow light/dark mode. SVG attributes accept var() references.

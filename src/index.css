@@ -14,6 +14,15 @@
   --font-body: 'Inter', system-ui, -apple-system, sans-serif;
   --font-mono: 'Inter', ui-monospace, 'SFMono-Regular', Consolas, monospace;
 
+  /* Root-relative type scale. 11px is reserved for dense instrument marks;
+     prose and controls step up from there. rem keeps browser text preferences
+     useful instead of freezing every label to an absolute pixel size. */
+  --text-instrument: 0.6875rem; /* 11px at the browser default */
+  --text-caption: 0.75rem;      /* 12px */
+  --text-ui: 0.8125rem;         /* 13px */
+  --text-body: 0.875rem;        /* 14px */
+  --text-title: 1rem;           /* 16px */
+
   /* Safety palette — meaning only, never decorative backgrounds */
   --color-safe: #34d399;
   --color-caution: #fbbf24;
@@ -428,7 +437,7 @@ h1, h2, h3, h4, h5, h6 {
 .charts-disclosure-title,
 .trip-profile-title {
   font-family: var(--font-heading);
-  font-size: 13px;
+  font-size: var(--text-body);
   font-weight: 800;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -539,7 +548,8 @@ h1, h2, h3, h4, h5, h6 {
   background: var(--color-caution-bg);
   color: var(--color-caution-text);
   border-radius: var(--radius-md);
-  font-size: 12px;
+  font-size: var(--text-ui);
+  line-height: 1.5;
   font-weight: 700;
 }
 
@@ -651,7 +661,7 @@ h1, h2, h3, h4, h5, h6 {
 .footer-text {
   max-width: 760px;
   margin: 0 auto;
-  font-size: 11px;
+  font-size: var(--text-caption);
   color: var(--text-muted);
   text-align: center;
   line-height: 1.6;
@@ -668,7 +678,7 @@ h1, h2, h3, h4, h5, h6 {
   max-width: 760px;
   margin: 8px auto 0;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--text-caption);
 }
 
 .footer-details summary {
@@ -720,7 +730,7 @@ h1, h2, h3, h4, h5, h6 {
 .loader-text {
   font-family: var(--font-heading);
   color: var(--text-muted);
-  font-size: 16px;
+  font-size: var(--text-title);
   font-weight: 500;
 }
 
@@ -757,7 +767,7 @@ h1, h2, h3, h4, h5, h6 {
   border: 0;
   min-height: 44px;
   padding: 0 14px;
-  font-size: 12px;
+  font-size: var(--text-ui);
   font-weight: 600;
   border-radius: var(--radius-xs);
   background: transparent;
@@ -780,7 +790,7 @@ h1, h2, h3, h4, h5, h6 {
 
 .chart-loading {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-ui);
   font-weight: 700;
 }
 
@@ -800,7 +810,7 @@ h1, h2, h3, h4, h5, h6 {
 
 .charts-disclosure-subtitle {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--text-caption);
   font-weight: 600;
 }
 
@@ -859,7 +869,7 @@ h1, h2, h3, h4, h5, h6 {
    and is deliberately a step more legible than it. */
 .footer-disclaimer {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-caption);
   line-height: 1.5;
   margin: 0 auto 8px;
   max-width: 68ch;
@@ -904,7 +914,7 @@ h1, h2, h3, h4, h5, h6 {
   gap: 8px;
   margin-top: 22px;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--text-ui);
 }
 
 /* The switcher normally sits on FRANK's dark nameplate. Give the same control
@@ -927,7 +937,6 @@ h1, h2, h3, h4, h5, h6 {
   transform: translateX(-50%);
   text-align: left;
 }
-
 /* Crash-screen recovery buttons; wraps rather than overflowing on narrow phones. */
 .error-screen-actions {
   display: flex;

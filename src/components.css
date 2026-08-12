@@ -35,7 +35,7 @@
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  font-size: 12px;
+  font-size: var(--text-caption);
   color: var(--text-main);
   border-right: 1px solid var(--panel-border);
   padding: 3px 0;
@@ -72,7 +72,7 @@
    (.timeline-overlay-cell.is-selected) — the header cell adds nothing. */
 
 .timeline-hour-text {
-  font-size: 11px;
+  font-size: var(--text-instrument);
   color: var(--text-main);
   font-weight: 700;
   pointer-events: none;
@@ -117,7 +117,7 @@
 .timeline-outlook-note {
   margin: 10px 0 0;
   padding: 0 2px;
-  font-size: 12px;
+  font-size: var(--text-ui);
   line-height: 1.5;
   color: var(--text-muted);
   max-width: 68ch;
@@ -189,7 +189,7 @@
   min-height: 44px;
   padding: 6px 16px;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: var(--text-ui);
   font-weight: 600;
   cursor: pointer;
   transition: var(--transition-smooth);
@@ -350,7 +350,7 @@
   color: var(--text-main) !important;
   background: transparent;
   transition: background 0.15s, color 0.15s;
-  font-size: 14px;
+  font-size: var(--text-body);
 }
 
 .custom-select-option:focus-visible {
@@ -532,7 +532,7 @@
   align-items: center;
   justify-content: flex-end;
   padding-right: 4px;
-  font-size: 11px;
+  font-size: var(--text-instrument);
   font-weight: 700;
   color: var(--text-muted);
   border-top: 1px solid var(--panel-border);
@@ -605,13 +605,13 @@
 
 .meteogram-wind-value {
   font-weight: 700;
-  font-size: 11px;
+  font-size: var(--text-instrument);
   color: var(--text-main);
   line-height: 1;
 }
 
 .meteogram-value {
-  font-size: 12px;
+  font-size: var(--text-caption);
   font-weight: 700;
   color: var(--text-main);
   line-height: 1;
@@ -696,7 +696,7 @@
   position: sticky;
   left: 8px;
   display: inline-block;
-  font-size: 11px;
+  font-size: var(--text-caption);
   font-weight: 600;
   line-height: 20px;
   white-space: nowrap;
@@ -726,7 +726,7 @@
 }
 
 .chart-header-metric {
-  font-size: 12px;
+  font-size: var(--text-caption);
   font-weight: 600;
 }
 
@@ -764,7 +764,7 @@
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  font-size: 13px;
+  font-size: var(--text-ui);
   font-weight: 700;
   color: var(--text-main);
 }
@@ -807,7 +807,7 @@
 .chart-axis-chip,
 .chart-limit-chip {
   position: absolute;
-  font-size: 10px;
+  font-size: var(--text-instrument);
   line-height: 1;
   white-space: nowrap;
 }
@@ -860,7 +860,7 @@
 
 .settings-subtitle {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--text-caption);
   font-weight: 600;
 }
 
@@ -956,7 +956,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: var(--text-caption);
   font-weight: bold;
   color: var(--text-main);
   cursor: pointer;
@@ -1000,7 +1000,7 @@
   border: 1px solid var(--panel-border);
   border-radius: var(--radius-xs);
   padding: 4px 8px;
-  font-size: 11px;
+  font-size: var(--text-instrument);
   font-weight: 600;
   white-space: nowrap;
   pointer-events: none;
@@ -1102,11 +1102,11 @@
 
 .limit-name {
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--text-body);
 }
 
 .limit-hint {
-  font-size: 11px;
+  font-size: var(--text-caption);
   color: var(--text-muted);
   margin: 0;
 }
@@ -1238,7 +1238,7 @@
 
 .limit-value small {
   display: block;
-  font-size: 10px;
+  font-size: var(--text-instrument);
   color: var(--text-muted);
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1255,7 +1255,7 @@
 .limit-value-row.is-mini .step-btn {
   width: 36px;
   height: 36px;
-  font-size: 16px;
+  font-size: var(--text-title);
   border-radius: var(--radius-sm);
 }
 
@@ -1264,11 +1264,11 @@
 }
 
 .limit-value-row.is-mini .limit-value-num {
-  font-size: 16px;
+  font-size: var(--text-title);
 }
 
 .limit-value-row.is-mini .limit-value small {
-  font-size: 9px;
+  font-size: var(--text-instrument);
   margin-top: 2px;
 }
 
@@ -1308,7 +1308,7 @@
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  font-size: 10px;
+  font-size: var(--text-instrument);
   color: var(--text-muted);
   font-family: var(--font-mono);
   letter-spacing: 0.04em;
@@ -1371,7 +1371,7 @@
 }
 
 .limit-caution-name {
-  font-size: 12px;
+  font-size: var(--text-caption);
   font-weight: 600;
 }
 
@@ -1380,7 +1380,7 @@
 }
 
 .limit-caution-hint {
-  font-size: 10.5px;
+  font-size: var(--text-caption);
   color: var(--text-muted);
 }
 
@@ -1399,7 +1399,7 @@
   background: transparent;
   color: var(--text-main);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--text-ui);
   font-weight: 600;
   padding: 12px 14px;
   cursor: pointer;
@@ -1469,14 +1469,14 @@
 
 .sector-lead {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--text-caption);
   line-height: 1.45;
   color: var(--text-muted);
 }
 
 .sector-note {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--text-caption);
   line-height: 1.4;
   color: var(--text-muted);
 }
@@ -1520,7 +1520,7 @@
 
 .compass-label {
   fill: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-caption);
   font-weight: 700;
 }
 
@@ -1531,7 +1531,7 @@
   border-radius: 999px;
   background: color-mix(in srgb, var(--color-caution) 18%, transparent);
   color: var(--color-caution-text);
-  font-size: 10px;
+  font-size: var(--text-instrument);
   font-weight: 700;
   letter-spacing: 0.02em;
   text-transform: none;
@@ -1544,7 +1544,7 @@
 
 .sector-bearing {
   margin-left: 6px;
-  font-size: 10px;
+  font-size: var(--text-instrument);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: none;
@@ -1599,7 +1599,7 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  font-size: 11px;
+  font-size: var(--text-caption);
   font-weight: 700;
   letter-spacing: 0.06em;
   color: var(--primary);
@@ -1639,13 +1639,13 @@
   padding: 8px 12px;
   font-weight: 600;
   font-family: inherit;
-  font-size: 14px;
+  font-size: var(--text-body);
   height: 44px;
 }
 
 .custom-select-container.is-compact .custom-select-trigger {
   padding: 8px;
-  font-size: 12px;
+  font-size: var(--text-caption);
 }
 
 .custom-select-container.is-open .custom-select-trigger {
@@ -1692,7 +1692,7 @@
 .launch-empty {
   padding: 16px;
   text-align: center;
-  font-size: 13px;
+  font-size: var(--text-ui);
   color: var(--text-muted);
   border: 1px dashed var(--panel-border);
   border-radius: var(--radius-md);
@@ -1710,7 +1710,7 @@
 .tide-day-head {
   margin: 8px 0 0;
   padding-bottom: 4px;
-  font-size: 11px;
+  font-size: var(--text-caption);
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1787,14 +1787,14 @@
 }
 
 .tide-time {
-  font-size: 16px;
+  font-size: var(--text-title);
   font-weight: 600;
   color: var(--text-main);
   font-variant-numeric: tabular-nums;
 }
 
 .tide-duration {
-  font-size: 13px;
+  font-size: var(--text-ui);
   font-weight: 600;
   color: var(--text-muted);
 }
@@ -1802,7 +1802,7 @@
 .tide-tag {
   margin-left: 4px;
   padding: 1px 6px;
-  font-size: 10px;
+  font-size: var(--text-instrument);
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1812,7 +1812,7 @@
 }
 
 .tide-conditions {
-  font-size: 13px;
+  font-size: var(--text-ui);
   color: var(--text-muted);
 }
 
@@ -1823,7 +1823,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 4px 12px;
-  font-size: 12px;
+  font-size: var(--text-caption);
   font-weight: 600;
   color: var(--text-muted);
 }
@@ -1904,7 +1904,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--text-caption);
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1925,7 +1925,7 @@
 .calendar-legend {
   display: flex;
   gap: 12px;
-  font-size: 12px;
+  font-size: var(--text-caption);
   color: var(--text-muted);
   margin-bottom: 12px;
   align-items: center;
@@ -2049,7 +2049,7 @@ button.legend-toggle.is-on {
 
 .calendar-empty {
   margin: 0 0 10px;
-  font-size: 12px;
+  font-size: var(--text-caption);
   line-height: 1.5;
   color: var(--text-muted);
 }
@@ -2076,7 +2076,7 @@ button.legend-toggle.is-on {
 .gantt-tick {
   position: absolute;
   transform: translateX(-50%);
-  font-size: 10px;
+  font-size: var(--text-instrument);
   font-weight: 600;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
@@ -2105,13 +2105,13 @@ button.legend-toggle.is-on {
 }
 
 .gantt-weekday {
-  font-size: 12px;
+  font-size: var(--text-caption);
   font-weight: 600;
   color: var(--text-main);
 }
 
 .gantt-daynum {
-  font-size: 11px;
+  font-size: var(--text-instrument);
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -2169,7 +2169,7 @@ button.legend-toggle.is-on {
   align-self: stretch;
   display: flex;
   align-items: center;
-  font-size: 12px;
+  font-size: var(--text-caption);
   font-weight: 700;
   padding: 0 4px;
   border-radius: 2px;
@@ -2189,7 +2189,7 @@ button.legend-toggle.is-on {
 
 .gantt-bar-label-compact {
   padding-inline: 2px;
-  font-size: 11px;
+  font-size: var(--text-instrument);
 }
 
 .gantt-bar-label-dot {
@@ -2272,7 +2272,7 @@ button.legend-toggle.is-on {
   padding: 8px 2px 0;
   border-top: 1px solid var(--panel-border);
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-caption);
   line-height: 1.4;
 }
 
@@ -2282,14 +2282,14 @@ button.legend-toggle.is-on {
 
 .gantt-selection-time {
   color: var(--text-main);
-  font-size: 13px;
+  font-size: var(--text-ui);
   font-variant-numeric: tabular-nums;
 }
 
 .gantt-selection-confidence {
   flex-basis: 100%;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--text-instrument);
 }
 
 /* Safety manual modal */
@@ -2314,7 +2314,7 @@ button.legend-toggle.is-on {
   grid-column: 2;
   text-align: center;
   margin: 0;
-  font-size: 16px;
+  font-size: var(--text-title);
   font-weight: 900;
   letter-spacing: 0.5px;
 }
@@ -2347,14 +2347,14 @@ button.legend-toggle.is-on {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  font-size: 13px;
+  font-size: var(--text-body);
   line-height: 1.5;
   padding: 20px 24px 24px 24px;
 }
 
 .manual-h {
   margin: 0 0 6px 0;
-  font-size: 13px;
+  font-size: var(--text-body);
   border-bottom: 1px solid var(--panel-border);
   padding-bottom: 4px;
   color: var(--primary);
@@ -2383,7 +2383,8 @@ button.legend-toggle.is-on {
   margin: 6px 0 0 0;
   font-style: italic;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-ui);
+  line-height: 1.5;
 }
 
 .manual-close-btn {
@@ -2395,7 +2396,7 @@ button.legend-toggle.is-on {
   border: 1px solid var(--control-border);
   border-radius: var(--radius-sm);
   font-weight: 700;
-  font-size: 12px;
+  font-size: var(--text-ui);
   cursor: pointer;
   text-transform: uppercase;
   letter-spacing: 1px;
@@ -2404,7 +2405,7 @@ button.legend-toggle.is-on {
 
 .settings-autosave-note {
   margin: 8px 0 0 0;
-  font-size: 11px;
+  font-size: var(--text-caption);
   color: var(--text-muted);
   line-height: 1.4;
 }
@@ -2466,7 +2467,7 @@ button.legend-toggle.is-on {
 }
 
 .warning-stripe-title {
-  font-size: 13px;
+  font-size: var(--text-ui);
   font-weight: 700;
   line-height: 1.3;
 }
@@ -2475,13 +2476,13 @@ button.legend-toggle.is-on {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--text-caption);
   color: var(--text-muted);
 }
 
 .warning-stripe-source {
   flex: none;
-  font-size: 11px;
+  font-size: var(--text-caption);
   font-weight: 700;
   letter-spacing: 0.04em;
   color: var(--text-muted);
@@ -2604,7 +2605,7 @@ button.legend-toggle.is-on {
   justify-self: center;
   align-self: center;
   font-family: var(--font-heading);
-  font-size: 11px;
+  font-size: var(--text-instrument);
   font-weight: 700;
   line-height: 1;
   /* Wide, even inter-letter tracking evoking the spaced-out sci-fi title logo */
@@ -2749,7 +2750,7 @@ button.legend-toggle.is-on {
 }
 
 .trip-profile-subtitle {
-  font-size: 11px;
+  font-size: var(--text-caption);
   color: var(--text-muted);
 }
 
@@ -2772,8 +2773,8 @@ button.legend-toggle.is-on {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 12px;
-  line-height: 1.45;
+  font-size: var(--text-ui);
+  line-height: 1.5;
   color: var(--text-main);
 }
 
@@ -2782,7 +2783,7 @@ button.legend-toggle.is-on {
 }
 
 .trip-profile-info-note {
-  font-size: 11px;
+  font-size: var(--text-caption);
   color: var(--text-muted);
 }
 
@@ -2834,7 +2835,7 @@ button.legend-toggle.is-on {
 }
 
 .frank-mode-label {
-  font-size: 11px;
+  font-size: var(--text-caption);
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -2859,7 +2860,7 @@ button.legend-toggle.is-on {
   gap: 6px;
   max-width: 100%;
   min-width: 0;
-  font-size: 11px;
+  font-size: var(--text-caption);
   font-variant-numeric: tabular-nums;
 }
 
@@ -2888,7 +2889,7 @@ button.legend-toggle.is-on {
      ("waves & water from an earlier update · marine service busy"). At 10px
      with opacity 0.85 it measured 3.87:1 dark / 4.26:1 light — the app's own
      honesty caveat rendered below AA in both themes. */
-  font-size: 11px;
+  font-size: var(--text-caption);
 }
 
 /* The dot rides inside the label line, not beside the whole box: as a flex
@@ -2931,7 +2932,7 @@ button.legend-toggle.is-on {
   align-items: center;
   gap: 5px;
   max-width: 100%;
-  font-size: 11px;
+  font-size: var(--text-caption);
   font-weight: 700;
   color: var(--frank-housing-text);
   text-transform: uppercase;
@@ -3014,12 +3015,13 @@ button.legend-toggle.is-on {
   background: none;
   border: none;
   border-radius: var(--radius-xs);
+  min-height: 44px;
   padding: 8px 10px;
   display: flex;
   align-items: center;
   gap: 8px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--text-body);
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: none;
@@ -3054,7 +3056,7 @@ button.legend-toggle.is-on {
   border-radius: 999px;
   background: color-mix(in srgb, var(--color-caution) 18%, transparent);
   color: var(--color-caution-text);
-  font-size: 10px;
+  font-size: var(--text-instrument);
   font-weight: 700;
   letter-spacing: 0.02em;
 }
@@ -3108,8 +3110,8 @@ button.legend-toggle.is-on {
     font-size: 21px;
   }
 
-  /* Four uppercase labels across four 1fr tracks: at 11px + 0.08em tracking
-     "CUSTOM" overran its cell and the bank spilled past the panel at 320px. */
+  /* Four uppercase labels across four 1fr tracks: wide tracking made
+     "CUSTOM" overrun its cell at 320px, so phones keep tighter tracking. */
   .frank-mode-label {
     letter-spacing: 0.03em;
   }
@@ -3124,18 +3126,17 @@ button.legend-toggle.is-on {
     height: 44px;
   }
 
-  /* The location label is a tappable control (the switcher), so keep it at a
-     comfortable 11px on mobile rather than shrinking it like a caption. */
+  /* The location label is a tappable control, so keep it at the 12px caption
+     step on mobile instead of shrinking it like decorative device copy. */
   .frank-location {
-    font-size: 11px;
+    font-size: var(--text-caption);
     letter-spacing: 0.08em;
   }
 
-  /* Same 11px as the location switcher beside it — the two share the label
-     line, so they should read as one voice (tracking still tightened so the
-     five letters fit under the narrower mobile CRT). */
+  /* FRANK is a logotype rather than operating information. It stays on the
+     11px instrument floor, with tracking tightened to fit the mobile CRT. */
   .frank-nameplate {
-    font-size: 11px;
+    font-size: var(--text-instrument);
     letter-spacing: 0.45em;
     text-indent: 0.45em;
   }
@@ -3223,7 +3224,7 @@ button.legend-toggle.is-on {
 
 
 .snapshot-label {
-  font-size: 11px;
+  font-size: var(--text-caption);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-muted);
@@ -3292,7 +3293,7 @@ button.legend-toggle.is-on {
 }
 
 .snapshot-value {
-  font-size: 14px;
+  font-size: var(--text-body);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   display: inline-flex;
@@ -3356,7 +3357,7 @@ button.legend-toggle.is-on {
   align-items: center;
   gap: 4px;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: var(--text-body);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -3388,7 +3389,7 @@ button.legend-toggle.is-on {
   border-radius: var(--radius-xs);
   background: var(--panel-border);
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--text-caption);
   font-weight: 600;
   letter-spacing: 0.01em;
 }
@@ -3446,7 +3447,7 @@ button.legend-toggle.is-on {
 }
 
 .snapshot-time-anchor {
-  font-size: 12px;
+  font-size: var(--text-caption);
   font-weight: 700;
   color: var(--text-muted);
   margin-bottom: 8px;
@@ -3460,7 +3461,7 @@ button.legend-toggle.is-on {
   margin: 0;
   padding: 0;
   /* The most actionable text in the app — sized to match the data values above */
-  font-size: 14px;
+  font-size: var(--text-body);
   line-height: 1.45;
 }
 
