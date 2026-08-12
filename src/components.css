@@ -117,8 +117,8 @@
 .timeline-outlook-note {
   margin: 10px 0 0;
   padding: 0 2px;
-  font-size: 11px;
-  line-height: 1.45;
+  font-size: 12px;
+  line-height: 1.5;
   color: var(--text-muted);
   max-width: 68ch;
 }
@@ -1333,6 +1333,30 @@
   padding-top: 10px;
 }
 
+/* Secondary on/off rows follow the same reading order as every card header:
+   description first, adjustment second, switch anchored at the far right. */
+.limit-caution-row.has-toggle {
+  display: grid;
+  grid-template-columns: minmax(14ch, 1fr) auto auto;
+}
+
+@media (max-width: 600px) {
+  .limit-caution-row.has-toggle {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .limit-caution-row.has-toggle > .limit-value-row {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: center;
+  }
+
+  .limit-caution-row.has-toggle > .toggle-switch {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
+
 .limit-caution-row.is-off .limit-caution-copy,
 .limit-caution-row.is-off .limit-value-row {
   opacity: 0.45;
@@ -1901,7 +1925,7 @@
 .calendar-legend {
   display: flex;
   gap: 12px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
   margin-bottom: 12px;
   align-items: center;
@@ -1945,9 +1969,10 @@ button.legend-toggle.is-on {
 }
 
 .legend-swatch {
-  width: 12px;
-  height: 12px;
-  border-radius: var(--radius-xs);
+  width: 18px;
+  height: 8px;
+  border-radius: 3px;
+  flex: 0 0 auto;
 }
 
 .legend-swatch.window {
@@ -1965,15 +1990,17 @@ button.legend-toggle.is-on {
   border: 1px solid var(--panel-border);
 }
 
-/* Matches NIGHT_FILL in WeatherCharts.tsx */
+/* Night is context rather than another result, so its key is intentionally
+   quieter than the solid/striped launch-window keys. */
 .legend-swatch.night {
-  background: var(--chart-night-fill);
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
   border: 1px solid var(--panel-border);
 }
 
 /* The "now" marker: same thin blue line as .gantt-now. */
 .legend-swatch.now {
   width: 2px;
+  height: 12px;
   border-radius: 1px;
   background: var(--primary);
 }
@@ -1993,6 +2020,14 @@ button.legend-toggle.is-on {
 }
 
 @media (max-width: 600px) {
+  .launch-panel-header .view-toggle {
+    width: 100%;
+  }
+
+  .launch-panel-header .view-toggle button {
+    flex: 1;
+  }
+
   .calendar-legend-break {
     display: block;
     flex-basis: 100%;
@@ -2081,6 +2116,12 @@ button.legend-toggle.is-on {
   font-variant-numeric: tabular-nums;
 }
 
+.gantt-row.is-today .gantt-weekday,
+.gantt-row.is-today .gantt-daynum {
+  color: var(--primary);
+  font-weight: 700;
+}
+
 /* The 00–24 track: faint surface + hairline ticks every 6h (25% steps). */
 .gantt-track {
   position: relative;
@@ -2109,6 +2150,7 @@ button.legend-toggle.is-on {
   overflow: hidden;
   cursor: pointer;
   font-family: inherit;
+  container: launch-bar / inline-size;
   z-index: 1;
 }
 
@@ -2124,20 +2166,53 @@ button.legend-toggle.is-on {
 .gantt-bar-label {
   position: relative;
   z-index: 2;
-  font-size: 11px;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  font-size: 12px;
   font-weight: 700;
-  color: var(--text-inverse);
-  /* White on the light theme's --color-safe (#059669) is 3.77:1 — under AA for
-     11px text, and this label carries the launch window's start and end times.
-     The shadow lifts it without changing the bar colour. The sibling case is
-     already noted at .frank-mode-selected; this one was missed. */
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+  padding: 0 4px;
+  border-radius: 2px;
+  background: rgba(5, 34, 28, 0.78);
+  color: #ffffff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.42);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 
-/* Outlook (longer-range block) windows: the lower-confidence stripe texture
-   and NO start–end times — a 6h block is not a promise about 02:00. */
+/* A bar's visible label follows its actual pixel width, not its duration.
+   Compact duration is the safe fallback (and the no-container-query fallback);
+   a full range replaces it as soon as it fits. */
+.gantt-bar-label-range {
+  display: none;
+}
+
+.gantt-bar-label-compact {
+  padding-inline: 2px;
+  font-size: 11px;
+}
+
+.gantt-bar-label-dot {
+  display: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.45);
+}
+
+@container launch-bar (min-width: 40px) {
+  .gantt-bar-label-range { display: flex; }
+  .gantt-bar-label-compact { display: none; }
+}
+
+@container launch-bar (max-width: 19px) {
+  .gantt-bar-label-compact { display: none; }
+  .gantt-bar-label-dot { display: block; }
+}
+
+/* Outlook (longer-range block) windows: the lower-confidence stripe texture;
+   the legend and accessible label explain what the pattern means. */
 .gantt-bar.is-outlook {
   background-image: repeating-linear-gradient(
     -45deg,
@@ -2152,28 +2227,69 @@ button.legend-toggle.is-on {
   font-weight: 600;
 }
 
-/* Night overlay sits ABOVE the bars (matches the charts' NIGHT_FILL), so a
-   window running past sunset visibly dims across the boundary. */
+/* Night is context, not another result. A quiet veil above the bars still dims
+   any part outside daylight, but no longer resembles a competing gray window. */
 .gantt-night {
   position: absolute;
   top: 0;
   bottom: 0;
-  background: var(--chart-night-fill);
-  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--text-muted) 18%, transparent);
+  border-radius: 0;
   pointer-events: none;
   z-index: 2;
+}
+
+.gantt-night.is-morning {
+  border-radius: var(--radius-xs) 0 0 var(--radius-xs);
+}
+
+.gantt-night.is-evening {
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
 }
 
 /* "Now" marker on today's row. */
 .gantt-now {
   position: absolute;
-  top: -3px;
-  bottom: -3px;
-  width: 2px;
+  top: -4px;
+  bottom: -4px;
+  width: 3px;
   background: var(--primary);
   border-radius: 1px;
+  box-shadow: 0 0 0 1px var(--panel-bg);
+  transform: translateX(-50%);
   pointer-events: none;
-  z-index: 3;
+  z-index: 4;
+}
+
+/* Exact touch/focus feedback for compact bars. Kept as one quiet line below
+   the overview so labels never need callouts that collide with nearby bars. */
+.gantt-selection {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 10px;
+  padding: 8px 2px 0;
+  border-top: 1px solid var(--panel-border);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.gantt-selection-label {
+  font-weight: 600;
+}
+
+.gantt-selection-time {
+  color: var(--text-main);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gantt-selection-confidence {
+  flex-basis: 100%;
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
 /* Safety manual modal */
@@ -2188,17 +2304,43 @@ button.legend-toggle.is-on {
   z-index: 10;
   border-bottom: 2px solid var(--panel-border);
   padding: 20px 24px 12px 24px;
-  display: flex;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
   align-items: center;
   margin-bottom: 0;
 }
 
 .manual-title {
+  grid-column: 2;
+  text-align: center;
   margin: 0;
   font-size: 16px;
   font-weight: 900;
   letter-spacing: 0.5px;
+}
+
+.manual-header-close {
+  grid-column: 3;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--control-border);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-main);
+  cursor: pointer;
+}
+
+.manual-header-close:hover {
+  background: var(--primary-bg);
+}
+
+.manual-header-close:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 .manual-body {
@@ -3251,10 +3393,26 @@ button.legend-toggle.is-on {
    shrink and ellipsize instead of pushing the Air reading off a 320px row. */
 .snapshot-value.snapshot-desc {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  line-height: 1.25;
   display: block;
+}
+
+/* The phrase CRT is decorative personality, not the safety assessment. On
+   legacy 320–360px phones it collapsed to a 26px slit, so remove that middle
+   column and let the face/actions remain useful instead of showing fragments. */
+@media (max-width: 360px) {
+  .frank-device-columns {
+    grid-template-columns: 72px auto;
+    grid-template-areas:
+      'crt  actions'
+      'name location';
+    justify-content: space-between;
+  }
+
+  .frank-cell-display {
+    display: none;
+  }
 }
 
 /* Respect reduced-motion: silence the decorative weather-icon loops (the

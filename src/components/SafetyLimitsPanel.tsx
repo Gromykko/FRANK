@@ -266,14 +266,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLi
                 midLabel={t('danger from {0}', windCautionAt.toFixed(1))}
                 rightLabel={t('20+ gale')}
               />
-              <div className={`limit-caution-row ${settings.enableWindSpeed && settings.enableWindGust ? '' : 'is-off'}`}>
-                <ToggleSwitch
-                  small
-                  checked={settings.enableWindSpeed && settings.enableWindGust}
-                  onChange={checked => updateCriteria({ enableWindGust: checked })}
-                  label={t('Wind gust margin enabled')}
-                  disabled={!settings.enableWindSpeed}
-                />
+              <div className={`limit-caution-row has-toggle ${settings.enableWindSpeed && settings.enableWindGust ? '' : 'is-off'}`}>
                 <div className="limit-caution-copy">
                   <span className="limit-caution-name">{t('Gust margin')}</span>
                   <span className="limit-caution-hint">{t('Danger from {0} m/s for gusts and average wind alike', windCautionAt.toFixed(1))}</span>
@@ -285,6 +278,13 @@ export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLi
                   unit="+m/s" label={t('gust margin')}
                   onChange={margin => updateCriteria({ gustMargin: margin, maxWindSpeedCaution: settings.maxWindSpeedSafe + margin })}
                   disabled={!settings.enableWindSpeed || !settings.enableWindGust}
+                />
+                <ToggleSwitch
+                  small
+                  checked={settings.enableWindSpeed && settings.enableWindGust}
+                  onChange={checked => updateCriteria({ enableWindGust: checked })}
+                  label={t('Wind gust margin enabled')}
+                  disabled={!settings.enableWindSpeed}
                 />
               </div>
             </section>
@@ -325,16 +325,9 @@ export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLi
                 midLabel={t('danger from {0}', waveCautionAt.toFixed(2))}
                 rightLabel={t('1.5+ rough')}
               />
-              <div className={`limit-caution-row ${settings.enableWaveHeight && settings.enableWaveCaution ? '' : 'is-off'}`}>
-                <ToggleSwitch
-                  small
-                  checked={settings.enableWaveHeight && settings.enableWaveCaution}
-                  onChange={checked => updateCriteria({ enableWaveCaution: checked })}
-                  label={t('Wave caution margin enabled')}
-                  disabled={!settings.enableWaveHeight}
-                />
+              <div className={`limit-caution-row has-toggle ${settings.enableWaveHeight && settings.enableWaveCaution ? '' : 'is-off'}`}>
                 <div className="limit-caution-copy">
-                  <span className="limit-caution-name">{t('Caution margin')}</span>
+                  <span className="limit-caution-name">{t('Wave margin')}</span>
                   <span className="limit-caution-hint">{t('Danger at {0} m and above', waveCautionAt.toFixed(2))}</span>
                 </div>
                 <Stepper
@@ -347,6 +340,13 @@ export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLi
                     maxWaveHeightCaution: roundToDecimals(settings.maxWaveHeightSafe + margin, 2),
                   })}
                   disabled={!settings.enableWaveHeight || !settings.enableWaveCaution}
+                />
+                <ToggleSwitch
+                  small
+                  checked={settings.enableWaveHeight && settings.enableWaveCaution}
+                  onChange={checked => updateCriteria({ enableWaveCaution: checked })}
+                  label={t('Wave caution margin enabled')}
+                  disabled={!settings.enableWaveHeight}
                 />
               </div>
             </section>
@@ -385,7 +385,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLi
               />
               <div className="limit-caution-row">
                 <div className="limit-caution-copy">
-                  <span className="limit-caution-name">{t('Caution band')}</span>
+                  <span className="limit-caution-name">{t('Cold-water margin')}</span>
                   <span className="limit-caution-hint">{t('{0}–{1} °C asks for thermal wear', settings.minWaterTempCaution, settings.minWaterTempSafe)}</span>
                 </div>
                 <Stepper

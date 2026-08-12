@@ -55,16 +55,17 @@ export const da: Record<string, string> = {
   'Hourly forecast timeline': 'Timeprognosens tidslinje',
   // Explains the striped, time-span columns where the matrix stops being hourly.
   // ── Meteogram outlook legend ──────────────────────────────────────────────
-  'Columns headed with a time span, like 02–08, are 6-hour blocks. MET stops publishing hour by hour this far out.':
-    'Kolonner med et tidsrum i overskriften, fx 02–08, er 6-timers blokke. MET holder op med at udgive time for time så langt frem.',
-  'Waves and water: the block’s roughest and coldest hour.':
-    'Bølger og vand: blokkens groveste og koldeste time.',
-  'Wind and air: MET’s one reading for the whole block.':
-    'Vind og luft: MET’s ene måling for hele blokken.',
-  'Water level: reaches high water': 'Vandstand: når højvande',
+  'Columns like 02–08 show a 6-hour block.': 'Kolonner som 02–08 viser en 6-timers blok.',
+  'Waves and water temperature: the highest waves and coldest water.':
+    'Bølger og vandtemperatur: højeste bølger og koldeste vand.',
+  'Wind and air temperature: MET’s reading for the block.':
+    'Vind og lufttemperatur: METs måling for blokken.',
+  'Water level: high water': 'Vandstand: højvande',
   'low water': 'lavvande',
   'both': 'begge',
-  'or stays near mean': 'eller holder sig omkring middel',
+  'or near mean': 'eller omkring middel',
+  'Water level: high water, low water, both, or near mean.':
+    'Vandstand: højvande, lavvande, begge eller omkring middel.',
   'Tap a block for its numbers.': 'Tryk på en blok for at se tallene.',
   'Detailed Graphs': 'Detaljerede grafer',
   'Wind, waves, water level, and temperature': 'Vind, bølger, vandstand og temperatur',
@@ -73,6 +74,7 @@ export const da: Record<string, string> = {
   ', waves & water by DMI ({0}) for {1}.': ', bølger & vandstand fra DMI ({0}) for {1}.',
   'Warnings by': 'Varsler fra',
   'Forecast built {0}. Worker checked {1}.': 'Prognose bygget {0}. Server tjekket {1}.',
+  'Data and version': 'Data og version',
 
   // useForecast error strings (shown via t(error))
   'No forecast data is available yet.': 'Der er ingen prognosedata endnu.',
@@ -127,7 +129,7 @@ export const da: Record<string, string> = {
   'Checked · {0}': 'Tjekket · {0}',
   'Retrying automatically · checked {0}': 'Prøver igen automatisk · tjekket {0}',
   'Showing earlier data · last try {0}': 'Viser ældre data · sidste forsøg {0}',
-  '{0} from an earlier update · {1} busy': '{0} fra en tidligere opdatering · {1} er optaget',
+  '{0} from an earlier update · {1} busy': '{0} er ældre · {1} er optaget',
   '{0} from an earlier update · couldn’t refresh just now': '{0} fra en tidligere opdatering · kunne ikke opdatere lige nu',
   '{0} min': '{0} min',
   '{0} h': '{0} t',
@@ -212,6 +214,7 @@ export const da: Record<string, string> = {
   '{0} — worth keeping an eye on.': '{0} — værd at holde øje med.',
   'Nighttime: outside sunrise-to-sunset paddling hours.': 'Nat: uden for rotimerne mellem solopgang og solnedgang.',
   "Everything's within your limits — {0}, {1}, {2}.": 'Alt er inden for dine grænser — {0}, {1}, {2}.',
+  'The outlook is within your limits — {0}, {1}, {2}.': 'Udsigten ligger inden for dine grænser — {0}, {1}, {2}.',
   'calm water': 'roligt vand',
   'small ripples': 'små krusninger',
   'choppy water': 'krap sø',
@@ -278,9 +281,7 @@ export const da: Record<string, string> = {
   'Gusts': 'Vindstød',
   'Waves': 'Bølger',
   'Water': 'Vand',
-  // "Niveau" not "Vandstand": the long label pushed the block range value
-  // ("-0.01 til +0.33 m") into the sunrise/sunset cell on 390px phones.
-  'Level': 'Niveau',
+  'Level': 'Vandstand',
   // Screen-reader-only labels for the sunrise/sunset cell, whose icons carry
   // no accessible name (see ConditionsSnapshot).
   // A DMI warning that has not started yet: say when the weather is expected
@@ -293,7 +294,7 @@ export const da: Record<string, string> = {
   '{0} to {1} cm': '{0} til {1} cm',
   'Wind from {0}. The arrow points downwind (where the wind is heading).':
     'Vind fra {0}. Pilen peger med vinden (derhen hvor vinden blæser).',
-  'Long range outlook · lower confidence': 'Langtidsudsigt · lavere sikkerhed',
+  'Long range outlook · more uncertain forecast': 'Langtidsudsigt · mere usikker prognose',
   'Overall rating: {0}.': 'Samlet vurdering: {0}.',
   'Conditions for {0}:': 'Forhold for {0}:',
 
@@ -306,7 +307,7 @@ export const da: Record<string, string> = {
   'Water temperature (°C)': 'Vandtemperatur (°C)',
   'Forecast hours': 'Prognosetimer',
   '(Night)': '(Nat)',
-  '(Longer range, lower confidence)': '(Længere sigt, lavere sikkerhed)',
+  '(Longer range, more uncertain forecast)': '(Længere sigt, mere usikker prognose)',
 
   // ── PaddlePlanner ─────────────────────────────────────────────────────────
   'Available Launch Windows': 'Ledige rovinduer',
@@ -320,8 +321,8 @@ export const da: Record<string, string> = {
   '{0} hr': '{0} time',
   '{0} hrs': '{0} timer',
   'outlook': 'udsigt',
-  'Outlook window, roughly {0}:00 to {1}:00 — longer range, lower confidence':
-    'Udsigtsvindue, cirka {0}:00 til {1}:00 — længere sigt, lavere sikkerhed',
+  'Outlook window, approximately {0}:00 to {1}:00 — more uncertain forecast':
+    'Udsigtsvindue, cirka {0}:00 til {1}:00 — mere usikker prognose',
   'Launch window {0}:00 to {1}:00, {2}': 'Rovindue {0}:00 til {1}:00, {2}',
   ', partly outside daylight': ', delvist uden for dagslys',
   'no launch windows': 'ingen rovinduer',
@@ -331,20 +332,22 @@ export const da: Record<string, string> = {
   'Ends near sunset ({0})': 'Slutter nær solnedgang ({0})',
   "A DMI {0} warning for {1} overlaps this window — it doesn't change this window's verdict; see the warning banner and DMI for details":
     '{0} DMI-varsel for {1} overlapper dette vindue — det ændrer ikke vinduets vurdering; se varselsbanneret og DMI for detaljer',
-  'Longer-range outlook — lower confidence.': 'Langtidsudsigt — lavere sikkerhed.',
+  'Longer-range outlook — more uncertain forecast.': 'Langtidsudsigt — mere usikker prognose.',
   'Tap to show this window in the graph.': 'Tryk for at vise dette vindue i grafen.',
   'Share this launch window': 'Del dette rovindue',
   'Launch window': 'Rovindue',
-  'Outlook (lower confidence)': 'Udsigt (lavere sikkerhed)',
+  'Outlook · more uncertain forecast': 'Udsigt · mere usikker prognose',
+  'More uncertain forecast': 'Mere usikker prognose',
   'Night': 'Nat',
   'Now': 'Nu',
   'No launch windows in this forecast — the timeline above shows the marginal hours.':
     'Ingen rovinduer i denne prognose — tidslinjen ovenfor viser de marginale timer.',
   'Launch windows by day, {0} days': 'Rovinduer pr. dag, {0} dage',
+  'Selected window': 'Valgt rovindue',
 
   // ── WeatherCharts ─────────────────────────────────────────────────────────
-  'Your limits: on': 'Dine grænser: til',
-  'Your limits: off': 'Dine grænser: fra',
+  'Show limits': 'Vis grænser',
+  'Hide limits': 'Skjul grænser',
   'Tap or click a graph to select that hour': 'Tryk eller klik på en graf for at vælge den time',
   'Detailed graphs restricted to hourly available data': 'Detaljerede grafer viser kun timedata',
   'Wind & gusts': 'Vind & vindstød',
@@ -429,7 +432,7 @@ export const da: Record<string, string> = {
   '0 flat': '0 fladt',
   '1.5+ rough': '1,5+ uroligt',
   'Wave caution margin enabled': 'Bølgemargen slået til',
-  'Caution margin': 'Pas på-margen',
+  'Wave margin': 'Bølgemargen',
   'waves up to {0} m rate Caution': 'bølger op til {0} m vurderes Pas på',
   'wave caution margin': 'bølgemargen',
   'Min Water Temp': 'Min vandtemperatur',
@@ -439,7 +442,7 @@ export const da: Record<string, string> = {
   '0 ice': '0 is',
   'safe from {0}°': 'sikker fra {0}°',
   '25 summer': '25 sommer',
-  'Caution band': 'Pas på-bånd',
+  'Cold-water margin': 'Koldtvandsmargin',
   '{0}–{1} °C asks for thermal wear': '{0}–{1} °C kræver termotøj',
   'water temperature caution band': 'pas på-bånd for vandtemperatur',
   'Safe / Comfortable': 'Sikkert / Behageligt',
@@ -590,7 +593,7 @@ export const da: Record<string, string> = {
   'hourly windows split at local midnight, so each belongs to one calendar day; longer-range outlook windows can run past it (the end time then shows its day).':
     'timevinduer deles ved lokal midnat, så hvert hører til én kalenderdag; langtidsudsigtens vinduer kan løbe forbi den (sluttiden viser da sin dag).',
   'Longer range:': 'Længere sigt:',
-  'beyond the hourly forecast, coarser outlook blocks (6 hours, occasionally 12) form windows marked "lower confidence" — treat them as hints, not commitments.':
-    'ud over timeprognosen danner grovere udsigtsblokke (6 timer, af og til 12) vinduer markeret "lavere sikkerhed" — tag dem som fingerpeg, ikke løfter.',
+  'beyond the hourly forecast, coarser outlook blocks (6 hours, occasionally 12) form windows marked "more uncertain forecast" — treat them as hints, not commitments.':
+    'ud over timeprognosen danner grovere udsigtsblokke (6 timer, af og til 12) vinduer markeret "mere usikker prognose" — tag dem som fingerpeg, ikke løfter.',
   'Close': 'Luk',
 };

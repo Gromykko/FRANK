@@ -697,7 +697,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
                   `${t('Air')} ${formatReading(hourData.tempAir, 1)}°C`,
                   `${t('Water')} ${formatReading(hourData.tempWater, 1)}°C`,
                 ].join(', ');
-                const cellDescription = `${formatDateMedium(hourData.time)} ${timeLabel} - ${t(RATING_WORD[status]).toUpperCase()}${hourData.isDay ? '' : ` ${t('(Night)')}`}${isBlock ? ` ${t('(Longer range, lower confidence)')}` : ''}. ${cellReadings}`;
+                const cellDescription = `${formatDateMedium(hourData.time)} ${timeLabel} - ${t(RATING_WORD[status]).toUpperCase()}${hourData.isDay ? '' : ` ${t('(Night)')}`}${isBlock ? ` ${t('(Longer range, more uncertain forecast)')}` : ''}. ${cellReadings}`;
                 return (
                   <button
                     key={`overlay-${actualIndex}`}
@@ -726,16 +726,18 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
       {hasOutlookColumns && (
         <div className="timeline-outlook-note">
           <p className="outlook-note-lead">
-            {t('Columns headed with a time span, like 02–08, are 6-hour blocks. MET stops publishing hour by hour this far out.')}
+            {t('Columns like 02–08 show a 6-hour block.')}
           </p>
           <ul className="outlook-note-list">
-            <li>{t('Waves and water: the block’s roughest and coldest hour.')}</li>
-            <li>{t('Wind and air: MET’s one reading for the whole block.')}</li>
-            <li>
-              {t('Water level: reaches high water')} <ArrowUp size={12} aria-hidden="true" />,{' '}
-              {t('low water')} <ArrowDown size={12} aria-hidden="true" />,{' '}
-              {t('both')} <ArrowUpDown size={12} aria-hidden="true" />,{' '}
-              {t('or stays near mean')} <Minus size={12} aria-hidden="true" />.
+            <li>{t('Waves and water temperature: the highest waves and coldest water.')}</li>
+            <li>{t('Wind and air temperature: MET’s reading for the block.')}</li>
+            <li aria-label={t('Water level: high water, low water, both, or near mean.')}>
+              <span aria-hidden="true">
+                {t('Water level: high water')} <ArrowUp size={12} />,{' '}
+                {t('low water')} <ArrowDown size={12} />,{' '}
+                {t('both')} <ArrowUpDown size={12} />{' '}
+                {t('or near mean')} <Minus size={12} />.
+              </span>
             </li>
           </ul>
           <p className="outlook-note-lead">{t('Tap a block for its numbers.')}</p>

@@ -144,7 +144,7 @@ export default function ConditionsSnapshot({
 
       {isBlock && (
         <div className="snapshot-lowconf-note">
-          {t('Long range outlook · lower confidence')}
+          {t('Long range outlook · more uncertain forecast')}
         </div>
       )}
 

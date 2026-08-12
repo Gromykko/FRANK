@@ -28,6 +28,7 @@ interface PaddlePlannerProps {
 // Windows only ever contain Good-to-go hours (findLaunchWindows accepts
 // rating === 'safe' exclusively), so a bar needs no per-hour status detail.
 interface CalBar {
+  id: string;
   firstIdx: number;
   // Axis geometry, in local hours on a 0-24 scale.
   startFrac: number;
@@ -37,7 +38,9 @@ interface CalBar {
   // truthfully on a 24-hour axis — the drawing may compress, the number must not.
   startMs: number;
   endMs: number;
-  label: string;
+  rangeLabel: string;
+  compactLabel: string;
+  hours: number;
   lowConfidence: boolean;
   aria: string;
 }
@@ -63,6 +66,7 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
   // this component even though its props are identity-stable.
   const { lang, t } = useLang();
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
+  const [selectedCalendarBarId, setSelectedCalendarBarId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const listDragRef = useRef({ active: false, moved: false, startX: 0, scrollLeft: 0 });
 
@@ -204,13 +208,16 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
           run.endMs = ms + 3_600_000;
         } else {
           run = {
+            id: `${day.key}-${slot.startIndex}`,
             day,
             firstIdx: slot.startIndex,
             startFrac: startHour,
             endFrac: startHour + 1,
             startMs: ms,
             endMs: ms + 3_600_000,
-            label: '',
+            rangeLabel: '',
+            compactLabel: '',
+            hours: 0,
             lowConfidence: Boolean(slot.lowConfidence),
             aria: '',
           };
@@ -222,16 +229,15 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
         const hours = Math.round((r.endMs - r.startMs) / 3_600_000);
         const from = `${String(Math.floor(r.startFrac)).padStart(2, '0')}`;
         const to = `${String(Math.floor(r.endFrac) % 24 || 24).padStart(2, '0')}`;
-        // Label by how much bar there is to write on (~12px/hour on a phone).
-        // Outlook bars never print start–end times: a 6h block is not a
-        // promise that 02:00 is paddleable.
-        r.label = r.lowConfidence
-          ? (hours >= 4 ? t('outlook') : '')
-          : hours >= 7 ? `${from}–${to} · ${hours} h`
-            : hours >= 3 ? `${hours} h`
-              : '';
+        // Both variants are always present. CSS container queries choose the
+        // exact range when the rendered bar is wide enough and the compact
+        // duration when it is not, so a two-hour bar is useful on desktop and
+        // phone without tying content to a fixed duration threshold.
+        r.rangeLabel = `${from}–${to}`;
+        r.compactLabel = `${hours}h`;
+        r.hours = hours;
         r.aria = r.lowConfidence
-          ? t('Outlook window, roughly {0}:00 to {1}:00 — longer range, lower confidence', from, to)
+          ? t('Outlook window, approximately {0}:00 to {1}:00 — more uncertain forecast', from, to)
           : t('Launch window {0}:00 to {1}:00, {2}', from, to, formatDuration(t, hours)) + (slot.daylightPartial ? t(', partly outside daylight') : '');
         r.day.bars.push(r);
       }
@@ -243,6 +249,11 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
 
     return days;
   }, [data, windows, sunrises, sunsets, startIndex, t]);
+
+  const selectedCalendarBar = useMemo(
+    () => calendarDays.flatMap((day) => day.bars).find((bar) => bar.id === selectedCalendarBarId) ?? null,
+    [calendarDays, selectedCalendarBarId],
+  );
 
   // Selecting from the planner also asks the meteogram to reveal that hour.
   // A plain onSelectIndex can't do this when the index is already selected —
@@ -468,7 +479,7 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                             </span>
                           )}
                           {slot.lowConfidence && (
-                            <span className="sr-only"> {t('Longer-range outlook — lower confidence.')}</span>
+                            <span className="sr-only"> {t('Longer-range outlook — more uncertain forecast.')}</span>
                           )}
                           <span className="sr-only"> {t('Tap to show this window in the graph.')}</span>
                         </button>
@@ -497,7 +508,7 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                   </div>
                   {calendarDays.some((d) => d.bars.some((b) => b.lowConfidence)) && (
                     <div className="calendar-legend-item">
-                      <div className="legend-swatch outlook"></div> {t('Outlook (lower confidence)')}
+                      <div className="legend-swatch outlook"></div> {t('Outlook · more uncertain forecast')}
                     </div>
                   )}
                   <span className="calendar-legend-break" aria-hidden="true" />
@@ -529,7 +540,7 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                   </div>
 
                   {calendarDays.map((day) => (
-                    <div key={day.key} className="gantt-row" role="listitem" aria-label={day.aria}>
+                    <div key={day.key} className={`gantt-row ${day.nowFrac !== null ? 'is-today' : ''}`} role="listitem" aria-label={day.aria}>
                       <span className="gantt-day" aria-hidden="true">
                         <span className="gantt-weekday">{day.weekday}</span>
                         <span className="gantt-daynum">{day.dayNum}</span>
@@ -543,15 +554,21 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                               type="button"
                               className={`gantt-bar ${bar.lowConfidence ? 'is-outlook' : ''}`}
                               style={{ left: `${(bar.startFrac / 24) * 100}%`, width: `${(barSpan / 24) * 100}%` }}
-                              onClick={() => selectAndReveal(bar.firstIdx)}
+                              onClick={() => {
+                                setSelectedCalendarBarId(bar.id);
+                                selectAndReveal(bar.firstIdx);
+                              }}
                               aria-label={bar.aria}
+                              title={bar.aria}
                             >
-                              {bar.label && <span className="gantt-bar-label">{bar.label}</span>}
+                              <span className="gantt-bar-label gantt-bar-label-range" aria-hidden="true">{bar.rangeLabel}</span>
+                              <span className="gantt-bar-label gantt-bar-label-compact" aria-hidden="true">{bar.compactLabel}</span>
+                              <span className="gantt-bar-label-dot" aria-hidden="true" />
                             </button>
                           );
                         })}
-                        <span className="gantt-night" style={{ left: 0, width: `${(day.sunriseFrac / 24) * 100}%` }} aria-hidden="true" />
-                        <span className="gantt-night" style={{ left: `${(day.sunsetFrac / 24) * 100}%`, width: `${((24 - day.sunsetFrac) / 24) * 100}%` }} aria-hidden="true" />
+                        <span className="gantt-night is-morning" style={{ left: 0, width: `${(day.sunriseFrac / 24) * 100}%` }} aria-hidden="true" />
+                        <span className="gantt-night is-evening" style={{ left: `${(day.sunsetFrac / 24) * 100}%`, width: `${((24 - day.sunsetFrac) / 24) * 100}%` }} aria-hidden="true" />
                         {day.nowFrac !== null && (
                           <span className="gantt-now" style={{ left: `${(day.nowFrac / 24) * 100}%` }} aria-hidden="true" />
                         )}
@@ -559,6 +576,16 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                     </div>
                   ))}
                 </div>
+                {selectedCalendarBar && (
+                  <div className="gantt-selection" role="status" aria-live="polite">
+                    <span className="gantt-selection-label">{t('Selected window')}</span>
+                    <strong className="gantt-selection-time">{selectedCalendarBar.rangeLabel}</strong>
+                    <span>· {formatDuration(t, selectedCalendarBar.hours)}</span>
+                    {selectedCalendarBar.lowConfidence && (
+                      <span className="gantt-selection-confidence">{t('More uncertain forecast')}</span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>

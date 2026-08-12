@@ -425,6 +425,12 @@ describe('rating combination rules', () => {
     expect(triggered.reasons.some(r => r.severity === 'safe')).toBe(false);
     expect(triggered.reasons.some(r => r.text.includes('within your limits'))).toBe(false);
   });
+
+  it('qualifies an all-clear when the reading is a longer-range block', () => {
+    const result = analyzeSafetyConditions({ ...baseData, blockSpanHours: 6 }, baseSettings);
+    expect(result.rating).toBe('safe');
+    expect(result.reasons[0].text.startsWith('The outlook is within your limits')).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

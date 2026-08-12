@@ -359,9 +359,7 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
       </span>
     </div>
   );
-  const activeMetric = (metric: React.ReactNode) => activeItem.blockSpanHours
-    ? <span>{t('Detailed graphs restricted to hourly available data')}</span>
-    : metric;
+  const activeMetric = (metric: React.ReactNode) => activeItem.blockSpanHours ? null : metric;
 
   return (
     <div className="charts-grid">
@@ -375,9 +373,13 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
           aria-pressed={showLimits}
           onClick={() => setShowLimits((v) => !v)}
         >
-          <div className="legend-swatch limit-line"></div> {t(showLimits ? 'Your limits: on' : 'Your limits: off')}
+          <div className="legend-swatch limit-line"></div> {t(showLimits ? 'Hide limits' : 'Show limits')}
         </button>
-        <span className="calendar-legend-note">{t('Tap or click a graph to select that hour')}</span>
+        <span className="calendar-legend-note">
+          {t(activeItem.blockSpanHours
+            ? 'Detailed graphs restricted to hourly available data'
+            : 'Tap or click a graph to select that hour')}
+        </span>
       </div>
 
       <div

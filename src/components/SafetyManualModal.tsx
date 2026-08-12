@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { X } from 'lucide-react';
 import { CURRENT_LOCATION } from '../config/locations';
 import { resolveSectors } from '../features/safety/analyzeSafetyConditions';
 import { useLang } from '../i18n';
@@ -78,6 +79,14 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
       >
         <div className="info-modal-header manual-header">
           <h2 className="manual-title" id="safety-manual-title">{t('HOW FRANK DECIDES')}</h2>
+          <button
+            type="button"
+            className="manual-header-close"
+            onClick={onClose}
+            aria-label={t('Close')}
+          >
+            <X size={20} aria-hidden="true" />
+          </button>
         </div>
 
         <div className="manual-body">
@@ -185,7 +194,7 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
             <ul className="manual-list">
               <li><strong>{t('Minimum duration:')}</strong> {t('runs shorter than your Min Duration setting are not shown.')}</li>
               <li><strong>{t('Day boundaries:')}</strong> {t('hourly windows split at local midnight, so each belongs to one calendar day; longer-range outlook windows can run past it (the end time then shows its day).')}</li>
-              <li><strong>{t('Longer range:')}</strong> {t('beyond the hourly forecast, coarser outlook blocks (6 hours, occasionally 12) form windows marked "lower confidence" — treat them as hints, not commitments.')}</li>
+              <li><strong>{t('Longer range:')}</strong> {t('beyond the hourly forecast, coarser outlook blocks (6 hours, occasionally 12) form windows marked "more uncertain forecast" — treat them as hints, not commitments.')}</li>
             </ul>
           </div>
 

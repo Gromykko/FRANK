@@ -374,7 +374,14 @@ export function analyzeSafetyConditions(
       : data.waveHeight <= 1.25 ? 'choppy water'
       : data.waveHeight <= 2.5 ? 'rough water'
       : 'very rough water');
-    addReason('safe', translate("Everything's within your limits — {0}, {1}, {2}.", translate(getWindSpeedLabel(data.windSpeed)).toLowerCase(), seaState, weatherDesc.toLowerCase()));
+    addReason('safe', translate(
+      data.blockSpanHours
+        ? 'The outlook is within your limits — {0}, {1}, {2}.'
+        : "Everything's within your limits — {0}, {1}, {2}.",
+      translate(getWindSpeedLabel(data.windSpeed)).toLowerCase(),
+      seaState,
+      weatherDesc.toLowerCase(),
+    ));
   }
 
   return { rating, reasons };
