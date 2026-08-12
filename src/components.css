@@ -2862,10 +2862,6 @@ button.legend-toggle.is-on {
   min-width: 0;
   font-size: var(--text-caption);
   font-variant-numeric: tabular-nums;
-  /* The left column (CRT) is 82px wide, the right column (Buttons) is 44px wide.
-     This 38px difference means the middle column's center is shifted 19px right.
-     Padding the left side by 38px perfectly aligns the text center with the display! */
-  padding-left: 38px;
 }
 
 /* Label on line 1, the (optional) caveat on line 2. The caveat can be long
