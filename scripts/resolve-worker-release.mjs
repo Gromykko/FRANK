@@ -7,13 +7,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 //   node scripts/resolve-worker-release.mjs --source-sha <40-hex-sha> \
 //     [--github-output <path>]
 // GitHub outputs: action, source_sha, candidate_tag, deployment_mode,
-// production_version_id, and candidate_version_id.
+// production_version_id, production_source_sha, and candidate_version_id.
 
 const execFileAsync = promisify(execFile);
 const WRANGLER_CLI = fileURLToPath(new URL('../node_modules/wrangler/bin/wrangler.js', import.meta.url));
 const SOURCE_SHA = /^[0-9a-f]{40}$/i;
 const VERSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CANDIDATE_TAG_PREFIX = 'frank-sha-';
+const SOURCE_TAG = /^frank-sha-([0-9a-f]{40})$/i;
 const WRANGLER_OPTIONS = Object.freeze({
   encoding: 'utf8',
   windowsHide: true,
@@ -104,6 +105,20 @@ function resolveTaggedCandidate(versionsList, candidateTag) {
   return requireVersionId(matches[0]?.id, `Worker candidate tagged ${candidateTag}`);
 }
 
+function sourceShaForVersion(versionsList, versionId) {
+  if (!Array.isArray(versionsList)) {
+    throw new Error('Expected Wrangler versions list output to be an array.');
+  }
+  const matches = versionsList.filter((version) => version?.id === versionId);
+  if (matches.length !== 1) {
+    throw new Error(`Captured production version ${versionId} is missing or ambiguous.`);
+  }
+  const tag = matches[0]?.annotations?.['workers/tag'];
+  if (typeof tag !== 'string') return '';
+  const match = SOURCE_TAG.exec(tag);
+  return match ? match[1].toLowerCase() : '';
+}
+
 /**
  * Resolve the only safe next step without changing Worker traffic or uploading code.
  *
@@ -121,6 +136,10 @@ export function resolveWorkerReleasePlan({
   const candidateTag = candidateTagForSourceSha(normalizedSha);
   const deployment = normalizeDeploymentStatus(deploymentStatus);
   const taggedCandidateVersionId = resolveTaggedCandidate(versionsList, candidateTag);
+  const productionSourceSha = sourceShaForVersion(
+    versionsList,
+    deployment.productionVersionId,
+  );
 
   let action;
   let candidateVersionId = taggedCandidateVersionId;
@@ -151,6 +170,7 @@ export function resolveWorkerReleasePlan({
     candidateTag,
     deploymentMode: deployment.mode,
     productionVersionId: deployment.productionVersionId,
+    productionSourceSha,
     candidateVersionId,
   });
 }
@@ -224,6 +244,7 @@ export function githubOutputForWorkerRelease(plan) {
     `candidate_tag=${plan.candidateTag}`,
     `deployment_mode=${plan.deploymentMode}`,
     `production_version_id=${plan.productionVersionId}`,
+    `production_source_sha=${plan.productionSourceSha}`,
     `candidate_version_id=${plan.candidateVersionId}`,
     '',
   ].join('\n');

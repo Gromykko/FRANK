@@ -32,6 +32,10 @@ function taggedVersion(id = CANDIDATE_ID, tag = CANDIDATE_TAG) {
   return { id, annotations: { 'workers/tag': tag } };
 }
 
+function productionVersion(tag = `frank-sha-${'1'.repeat(40)}`) {
+  return taggedVersion(PRODUCTION_ID, tag);
+}
+
 describe('deterministic Worker candidate identity', () => {
   it('derives one stable, lower-case version tag from the exact source SHA', () => {
     expect(candidateTagForSourceSha(SOURCE_SHA)).toBe(CANDIDATE_TAG);
@@ -52,13 +56,17 @@ describe('resumable Worker release plan', () => {
     expect(resolveWorkerReleasePlan({
       sourceSha: SOURCE_SHA,
       deploymentStatus: cleanDeployment(),
-      versionsList: [taggedVersion(OTHER_ID, 'frank-sha-another-source')],
+      versionsList: [
+        productionVersion(),
+        taggedVersion(OTHER_ID, `frank-sha-${'2'.repeat(40)}`),
+      ],
     })).toEqual({
       action: 'upload',
       sourceSha: NORMALIZED_SHA,
       candidateTag: CANDIDATE_TAG,
       deploymentMode: 'clean',
       productionVersionId: PRODUCTION_ID,
+      productionSourceSha: '1'.repeat(40),
       candidateVersionId: '',
     });
   });
@@ -67,7 +75,7 @@ describe('resumable Worker release plan', () => {
     expect(resolveWorkerReleasePlan({
       sourceSha: SOURCE_SHA,
       deploymentStatus: cleanDeployment(),
-      versionsList: [taggedVersion()],
+      versionsList: [productionVersion(), taggedVersion()],
     })).toMatchObject({
       action: 'stage',
       productionVersionId: PRODUCTION_ID,
@@ -75,11 +83,31 @@ describe('resumable Worker release plan', () => {
     });
   });
 
+  it('leaves the production source empty only for the explicit pre-baseline tag shape', () => {
+    expect(resolveWorkerReleasePlan({
+      sourceSha: SOURCE_SHA,
+      deploymentStatus: cleanDeployment(),
+      versionsList: [productionVersion('manual-pre-baseline')],
+    })).toMatchObject({
+      action: 'upload',
+      productionVersionId: PRODUCTION_ID,
+      productionSourceSha: '',
+    });
+  });
+
+  it('fails closed when the captured production version is absent from the version list', () => {
+    expect(() => resolveWorkerReleasePlan({
+      sourceSha: SOURCE_SHA,
+      deploymentStatus: cleanDeployment(),
+      versionsList: [taggedVersion()],
+    })).toThrow('missing or ambiguous');
+  });
+
   it('resumes warming only when the expected candidate is already at zero traffic', () => {
     expect(resolveWorkerReleasePlan({
       sourceSha: SOURCE_SHA,
       deploymentStatus: stagedDeployment(),
-      versionsList: [taggedVersion()],
+      versionsList: [productionVersion(), taggedVersion()],
     })).toMatchObject({
       action: 'warm',
       deploymentMode: 'staged',
@@ -96,6 +124,7 @@ describe('resumable Worker release plan', () => {
     })).toMatchObject({
       action: 'complete',
       productionVersionId: CANDIDATE_ID,
+      productionSourceSha: NORMALIZED_SHA,
       candidateVersionId: CANDIDATE_ID,
     });
   });
@@ -104,17 +133,17 @@ describe('resumable Worker release plan', () => {
     {
       name: 'an untagged zero-traffic version',
       deploymentStatus: stagedDeployment(),
-      versionsList: [],
+      versionsList: [productionVersion()],
     },
     {
       name: 'a staged version belonging to another source',
       deploymentStatus: stagedDeployment(OTHER_ID),
-      versionsList: [taggedVersion()],
+      versionsList: [productionVersion(), taggedVersion()],
     },
     {
       name: 'an ambiguous deterministic tag',
       deploymentStatus: cleanDeployment(),
-      versionsList: [taggedVersion(), taggedVersion(OTHER_ID)],
+      versionsList: [productionVersion(), taggedVersion(), taggedVersion(OTHER_ID)],
     },
   ])('fails closed for $name', ({ deploymentStatus, versionsList }) => {
     expect(() => resolveWorkerReleasePlan({
@@ -155,7 +184,7 @@ describe('read-only Wrangler inspection', () => {
   it('uses the pinned CLI with argument arrays and sandwiches the versions read', async () => {
     const execFileImpl = vi.fn()
       .mockResolvedValueOnce({ stdout: JSON.stringify(cleanDeployment()) })
-      .mockResolvedValueOnce({ stdout: JSON.stringify([taggedVersion()]) })
+      .mockResolvedValueOnce({ stdout: JSON.stringify([productionVersion(), taggedVersion()]) })
       .mockResolvedValueOnce({ stdout: JSON.stringify(cleanDeployment()) });
 
     await expect(inspectWorkerRelease({ sourceSha: SOURCE_SHA, execFileImpl }))
@@ -176,7 +205,7 @@ describe('read-only Wrangler inspection', () => {
   it('fails closed if production traffic changes during inspection', async () => {
     const execFileImpl = vi.fn()
       .mockResolvedValueOnce({ stdout: JSON.stringify(cleanDeployment()) })
-      .mockResolvedValueOnce({ stdout: JSON.stringify([taggedVersion()]) })
+      .mockResolvedValueOnce({ stdout: JSON.stringify([productionVersion(), taggedVersion()]) })
       .mockResolvedValueOnce({ stdout: JSON.stringify(stagedDeployment()) });
 
     await expect(inspectWorkerRelease({ sourceSha: SOURCE_SHA, execFileImpl }))
@@ -198,7 +227,7 @@ describe('release-resume CLI contract', () => {
     const plan = resolveWorkerReleasePlan({
       sourceSha: SOURCE_SHA,
       deploymentStatus: stagedDeployment(),
-      versionsList: [taggedVersion()],
+      versionsList: [productionVersion(), taggedVersion()],
     });
     expect(githubOutputForWorkerRelease(plan)).toBe([
       'action=warm',
@@ -206,6 +235,7 @@ describe('release-resume CLI contract', () => {
       `candidate_tag=${CANDIDATE_TAG}`,
       'deployment_mode=staged',
       `production_version_id=${PRODUCTION_ID}`,
+      `production_source_sha=${'1'.repeat(40)}`,
       `candidate_version_id=${CANDIDATE_ID}`,
       '',
     ].join('\n'));
