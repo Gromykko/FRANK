@@ -17,6 +17,7 @@ const DEFAULT_RETRY_DELAY_MS = 2_000;
 const DEFAULT_HEALTH_PROPAGATION_TIMEOUT_MS = 90_000;
 const DEFAULT_HEALTH_RETRY_DELAY_MS = 5_000;
 const DEFAULT_WAIT_RETRY_AFTER_SECONDS = 10 * 60;
+const PROGRESSIVE_WARM_ROTATION_BUCKET_MS = 10 * 60_000;
 const MAX_RESPONSE_BODY_CHARS = 64 * 1024;
 const WORKER_VERSION_HEADER = 'x-frank-worker-version';
 const RELEASE_HEADERS = Object.freeze({
@@ -108,6 +109,22 @@ function positiveInteger(value, label) {
     throw new WarmupError(`${label} must be a positive integer.`);
   }
   return parsed;
+}
+
+function progressiveWarmOrder(locationIds, rotationNowMs, enabled) {
+  if (!enabled || locationIds.length < 2) return [...locationIds];
+  if (!Number.isFinite(rotationNowMs) || rotationNowMs < 0) {
+    throw new WarmupError('Progressive warm rotation time must be a non-negative timestamp.');
+  }
+
+  const offset = Math.floor(rotationNowMs / PROGRESSIVE_WARM_ROTATION_BUCKET_MS)
+    % locationIds.length;
+  return [...locationIds.slice(offset), ...locationIds.slice(0, offset)];
+}
+
+function manifestOrdered(locationIds, values) {
+  const included = new Set(values);
+  return locationIds.filter((id) => included.has(id));
 }
 
 function workerVersionId(value, label) {
@@ -1222,6 +1239,7 @@ export async function warmWorker({
   fetchImpl = fetch,
   logger = consoleLogger,
   onProgress,
+  rotationNowMs = Date.now(),
 }) {
   const base = normalizeBaseUrl(baseUrl);
   const boundedAttempts = positiveInteger(attempts, 'Attempts');
@@ -1287,6 +1305,12 @@ export async function warmWorker({
     throw new WarmupError('Location release contracts must be an array.');
   }
   const locationContractById = new Map(locationContracts.map((location) => [location?.id, location]));
+  const progressiveOrderEnabled = requireTargetReadyAll && allowWaiting && !readOnly;
+  const warmingLocationIds = progressiveWarmOrder(
+    locationIds,
+    rotationNowMs,
+    progressiveOrderEnabled,
+  );
 
   // Keep these requests sequential. The pre-promotion candidate uses `warm=1`
   // to build an empty target generation; the post-promotion smoke deliberately
@@ -1294,13 +1318,16 @@ export async function warmWorker({
   // terminal amber for a warming request, so a struggling upstream is never
   // hammered by the release gate. Resumable exact-all preparation also stops
   // at the first typed initialization: completed KV entries survive, and the
-  // next cycle advances through them until it reaches the next cold location.
+  // each ten-minute retry bucket starts at a different manifest position. This
+  // gives every cold location a bounded first chance without shared scheduler
+  // state. Exact-ready entries remain cheap cache reads, and result/report
+  // arrays are normalized back to stable manifest order below.
   const transientIds = [];
   const availableIds = [];
   const targetReadyIds = [];
   const generationNotReadyIds = [];
   const initializationRetryAfterById = new Map();
-  for (const locationId of locationIds) {
+  for (const locationId of warmingLocationIds) {
     const forecastPath = `api/v${apiSchemaVersion}/forecast/${encodeURIComponent(locationId)}`;
     const url = new URL(forecastPath, base);
     if (!readOnly) url.searchParams.set('warm', '1');
@@ -1438,12 +1465,12 @@ export async function warmWorker({
     );
   }
   const result = {
-    availableLocationIds: availableIds,
-    targetReadyLocationIds: targetReadyIds,
-    generationNotReadyLocationIds: generationNotReadyIds,
+    availableLocationIds: manifestOrdered(locationIds, availableIds),
+    targetReadyLocationIds: manifestOrdered(locationIds, targetReadyIds),
+    generationNotReadyLocationIds: manifestOrdered(locationIds, generationNotReadyIds),
     verifiedPriorApiSchemaVersions,
     initializingLocationIds: health.missing,
-    transientLocationIds: transientIds,
+    transientLocationIds: manifestOrdered(locationIds, transientIds),
     staleDataLocationIds: health.staleDataReady,
   };
   if (!allowWaiting) {

@@ -230,7 +230,8 @@ describe('Worker route HTTP contract', () => {
     expect(response.headers.get('Referrer-Policy')).toBe('no-referrer');
     expect(response.headers.get('X-Frame-Options')).toBe('DENY');
     const body = await response.text();
-    expect(body).toContain('Visitor requests only\n  read prepared snapshots');
+    expect(body).toContain('only read prepared KV snapshots');
+    expect(body).toContain('Only those operational paths may start provider');
     expect(body).not.toContain("visitor's request prompts a check");
     expect(body).toContain('EXACT GENERATION READY');
   });
@@ -256,19 +257,21 @@ describe('Worker route HTTP contract', () => {
     expect(body).toContain('--panel-bg:#f9fcff');
     expect(body).toContain('--crt-screen:#0a0e14');
     expect(body).toContain('class="instrument-panel"');
-    expect(body).toContain('<thead>');
-    expect(body).toContain('<tbody>');
+    expect(body.match(/class="location-module"/g) ?? []).toHaveLength(LOCATIONS.length);
+    expect(body.match(/class="source-board"/g) ?? []).toHaveLength(LOCATIONS.length);
     expect(body).toContain('@media (max-width:720px)');
     expect(body).toContain('@media (max-width:480px)');
     expect(body).toContain('@media (max-width:360px)');
-    expect(body.match(/data-label="Location"/g) ?? []).toHaveLength(LOCATIONS.length);
-    expect(body.match(/data-label="Status"/g) ?? []).toHaveLength(LOCATIONS.length);
-    expect(body.match(/data-label="Weather \/ MET"/g) ?? []).toHaveLength(LOCATIONS.length);
-    expect(body.match(/data-label="Water level"/g) ?? []).toHaveLength(LOCATIONS.length);
-    expect(body.match(/data-label="Waves"/g) ?? []).toHaveLength(LOCATIONS.length);
-    expect(body).toContain('Weather<br><span class="hdr-sub">MET issue</span>');
-    expect(body).toContain('Water<br><span class="hdr-sub">DMI run</span>');
-    expect(body).toContain('Waves<br><span class="hdr-sub">DMI run</span>');
+    expect(body.match(/data-source="weather"/g) ?? []).toHaveLength(LOCATIONS.length);
+    expect(body.match(/data-source="water"/g) ?? []).toHaveLength(LOCATIONS.length);
+    expect(body.match(/data-source="waves"/g) ?? []).toHaveLength(LOCATIONS.length);
+    expect(body.match(/data-source="warnings"/g) ?? []).toHaveLength(LOCATIONS.length);
+    expect(body).toContain('<div><h4>Weather</h4><span>MET Norway</span></div>');
+    expect(body).toContain('<div><h4>Water level</h4><span>DMI DKSS</span></div>');
+    expect(body).toContain('<div><h4>Waves</h4><span>DMI WAM</span></div>');
+    expect(body).toContain('<div><h4>Warnings</h4><span>MeteoAlarm</span></div>');
+    expect(body).toContain('Separate feed health is not stored; no false green is shown.');
+    expect(body).not.toContain('<table');
     expect(body).not.toContain('F · R · A · N · K');
     expect(body).not.toContain('backdrop-filter');
     expect(body).not.toContain('class="banner');
@@ -326,9 +329,41 @@ describe('Worker route HTTP contract', () => {
 
     const response = await worker.fetch(request('/status'), runtime.env, runtime.ctx);
     const body = await response.text();
+    const horsensCard = body.match(/<article class="location-module" data-location="horsens">[\s\S]*?<\/article>/)?.[0] ?? '';
 
     expect(body).toContain('provider busy · marine');
-    expect(body).toContain('<span class="warn">waves</span>');
+    expect(horsensCard).toMatch(/class="source-card tone-warn" data-source="waves"[\s\S]*?Provider busy/);
+    expect(horsensCard).toMatch(/class="source-card tone-good" data-source="water"[\s\S]*?Current snapshot/);
+  });
+
+  it('shows real provider provenance ages without claiming MeteoAlarm health', async () => {
+    const now = Date.parse('2026-08-20T18:00:00.000Z');
+    const entries: HealthLocationEntry[] = [{
+      id: 'horsens',
+      areaName: 'Horsens Fjord',
+      hasCache: true,
+      exactGenerationReady: true,
+      availabilitySource: 'generation',
+      fetchedAt: '2026-08-20T17:45:00.000Z',
+      cacheHealth: {
+        status: 'current',
+        lastAttemptAt: '2026-08-20T17:50:00.000Z',
+        weatherLastModified: '2026-08-20T17:30:00.000Z',
+        marineInstances: {
+          water: { collection: 'dkss_idw', id: '2026-08-20T120000Z' },
+          waves: { collection: 'wam_nsb', id: '2026-08-20T120000Z' },
+        },
+      },
+    }];
+
+    const body = await statusResponse(buildHealthPayload(entries, false, now)).text();
+
+    expect(body).toContain('30 min old');
+    expect(body.match(/6h 00m old/g) ?? []).toHaveLength(2);
+    expect(body).toContain('Model run 2026-08-20 12:00:00 UTC');
+    expect(body).toContain('15 min snapshot');
+    expect(body).toContain('Advisory source');
+    expect(body).not.toContain('MeteoAlarm current');
   });
 
   it('keeps the unversioned bootstrap route as an exact canonical alias', async () => {

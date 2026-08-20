@@ -29,6 +29,7 @@ function warmRelease(options: Parameters<typeof warmWorker>[0]) {
   return warmWorker({
     expectedApiSchemaVersion: options.expectedRelease?.apiSchemaVersion ?? 1,
     expectedWorkerVersionId: EXPECTED_WORKER_VERSION_ID,
+    rotationNowMs: 0,
     ...options,
   });
 }
@@ -1333,6 +1334,71 @@ describe('Worker deployment warm-up', () => {
       `/api/v1/forecast/${locationIds[2]}?warm=1`,
       '/health',
     ]);
+  });
+
+  it('gives every cold location first chance across four ten-minute retry buckets', async () => {
+    const contract = await loadReleaseContract();
+    const locations = contract.locations;
+    const locationIds = locations.map(({ id }) => id);
+    const requestsByCycle: string[][] = [];
+    let currentRequests: string[] = [];
+    const baseUrl = await listen((request, response) => {
+      currentRequests.push(request.url ?? '');
+      const match = request.url?.match(/^\/api\/v1\/forecast\/([a-z0-9-]+)\?warm=1$/);
+      if (match) {
+        return json(
+          response,
+          503,
+          initializing(match[1]),
+          EXPECTED_WORKER_VERSION_ID,
+          {
+            ...exactReleaseHeaders(contract.release, false),
+            'Retry-After': '600',
+          },
+        );
+      }
+      if (request.url === '/health') {
+        return json(
+          response,
+          503,
+          releaseHealth(locationIds, contract.release, { missing: locationIds }),
+          EXPECTED_WORKER_VERSION_ID,
+          exactReleaseHeaders(contract.release),
+        );
+      }
+      return json(response, 404, { error: 'not found' });
+    });
+
+    for (let bucket = 0; bucket < locationIds.length; bucket += 1) {
+      currentRequests = [];
+      const result = await warmRelease({
+        baseUrl,
+        locationIds,
+        locationContracts: locations,
+        expectedVersion: contract.expectedVersion,
+        expectedRelease: contract.release,
+        requireTargetReadyAll: true,
+        allowWaiting: true,
+        rotationNowMs: bucket * 10 * 60_000,
+        attempts: 1,
+        timeoutMs: 500,
+        retryDelayMs: 1,
+        logger: silentLogger,
+      });
+      requestsByCycle.push(currentRequests);
+
+      expect(result).toMatchObject({
+        readyForPromotion: false,
+        waitingLocationIds: locationIds,
+        initializingLocationIds: locationIds,
+        transientLocationIds: [locationIds[bucket]],
+      });
+    }
+
+    expect(requestsByCycle).toEqual(locationIds.map((id) => [
+      `/api/v1/forecast/${id}?warm=1`,
+      '/health',
+    ]));
   });
 
   it('returns promotion-ready only after exact forecasts and exact health agree', async () => {

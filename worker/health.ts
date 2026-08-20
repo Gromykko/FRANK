@@ -128,7 +128,44 @@ function formatUtcTimestamp(iso: string): string {
   return new Date(ms).toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC');
 }
 
+function providerTimestampMs(value: string | undefined): number {
+  if (!value) return Number.NaN;
+  const parsed = Date.parse(value);
+  if (Number.isFinite(parsed)) return parsed;
+
+  // DMI run ids use an ISO-like compact time (`2026-08-20T120000Z`) that
+  // Date.parse does not accept consistently across runtimes.
+  const compact = value.match(/^(\d{4})-?(\d{2})-?(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+  return compact
+    ? Date.parse(`${compact[1]}-${compact[2]}-${compact[3]}T${compact[4]}:${compact[5]}:${compact[6]}Z`)
+    : Number.NaN;
+}
+
+function providerAgeMs(value: string | undefined, nowMs: number): number | null {
+  const timestampMs = providerTimestampMs(value);
+  const ageMs = nowMs - timestampMs;
+  return Number.isFinite(timestampMs) && ageMs >= 0 ? ageMs : null;
+}
+
+function formatProviderTimestamp(value: string | undefined): string {
+  const timestampMs = providerTimestampMs(value);
+  return Number.isFinite(timestampMs)
+    ? new Date(timestampMs).toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC')
+    : 'run time not recorded';
+}
+
 type FrankStatusRating = 'safe' | 'caution' | 'danger';
+type SourceTone = 'good' | 'warn' | 'bad' | 'neutral';
+
+interface SourceStatusView {
+  key: 'weather' | 'water' | 'waves' | 'warnings';
+  label: string;
+  provider: string;
+  tone: SourceTone;
+  state: string;
+  value: string;
+  detail: string;
+}
 
 // The status page cannot import React or the app stylesheet, so this is a
 // deliberately exact HTML rendering of src/components/GertyFace.tsx. Keep the
@@ -156,19 +193,16 @@ export function statusResponse(health: HealthPayload): Response {
   const byId = new Map(health.ages.map((age) => [age.id, age]));
   const level = (ms: number, budget: number): 'bad' | 'warn' | 'good' =>
     (ms > budget ? 'bad' : ms > budget * 0.75 ? 'warn' : 'good');
+  const checkedAtMs = Date.parse(health.checkedAt);
+  const nowMs = Number.isFinite(checkedAtMs) ? checkedAtMs : Date.now();
 
-  const rows = health.locations.map((location) => {
+  const locationCards = health.locations.map((location) => {
     const age = byId.get(location.id) ?? {
       ageMs: Number.POSITIVE_INFINITY,
       checkAgeMs: Number.POSITIVE_INFINITY,
     };
     const cacheHealth: Partial<WorkerCacheHealth> = location.cacheHealth ?? {};
-    const degraded = (cacheHealth.degradedSources ?? []).join(', ');
-    const weatherRun = cacheHealth.weatherLastModified
-      ? escapeHtml(formatUtcTimestamp(cacheHealth.weatherLastModified))
-      : '—';
-    const waterRun = escapeHtml(cacheHealth.marineInstances?.water?.id ?? '—');
-    const waveRun = escapeHtml(cacheHealth.marineInstances?.waves?.id ?? '—');
+    const degradedSources = new Set(cacheHealth.degradedSources ?? []);
     const missing = !location.hasCache;
     const initialization = missing ? location.initialization : undefined;
     const generationState = location.exactGenerationReady
@@ -195,18 +229,132 @@ export function statusResponse(health: HealthPayload): Response {
         : missing
           ? 'AWAITING DATA'
           : cacheHealth.status ?? 'unknown';
-    return `<tr>
-      <td class="location-cell" data-label="Location"><strong>${escapeHtml(location.areaName)}</strong><br><span class="dim">${escapeHtml(location.id)}</span></td>
-      <td data-label="Last check" class="${initialization ? 'warn' : missing ? 'bad' : level(age.checkAgeMs, HEALTH_MAX_CHECK_AGE_MS)}"><strong>${escapeHtml(formatAge(age.checkAgeMs))}</strong><br><span class="dim">${escapeHtml(checkDetail)}</span></td>
-      <td data-label="Data age" class="${missing ? 'bad' : level(age.ageMs, HEALTH_MAX_DATA_AGE_MS)}"><strong>${escapeHtml(missing ? 'no forecast' : formatAge(age.ageMs))}</strong></td>
-      <td data-label="Status" class="status-cell">${escapeHtml(status)}
-        <br><span class="${location.exactGenerationReady ? 'good' : 'warn'}">${escapeHtml(generationState)}</span>
-        ${providerState ? `<br><span class="warn">${escapeHtml(providerState)}</span>` : ''}</td>
-      <td data-label="Weather / MET" class="source-cell source-weather dim mono">${weatherRun}</td>
-      <td data-label="Water level" class="source-cell source-water dim mono">${waterRun}</td>
-      <td data-label="Waves" class="source-cell source-waves dim mono">${waveRun}</td>
-      <td data-label="Degraded" class="degraded-cell">${degraded ? `<span class="warn">${escapeHtml(degraded)}</span>` : '<span class="dim">none</span>'}</td>
-    </tr>`;
+
+    const providerAppliesTo = (source: 'weather' | 'water' | 'waves'): boolean => {
+      if (!cacheHealth.providerBusy) return false;
+      if (degradedSources.size > 0 && !degradedSources.has(source)) return false;
+      if (!cacheHealth.busyProvider || cacheHealth.busyProvider === 'services') return true;
+      return source === 'weather'
+        ? cacheHealth.busyProvider === 'weather'
+        : cacheHealth.busyProvider === 'marine';
+    };
+    const initializationAppliesTo = (source: 'weather' | 'water' | 'waves'): boolean => {
+      if (!initialization || initialization.provider === 'services') return Boolean(initialization);
+      return source === 'weather'
+        ? initialization.provider === 'weather'
+        : initialization.provider === 'marine';
+    };
+    const requiredSource = (
+      key: 'weather' | 'water' | 'waves',
+      label: string,
+      provider: string,
+      provenance: string | undefined,
+      provenanceLabel: string,
+    ): SourceStatusView => {
+      if (health.storageUnavailable) {
+        return {
+          key, label, provider, tone: 'bad', state: 'Unavailable',
+          value: 'Storage unavailable',
+          detail: 'FRANK could not read the prepared cache.',
+        };
+      }
+      if (missing) {
+        const blocked = initializationAppliesTo(key);
+        const busy = blocked && Boolean(initialization?.busy);
+        return {
+          key, label, provider,
+          tone: busy ? 'warn' : blocked ? 'bad' : 'neutral',
+          state: busy ? 'Provider busy' : blocked ? 'Unavailable' : 'Waiting',
+          value: 'No source data yet',
+          detail: busy
+            ? 'The prepared cache will retry on an operational cycle.'
+            : 'Waiting for the first complete forecast snapshot.',
+        };
+      }
+
+      const degraded = degradedSources.has(key);
+      const busy = providerAppliesTo(key);
+      const provenanceAgeMs = providerAgeMs(provenance, nowMs);
+      const provenanceDetail = provenance
+        ? `${provenanceLabel} ${formatProviderTimestamp(provenance)}`
+        : `${provenanceLabel} not recorded`;
+      return {
+        key, label, provider,
+        tone: degraded || busy ? 'warn' : provenanceAgeMs === null ? 'neutral' : 'good',
+        state: busy ? 'Provider busy' : degraded ? 'Last-good fallback' : provenanceAgeMs === null ? 'Available' : 'Current snapshot',
+        value: provenanceAgeMs === null
+          ? 'Snapshot available'
+          : `${formatAge(provenanceAgeMs)} old`,
+        detail: provenanceDetail,
+      };
+    };
+
+    const sources: SourceStatusView[] = [
+      requiredSource(
+        'weather',
+        'Weather',
+        'MET Norway',
+        cacheHealth.weatherLastModified,
+        'Forecast issued',
+      ),
+      requiredSource(
+        'water',
+        'Water level',
+        'DMI DKSS',
+        cacheHealth.marineInstances?.water?.id,
+        'Model run',
+      ),
+      requiredSource(
+        'waves',
+        'Waves',
+        'DMI WAM',
+        cacheHealth.marineInstances?.waves?.id,
+        'Model run',
+      ),
+      health.storageUnavailable
+        ? {
+            key: 'warnings', label: 'Warnings', provider: 'MeteoAlarm', tone: 'bad',
+            state: 'Unavailable', value: 'Storage unavailable',
+            detail: 'FRANK could not read the prepared cache.',
+          }
+        : missing
+          ? {
+              key: 'warnings', label: 'Warnings', provider: 'MeteoAlarm', tone: 'neutral',
+              state: 'Waiting', value: 'No snapshot yet',
+              detail: 'Warnings arrive with the first forecast snapshot.',
+            }
+          : {
+              key: 'warnings', label: 'Warnings', provider: 'MeteoAlarm', tone: 'neutral',
+              state: 'Advisory source', value: `${formatAge(age.ageMs)} snapshot`,
+              detail: 'Separate feed health is not stored; no false green is shown.',
+            },
+    ];
+    const sourceCards = sources.map((source) => `<section class="source-card tone-${source.tone}" data-source="${source.key}" role="listitem">
+      <div class="source-card-head">
+        <div><h4>${escapeHtml(source.label)}</h4><span>${escapeHtml(source.provider)}</span></div>
+        <span class="source-state"><i aria-hidden="true"></i>${escapeHtml(source.state)}</span>
+      </div>
+      <strong class="source-value">${escapeHtml(source.value)}</strong>
+      <span class="source-detail">${escapeHtml(source.detail)}</span>
+    </section>`).join('');
+    const overallTone = health.storageUnavailable || missing
+      ? 'bad'
+      : location.exactGenerationReady
+        ? 'good'
+        : 'warn';
+
+    return `<article class="location-module" data-location="${escapeHtml(location.id)}">
+      <header class="location-module-head">
+        <div class="location-identity"><span class="location-index">${escapeHtml(location.id)}</span><h3>${escapeHtml(location.areaName)}</h3></div>
+        <span class="generation-state ${overallTone}">${escapeHtml(generationState)}</span>
+      </header>
+      <div class="location-vitals">
+        <div><span>Last check</span><strong class="${initialization ? 'warn' : missing ? 'bad' : level(age.checkAgeMs, HEALTH_MAX_CHECK_AGE_MS)}">${escapeHtml(formatAge(age.checkAgeMs))}</strong><small>${escapeHtml(checkDetail)}</small></div>
+        <div><span>Forecast age</span><strong class="${missing ? 'bad' : level(age.ageMs, HEALTH_MAX_DATA_AGE_MS)}">${escapeHtml(missing ? 'no forecast' : formatAge(age.ageMs))}</strong><small>last complete rebuild</small></div>
+        <div><span>Cache state</span><strong class="${overallTone}">${escapeHtml(status)}</strong><small>${providerState ? escapeHtml(providerState) : 'prepared snapshot'}</small></div>
+      </div>
+      <div class="source-board" role="list" aria-label="${escapeHtml(`${location.areaName} source status`)}">${sourceCards}</div>
+    </article>`;
   }).join('');
 
   const rating: FrankStatusRating = health.ok && health.release.allLocationsReady
@@ -455,7 +603,8 @@ export function statusResponse(health: HealthPayload): Response {
   .frank-display-text {
     position:relative;
     z-index:1;
-    overflow-wrap:anywhere;
+    overflow-wrap:normal;
+    word-break:normal;
     text-shadow:0 0 8px color-mix(in srgb,currentColor 60%,transparent);
   }
   .operation-stamp {
@@ -526,52 +675,140 @@ export function statusResponse(health: HealthPayload): Response {
     color:var(--text-muted);
     font-size:var(--text-instrument);
   }
-  .table-wrap { width:100%; padding:6px 10px 10px; overflow-x:auto }
-  table { width:100%; border-collapse:separate; border-spacing:0 6px; table-layout:fixed }
-  th {
-    padding:3px 9px 5px;
+  .locations-board { display:grid; gap:10px; padding:10px }
+  .location-module {
+    overflow:hidden;
+    border:1px solid var(--module-edge);
+    border-radius:var(--radius-sm);
+    background:var(--module-bg);
+  }
+  .location-module-head {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:16px;
+    padding:11px 12px;
+    border-bottom:1px solid var(--module-edge);
+    background:color-mix(in srgb,var(--primary) 4%,var(--module-bg));
+  }
+  .location-identity { min-width:0 }
+  .location-identity h3 {
+    margin:1px 0 0;
+    font-size:.9375rem;
+    line-height:1.2;
+  }
+  .location-index {
+    display:block;
     color:var(--text-muted);
-    text-align:left;
-    vertical-align:bottom;
+    font:700 .625rem/1 var(--font-mono);
+    letter-spacing:.12em;
+    text-transform:uppercase;
+  }
+  .generation-state {
+    flex:0 0 auto;
     font-size:.625rem;
-    font-weight:750;
+    font-weight:800;
+    letter-spacing:.09em;
+    text-align:right;
+  }
+  .location-vitals {
+    display:grid;
+    grid-template-columns:repeat(3,minmax(0,1fr));
+    border-bottom:1px solid var(--module-edge);
+  }
+  .location-vitals > div {
+    display:grid;
+    align-content:start;
+    gap:2px;
+    min-width:0;
+    padding:10px 12px;
+  }
+  .location-vitals > div + div { border-left:1px solid var(--module-edge) }
+  .location-vitals span {
+    color:var(--text-muted);
+    font-size:.625rem;
+    font-weight:800;
     letter-spacing:.1em;
     text-transform:uppercase;
   }
-  th:first-child,td:first-child { width:14% }
-  th:nth-child(2) { width:17% }
-  th:nth-child(3) { width:8% }
-  th:nth-child(4) { width:20% }
-  th:nth-child(5) { width:13% }
-  th:nth-child(6) { width:10% }
-  th:nth-child(7) { width:10% }
-  th:nth-child(8) { width:8% }
-  td {
-    padding:10px 9px;
-    border-top:1px solid var(--module-edge);
-    border-bottom:1px solid var(--module-edge);
+  .location-vitals strong { font-size:var(--text-ui); overflow-wrap:anywhere }
+  .location-vitals small { color:var(--text-muted); font-size:var(--text-instrument); overflow-wrap:anywhere }
+  .source-board {
+    display:grid;
+    grid-template-columns:repeat(4,minmax(0,1fr));
+    gap:8px;
+    padding:10px;
+  }
+  .source-card {
+    --source-tone:#718096;
+    display:flex;
+    min-width:0;
+    min-height:116px;
+    flex-direction:column;
+    padding:10px;
+    border:1px solid var(--module-edge);
+    border-top:2px solid var(--source-tone);
+    border-radius:var(--radius-sm);
+    background:color-mix(in srgb,var(--source-tone) 2.5%,var(--panel-bg));
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.7);
+  }
+  .source-card.tone-good { --source-tone:var(--color-safe) }
+  .source-card.tone-warn { --source-tone:var(--color-caution) }
+  .source-card.tone-bad { --source-tone:var(--color-danger) }
+  .source-card-head {
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    gap:7px;
+  }
+  .source-card h4 { margin:0; font-size:var(--text-ui); line-height:1.15 }
+  .source-card-head > div > span {
+    display:block;
+    margin-top:2px;
+    color:var(--text-muted);
+    font-size:.625rem;
+  }
+  .source-state {
+    display:inline-flex;
+    max-width:52%;
+    align-items:flex-start;
+    justify-content:flex-end;
+    gap:4px;
+    color:var(--source-tone);
+    font-size:.59375rem;
+    font-weight:800;
+    line-height:1.15;
+    text-align:right;
+  }
+  .source-state i {
+    width:6px;
+    height:6px;
+    flex:0 0 auto;
+    margin-top:1px;
+    border-radius:50%;
+    background:currentColor;
+    box-shadow:0 0 4px color-mix(in srgb,currentColor 38%,transparent);
+  }
+  .source-value {
+    margin-top:auto;
+    padding-top:14px;
     color:var(--text-main);
-    background:var(--module-bg);
-    vertical-align:top;
+    font-size:var(--text-caption);
+    line-height:1.25;
     overflow-wrap:anywhere;
   }
-  td:first-child {
-    padding-left:12px;
-    border-left:1px solid var(--module-edge);
-    border-radius:var(--radius-sm) 0 0 var(--radius-sm);
+  .source-detail {
+    margin-top:3px;
+    color:var(--text-muted);
+    font:var(--text-instrument)/1.3 var(--font-mono);
+    overflow-wrap:anywhere;
   }
-  td:last-child {
-    padding-right:12px;
-    border-right:1px solid var(--module-edge);
-    border-radius:0 var(--radius-sm) var(--radius-sm) 0;
-  }
-  .location-cell strong { font-size:var(--text-body) }
   .good { color:var(--color-safe-text) }
   .warn { color:var(--color-caution-text) }
   .bad { color:var(--color-danger-text) }
+  .neutral { color:var(--text-muted) }
   .dim { color:var(--text-muted) }
   .mono { font:var(--text-caption)/1.45 var(--font-mono); letter-spacing:.01em }
-  .hdr-sub { font-weight:500; text-transform:none; letter-spacing:0; opacity:.82 }
 
   .notes {
     margin-top:12px;
@@ -615,65 +852,8 @@ export function statusResponse(health: HealthPayload): Response {
   @media (max-width:720px) {
     .status-shell { padding:12px 10px 24px }
     .panel-bezel { align-items:flex-start; flex-direction:column; gap:2px; padding:10px 12px }
-    .table-wrap { padding:8px; overflow:visible }
-    table,tbody,tr,td { display:block; width:100% }
-    table { table-layout:auto; border-spacing:0 }
-    thead {
-      position:absolute;
-      width:1px;
-      height:1px;
-      padding:0;
-      margin:-1px;
-      overflow:hidden;
-      clip:rect(0,0,0,0);
-      white-space:nowrap;
-      border:0;
-    }
-    tbody { display:grid; gap:8px }
-    tbody tr {
-      display:grid;
-      grid-template-columns:1fr 1fr;
-      overflow:hidden;
-      border:1px solid var(--module-edge);
-      border-radius:var(--radius-sm);
-      background:var(--module-bg);
-    }
-    td,th:first-child,td:first-child {
-      width:auto;
-      min-width:0;
-      padding:9px 10px;
-      border:0;
-      border-top:1px solid var(--module-edge);
-      border-radius:0;
-      background:transparent;
-    }
-    td:nth-child(even) { border-left:1px solid var(--module-edge) }
-    td::before {
-      content:attr(data-label);
-      display:block;
-      margin-bottom:3px;
-      color:var(--text-muted);
-      font-size:.625rem;
-      font-weight:800;
-      letter-spacing:.1em;
-      text-transform:uppercase;
-    }
-    td.location-cell {
-      grid-column:1/-1;
-      padding:10px;
-      border-top:0;
-      border-left:0;
-      background:color-mix(in srgb,var(--primary) 4%,var(--module-bg));
-    }
-    .location-cell::before { display:none }
-    .location-cell strong { font-size:.9375rem }
-    td.status-cell {
-      grid-column:1/-1;
-      border-left:0;
-    }
-    td.source-weather { grid-column:1/-1; border-left:0 }
-    td.source-water { border-left:0 }
-    td.degraded-cell { grid-column:1/-1; border-left:0 }
+    .locations-board { padding:8px }
+    .source-board { grid-template-columns:repeat(2,minmax(0,1fr)) }
     .notes summary { padding:12px }
     .notes-content { padding:0 12px 14px }
   }
@@ -690,11 +870,21 @@ export function statusResponse(health: HealthPayload): Response {
     .frank-crt { width:64px; height:64px }
     .frank-crt .gerty-face { width:42px; height:42px }
     .frank-cell-display { padding:0 12px }
-    .frank-display { min-height:56px; padding:6px 8px; font-size:1.3125rem }
+    .frank-display { min-height:56px; padding:6px 8px; font-size:1.125rem }
     .frank-nameplate { letter-spacing:.45em; text-indent:.45em }
     .operation-stamp { padding:7px 8px; font-size:.625rem }
     .operation-stamp strong { font-size:.6875rem }
     .frank-location { font-size:.6875rem; letter-spacing:.08em }
+    .location-module-head { align-items:flex-start; flex-direction:column; gap:6px }
+    .generation-state { text-align:left }
+    .location-vitals { grid-template-columns:1fr 1fr }
+    .location-vitals > div:nth-child(3) {
+      grid-column:1/-1;
+      border-top:1px solid var(--module-edge);
+      border-left:0;
+    }
+    .source-board { grid-template-columns:1fr }
+    .source-card { min-height:104px }
   }
   @media (max-width:360px) {
     .status-shell { padding-right:8px; padding-left:8px }
@@ -752,28 +942,24 @@ export function statusResponse(health: HealthPayload): Response {
       <h2 id="locations-title">Forecast locations</h2>
       <p>${escapeHtml(statusDetail)}</p>
     </div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Location</th><th>Last check<br><span class="hdr-sub">own cycle per location</span></th><th>Data age<br><span class="hdr-sub">last rebuild</span></th><th>Status<br><span class="hdr-sub">data generation</span></th><th>Weather<br><span class="hdr-sub">MET issue</span></th><th>Water<br><span class="hdr-sub">DMI run</span></th><th>Waves<br><span class="hdr-sub">DMI run</span></th><th>Degraded</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
+    <div class="locations-board">${locationCards}</div>
   </section>
 
   <details class="notes">
     <summary>How to read this instrument</summary>
     <div class="notes-content">
-      <p>Last check counts from the most recent time the worker asked MET and DMI whether
-      anything had changed. The schedule runs every 10 minutes, but the timestamp is only
-      written to storage once it is 15 minutes old, because each write comes out of a daily
-      quota. A figure of 15 or 20 minutes therefore does not mean a check was missed.</p>
+      <p>Last check is the most recent scheduled or authenticated release attempt for the
+      required forecast sources. The schedule runs every 10 minutes, but the timestamp is
+      only written to storage once it is 15 minutes old, because each write comes out of a
+      daily quota. A figure of 15 or 20 minutes therefore does not mean a check was missed.</p>
 
       <p>Each location also runs that cycle independently, so the four rows are normally out
       of step with each other. One city reading 2 minutes while another reads 11 is the
       expected picture, not a fault: a location's stamp is also rewritten whenever that
-      location rebuilds, which follows its own MET validity window. Visitor requests only
-  read prepared snapshots and do not alter this clock. The rows only line up right after
-      a deploy, when all four are built at once. The alarm sits at
+      location rebuilds, which follows its own MET validity window. Ordinary visits, page
+      reloads and the in-app refresh button only read prepared KV snapshots; they do not
+      contact providers or alter this clock. The cards only line up right after a deploy,
+      when all four are built at once. The alarm sits at
       ${escapeHtml(health.checkStaleAfterMin)} minutes, well clear of the whole cycle.
       Worst right now: ${escapeHtml(health.oldestCheckAgeMin ?? '?')} minutes.</p>
 
@@ -786,9 +972,15 @@ export function statusResponse(health: HealthPayload): Response {
       ${escapeHtml(health.oldestAgeMin ?? '?')} minutes.</p>
 
       <p>The word under Last check names what triggered it. <code>cron</code> is the
-      10-minute schedule. <code>release-candidate</code> is a deployment warm-up for this
-      immutable data generation. Ordinary visitors and the refresh
-      button only read prepared snapshots; they never start provider work.</p>
+      10-minute schedule. <code>release-candidate</code> is an authenticated shadow warm-up
+      for this immutable data generation. Only those operational paths may start provider
+      work.</p>
+
+      <p>MET shows the age of its forecast issue; DKSS and WAM show the age of their model
+      runs. Amber means FRANK is serving last-good data or the relevant provider was busy.
+      MeteoAlarm is advisory and currently has no separately persisted provider clock, so
+      its card deliberately reports the prepared snapshot age instead of inventing a green
+      upstream status.</p>
 
       <p>This page reloads every 30 seconds and is meant for reading. The machine-readable
       alarm lives at <a href="/health">/health</a>, which returns 503 and a
