@@ -7,7 +7,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 //   node scripts/resolve-worker-release.mjs --source-sha <40-hex-sha> \
 //     [--github-output <path>]
 // GitHub outputs: action, source_sha, candidate_tag, deployment_mode,
-// production_version_id, production_source_sha, and candidate_version_id.
+// production_version_id/source_sha, candidate_version_id, and the currently
+// staged candidate version/source identities (when present).
 
 const execFileAsync = promisify(execFile);
 const WRANGLER_CLI = fileURLToPath(new URL('../node_modules/wrangler/bin/wrangler.js', import.meta.url));
@@ -122,6 +123,8 @@ function sourceShaForVersion(versionsList, versionId) {
 /**
  * Resolve the only safe next step without changing Worker traffic or uploading code.
  *
+ * `replace-staged`: an older deterministic zero-traffic candidate must be
+ * removed before this source can be uploaded or staged.
  * `upload`: no version exists for this source SHA.
  * `stage`: the immutable candidate exists but is not in the 100/0 deployment.
  * `warm`: the exact candidate is already staged at zero traffic.
@@ -143,18 +146,23 @@ export function resolveWorkerReleasePlan({
 
   let action;
   let candidateVersionId = taggedCandidateVersionId;
+  let stagedCandidateVersionId = deployment.stagedCandidateVersionId;
+  let stagedCandidateSourceSha = '';
   if (deployment.mode === 'staged') {
-    if (!taggedCandidateVersionId) {
-      throw new Error(
-        `The zero-traffic Worker version is not the candidate tagged ${candidateTag}.`,
-      );
+    stagedCandidateSourceSha = sourceShaForVersion(
+      versionsList,
+      deployment.stagedCandidateVersionId,
+    );
+    if (taggedCandidateVersionId === deployment.stagedCandidateVersionId) {
+      action = 'warm';
+    } else {
+      if (!stagedCandidateSourceSha || stagedCandidateSourceSha === normalizedSha) {
+        throw new Error(
+          'The zero-traffic Worker version has no safe deterministic source identity.',
+        );
+      }
+      action = 'replace-staged';
     }
-    if (taggedCandidateVersionId !== deployment.stagedCandidateVersionId) {
-      throw new Error(
-        `The staged Worker candidate does not match source SHA ${normalizedSha}.`,
-      );
-    }
-    action = 'warm';
   } else if (!taggedCandidateVersionId) {
     action = 'upload';
   } else if (taggedCandidateVersionId === deployment.productionVersionId) {
@@ -164,6 +172,7 @@ export function resolveWorkerReleasePlan({
   }
 
   if (action === 'upload') candidateVersionId = '';
+  if (deployment.mode === 'clean') stagedCandidateVersionId = '';
   return Object.freeze({
     action,
     sourceSha: normalizedSha,
@@ -172,6 +181,8 @@ export function resolveWorkerReleasePlan({
     productionVersionId: deployment.productionVersionId,
     productionSourceSha,
     candidateVersionId,
+    stagedCandidateVersionId,
+    stagedCandidateSourceSha,
   });
 }
 
@@ -246,6 +257,8 @@ export function githubOutputForWorkerRelease(plan) {
     `production_version_id=${plan.productionVersionId}`,
     `production_source_sha=${plan.productionSourceSha}`,
     `candidate_version_id=${plan.candidateVersionId}`,
+    `staged_candidate_version_id=${plan.stagedCandidateVersionId}`,
+    `staged_candidate_source_sha=${plan.stagedCandidateSourceSha}`,
     '',
   ].join('\n');
 }

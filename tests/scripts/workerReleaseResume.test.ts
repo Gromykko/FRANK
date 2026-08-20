@@ -68,6 +68,8 @@ describe('resumable Worker release plan', () => {
       productionVersionId: PRODUCTION_ID,
       productionSourceSha: '1'.repeat(40),
       candidateVersionId: '',
+      stagedCandidateVersionId: '',
+      stagedCandidateSourceSha: '',
     });
   });
 
@@ -116,6 +118,42 @@ describe('resumable Worker release plan', () => {
     });
   });
 
+  it('returns a typed replacement plan for an older deterministic zero-traffic candidate', () => {
+    const olderSha = '3'.repeat(40);
+    expect(resolveWorkerReleasePlan({
+      sourceSha: SOURCE_SHA,
+      deploymentStatus: stagedDeployment(OTHER_ID),
+      versionsList: [
+        productionVersion(),
+        taggedVersion(OTHER_ID, `frank-sha-${olderSha}`),
+      ],
+    })).toMatchObject({
+      action: 'replace-staged',
+      productionVersionId: PRODUCTION_ID,
+      candidateVersionId: '',
+      stagedCandidateVersionId: OTHER_ID,
+      stagedCandidateSourceSha: olderSha,
+    });
+  });
+
+  it('reuses the desired upload after safely replacing an older staged candidate', () => {
+    const olderSha = '3'.repeat(40);
+    expect(resolveWorkerReleasePlan({
+      sourceSha: SOURCE_SHA,
+      deploymentStatus: stagedDeployment(OTHER_ID),
+      versionsList: [
+        productionVersion(),
+        taggedVersion(),
+        taggedVersion(OTHER_ID, `frank-sha-${olderSha}`),
+      ],
+    })).toMatchObject({
+      action: 'replace-staged',
+      candidateVersionId: CANDIDATE_ID,
+      stagedCandidateVersionId: OTHER_ID,
+      stagedCandidateSourceSha: olderSha,
+    });
+  });
+
   it('is complete when the exact tagged version already serves all traffic', () => {
     expect(resolveWorkerReleasePlan({
       sourceSha: SOURCE_SHA,
@@ -134,11 +172,6 @@ describe('resumable Worker release plan', () => {
       name: 'an untagged zero-traffic version',
       deploymentStatus: stagedDeployment(),
       versionsList: [productionVersion()],
-    },
-    {
-      name: 'a staged version belonging to another source',
-      deploymentStatus: stagedDeployment(OTHER_ID),
-      versionsList: [productionVersion(), taggedVersion()],
     },
     {
       name: 'an ambiguous deterministic tag',
@@ -237,6 +270,8 @@ describe('release-resume CLI contract', () => {
       `production_version_id=${PRODUCTION_ID}`,
       `production_source_sha=${'1'.repeat(40)}`,
       `candidate_version_id=${CANDIDATE_ID}`,
+      `staged_candidate_version_id=${CANDIDATE_ID}`,
+      `staged_candidate_source_sha=${NORMALIZED_SHA}`,
       '',
     ].join('\n'));
   });
