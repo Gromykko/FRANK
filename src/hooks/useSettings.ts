@@ -2,14 +2,12 @@ import { useCallback, useEffect, useState, useRef } from 'react';
 import {
   DEFAULT_SETTINGS,
   getPresetSettings,
-  LEGACY_SETTINGS_STORAGE_KEY,
   SETTINGS_STORAGE_KEY,
   CUSTOM_SETTINGS_STORAGE_KEY,
-  LEGACY_CUSTOM_SETTINGS_STORAGE_KEY,
 } from '../features/safety/presets';
 import type { SafetySettings } from '../features/safety/presets';
 import { floorCaution, MIN_CAUTION_GAP } from '../features/safety/presets';
-import { CURRENT_LOCATION, DEFAULT_LOCATION_ID } from '../config/locations';
+import { CURRENT_LOCATION } from '../config/locations';
 import type { ForecastLocation } from '../config/locations';
 import { readStorage } from '../utils/storage';
 import { clampNumber, roundToDecimals } from '../utils/number';
@@ -20,11 +18,11 @@ export type { SafetySettings } from '../features/safety/presets';
 // Pages build, service-worker cache, forecast API, payload, or Worker data
 // generation: those can all change without changing a user's choices.
 //
-// The metadata is inline rather than wrapping `settings`. That keeps the
-// record backwards-compatible with a previous FRANK shell: an older client
-// ignores the unknown metadata field but can still read every setting at its
-// familiar top-level path. A future breaking settings format must use an
-// explicit migration/expand-contract step before this number is advanced.
+// Metadata stays beside the settings rather than wrapping them. The shallow
+// shape preserves additive fields through read/write cycles, while the schema
+// marker lets us reject records from another location or an incompatible
+// future format. A future breaking format needs an explicit migration before
+// this number advances.
 export const SETTINGS_STORAGE_SCHEMA_VERSION = 1;
 export const SETTINGS_STORAGE_METADATA_KEY = '__frankSettingsStorage';
 const SETTINGS_STORAGE_KIND = 'frank-safety-settings';
@@ -33,13 +31,6 @@ interface SettingsStorageMetadata {
   kind: typeof SETTINGS_STORAGE_KIND;
   schemaVersion: typeof SETTINGS_STORAGE_SCHEMA_VERSION;
   locationId: string;
-}
-
-export interface DecodedStoredSettings {
-  settings: SafetySettings;
-  // Raw pre-schema records remain supported and are rewritten in the current
-  // inline format only after they have parsed and healed successfully.
-  needsMigration: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -59,52 +50,6 @@ export function serializeStoredSettings(
     ...(settings as unknown as Record<string, unknown>),
     [SETTINGS_STORAGE_METADATA_KEY]: metadata,
   });
-}
-
-// Settings saved under the old fixed easterly/westerly model carried 8 flat
-// fields; the new model keys caps by sector id. Map easterly*→the onshore
-// sector, westerly*→the offshore sector, preserving each user's exact caps (and
-// any edited angle, so their verdict never changes). Runs once; new-shape
-// settings (already carrying sectorLimits) pass through untouched.
-export function migrateLegacySectors(raw: Record<string, unknown>, location: ForecastLocation): Record<string, unknown> {
-  if (raw.sectorLimits) return raw;
-  if (raw.easterlyLimit === undefined && raw.westerlyLimit === undefined) return raw;
-
-  const onshore = location.windSectors.find((s) => s.exposure === 'onshore') ?? location.windSectors[0];
-  const offshore = location.windSectors.find((s) => s.exposure === 'offshore') ?? location.windSectors[1];
-  const sectorLimits: Record<string, { safe: number; caution: number }> = {};
-  const sectorAngles: Record<string, { min: number; max: number }> = {};
-
-  const carry = (
-    sector: ForecastLocation['windSectors'][number] | undefined,
-    min: unknown, max: unknown, safe: unknown, caution: unknown
-  ) => {
-    if (!sector) return;
-    if (typeof safe === 'number') {
-      const cautionVal = typeof caution === 'number' ? caution : sector.cautionLimit;
-      sectorLimits[sector.id] = { safe, caution: floorCaution(safe, cautionVal) };
-    }
-    // Only record an angle override if the user had actually moved it off the
-    // location default — unedited users use pure location geometry.
-    if (typeof min === 'number' && typeof max === 'number' && (min !== sector.min || max !== sector.max)) {
-      sectorAngles[sector.id] = { min, max };
-    }
-  };
-  carry(onshore, raw.easterlyMin, raw.easterlyMax, raw.easterlyLimit, raw.easterlyCautionLimit);
-  carry(offshore, raw.westerlyMin, raw.westerlyMax, raw.westerlyLimit, raw.westerlyCautionLimit);
-
-  const rest = { ...raw };
-  for (const key of [
-    'easterlyMin', 'easterlyMax', 'easterlyLimit', 'easterlyCautionLimit',
-    'westerlyMin', 'westerlyMax', 'westerlyLimit', 'westerlyCautionLimit',
-  ]) {
-    delete rest[key];
-  }
-  return {
-    ...rest,
-    ...(Object.keys(sectorLimits).length ? { sectorLimits } : {}),
-    ...(Object.keys(sectorAngles).length ? { sectorAngles } : {}),
-  };
 }
 
 // A stored profile can hold a sector caution cap below its safe cap (the
@@ -176,18 +121,6 @@ function coerceNumericLimits(s: SafetySettings): SafetySettings {
   // planner (where an unknown tide preference silently behaves like "any").
   if (!TRIP_MODES.includes(out.tripMode)) out.tripMode = DEFAULT_SETTINGS.tripMode;
   if (!TIDE_PREFERENCES.includes(out.tidePreference)) out.tidePreference = DEFAULT_SETTINGS.tidePreference;
-  // Angles are the one field `??` in resolveSectors can't defend: a string
-  // survives it and `"abc" >= 90` is false, so the sector silently never
-  // matches and its stricter directional cap vanishes. Drop anything that
-  // isn't a real bearing so the curated geometry is used instead.
-  if (out.sectorAngles) {
-    const sectorAngles: NonNullable<SafetySettings['sectorAngles']> = {};
-    for (const [id, angle] of Object.entries(out.sectorAngles)) {
-      const inRange = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v < 360;
-      if (inRange(angle?.min) && inRange(angle?.max)) sectorAngles[id] = { min: angle.min, max: angle.max };
-    }
-    out.sectorAngles = sectorAngles;
-  }
   // Sector caps come from the same untrusted blob and feed the same comparisons.
   const sectorLimits: SafetySettings['sectorLimits'] = {};
   const isFiniteNumber = (value: unknown): value is number =>
@@ -245,37 +178,29 @@ export function healSettings(s: SafetySettings): SafetySettings {
   };
 }
 
-// Decode both the original raw object and the current versioned record. The
-// recognized values remain top-level for backwards compatibility; metadata is
-// removed before settings enter React state. A malformed/future envelope is a
-// whole-record failure so the caller can preserve its original bytes, while a
-// malformed individual setting is still healed independently below.
+// Only the current location-scoped schema is readable. A missing, malformed,
+// future, or misplaced marker is a whole-record failure so the caller can
+// preserve the original bytes; malformed individual settings inside a valid
+// record are still healed independently below.
 export function decodeStoredSettings(
   json: string,
   location: ForecastLocation = CURRENT_LOCATION,
-): DecodedStoredSettings {
+) {
   const parsed: unknown = JSON.parse(json);
   if (!isRecord(parsed)) throw new Error('Stored settings must be a JSON object');
 
   const metadata = parsed[SETTINGS_STORAGE_METADATA_KEY];
-  let needsMigration = true;
-  const raw = { ...parsed };
-
-  if (metadata !== undefined) {
-    if (!isRecord(metadata)
-      || metadata.kind !== SETTINGS_STORAGE_KIND
-      || metadata.schemaVersion !== SETTINGS_STORAGE_SCHEMA_VERSION
-      || metadata.locationId !== location.id) {
-      throw new Error('Unsupported or misplaced settings storage schema');
-    }
-    needsMigration = false;
-    delete raw[SETTINGS_STORAGE_METADATA_KEY];
+  if (!isRecord(metadata)
+    || metadata.kind !== SETTINGS_STORAGE_KIND
+    || metadata.schemaVersion !== SETTINGS_STORAGE_SCHEMA_VERSION
+    || metadata.locationId !== location.id) {
+    throw new Error('Unsupported or misplaced settings storage schema');
   }
 
-  const migrated = migrateLegacySectors(raw, location);
+  const raw = { ...parsed };
+  delete raw[SETTINGS_STORAGE_METADATA_KEY];
   return {
-    settings: healSettings({ ...DEFAULT_SETTINGS, ...migrated } as SafetySettings),
-    needsMigration,
+    settings: healSettings({ ...DEFAULT_SETTINGS, ...raw } as SafetySettings),
   };
 }
 
@@ -305,29 +230,13 @@ function persistStoredSettings(storageKey: string, settings: SafetySettings, unr
   }
 }
 
-interface PendingStorageMigration {
-  sourceKey: string;
-  sourceRaw: string;
-  targetRawAtLoad: string | null;
-}
-
-function migrationSourceIsUnchanged(targetKey: string, migration: PendingStorageMigration): boolean {
-  // localStorage has no compare-and-set primitive. Rechecking both slots just
-  // before the migration write is the important half: a slower old/new tab
-  // must never overwrite a more recent user edit it did not load.
-  return readStorage(migration.sourceKey) === migration.sourceRaw
-    && readStorage(targetKey) === migration.targetRawAtLoad;
-}
-
 export function useSettings() {
   const customProfileRef = useRef<SafetySettings | null>(null);
   const customWriteNeededRef = useRef(false);
-  const customMigrationRef = useRef<PendingStorageMigration | null>(null);
   const customSlotMissingRef = useRef(false);
   const customWriteAuthorizedRef = useRef(false);
   const customRecoveryAvailableRef = useRef(false);
   const activeWriteNeededRef = useRef(false);
-  const activeMigrationRef = useRef<PendingStorageMigration | null>(null);
   // The raw bytes of a stored profile we could not parse, or null. A failed load
   // must NOT be silently replaced: the debounced write below fires on mount too,
   // so falling back to defaults used to stamp them over the unreadable blob
@@ -350,32 +259,13 @@ export function useSettings() {
   const hasEditedRef = useRef(false);
 
   const [settings, setSettings] = useState<SafetySettings>(() => {
-    // The unsuffixed legacy keys predate multi-location and can only have been
-    // written by the Horsens-only build. Reading them for every city
-    // transplanted inner-fjord caps onto open-water sectors (Aarhus Bugt).
-    const legacyOwnsThisLocation = CURRENT_LOCATION.id === DEFAULT_LOCATION_ID;
-    const currentSavedCustom = readStorage(CUSTOM_SETTINGS_STORAGE_KEY);
-    const legacySavedCustom = currentSavedCustom === null && legacyOwnsThisLocation
-      ? readStorage(LEGACY_CUSTOM_SETTINGS_STORAGE_KEY)
-      : null;
-    const savedCustom = currentSavedCustom ?? legacySavedCustom;
-    const savedCustomSourceKey = currentSavedCustom !== null
-      ? CUSTOM_SETTINGS_STORAGE_KEY
-      : LEGACY_CUSTOM_SETTINGS_STORAGE_KEY;
-    customSlotMissingRef.current = currentSavedCustom === null;
+    const savedCustom = readStorage(CUSTOM_SETTINGS_STORAGE_KEY);
+    customSlotMissingRef.current = savedCustom === null;
     if (savedCustom !== null) {
       try {
         const decoded = decodeStoredSettings(savedCustom);
         customProfileRef.current = { ...decoded.settings, tripMode: 'custom' };
         customRecoveryAvailableRef.current = true;
-        if (decoded.needsMigration || savedCustomSourceKey !== CUSTOM_SETTINGS_STORAGE_KEY) {
-          customWriteNeededRef.current = true;
-          customMigrationRef.current = {
-            sourceKey: savedCustomSourceKey,
-            sourceRaw: savedCustom,
-            targetRawAtLoad: currentSavedCustom,
-          };
-        }
       } catch {
         customLoadFailedRef.current = savedCustom;
       }
@@ -384,24 +274,11 @@ export function useSettings() {
       customProfileRef.current = getPresetSettings('custom');
     }
 
-    const currentSaved = readStorage(SETTINGS_STORAGE_KEY);
-    const legacySaved = currentSaved === null && legacyOwnsThisLocation
-      ? readStorage(LEGACY_SETTINGS_STORAGE_KEY)
-      : null;
-    const saved = currentSaved ?? legacySaved;
-    const savedSourceKey = currentSaved !== null ? SETTINGS_STORAGE_KEY : LEGACY_SETTINGS_STORAGE_KEY;
+    const saved = readStorage(SETTINGS_STORAGE_KEY);
     if (saved !== null) {
       try {
         const decoded = decodeStoredSettings(saved);
         const parsed = decoded.settings;
-        if (decoded.needsMigration || savedSourceKey !== SETTINGS_STORAGE_KEY) {
-          activeWriteNeededRef.current = true;
-          activeMigrationRef.current = {
-            sourceKey: savedSourceKey,
-            sourceRaw: saved,
-            targetRawAtLoad: currentSaved,
-          };
-        }
         if (parsed.tripMode === 'custom') {
           // The active record is itself a valid last-good Custom profile. Use
           // it to recover a missing/corrupt remembered-custom slot rather than
@@ -433,30 +310,20 @@ export function useSettings() {
 
     const write = () => {
       if (canWriteActive) {
-        const migration = activeMigrationRef.current;
-        if (migration && !migrationSourceIsUnchanged(SETTINGS_STORAGE_KEY, migration)) {
-          activeMigrationRef.current = null;
-          activeWriteNeededRef.current = false;
-        } else if (persistStoredSettings(SETTINGS_STORAGE_KEY, settings, activeLoadFailedRef.current)) {
+        if (persistStoredSettings(SETTINGS_STORAGE_KEY, settings, activeLoadFailedRef.current)) {
           activeLoadFailedRef.current = null;
-          activeMigrationRef.current = null;
           activeWriteNeededRef.current = false;
         }
       }
 
       if (canWriteCustom && shouldWriteCustom && customProfileRef.current) {
         // When Custom is active, state is the newest source of truth. When it
-        // is inactive, only a successfully decoded legacy custom profile is
-        // eligible for the one-time format migration.
+        // is inactive, use the last valid remembered profile for an authorized
+        // recovery or an explicitly requested save.
         const custom = settings.tripMode === 'custom' ? settings : customProfileRef.current;
-        const migration = customMigrationRef.current;
-        if (migration && !migrationSourceIsUnchanged(CUSTOM_SETTINGS_STORAGE_KEY, migration)) {
-          customMigrationRef.current = null;
-          customWriteNeededRef.current = false;
-        } else if (persistStoredSettings(CUSTOM_SETTINGS_STORAGE_KEY, custom, customLoadFailedRef.current)) {
+        if (persistStoredSettings(CUSTOM_SETTINGS_STORAGE_KEY, custom, customLoadFailedRef.current)) {
           customProfileRef.current = custom;
           customLoadFailedRef.current = null;
-          customMigrationRef.current = null;
           customWriteNeededRef.current = false;
           customSlotMissingRef.current = false;
         }
@@ -479,7 +346,6 @@ export function useSettings() {
 
   const saveSettings = useCallback((newSettings: SafetySettings) => {
     hasEditedRef.current = true;
-    activeMigrationRef.current = null;
     activeWriteNeededRef.current = true;
     // Heal on the way in (idempotent for the editors, which already maintain
     // the invariants) so an inverted band can never reach the assessment.
@@ -489,14 +355,12 @@ export function useSettings() {
       customProfileRef.current = healed;
       customWriteAuthorizedRef.current = true;
       customRecoveryAvailableRef.current = true;
-      customMigrationRef.current = null;
       customWriteNeededRef.current = true;
     }
   }, []);
 
   const setTripMode = useCallback((mode: SafetySettings['tripMode']) => {
     hasEditedRef.current = true;
-    activeMigrationRef.current = null;
     activeWriteNeededRef.current = true;
     if (mode === 'custom') {
       if (customSlotMissingRef.current && customLoadFailedRef.current === null) {
@@ -522,7 +386,6 @@ export function useSettings() {
           customLoadFailedRef.current,
         )) {
         customLoadFailedRef.current = null;
-        customMigrationRef.current = null;
         customWriteNeededRef.current = false;
         customSlotMissingRef.current = false;
       }

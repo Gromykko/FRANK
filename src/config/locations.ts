@@ -4,11 +4,11 @@ import type { ForecastLocation } from './locationTypes';
 
 // Keep the public type surface stable for existing frontend imports while the
 // Worker can consume the pure definitions without pulling browser-only code.
-export type { ForecastLocation, SectorExposure, WindSector } from './locationTypes';
+export type { ForecastLocation, WindSector } from './locationTypes';
 
 const FORECAST_LOCATIONS = locations as ForecastLocation[];
-// Also the only city the app supported before it became multi-location, so it
-// is the one location the unsuffixed legacy storage keys can have belonged to.
+// Deterministic fallback when neither a saved choice nor a build-time default
+// names a configured location.
 export const DEFAULT_LOCATION_ID = 'horsens';
 const LOCATION_STORAGE_KEY = 'frank_location';
 

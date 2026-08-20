@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   decodeStoredSettings,
   healSectorCautions,
-  migrateLegacySectors,
   parseStoredSettings,
   serializeStoredSettings,
   SETTINGS_STORAGE_METADATA_KEY,
@@ -14,18 +13,9 @@ import type { SafetySettings } from '../../src/features/safety/presets';
 import { CURRENT_LOCATION } from '../../src/config/locations';
 import type { HourlyData } from '../../src/features/forecast/types';
 
-const onshore = CURRENT_LOCATION.windSectors.find((s) => s.id === 'onshore')!; // Horsens 45–135, 4.5/7.0
-const offshore = CURRENT_LOCATION.windSectors.find((s) => s.id === 'offshore')!; // Horsens 225–315, 5.5/8.0
-
-// A legacy profile as stored before the sector-list refactor.
-function legacyBlob(overrides: Record<string, unknown> = {}) {
-  return {
-    tripMode: 'custom',
-    enableCustomWindDirs: true,
-    easterlyMin: onshore.min, easterlyMax: onshore.max, easterlyLimit: 4.5, easterlyCautionLimit: 7.0,
-    westerlyMin: offshore.min, westerlyMax: offshore.max, westerlyLimit: 5.5, westerlyCautionLimit: 8.0,
-    ...overrides,
-  };
+function currentRecord(overrides: Record<string, unknown> = {}): string {
+  const stored = JSON.parse(serializeStoredSettings(DEFAULT_SETTINGS)) as Record<string, unknown>;
+  return JSON.stringify({ ...stored, ...overrides });
 }
 
 const baseData: HourlyData = {
@@ -33,31 +23,6 @@ const baseData: HourlyData = {
   windDirection: 180, waveHeight: 0.1, wavePeriod: 3, waveDirection: 180, tideLevel: 0,
   precipitation: 0, symbolCode: 'clearsky_day', weatherCode: 0, currentSpeed: 0, currentDirection: 0, isDay: true,
 };
-
-describe('migrateLegacySectors', () => {
-  it('maps easterly*/westerly* onto sector ids with exact caps and strips the old keys', () => {
-    const out = migrateLegacySectors(legacyBlob(), CURRENT_LOCATION) as Record<string, unknown>;
-    const limits = out.sectorLimits as Record<string, { safe: number; caution: number }>;
-    expect(limits.onshore).toEqual({ safe: 4.5, caution: 7.0 });
-    expect(limits.offshore).toEqual({ safe: 5.5, caution: 8.0 });
-    for (const k of ['easterlyMin', 'easterlyLimit', 'westerlyMax', 'westerlyCautionLimit']) {
-      expect(out).not.toHaveProperty(k);
-    }
-  });
-
-  it('records a sectorAngles override ONLY when the stored angle diverged from the location default', () => {
-    const edited = migrateLegacySectors(legacyBlob({ easterlyMin: 30 }), CURRENT_LOCATION) as Record<string, unknown>;
-    expect(edited.sectorAngles).toEqual({ onshore: { min: 30, max: onshore.max } });
-
-    const unedited = migrateLegacySectors(legacyBlob(), CURRENT_LOCATION) as Record<string, unknown>;
-    expect(unedited).not.toHaveProperty('sectorAngles'); // pure location geometry
-  });
-
-  it('passes a new-shape blob (already has sectorLimits) through untouched', () => {
-    const already = { tripMode: 'custom', sectorLimits: { onshore: { safe: 3, caution: 4 } } };
-    expect(migrateLegacySectors(already, CURRENT_LOCATION)).toBe(already);
-  });
-});
 
 describe('healSectorCautions', () => {
   it('lifts an inverted caution cap to safe + 0.5', () => {
@@ -67,23 +32,18 @@ describe('healSectorCautions', () => {
 });
 
 describe('parseStoredSettings', () => {
-  it('the migrated profile produces the SAME verdict the legacy caps would have (zero-verdict-change)', () => {
-    const migrated = parseStoredSettings(JSON.stringify(legacyBlob({ maxWindSpeedSafe: 20, maxWindSpeedCaution: 25 })));
-    // Direction 90 (easterly/onshore), 5.0 m/s: over the 4.5 safe cap, under 7.0 → caution.
-    const atOnshore = analyzeSafetyConditions({ ...baseData, windDirection: 90, windSpeed: 5.0 }, migrated);
-    expect(atOnshore.rating).toBe('caution');
-    // 7.0 m/s hits the onshore danger cap.
-    expect(analyzeSafetyConditions({ ...baseData, windDirection: 90, windSpeed: 7.0 }, migrated).rating).toBe('danger');
-  });
-
   it('heals an inverted general-wind band on load', () => {
-    const parsed = parseStoredSettings(JSON.stringify(legacyBlob({ maxWindSpeedSafe: 8, maxWindSpeedCaution: 6 })));
+    const parsed = parseStoredSettings(currentRecord({
+      tripMode: 'custom',
+      maxWindSpeedSafe: 8,
+      maxWindSpeedCaution: 6,
+    }));
     expect(parsed.maxWindSpeedCaution).toBeGreaterThanOrEqual(parsed.maxWindSpeedSafe + 0.5);
   });
 });
 
 describe('versioned settings storage', () => {
-  it('migrates the original raw object without changing valid choices', () => {
+  it('round-trips current records without changing valid or additive fields', () => {
     const raw = {
       ...DEFAULT_SETTINGS,
       tripMode: 'custom' as const,
@@ -93,8 +53,8 @@ describe('versioned settings storage', () => {
       futureCompatibleField: { retain: true },
     };
 
-    const decoded = decodeStoredSettings(JSON.stringify(raw));
-    expect(decoded.needsMigration).toBe(true);
+    const storedJson = serializeStoredSettings(raw);
+    const decoded = decodeStoredSettings(storedJson);
     expect(decoded.settings).toMatchObject({
       tripMode: 'custom',
       maxWindSpeedSafe: 4.2,
@@ -104,24 +64,22 @@ describe('versioned settings storage', () => {
       futureCompatibleField: { retain: true },
     });
 
-    const migratedJson = serializeStoredSettings(decoded.settings);
-    const migratedRecord = JSON.parse(migratedJson) as Record<string, unknown>;
-    expect(migratedRecord.maxWindSpeedSafe).toBe(4.2);
-    expect(migratedRecord.gustMargin).toBe(1.8);
-    expect(migratedRecord.tidePreference).toBe('incoming');
-    expect(migratedRecord.futureCompatibleField).toEqual({ retain: true });
-    expect(migratedRecord[SETTINGS_STORAGE_METADATA_KEY]).toEqual({
+    const storedRecord = JSON.parse(storedJson) as Record<string, unknown>;
+    expect(storedRecord.maxWindSpeedSafe).toBe(4.2);
+    expect(storedRecord.gustMargin).toBe(1.8);
+    expect(storedRecord.tidePreference).toBe('incoming');
+    expect(storedRecord.futureCompatibleField).toEqual({ retain: true });
+    expect(storedRecord[SETTINGS_STORAGE_METADATA_KEY]).toEqual({
       kind: 'frank-safety-settings',
       schemaVersion: SETTINGS_STORAGE_SCHEMA_VERSION,
       locationId: CURRENT_LOCATION.id,
     });
 
-    const reread = decodeStoredSettings(migratedJson);
-    expect(reread.needsMigration).toBe(false);
+    const reread = decodeStoredSettings(serializeStoredSettings(decoded.settings));
     expect(reread.settings).toEqual(decoded.settings);
   });
 
-  it('keeps settings at the top level so a pre-schema app can still read them', () => {
+  it('keeps settings and metadata in one shallow additive record', () => {
     const stored = JSON.parse(serializeStoredSettings({
       ...DEFAULT_SETTINGS,
       tripMode: 'custom',
@@ -133,9 +91,11 @@ describe('versioned settings storage', () => {
     expect(stored).not.toHaveProperty('settings');
   });
 
-  it('rejects a future schema or a record belonging to another location', () => {
+  it('rejects a missing or future schema and a record belonging to another location', () => {
     const stored = JSON.parse(serializeStoredSettings(DEFAULT_SETTINGS)) as Record<string, unknown>;
     const metadata = stored[SETTINGS_STORAGE_METADATA_KEY] as Record<string, unknown>;
+
+    expect(() => decodeStoredSettings(JSON.stringify(DEFAULT_SETTINGS))).toThrow(/Unsupported or misplaced/);
 
     expect(() => decodeStoredSettings(JSON.stringify({
       ...stored,
@@ -152,7 +112,7 @@ describe('versioned settings storage', () => {
     expect(() => decodeStoredSettings('null')).toThrow(/JSON object/);
     expect(() => decodeStoredSettings('[]')).toThrow(/JSON object/);
 
-    const decoded = decodeStoredSettings(JSON.stringify({
+    const decoded = decodeStoredSettings(currentRecord({
       tripMode: 'custom',
       maxWindSpeedSafe: 4.4,
       minDuration: 'broken',
@@ -171,7 +131,7 @@ describe('versioned settings storage', () => {
 // check before it was guarded.
 // ---------------------------------------------------------------------------
 describe('parseStoredSettings hardening', () => {
-  const parse = (o: Record<string, unknown>) => parseStoredSettings(JSON.stringify({ tripMode: 'custom', ...o }));
+  const parse = (o: Record<string, unknown>) => parseStoredSettings(currentRecord({ tripMode: 'custom', ...o }));
 
   it('clamps an absurd-but-finite threshold instead of accepting it', () => {
     // 999 is finite, so the type guard passed it. `windSpeed >= 999` is then
@@ -223,25 +183,4 @@ describe('parseStoredSettings hardening', () => {
     expect(parsed.sectorLimits.offshore).toEqual({ safe: 0, caution: 25 });
   });
 
-  it('drops a sector angle that is not a real bearing, falling back to curated geometry', () => {
-    // `angle?.min ?? sector.min` lets a string through, and `"abc" >= 90` is
-    // false — so the sector never matched any wind and its stricter
-    // directional cap silently vanished.
-    const parsed = parse({
-      enableCustomWindDirs: true,
-      sectorAngles: { onshore: { min: 'abc', max: 'def' } },
-    });
-    expect(parsed.sectorAngles?.onshore).toBeUndefined();
-    // 90 deg is inside the curated onshore sector (45-135); its cap still bites.
-    const verdict = analyzeSafetyConditions(
-      { ...baseData, windDirection: 90, windSpeed: onshore.cautionLimit },
-      parsed
-    );
-    expect(verdict.rating).toBe('danger');
-  });
-
-  it('rejects an out-of-range bearing too', () => {
-    const parsed = parse({ sectorAngles: { onshore: { min: -10, max: 400 } } });
-    expect(parsed.sectorAngles?.onshore).toBeUndefined();
-  });
 });

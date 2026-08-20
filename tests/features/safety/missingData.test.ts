@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { analyzeSafetyConditions } from '../../../src/features/safety/analyzeSafetyConditions';
 import { DEFAULT_SETTINGS } from '../../../src/features/safety/presets';
-import { parseStoredSettings } from '../../../src/hooks/useSettings';
+import { parseStoredSettings, serializeStoredSettings } from '../../../src/hooks/useSettings';
 import { assembleHourlyRow, asNumber, reviveReadings } from '../../../src/features/forecast/normalize';
 import { findLaunchWindows } from '../../../src/features/planner/findLaunchWindows';
 import type { HourlyData } from '../../../src/features/forecast/types';
@@ -96,15 +96,23 @@ describe('normalize does not fabricate readings', () => {
 });
 
 describe('a corrupt stored profile cannot disable a safety check', () => {
+  const currentRecord = (overrides: Record<string, unknown>) => {
+    const stored = JSON.parse(serializeStoredSettings(DEFAULT_SETTINGS)) as Record<string, unknown>;
+    return JSON.stringify({ ...stored, ...overrides });
+  };
+
   it('falls back to the default when a threshold is not a number', () => {
-    const parsed = parseStoredSettings('{"tripMode":"custom","maxWindSpeedSafe":"x"}');
+    const parsed = parseStoredSettings(currentRecord({ tripMode: 'custom', maxWindSpeedSafe: 'x' }));
     expect(parsed.maxWindSpeedSafe).toBe(DEFAULT_SETTINGS.maxWindSpeedSafe);
     // The whole point: a gale must still rate danger afterwards.
     expect(analyzeSafetyConditions({ ...goodHour, windSpeed: 25, windGust: 30 }, parsed).rating).toBe('danger');
   });
 
   it('rounds a derived cap so it never prints a float artifact', () => {
-    const parsed = parseStoredSettings('{"maxWaveHeightSafe":0.1,"maxWaveHeightCaution":0.30000000000000004}');
+    const parsed = parseStoredSettings(currentRecord({
+      maxWaveHeightSafe: 0.1,
+      maxWaveHeightCaution: 0.30000000000000004,
+    }));
     const text = analyzeSafetyConditions({ ...goodHour, waveHeight: 0.35 }, parsed).reasons
       .map((r) => r.text)
       .join(' ');

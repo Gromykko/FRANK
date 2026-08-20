@@ -114,18 +114,15 @@ import { interpolate } from '../../i18n/interpolate';
 import type { Translate } from '../../i18n/interpolate';
 
 // Resolve a location's curated wind sectors against the user's per-sector cap
-// overrides (and any legacy angle override), applying the caution ≥ safe + 0.5
-// floor. Angles come from config; only the caps are user-tunable.
+// overrides, applying the caution ≥ safe + 0.5 floor. Angles come from config;
+// only the caps are user-tunable.
 export function resolveSectors(location: ForecastLocation, settings: SafetySettings): WindSector[] {
   return location.windSectors.map((sector) => {
     const cap = settings.sectorLimits?.[sector.id];
-    const angle = settings.sectorAngles?.[sector.id];
     const safeLimit = cap?.safe ?? sector.safeLimit;
     const cautionLimit = floorCaution(safeLimit, cap?.caution ?? sector.cautionLimit);
     return {
       ...sector,
-      min: angle?.min ?? sector.min,
-      max: angle?.max ?? sector.max,
       safeLimit,
       cautionLimit,
     };

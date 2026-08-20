@@ -41,7 +41,7 @@ export function formatLevelCm(metres: number | undefined): string {
 
 // Same, with an explicit sign for values that swing either side of zero
 // (water level relative to mean).
-export function formatSigned(value: number | undefined, decimals: number): string {
+function formatSigned(value: number | undefined, decimals: number): string {
   if (!Number.isFinite(value)) return NO_READING_TEXT;
   // Rounding a tiny negative water level yields -0, which prints as "-0.00".
   // Collapse it to a true zero so the row never shows a negative nothing.

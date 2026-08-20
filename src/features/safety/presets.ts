@@ -6,7 +6,7 @@ export type SectorCap = { safe: number; caution: number };
 
 // The minimum gap a caution/danger cap must sit above its safe cap, so the
 // assessment never runs an inverted band. One rule, one place — every site that
-// enforces it (presets, migration, healing, the editor, the engine) uses this.
+// enforces it (presets, healing, the editor, and the engine) uses this.
 export const MIN_CAUTION_GAP = 0.5;
 export function floorCaution(safe: number, caution: number): number {
   return Math.max(caution, safe + MIN_CAUTION_GAP);
@@ -23,9 +23,6 @@ export interface SafetySettings {
   // Per-sector cap overrides, keyed by WindSector.id. Missing sectors fall back
   // to the location's configured caps.
   sectorLimits: Record<string, SectorCap>;
-  // Migration-only: preserves a sector angle a user had edited under the old
-  // fixed easterly/westerly model. The UI no longer edits angles.
-  sectorAngles?: Record<string, { min: number; max: number }>;
   tripMode: 'default' | 'beginner' | 'pro' | 'custom';
   daylightOnly: boolean;
   minDuration: number;
@@ -42,9 +39,7 @@ export interface SafetySettings {
 const locationSectors = CURRENT_LOCATION.windSectors;
 
 export const SETTINGS_STORAGE_KEY = `ffkajak_settings_${CURRENT_LOCATION.id}`;
-export const LEGACY_SETTINGS_STORAGE_KEY = 'ffkajak_settings';
 export const CUSTOM_SETTINGS_STORAGE_KEY = `ffkajak_custom_saved_${CURRENT_LOCATION.id}`;
-export const LEGACY_CUSTOM_SETTINGS_STORAGE_KEY = 'ffkajak_custom_saved';
 
 // A preset shifts each sector's OWN configured caps by a per-exposure delta,
 // rather than clamping to an absolute ceiling. This preserves whatever ordering

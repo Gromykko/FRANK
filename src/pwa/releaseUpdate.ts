@@ -192,8 +192,3 @@ export function startReleaseUpdateManager(baseUrl = import.meta.env.BASE_URL): R
     },
   }
 }
-
-export const releaseUpdateInternals = {
-  parseReleaseDescriptor,
-  workerBuildId,
-}

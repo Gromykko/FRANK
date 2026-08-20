@@ -153,6 +153,9 @@ describe('resolveSectors', () => {
     } as SafetySettings;
     const resolved = resolveSectors(CURRENT_LOCATION, settings);
     const on = resolved.find((s) => s.id === 'onshore')!;
+    const configuredOnshore = CURRENT_LOCATION.windSectors.find((s) => s.id === 'onshore')!;
+    expect(on.min).toBe(configuredOnshore.min);
+    expect(on.max).toBe(configuredOnshore.max);
     expect(on.safeLimit).toBe(5);
     expect(on.cautionLimit).toBe(5.5); // caution floored to safe + 0.5
     // A sector without an override falls back to its configured caps.
@@ -589,29 +592,6 @@ describe('weather severity (additional symbol_code cases)', () => {
 
   it('legacy WMO fallback rates snow showers (85) as danger', () => {
     expect(analyzeSafetyConditions({ ...baseData, symbolCode: '', weatherCode: 85 }, baseSettings).rating).toBe('danger');
-  });
-
-  // A sector may wrap through north (min > max, e.g. 315°–45°); membership
-  // must treat the range as crossing 0°, not as an empty range.
-  it('handles wind sectors that wrap through north', () => {
-    // Override the onshore sector's angles to wrap through north (315–45) via a
-    // legacy-style sectorAngles override, and set its cap to 4 m/s.
-    const settings = {
-      ...baseSettings,
-      enableCustomWindDirs: true,
-      sectorAngles: { onshore: { min: 315, max: 45 } },
-      sectorLimits: { onshore: { safe: 4, caution: 7 } },
-    } as SafetySettings;
-
-    // 4.5 m/s stays under the plain wind limit (5) but over the sector cap (4),
-    // so any rating change comes from sector membership alone.
-    // 0° (due north) lies inside the wrapped 315–45 sector.
-    const northerly = { ...baseData, windDirection: 0, windSpeed: 4.5 };
-    expect(analyzeSafetyConditions(northerly, settings).rating).toBe('caution');
-
-    // 180° (due south) lies outside it.
-    const southerly = { ...baseData, windDirection: 180, windSpeed: 4.5 };
-    expect(analyzeSafetyConditions(southerly, settings).rating).toBe('safe');
   });
 
   // Snow showers must match the WMO 85 fallback and the Safety Manual, which
