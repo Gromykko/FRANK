@@ -164,9 +164,11 @@ export function statusResponse(health: HealthPayload): Response {
     };
     const cacheHealth: Partial<WorkerCacheHealth> = location.cacheHealth ?? {};
     const degraded = (cacheHealth.degradedSources ?? []).join(', ');
-    const runs = cacheHealth.marineInstances
-      ? `${escapeHtml(cacheHealth.marineInstances.water?.id ?? '—')}<br><span class="dim">${escapeHtml(cacheHealth.marineInstances.waves?.id ?? '—')}</span>`
+    const weatherRun = cacheHealth.weatherLastModified
+      ? escapeHtml(formatUtcTimestamp(cacheHealth.weatherLastModified))
       : '—';
+    const waterRun = escapeHtml(cacheHealth.marineInstances?.water?.id ?? '—');
+    const waveRun = escapeHtml(cacheHealth.marineInstances?.waves?.id ?? '—');
     const missing = !location.hasCache;
     const initialization = missing ? location.initialization : undefined;
     const generationState = location.exactGenerationReady
@@ -200,8 +202,10 @@ export function statusResponse(health: HealthPayload): Response {
       <td data-label="Status" class="status-cell">${escapeHtml(status)}
         <br><span class="${location.exactGenerationReady ? 'good' : 'warn'}">${escapeHtml(generationState)}</span>
         ${providerState ? `<br><span class="warn">${escapeHtml(providerState)}</span>` : ''}</td>
-      <td data-label="Degraded">${degraded ? `<span class="warn">${escapeHtml(degraded)}</span>` : '<span class="dim">none</span>'}</td>
-      <td data-label="Water / wave run" class="dim mono">${runs}</td>
+      <td data-label="Weather / MET" class="source-cell source-weather dim mono">${weatherRun}</td>
+      <td data-label="Water level" class="source-cell source-water dim mono">${waterRun}</td>
+      <td data-label="Waves" class="source-cell source-waves dim mono">${waveRun}</td>
+      <td data-label="Degraded" class="degraded-cell">${degraded ? `<span class="warn">${escapeHtml(degraded)}</span>` : '<span class="dim">none</span>'}</td>
     </tr>`;
   }).join('');
 
@@ -534,12 +538,14 @@ export function statusResponse(health: HealthPayload): Response {
     letter-spacing:.1em;
     text-transform:uppercase;
   }
-  th:first-child,td:first-child { width:16% }
-  th:nth-child(2) { width:22% }
-  th:nth-child(3) { width:10% }
-  th:nth-child(4) { width:25% }
-  th:nth-child(5) { width:10% }
-  th:nth-child(6) { width:17% }
+  th:first-child,td:first-child { width:14% }
+  th:nth-child(2) { width:17% }
+  th:nth-child(3) { width:8% }
+  th:nth-child(4) { width:20% }
+  th:nth-child(5) { width:13% }
+  th:nth-child(6) { width:10% }
+  th:nth-child(7) { width:10% }
+  th:nth-child(8) { width:8% }
   td {
     padding:10px 9px;
     border-top:1px solid var(--module-edge);
@@ -665,6 +671,9 @@ export function statusResponse(health: HealthPayload): Response {
       grid-column:1/-1;
       border-left:0;
     }
+    td.source-weather { grid-column:1/-1; border-left:0 }
+    td.source-water { border-left:0 }
+    td.degraded-cell { grid-column:1/-1; border-left:0 }
     .notes summary { padding:12px }
     .notes-content { padding:0 12px 14px }
   }
@@ -745,7 +754,7 @@ export function statusResponse(health: HealthPayload): Response {
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Location</th><th>Last check<br><span class="hdr-sub">own cycle per location</span></th><th>Data age<br><span class="hdr-sub">last rebuild</span></th><th>Status<br><span class="hdr-sub">data generation</span></th><th>Degraded</th><th>Water / wave run</th></tr></thead>
+        <thead><tr><th>Location</th><th>Last check<br><span class="hdr-sub">own cycle per location</span></th><th>Data age<br><span class="hdr-sub">last rebuild</span></th><th>Status<br><span class="hdr-sub">data generation</span></th><th>Weather<br><span class="hdr-sub">MET issue</span></th><th>Water<br><span class="hdr-sub">DMI run</span></th><th>Waves<br><span class="hdr-sub">DMI run</span></th><th>Degraded</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>

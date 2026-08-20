@@ -226,6 +226,12 @@ describe('Worker route HTTP contract', () => {
     expect(body).toContain('@media (max-width:360px)');
     expect(body.match(/data-label="Location"/g) ?? []).toHaveLength(LOCATIONS.length);
     expect(body.match(/data-label="Status"/g) ?? []).toHaveLength(LOCATIONS.length);
+    expect(body.match(/data-label="Weather \/ MET"/g) ?? []).toHaveLength(LOCATIONS.length);
+    expect(body.match(/data-label="Water level"/g) ?? []).toHaveLength(LOCATIONS.length);
+    expect(body.match(/data-label="Waves"/g) ?? []).toHaveLength(LOCATIONS.length);
+    expect(body).toContain('Weather<br><span class="hdr-sub">MET issue</span>');
+    expect(body).toContain('Water<br><span class="hdr-sub">DMI run</span>');
+    expect(body).toContain('Waves<br><span class="hdr-sub">DMI run</span>');
     expect(body).not.toContain('F · R · A · N · K');
     expect(body).not.toContain('backdrop-filter');
     expect(body).not.toContain('class="banner');
