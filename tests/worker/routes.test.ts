@@ -255,6 +255,58 @@ describe('Worker route HTTP contract', () => {
     expect(await response.text()).toBe('');
   });
 
+  it.each([
+    { path: '/forecast/horsens', method: 'GET', status: 503, kind: 'forecast' },
+    { path: '/forecast/horsens', method: 'HEAD', status: 503, kind: 'head' },
+    { path: '/health', method: 'GET', status: 503, kind: 'health' },
+    { path: '/health', method: 'HEAD', status: 503, kind: 'head' },
+    { path: '/status', method: 'GET', status: 200, kind: 'status' },
+    { path: '/status', method: 'HEAD', status: 200, kind: 'head' },
+  ])('bounds a stalled initial KV read on $method $path', async ({ path, method, status, kind }) => {
+    vi.useFakeTimers();
+    vi.setSystemTime('2026-08-25T12:00:00Z');
+    const runtime = makeRuntime();
+    runtime.env.FRANK_FORECAST_CACHE.get = () => new Promise<never>(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const startedAt = Date.now();
+    const pending = worker.fetch(request(path, method), runtime.env, runtime.ctx);
+    let settled = false;
+    void pending.then(
+      () => { settled = true; },
+      () => { settled = true; },
+    );
+
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+
+    const response = await pending;
+    expect(response.status).toBe(status);
+    expect(Date.now() - startedAt).toBe(2_000);
+
+    if (kind === 'head') {
+      expect(await response.text()).toBe('');
+    } else if (kind === 'forecast') {
+      expect(await response.json()).toEqual({
+        error: 'Forecast service failed',
+        message: 'An internal error occurred while fetching or processing forecast data.',
+      });
+    } else if (kind === 'health') {
+      const body = await response.json();
+      expect(body).toMatchObject({
+        ok: false,
+        reason: 'forecast storage unavailable',
+      });
+      expect(JSON.stringify(body)).not.toContain('Execution deadline');
+    } else {
+      const body = await response.text();
+      expect(body).toContain('forecast storage unavailable');
+      expect(body).toContain('STORAGE UNAVAILABLE');
+      expect(body).not.toContain('Execution deadline');
+    }
+  });
+
   it('hardens the human status page against framing and referrer leakage', async () => {
     const { env, ctx } = makeRuntime();
     const response = await worker.fetch(request('/status'), env, ctx);
@@ -284,6 +336,52 @@ describe('Worker route HTTP contract', () => {
     });
     expect(waits).toHaveLength(1);
     await Promise.all(waits);
+  });
+
+  it.each(['/forecast/horsens', '/forecast/horsens?refresh=1'])('does not re-read a known null forecast cache on %s', async (path) => {
+    const runId = new Date(Date.now() - 60 * 60_000).toISOString();
+    const forecastTime = new Date(Date.now() + 60 * 60_000).toISOString();
+    const runtime = makeRuntime(cachedForecast(), marineIngredients('horsens', runId, forecastTime));
+    const originalGet = runtime.env.FRANK_FORECAST_CACHE.get;
+    const originalPut = runtime.env.FRANK_FORECAST_CACHE.put;
+    const getKeys: string[] = [];
+    let forecastStored = false;
+
+    runtime.env.FRANK_FORECAST_CACHE.get = async (key: string, type?: string) => {
+      getKeys.push(key);
+      if (key.startsWith('forecast:') && !forecastStored) return null;
+      return originalGet(key, type);
+    };
+    runtime.env.FRANK_FORECAST_CACHE.put = async (key: string, value: string) => {
+      if (key.startsWith('forecast:')) forecastStored = true;
+      await originalPut(key, value);
+    };
+
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/instances')) {
+        return new Response(JSON.stringify({ instances: [{ id: runId }] }), { status: 200 });
+      }
+      if (url.includes('api.met.no')) {
+        return new Response(JSON.stringify(metForecastAt(forecastTime)), {
+          status: 200,
+          headers: {
+            'Last-Modified': new Date(Date.now() - 60_000).toUTCString(),
+            Expires: new Date(Date.now() + 30 * 60_000).toUTCString(),
+          },
+        });
+      }
+      if (url.includes('feeds.meteoalarm.org')) {
+        return new Response('<feed></feed>', { status: 200 });
+      }
+      throw new Error(`Unexpected cold-build fetch: ${url}`);
+    }) as typeof fetch;
+
+    const response = await worker.fetch(request(path), runtime.env, runtime.ctx);
+
+    expect(response.status).toBe(200);
+    expect(getKeys.filter((key) => key.startsWith('forecast:'))).toHaveLength(1);
+    expect(runtime.puts.some(({ key }) => key.startsWith('forecast:'))).toBe(true);
   });
 
   it('settles manual waitUntil work within the 25-second ceiling', async () => {

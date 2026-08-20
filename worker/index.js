@@ -45,6 +45,11 @@ export {
 // parallel-and-throttled against a struggling upstream.
 const FETCH_TIMEOUT_MS = 15_000;
 const CRON_FETCH_TIMEOUT_MS = 50_000;
+// Reads needed to answer an HTTP request must fail before the browser's own
+// 12-second Worker timeout. KV is normally an edge-local, millisecond operation;
+// waiting longer than this during a storage incident only turns a truthful 503
+// into an apparently frozen app/status monitor.
+const RESPONSE_KV_READ_BUDGET_MS = 2_000;
 // waitUntil work started by a browser request must be finished before 25s. The
 // one-second margin covers promise cleanup/logging after the final abort.
 const USER_BACKGROUND_EXECUTION_BUDGET_MS = 24_000;
@@ -239,6 +244,13 @@ function executionPolicy(policy = {}) {
     maxAttempts: policy.maxAttempts ?? MAX_FETCH_ATTEMPTS,
     completionReserveMs: Math.max(0, policy.completionReserveMs ?? 0),
   };
+}
+
+function responseKvReadPolicy() {
+  return executionPolicy({
+    deadlineAt: Date.now() + RESPONSE_KV_READ_BUDGET_MS,
+    maxAttempts: 1,
+  });
 }
 
 function remainingExecutionMs(policy) {
@@ -1147,7 +1159,13 @@ async function _refreshForecastCache(env, location, options = {}) {
   // Browser-triggered background work already read this payload to answer the
   // request. Reusing that event-local value removes a redundant KV operation
   // and guarantees the waitUntil task enters its bounded try/catch immediately.
-  const cached = options.cached ?? await readCachedForecast(env, location, policy);
+  // `null` is meaningful: the route already completed its bounded KV read and
+  // proved the key absent. Nullish coalescing treated that result as "not
+  // supplied" and performed the same read again on every cold request.
+  const cachedWasRead = Object.prototype.hasOwnProperty.call(options, 'cached');
+  const cached = cachedWasRead
+    ? options.cached
+    : await readCachedForecast(env, location, policy);
   const cachedNeedsRecovery = (() => {
     const health = cached?.sources?.cacheHealth;
     return health?.status === 'stale' || health?.status === 'fallback' || health?.needsRebuild;
@@ -1448,7 +1466,7 @@ async function handleForecastRequest(request, env, ctx, locationId, eventMemo) {
     // payload). The response is explicitly pending and keeps the timestamp of
     // the last COMPLETED check. Re-dating lastAttemptAt here used to make the
     // header claim "Checked just now" before any provider had answered.
-    const cached = await readCachedForecast(env, location);
+    const cached = await readCachedForecast(env, location, responseKvReadPolicy());
     if (cached) {
       ctx.waitUntil(refreshForecastCache(env, location, {
         force: true,
@@ -1477,11 +1495,12 @@ async function handleForecastRequest(request, env, ctx, locationId, eventMemo) {
       minIntervalMs: MANUAL_CHECK_MIN_INTERVAL_MS,
       executionPolicy: userExecutionPolicy(),
       eventMemo,
+      cached,
     });
     return jsonResponse(data);
   }
 
-  const cached = await readCachedForecast(env, location);
+  const cached = await readCachedForecast(env, location, responseKvReadPolicy());
   if (cached) {
     if (shouldCheckInBackground(location, cached, USER_BACKGROUND_CHECK_MIN_INTERVAL_MS)) {
       ctx.waitUntil(refreshForecastCache(env, location, {
@@ -1501,13 +1520,15 @@ async function handleForecastRequest(request, env, ctx, locationId, eventMemo) {
     minIntervalMs: 0,
     executionPolicy: userExecutionPolicy(),
     eventMemo,
+    cached,
   });
   return jsonResponse(data);
 }
 
 async function handleHealthRequest(env) {
-  const { ages, ...body } = await healthPayload(env);
+  const { ages, storageUnavailable, ...body } = await healthPayload(env);
   void ages; // internal only; the wire shape stays as documented
+  void storageUnavailable;
   return jsonResponse(body, body.ok ? 200 : 503);
 }
 
@@ -1515,18 +1536,39 @@ async function handleHealthRequest(env) {
 // /status (the human panel). Splitting it means the page can never disagree
 // with the thing that pages you.
 async function healthPayload(env) {
-  const entries = await Promise.all(
-    locations.map(async (location) => {
-      const data = await readCachedForecast(env, location);
-      return {
-        id: location.id,
-        areaName: location.areaName,
-        hasCache: Boolean(data),
-        fetchedAt: data?.sources?.fetchedAt,
-        cacheHealth: data?.sources?.cacheHealth,
-      };
-    })
-  );
+  const policy = responseKvReadPolicy();
+  let entries;
+  let storageUnavailable = false;
+  try {
+    entries = await Promise.all(
+      locations.map(async (location) => {
+        const data = await readCachedForecast(env, location, policy);
+        return {
+          id: location.id,
+          areaName: location.areaName,
+          hasCache: Boolean(data),
+          fetchedAt: data?.sources?.fetchedAt,
+          cacheHealth: data?.sources?.cacheHealth,
+        };
+      })
+    );
+  } catch (error) {
+    // Health/status must stay bounded and useful during the exact storage
+    // incident they are meant to diagnose. Keep binding detail in owner logs;
+    // the public machine/page contract gets one stable classification only.
+    console.error(JSON.stringify({
+      event: 'forecast_storage_read_failed',
+      error: error instanceof Error
+        ? { name: error.name, message: error.message }
+        : { message: String(error) },
+    }));
+    storageUnavailable = true;
+    entries = locations.map((location) => ({
+      id: location.id,
+      areaName: location.areaName,
+      hasCache: false,
+    }));
+  }
 
   // A dead man's switch, for an external uptime monitor to poll.
   //
@@ -1558,7 +1600,7 @@ async function healthPayload(env) {
   const worst = (key) => ages.reduce((acc, a) => Math.max(acc, a[key]), 0);
   const oldestAgeMs = worst('ageMs');
   const oldestCheckAgeMs = worst('checkAgeMs');
-  const ok = stalled.length === 0;
+  const ok = !storageUnavailable && stalled.length === 0;
   const asMin = (ms) => (Number.isFinite(ms) ? Math.round(ms / 60000) : null);
 
   return {
@@ -1572,13 +1614,21 @@ async function healthPayload(env) {
     oldestAgeMin: asMin(oldestAgeMs),
     dataStaleAfterMin: Math.round(HEALTH_MAX_DATA_AGE_MS / 60000),
     // Which clock tripped, so the alert email says what to look at.
-    reason: ok ? null : [
-      ...(notChecking.length ? [`not checking: ${notChecking.join(', ')}`] : []),
-      ...(notRebuilding.length ? [`not rebuilding: ${notRebuilding.join(', ')}`] : []),
-    ].join(' | '),
+    reason: ok
+      ? null
+      : storageUnavailable
+        ? 'forecast storage unavailable'
+        : [
+            ...(notChecking.length ? [`not checking: ${notChecking.join(', ')}`] : []),
+            ...(notRebuilding.length ? [`not rebuilding: ${notRebuilding.join(', ')}`] : []),
+          ].join(' | '),
     stalled,
     locations: entries,
     ages,
+    // Internal presentation flag. /health strips it to preserve its documented
+    // wire shape; /status uses it to avoid mislabeling an unreadable store as
+    // four independently missing cache keys.
+    storageUnavailable,
   };
 }
 
@@ -1641,7 +1691,7 @@ async function handleStatusRequest(env) {
       <td><strong>${escapeHtml(loc.areaName)}</strong><br><span class="dim">${escapeHtml(loc.id)}</span></td>
       <td class="${level(a.checkAgeMs, HEALTH_MAX_CHECK_AGE_MS)}"><strong>${escapeHtml(formatAge(a.checkAgeMs))}</strong><br><span class="dim">${escapeHtml(h.checkedBy ?? '—')}</span></td>
       <td class="${level(a.ageMs, HEALTH_MAX_DATA_AGE_MS)}"><strong>${escapeHtml(formatAge(a.ageMs))}</strong></td>
-      <td>${escapeHtml(h.status ?? (loc.hasCache ? 'unknown' : 'NO CACHE'))}${h.providerBusy ? '<br><span class="warn">provider busy</span>' : ''}</td>
+      <td>${escapeHtml(health.storageUnavailable ? 'STORAGE UNAVAILABLE' : h.status ?? (loc.hasCache ? 'unknown' : 'NO CACHE'))}${h.providerBusy ? '<br><span class="warn">provider busy</span>' : ''}</td>
       <td>${degraded ? `<span class="warn">${escapeHtml(degraded)}</span>` : '<span class="dim">none</span>'}</td>
       <td class="dim mono">${runs}</td>
     </tr>`;
