@@ -9,10 +9,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  compatibleForecastVersionFloor,
+  formatWarmAutomationOutput,
   formatWarmGateSummary,
   loadReleaseContract,
   parseReleasePolicy,
+  runCli,
   warmWorker,
 } from '../../scripts/warm-worker.mjs';
 
@@ -120,6 +121,8 @@ function initializing(locationId: string, retryAfterSeconds = 600) {
   const names: Record<string, [string, string]> = {
     horsens: ['Horsens', 'Horsens Fjord'],
     vejle: ['Vejle', 'Vejle Fjord'],
+    kolding: ['Kolding', 'Kolding Fjord'],
+    aarhus: ['Aarhus', 'Aarhus Bugt'],
   };
   const [name, areaName] = names[locationId] ?? [locationId, locationId];
   return {
@@ -295,6 +298,44 @@ afterEach(async () => {
 });
 
 describe('Worker deployment warm-up', () => {
+  it('formats a strict machine-readable promotion decision', () => {
+    expect(formatWarmAutomationOutput({
+      readyForPromotion: false,
+      waitingLocationIds: ['horsens', 'vejle'],
+      retryAfterSeconds: 600,
+    })).toBe([
+      'ready_for_promotion=false',
+      'waiting_location_ids=horsens,vejle',
+      'retry_after_seconds=600',
+      '',
+    ].join('\n'));
+    expect(formatWarmAutomationOutput({
+      readyForPromotion: true,
+      waitingLocationIds: [],
+      retryAfterSeconds: 0,
+    })).toContain('ready_for_promotion=true');
+    expect(() => formatWarmAutomationOutput({
+      readyForPromotion: true,
+      waitingLocationIds: ['horsens'],
+      retryAfterSeconds: 600,
+    })).toThrow('automation result is invalid');
+  });
+
+  it('requires the waiting opt-in and GitHub output contract together', async () => {
+    await expect(runCli([
+      '--require-target-ready-all',
+      '--allow-waiting',
+    ], {})).rejects.toThrow('must be used together');
+    await expect(runCli([
+      '--require-target-ready-all',
+      '--github-output', 'unused.txt',
+    ], {})).rejects.toThrow('must be used together');
+    await expect(runCli([
+      '--allow-waiting',
+      '--github-output', 'unused.txt',
+    ], {})).rejects.toThrow('requires --require-target-ready-all');
+  });
+
   it('formats an explicit city-by-city readiness summary', () => {
     const summary = formatWarmGateSummary({
       title: 'Candidate readiness',
@@ -312,6 +353,14 @@ describe('Worker deployment warm-up', () => {
     expect(summary).toContain('Missing exact readiness: vejle');
     expect(summary).toContain('Horsens Fjord (`horsens`): exact target ready');
     expect(summary).toContain('Vejle Fjord (`vejle`): failed during check');
+
+    const waiting = formatWarmGateSummary({
+      status: 'waiting',
+      locations: [{ id: 'horsens', areaName: 'Horsens Fjord' }],
+      initializingLocationIds: ['horsens'],
+    });
+    expect(waiting).toContain('Gate: waiting');
+    expect(waiting).toContain('Horsens Fjord (`horsens`): initializing');
   });
 
   it('blocks a breaking API until continuous old-representation materialization exists', () => {
@@ -345,6 +394,58 @@ describe('Worker deployment warm-up', () => {
     expect(policy.supportedApiSchemaVersions).toEqual([1]);
     expect(policy.auditedPreviousReleases).toHaveLength(1);
     expect(policy.auditedPriorApiReleases).toEqual([]);
+  });
+
+  it('accepts a fallback only when its complete audited release descriptor matches', async () => {
+    const manifest = await loadReleaseContract();
+    const location = manifest.locations[0];
+    const policy = parseReleasePolicy(sameApiPreviousGenerationContract());
+    const current = policy.release;
+    const previous = policy.auditedPreviousReleases[0];
+    const baseUrl = await listen((request, response) => {
+      if (request.url?.startsWith(`/api/v1/forecast/${location.id}`)) {
+        return json(
+          response,
+          200,
+          forecast(location.id, previous.payloadVersion, location.coordinate, previous),
+          EXPECTED_WORKER_VERSION_ID,
+          {
+            ...exactReleaseHeaders(current, false),
+            'X-FRANK-Payload-Version': String(previous.payloadVersion),
+          },
+        );
+      }
+      if (request.url === '/health') {
+        return json(
+          response,
+          200,
+          releaseHealth([location.id], current, { fallback: [location.id] }),
+          EXPECTED_WORKER_VERSION_ID,
+          exactReleaseHeaders(current),
+        );
+      }
+      return json(response, 404, { error: 'not found' });
+    });
+
+    await expect(warmRelease({
+      baseUrl,
+      locationIds: [location.id],
+      locationContracts: [location],
+      expectedVersion: current.payloadVersion,
+      expectedRelease: current,
+      auditedPreviousReleases: [previous],
+      requireTargetReadyAll: true,
+      allowWaiting: true,
+      attempts: 1,
+      timeoutMs: 500,
+      retryDelayMs: 1,
+      logger: silentLogger,
+    })).resolves.toMatchObject({
+      readyForPromotion: false,
+      waitingLocationIds: [location.id],
+      retryAfterSeconds: 600,
+      generationNotReadyLocationIds: [location.id],
+    });
   });
 
   it('refuses to accumulate more than one previous forecast generation', () => {
@@ -389,11 +490,6 @@ describe('Worker deployment warm-up', () => {
     expect(contract.supportedApiSchemaVersions).toEqual([contract.release.apiSchemaVersion]);
   });
 
-  it('does not infer numeric payload compatibility without an audited generation descriptor', () => {
-    expect(compatibleForecastVersionFloor(7)).toBe(7);
-    expect(compatibleForecastVersionFloor(8)).toBe(8);
-  });
-
   it('fails closed before making requests when the expected Worker identity is invalid', async () => {
     const fetchImpl = async () => new Response();
 
@@ -407,16 +503,15 @@ describe('Worker deployment warm-up', () => {
     })).rejects.toThrow('Expected Worker version ID must be a valid Cloudflare Worker version ID');
   });
 
-  it('refuses to widen the canonical v7 payload range', async () => {
+  it.each([0, -1, 1.5])('rejects invalid expected payload version %s before I/O', async (expectedVersion) => {
     await expect(warmWorker({
       baseUrl: 'https://frank.test/',
       locationIds: ['horsens'],
-      expectedVersion: 7,
-      compatibleMinVersion: 5,
+      expectedVersion,
       expectedWorkerVersionId: EXPECTED_WORKER_VERSION_ID,
       fetchImpl: async () => new Response(),
       logger: silentLogger,
-    })).rejects.toThrow('must be between audited v7 and v7');
+    })).rejects.toThrow('Expected payload version must be a positive integer');
   });
 
   it('warms configured locations sequentially before checking health', async () => {
@@ -508,7 +603,6 @@ describe('Worker deployment warm-up', () => {
     });
 
     expect(result.targetReadyLocationIds).toEqual(contract.locationIds);
-    expect(result.compatibleFallbackLocationIds).toEqual([]);
     expect(result.verifiedPriorApiSchemaVersions).toEqual([]);
     expect(requests).toEqual([
       ...contract.locationIds.map((id) => `/api/v1/forecast/${id}?warm=1`),
@@ -828,7 +922,6 @@ describe('Worker deployment warm-up', () => {
       baseUrl,
       locationIds: ['horsens'],
       expectedVersion: 7,
-      compatibleMinVersion: 7,
       attempts: 1,
       timeoutMs: 500,
       retryDelayMs: 1,
@@ -904,7 +997,6 @@ describe('Worker deployment warm-up', () => {
         coordinate: { latitude: 55.858, longitude: 9.905 },
       }],
       expectedVersion: 7,
-      compatibleMinVersion: 7,
       attempts: 1,
       timeoutMs: 500,
       retryDelayMs: 1,
@@ -1097,7 +1189,6 @@ describe('Worker deployment warm-up', () => {
     expect(result).toEqual({
       availableLocationIds: ['vejle'],
       targetReadyLocationIds: ['vejle'],
-      compatibleFallbackLocationIds: [],
       generationNotReadyLocationIds: [],
       verifiedPriorApiSchemaVersions: [],
       initializingLocationIds: ['horsens'],
@@ -1132,6 +1223,269 @@ describe('Worker deployment warm-up', () => {
     })).rejects.toThrow(
       'release has no ready forecast locations; refusing a zero-availability production release',
     );
+  });
+
+  it('returns a resumable wait only for typed initialization with matching health', async () => {
+    const contract = await loadReleaseContract();
+    const locations = contract.locations.slice(0, 2);
+    const locationIds = locations.map(({ id }) => id);
+    const retryAfterById = new Map([
+      [locationIds[0], 120],
+      [locationIds[1], 300],
+    ]);
+    const requests: string[] = [];
+    const baseUrl = await listen((request, response) => {
+      requests.push(request.url ?? '');
+      const match = request.url?.match(/^\/api\/v1\/forecast\/([a-z0-9-]+)\?warm=1$/);
+      if (match) {
+        const retryAfter = retryAfterById.get(match[1]) ?? 600;
+        return json(
+          response,
+          503,
+          initializing(match[1], retryAfter),
+          EXPECTED_WORKER_VERSION_ID,
+          {
+            ...exactReleaseHeaders(contract.release, false),
+            'Retry-After': String(retryAfter),
+          },
+        );
+      }
+      if (request.url === '/health') {
+        const body = releaseHealth(locationIds, contract.release, { missing: locationIds });
+        return json(
+          response,
+          503,
+          body,
+          EXPECTED_WORKER_VERSION_ID,
+          exactReleaseHeaders(contract.release),
+        );
+      }
+      return json(response, 404, { error: 'not found' });
+    });
+
+    const result = await warmRelease({
+      baseUrl,
+      locationIds,
+      locationContracts: locations,
+      expectedVersion: contract.expectedVersion,
+      expectedRelease: contract.release,
+      requireTargetReadyAll: true,
+      allowWaiting: true,
+      attempts: 1,
+      timeoutMs: 500,
+      retryDelayMs: 1,
+      logger: silentLogger,
+    });
+
+    expect(result).toMatchObject({
+      readyForPromotion: false,
+      waitingLocationIds: locationIds,
+      retryAfterSeconds: 300,
+      targetReadyLocationIds: [],
+      initializingLocationIds: locationIds,
+    });
+    expect(requests).toEqual([
+      `/api/v1/forecast/${locationIds[0]}?warm=1`,
+      `/api/v1/forecast/${locationIds[1]}?warm=1`,
+      '/health',
+    ]);
+  });
+
+  it('returns promotion-ready only after exact forecasts and exact health agree', async () => {
+    const contract = await loadReleaseContract();
+    const locations = contract.locations.slice(0, 2);
+    const locationIds = locations.map(({ id }) => id);
+    const baseUrl = await listen((request, response) => {
+      const match = request.url?.match(/^\/api\/v1\/forecast\/([a-z0-9-]+)\?warm=1$/);
+      if (match) {
+        const location = locations.find(({ id }) => id === match[1]);
+        return json(
+          response,
+          200,
+          forecast(match[1], contract.expectedVersion, location?.coordinate, contract.release),
+          EXPECTED_WORKER_VERSION_ID,
+          exactReleaseHeaders(contract.release, true),
+        );
+      }
+      if (request.url === '/health') {
+        return json(
+          response,
+          200,
+          exactHealth(locationIds, contract.release),
+          EXPECTED_WORKER_VERSION_ID,
+          exactReleaseHeaders(contract.release),
+        );
+      }
+      return json(response, 404, { error: 'not found' });
+    });
+
+    await expect(warmRelease({
+      baseUrl,
+      locationIds,
+      locationContracts: locations,
+      expectedVersion: contract.expectedVersion,
+      expectedRelease: contract.release,
+      requireTargetReadyAll: true,
+      allowWaiting: true,
+      attempts: 1,
+      timeoutMs: 500,
+      retryDelayMs: 1,
+      logger: silentLogger,
+    })).resolves.toMatchObject({
+      readyForPromotion: true,
+      waitingLocationIds: [],
+      retryAfterSeconds: 0,
+    });
+  });
+
+  it('reports internally consistent target-health lag as waiting after propagation', async () => {
+    const contract = await loadReleaseContract();
+    const locations = contract.locations.slice(0, 2);
+    const locationIds = locations.map(({ id }) => id);
+    const laggingId = locationIds[1];
+    const baseUrl = await listen((request, response) => {
+      const match = request.url?.match(/^\/api\/v1\/forecast\/([a-z0-9-]+)\?warm=1$/);
+      if (match) {
+        const location = locations.find(({ id }) => id === match[1]);
+        return json(
+          response,
+          200,
+          forecast(match[1], contract.expectedVersion, location?.coordinate, contract.release),
+          EXPECTED_WORKER_VERSION_ID,
+          exactReleaseHeaders(contract.release, true),
+        );
+      }
+      if (request.url === '/health') {
+        return json(
+          response,
+          200,
+          releaseHealth(locationIds, contract.release, { fallback: [laggingId] }),
+          EXPECTED_WORKER_VERSION_ID,
+          exactReleaseHeaders(contract.release),
+        );
+      }
+      return json(response, 404, { error: 'not found' });
+    });
+
+    await expect(warmRelease({
+      baseUrl,
+      locationIds,
+      locationContracts: locations,
+      expectedVersion: contract.expectedVersion,
+      expectedRelease: contract.release,
+      requireTargetReadyAll: true,
+      allowWaiting: true,
+      attempts: 1,
+      timeoutMs: 500,
+      retryDelayMs: 1,
+      healthPropagationTimeoutMs: 20,
+      healthPropagationRetryDelayMs: 1,
+      logger: silentLogger,
+    })).resolves.toMatchObject({
+      readyForPromotion: false,
+      waitingLocationIds: [laggingId],
+      retryAfterSeconds: 600,
+    });
+  });
+
+  it('does not downgrade malformed initialization or unavailable storage into waiting', async () => {
+    const contract = await loadReleaseContract();
+    const location = contract.locations[0];
+    let malformed = true;
+    const baseUrl = await listen((request, response) => {
+      if (request.url?.startsWith(`/api/v1/forecast/${location.id}`)) {
+        const body = initializing(location.id);
+        if (malformed) body.code = 'NOT_THE_INITIALIZATION_CONTRACT';
+        return json(
+          response,
+          503,
+          body,
+          EXPECTED_WORKER_VERSION_ID,
+          {
+            ...exactReleaseHeaders(contract.release, false),
+            'Retry-After': '600',
+          },
+        );
+      }
+      if (request.url === '/health') {
+        const body = releaseHealth([location.id], contract.release, { missing: [location.id] });
+        body.storageAvailable = false;
+        return json(
+          response,
+          503,
+          body,
+          EXPECTED_WORKER_VERSION_ID,
+          exactReleaseHeaders(contract.release),
+        );
+      }
+      return json(response, 404, { error: 'not found' });
+    });
+    const options = {
+      baseUrl,
+      locationIds: [location.id],
+      locationContracts: [location],
+      expectedVersion: contract.expectedVersion,
+      expectedRelease: contract.release,
+      requireTargetReadyAll: true,
+      allowWaiting: true,
+      attempts: 1,
+      timeoutMs: 500,
+      retryDelayMs: 1,
+      logger: silentLogger,
+    };
+
+    await expect(warmRelease(options)).rejects.toThrow('HTTP 503 contract mismatch');
+    malformed = false;
+    await expect(warmRelease(options)).rejects.toThrow('forecast storage unavailable');
+  });
+
+  it('does not downgrade Worker identity or target-health schema errors into waiting', async () => {
+    const contract = await loadReleaseContract();
+    const location = contract.locations[0];
+    let mode: 'identity' | 'schema' = 'identity';
+    const baseUrl = await listen((request, response) => {
+      if (request.url?.startsWith(`/api/v1/forecast/${location.id}`)) {
+        return json(
+          response,
+          503,
+          initializing(location.id),
+          mode === 'identity' ? PREVIOUS_WORKER_VERSION_ID : EXPECTED_WORKER_VERSION_ID,
+          {
+            ...exactReleaseHeaders(contract.release, false),
+            'Retry-After': '600',
+          },
+        );
+      }
+      if (request.url === '/health') {
+        const body = releaseHealth([location.id], contract.release, { missing: [location.id] });
+        delete (body as { release?: unknown }).release;
+        return json(
+          response,
+          503,
+          body,
+          EXPECTED_WORKER_VERSION_ID,
+          exactReleaseHeaders(contract.release),
+        );
+      }
+      return json(response, 404, { error: 'not found' });
+    });
+    const options = {
+      baseUrl,
+      locationIds: [location.id],
+      locationContracts: [location],
+      expectedVersion: contract.expectedVersion,
+      expectedRelease: contract.release,
+      requireTargetReadyAll: true,
+      allowWaiting: true,
+      attempts: 1,
+      timeoutMs: 500,
+      retryDelayMs: 1,
+      logger: silentLogger,
+    };
+
+    await expect(warmRelease(options)).rejects.toThrow('did not become active');
+    mode = 'schema';
+    await expect(warmRelease(options)).rejects.toThrow('target release health contract is malformed');
   });
 
   it('waits for a just-warmed ready cache to propagate into health', async () => {
@@ -1542,6 +1896,66 @@ describe('Worker deployment warm-up', () => {
       retryDelayMs: 1,
       logger: silentLogger,
     })).rejects.toThrow('forecast horsens failed after 1 attempt');
+  });
+
+  it('writes a waiting decision to GitHub output and exits successfully', async () => {
+    const contract = await loadReleaseContract();
+    const baseUrl = await listen((request, response) => {
+      const match = request.url?.match(/^\/api\/v1\/forecast\/([a-z0-9-]+)\?warm=1$/);
+      if (match) {
+        return json(
+          response,
+          503,
+          initializing(match[1]),
+          EXPECTED_WORKER_VERSION_ID,
+          {
+            ...exactReleaseHeaders(contract.release, false),
+            'Retry-After': '600',
+          },
+        );
+      }
+      if (request.url === '/health') {
+        const body = releaseHealth(
+          contract.locationIds,
+          contract.release,
+          { missing: contract.locationIds },
+        );
+        return json(
+          response,
+          503,
+          body,
+          EXPECTED_WORKER_VERSION_ID,
+          exactReleaseHeaders(contract.release),
+        );
+      }
+      return json(response, 404, { error: 'not found' });
+    });
+
+    const temporaryDirectory = await mkdtemp(path.join(tmpdir(), 'frank-warm-output-'));
+    const githubOutput = path.join(temporaryDirectory, 'github-output.txt');
+    const child = spawn(process.execPath, [
+      SCRIPT_PATH,
+      '--base-url', baseUrl,
+      '--expected-worker-version-id', EXPECTED_WORKER_VERSION_ID,
+      '--require-target-ready-all',
+      '--allow-waiting',
+      '--github-output', githubOutput,
+      '--attempts', '1',
+      '--timeout-ms', '500',
+      '--retry-delay-ms', '1',
+    ], { cwd: fileURLToPath(new URL('../..', import.meta.url)) });
+    child.stdout.resume();
+    child.stderr.resume();
+
+    const [exitCode] = await once(child, 'exit');
+    expect(exitCode).toBe(0);
+    expect(await readFile(githubOutput, 'utf8')).toBe([
+      'ready_for_promotion=false',
+      `waiting_location_ids=${contract.locationIds.join(',')}`,
+      'retry_after_seconds=600',
+      '',
+    ].join('\n'));
+    await rm(temporaryDirectory, { recursive: true, force: true });
   });
 
   it('exits nonzero on a contract mismatch without printing the response body', async () => {

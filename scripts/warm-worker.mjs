@@ -16,6 +16,7 @@ const DEFAULT_TIMEOUT_MS = 35_000;
 const DEFAULT_RETRY_DELAY_MS = 2_000;
 const DEFAULT_HEALTH_PROPAGATION_TIMEOUT_MS = 90_000;
 const DEFAULT_HEALTH_RETRY_DELAY_MS = 5_000;
+const DEFAULT_WAIT_RETRY_AFTER_SECONDS = 10 * 60;
 const MAX_RESPONSE_BODY_CHARS = 64 * 1024;
 const WORKER_VERSION_HEADER = 'x-frank-worker-version';
 const RELEASE_HEADERS = Object.freeze({
@@ -122,26 +123,6 @@ function workerName(value) {
     throw new WarmupError('Worker name must contain only lowercase letters, numbers, and hyphens.');
   }
   return value;
-}
-
-export function compatibleForecastVersionFloor(currentVersion) {
-  // The pre-launch baseline has no historical payload bridge. Future N-1
-  // support is expressed by full release descriptors in releaseContract.ts,
-  // never by assuming that a numeric predecessor is compatible.
-  return positiveInteger(currentVersion, 'Expected payload version');
-}
-
-function requireCompatibleVersionFloor(currentVersion, requestedFloor) {
-  const auditedFloor = compatibleForecastVersionFloor(currentVersion);
-  const floor = requestedFloor === undefined
-    ? auditedFloor
-    : positiveInteger(requestedFloor, 'Compatible minimum payload version');
-  if (floor < auditedFloor || floor > currentVersion) {
-    throw new WarmupError(
-      `Compatible minimum payload version for v${currentVersion} must be between audited v${auditedFloor} and v${currentVersion}.`,
-    );
-  }
-  return floor;
 }
 
 function normalizeBaseUrl(value) {
@@ -416,7 +397,6 @@ export async function loadReleaseContract({
     supportedApiSchemaVersions: policy.supportedApiSchemaVersions,
     auditedPreviousReleases: policy.auditedPreviousReleases,
     auditedPriorApiReleases: policy.auditedPriorApiReleases,
-    compatibleMinVersion: compatibleForecastVersionFloor(expectedVersion),
   };
 }
 
@@ -490,7 +470,6 @@ function forecastPayloadMatches(
   locationId,
   expectedVersion,
   expectedApiSchemaVersion,
-  compatibleMinVersion,
   expectedLocation,
 ) {
   if (!payload || typeof payload !== 'object' || !Array.isArray(payload.hourly)
@@ -511,8 +490,7 @@ function forecastPayloadMatches(
   const sources = payload.sources;
   const payloadVersion = sources?.payloadVersion;
   if (!Number.isSafeInteger(payloadVersion)
-    || payloadVersion < compatibleMinVersion
-    || payloadVersion > expectedVersion
+    || payloadVersion !== expectedVersion
     || sources?.location?.id !== locationId
     || typeof sources.location.name !== 'string'
     || sources.location.name.length === 0
@@ -588,7 +566,27 @@ function exactReleaseResponseMatches(payload, responseRelease, expectedRelease) 
     && releaseMetadataMatches(payload?.sources?.release, expectedRelease);
 }
 
-function initializingPayloadMatches(payload, locationId, retryAfterHeader) {
+function exactFallbackResponseMatches(
+  payload,
+  responseRelease,
+  expectedRelease,
+  fallbackRelease,
+) {
+  return Boolean(
+    expectedRelease
+      && fallbackRelease
+      && responseRelease?.generationReady === false
+      && responseRelease.apiSchemaVersion === expectedRelease.apiSchemaVersion
+      && responseRelease.modelRevision === expectedRelease.modelRevision
+      && responseRelease.assembledCacheSchema === expectedRelease.assembledCacheSchema
+      && responseRelease.marineCacheSchema === expectedRelease.marineCacheSchema
+      && responseRelease.dataGenerationId === expectedRelease.dataGenerationId
+      && responseRelease.payloadVersion === fallbackRelease.payloadVersion
+      && releaseMetadataMatches(payload?.sources?.release, fallbackRelease),
+  );
+}
+
+function initializingPayloadMatches(payload, locationId, retryAfterHeader, expectedLocation) {
   const retryAfterSeconds = Number(retryAfterHeader);
   return Boolean(
     payload
@@ -605,7 +603,10 @@ function initializingPayloadMatches(payload, locationId, retryAfterHeader) {
       && typeof payload.location?.name === 'string'
       && payload.location.name.length > 0
       && typeof payload.location?.areaName === 'string'
-      && payload.location.areaName.length > 0,
+      && payload.location.areaName.length > 0
+      && (!expectedLocation
+        || (payload.location.name === expectedLocation.name
+          && payload.location.areaName === expectedLocation.areaName)),
   );
 }
 
@@ -666,11 +667,11 @@ async function requireForecastStage({
   url,
   locationId,
   expectedVersion,
-  compatibleMinVersion,
   expectedLocation,
   expectedWorkerVersionId,
   expectedApiSchemaVersion,
   expectedRelease,
+  auditedPreviousReleases,
   versionOverride,
   requireTargetVersion,
   retryInitializing,
@@ -710,58 +711,77 @@ async function requireForecastStage({
         locationId,
         expectedVersion,
         expectedApiSchemaVersion,
-        compatibleMinVersion,
         expectedLocation,
       )) {
-      const payloadVersion = result.payload.sources.payloadVersion;
       const generationNeedsRebuild = result.payload.sources.cacheHealth?.needsRebuild === true
         || result.payload.sources.cacheHealth?.status === 'pending'
         || !exactReleaseResponseMatches(result.payload, result.release, expectedRelease);
-      if (payloadVersion === expectedVersion && !generationNeedsRebuild) {
+      if (!generationNeedsRebuild) {
         logger.info(`[warm] ${label}: ${targetLabel} ready`);
-        return 'target-ready';
+        return { outcome: 'target-ready', retryAfterSeconds: 0 };
       }
 
-      if (payloadVersion === expectedVersion) {
-        if (requireTargetVersion && attempt < attempts) {
-          logger.warn(`[warm] ${label}: ${targetLabel} still needs a completed rebuild; retrying`);
-          await delay(retryDelayMs * attempt);
-          continue;
-        }
-        logger.warn(`[warm] ${label}: ${targetLabel} still needs a completed rebuild`);
-        return 'generation-not-ready';
-      }
-
-      // A validated N-1 response is useful evidence that the candidate can
-      // preserve availability. It is deliberately a DIFFERENT result from
-      // target readiness: promoting a model/schema release while every route
-      // is merely showing its legacy bridge recreated the v7 cold-cache
-      // incident in slower motion.
       if (requireTargetVersion && attempt < attempts) {
-        logger.warn(
-          `[warm] ${label}: compatible payload v${payloadVersion} is available, `
-          + `but target v${expectedVersion} is not ready; retrying`,
-        );
+        logger.warn(`[warm] ${label}: ${targetLabel} still needs a completed rebuild; retrying`);
         await delay(retryDelayMs * attempt);
         continue;
       }
-      logger.warn(
-        `[warm] ${label}: compatible payload v${payloadVersion} is available; `
-        + `target v${expectedVersion} is not ready`,
-      );
-      return 'compatible-fallback';
+      logger.warn(`[warm] ${label}: ${targetLabel} still needs a completed rebuild`);
+      return { outcome: 'generation-not-ready', retryAfterSeconds: 0 };
+    }
+
+    if (result.received && result.status === 200) {
+      const exactFallback = auditedPreviousReleases.find((release) => (
+        release.apiSchemaVersion === expectedApiSchemaVersion
+        && forecastPayloadMatches(
+          result.payload,
+          locationId,
+          release.payloadVersion,
+          expectedApiSchemaVersion,
+          expectedLocation,
+        )
+        && exactFallbackResponseMatches(
+          result.payload,
+          result.release,
+          expectedRelease,
+          release,
+        )
+      ));
+      if (exactFallback) {
+        if (requireTargetVersion && attempt < attempts) {
+          logger.warn(
+            `[warm] ${label}: exact fallback ${exactFallback.dataGenerationId} is available; `
+            + `${targetLabel} is still incomplete; retrying`,
+          );
+          await delay(retryDelayMs * attempt);
+          continue;
+        }
+        logger.warn(
+          `[warm] ${label}: exact fallback ${exactFallback.dataGenerationId} is available; `
+          + `${targetLabel} is still incomplete`,
+        );
+        return { outcome: 'generation-not-ready', retryAfterSeconds: 0 };
+      }
     }
 
     if (result.received
       && result.status === 503
-      && initializingPayloadMatches(result.payload, locationId, result.retryAfter)) {
+      && initializingPayloadMatches(
+        result.payload,
+        locationId,
+        result.retryAfter,
+        expectedLocation,
+      )) {
       if (retryInitializing && attempt < attempts) {
         logger.warn(`[warm] ${label}: exact cache not visible to ordinary traffic yet; retrying`);
         await delay(retryDelayMs * attempt);
         continue;
       }
       logger.warn(`[warm] ${label}: initializing; continuing release gate`);
-      return 'initializing';
+      return {
+        outcome: 'initializing',
+        retryAfterSeconds: result.payload.retryAfterSeconds,
+      };
     }
 
     // A response reached the production Worker but failed its public contract.
@@ -846,25 +866,35 @@ async function requirePriorApiForecastStage({
   );
 }
 
-function normalizeAuditedPriorApiReleases(value, currentRelease) {
+function normalizeAuditedPreviousReleases(value, currentRelease) {
   if (!Array.isArray(value)) {
-    throw new WarmupError('Audited prior API release descriptors must be an array.');
+    throw new WarmupError('Audited previous release descriptors must be an array.');
   }
   if (value.length > 0 && !currentRelease) {
-    throw new WarmupError('Current release metadata is required to verify prior APIs.');
+    throw new WarmupError('Current release metadata is required to verify previous releases.');
+  }
+  if (value.length > 1) {
+    throw new WarmupError('At most one audited previous release descriptor is supported.');
   }
   const seen = new Set();
   const releases = [];
   for (const release of value) {
     if (!validReleaseMetadata(release)) {
-      throw new WarmupError('An audited prior API release descriptor is invalid.');
+      throw new WarmupError('An audited previous release descriptor is invalid.');
     }
-    if (release.apiSchemaVersion === currentRelease?.apiSchemaVersion
-      || seen.has(release.apiSchemaVersion)) continue;
-    seen.add(release.apiSchemaVersion);
+    if (release.dataGenerationId === currentRelease?.dataGenerationId
+      || seen.has(release.dataGenerationId)) {
+      throw new WarmupError('An audited previous release descriptor duplicates a release identity.');
+    }
+    seen.add(release.dataGenerationId);
     releases.push(release);
   }
   return releases;
+}
+
+function normalizeAuditedPriorApiReleases(value, currentRelease) {
+  return normalizeAuditedPreviousReleases(value, currentRelease)
+    .filter((release) => release.apiSchemaVersion !== currentRelease?.apiSchemaVersion);
 }
 
 function sameStringSet(left, right) {
@@ -936,6 +966,7 @@ function assessHealth(
   }
 
   let exactReadinessReason = null;
+  let exactNotReady = [];
   if (requireTargetReadyAll && expectedRelease) {
     const release = payload.release;
     const releaseLists = release && typeof release === 'object'
@@ -980,8 +1011,8 @@ function assessHealth(
       return { kind: 'hard', reason: 'target release readiness lists contradict location health' };
     }
     if (!allLocationsReady) {
-      const notReady = locationIds.filter((id) => !exactReady.includes(id));
-      exactReadinessReason = `exact target generation not visible yet: ${notReady.join(', ')}`;
+      exactNotReady = locationIds.filter((id) => !exactReady.includes(id));
+      exactReadinessReason = `exact target generation not visible yet: ${exactNotReady.join(', ')}`;
     }
   }
 
@@ -1025,7 +1056,13 @@ function assessHealth(
   }
 
   if (exactReadinessReason) {
-    return { kind: 'propagation', reason: exactReadinessReason };
+    return {
+      kind: 'propagation',
+      reason: exactReadinessReason,
+      waitingLocationIds: exactNotReady,
+      missing,
+      staleDataReady,
+    };
   }
 
   const unexpectedMissing = missing.filter((id) => !transientIds.includes(id));
@@ -1033,6 +1070,9 @@ function assessHealth(
     return {
       kind: 'propagation',
       reason: `ready cache not visible yet: ${unexpectedMissing.join(', ')}`,
+      waitingLocationIds: unexpectedMissing,
+      missing,
+      staleDataReady,
     };
   }
 
@@ -1047,9 +1087,11 @@ async function requireHealthStage({
   url,
   locationIds,
   transientIds,
+  knownWaitingIds,
   expectedWorkerVersionId,
   expectedRelease,
   requireTargetReadyAll,
+  allowWaiting,
   versionOverride,
   attempts,
   timeoutMs,
@@ -1063,9 +1105,20 @@ async function requireHealthStage({
   let transportAttempts = 0;
   let propagationReason;
   let propagationKind = 'cache';
+  let lastWaitingAssessment;
+  const knownWaiting = new Set(knownWaitingIds);
+
+  const waitingResult = (assessment) => ({
+    ...assessment,
+    kind: 'waiting',
+  });
 
   while (true) {
     if (propagationReason && Date.now() >= deadlineAt) {
+      if (allowWaiting && lastWaitingAssessment) {
+        logger.warn(`[warm] health: ${propagationReason}; deferring promotion`);
+        return waitingResult(lastWaitingAssessment);
+      }
       throw new WarmupError(`health failed after ${propagationKind} propagation window: ${propagationReason}.`);
     }
     logger.info('[warm] health: checking');
@@ -1098,6 +1151,7 @@ async function requireHealthStage({
       throw new WarmupError(`health failed: ${assessment.reason}.`);
     }
     if (assessment.kind === 'identity') {
+      lastWaitingAssessment = undefined;
       if (Date.now() >= deadlineAt) {
         throw new WarmupError(`health failed after Worker version propagation window: ${assessment.reason}.`);
       }
@@ -1122,7 +1176,18 @@ async function requireHealthStage({
       continue;
     }
 
+    lastWaitingAssessment = assessment;
+    if (allowWaiting
+      && assessment.waitingLocationIds.length > 0
+      && assessment.waitingLocationIds.every((id) => knownWaiting.has(id))) {
+      logger.warn(`[warm] health: ${assessment.reason}; deferring promotion`);
+      return waitingResult(assessment);
+    }
     if (Date.now() >= deadlineAt) {
+      if (allowWaiting) {
+        logger.warn(`[warm] health: ${assessment.reason}; deferring promotion`);
+        return waitingResult(assessment);
+      }
       throw new WarmupError(`health failed after cache propagation window: ${assessment.reason}.`);
     }
     propagationReason = assessment.reason;
@@ -1136,15 +1201,16 @@ export async function warmWorker({
   baseUrl,
   locationIds,
   expectedVersion,
-  compatibleMinVersion,
   locationContracts = [],
   expectedWorkerVersionId,
   expectedApiSchemaVersion,
   expectedRelease,
+  auditedPreviousReleases = [],
   auditedPriorApiReleases = [],
   workerName: targetWorkerName,
   requireTargetReadyAll = false,
   readOnly = false,
+  allowWaiting = false,
   attempts = DEFAULT_ATTEMPTS,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   retryDelayMs = DEFAULT_RETRY_DELAY_MS,
@@ -1167,10 +1233,6 @@ export async function warmWorker({
     'Health propagation retry delay',
   );
   const version = positiveInteger(expectedVersion, 'Expected payload version');
-  const minimumCompatibleVersion = requireCompatibleVersionFloor(
-    version,
-    compatibleMinVersion,
-  );
   const expectedWorkerId = workerVersionId(expectedWorkerVersionId, 'Expected Worker version ID');
   const apiSchemaVersion = expectedRelease?.apiSchemaVersion
     ?? positiveInteger(expectedApiSchemaVersion, 'Expected API schema version');
@@ -1186,12 +1248,22 @@ export async function warmWorker({
   if (typeof readOnly !== 'boolean') {
     throw new WarmupError('Read-only forecast policy must be a boolean.');
   }
+  if (typeof allowWaiting !== 'boolean') {
+    throw new WarmupError('Waiting policy must be a boolean.');
+  }
+  if (allowWaiting && !requireTargetReadyAll) {
+    throw new WarmupError('Waiting mode requires exact target readiness for every location.');
+  }
   if (onProgress !== undefined && typeof onProgress !== 'function') {
     throw new WarmupError('Warm-up progress reporter must be a function.');
   }
   if (expectedRelease !== undefined && !validReleaseMetadata(expectedRelease)) {
     throw new WarmupError('Expected release metadata is invalid.');
   }
+  const previousReleases = normalizeAuditedPreviousReleases(
+    auditedPreviousReleases,
+    expectedRelease,
+  );
   const priorApiReleases = normalizeAuditedPriorApiReleases(
     auditedPriorApiReleases,
     expectedRelease,
@@ -1213,8 +1285,8 @@ export async function warmWorker({
   const transientIds = [];
   const availableIds = [];
   const targetReadyIds = [];
-  const compatibleFallbackIds = [];
   const generationNotReadyIds = [];
+  const initializationRetryAfterById = new Map();
   for (const locationId of locationIds) {
     if (typeof locationId !== 'string' || !/^[a-z0-9-]+$/.test(locationId)) {
       throw new WarmupError('A location id is invalid.');
@@ -1227,20 +1299,19 @@ export async function warmWorker({
       phase: 'checking',
       locationId,
       targetReadyLocationIds: [...targetReadyIds],
-      compatibleFallbackLocationIds: [...compatibleFallbackIds],
       generationNotReadyLocationIds: [...generationNotReadyIds],
       transientLocationIds: [...transientIds],
     });
-    const result = await requireForecastStage({
+    const stage = await requireForecastStage({
       label: `forecast ${locationId}`,
       url,
       locationId,
       expectedVersion: version,
-      compatibleMinVersion: minimumCompatibleVersion,
       expectedLocation: locationContractById.get(locationId),
       expectedWorkerVersionId: expectedWorkerId,
       expectedApiSchemaVersion: apiSchemaVersion,
       expectedRelease,
+      auditedPreviousReleases: previousReleases,
       versionOverride,
       requireTargetVersion: requireTargetReadyAll,
       retryInitializing: readOnly && requireTargetReadyAll,
@@ -1250,14 +1321,14 @@ export async function warmWorker({
       fetchImpl,
       logger,
     });
-    if (result === 'initializing') transientIds.push(locationId);
+    const result = stage.outcome;
+    if (result === 'initializing') {
+      transientIds.push(locationId);
+      initializationRetryAfterById.set(locationId, stage.retryAfterSeconds);
+    }
     if (result === 'target-ready') {
       availableIds.push(locationId);
       targetReadyIds.push(locationId);
-    }
-    if (result === 'compatible-fallback') {
-      availableIds.push(locationId);
-      compatibleFallbackIds.push(locationId);
     }
     if (result === 'generation-not-ready') {
       availableIds.push(locationId);
@@ -1268,7 +1339,6 @@ export async function warmWorker({
       locationId,
       outcome: result,
       targetReadyLocationIds: [...targetReadyIds],
-      compatibleFallbackLocationIds: [...compatibleFallbackIds],
       generationNotReadyLocationIds: [...generationNotReadyIds],
       transientLocationIds: [...transientIds],
     });
@@ -1277,20 +1347,20 @@ export async function warmWorker({
   // Partial availability requires at least one real 200 forecast response.
   // A typed 503 initialization response is safe and honest, but it is not an
   // available location and must never be enough to promote a release.
-  if (availableIds.length === 0) {
+  if (availableIds.length === 0 && !allowWaiting) {
     throw new WarmupError(
       'release has no ready forecast locations; refusing a zero-availability production release.',
     );
   }
 
-  if (requireTargetReadyAll && targetReadyIds.length !== locationIds.length) {
+  if (requireTargetReadyAll && targetReadyIds.length !== locationIds.length && !allowWaiting) {
     const notReady = locationIds.filter((id) => !targetReadyIds.includes(id));
     const targetLabel = expectedRelease
       ? `target release ${expectedRelease.dataGenerationId}`
       : `target payload v${version}`;
     throw new WarmupError(
       `${targetLabel} is not ready for every public location: ${notReady.join(', ')}. `
-      + 'Legacy fallback and initialization never authorize production promotion.',
+      + 'Incomplete generations and initialization never authorize production promotion.',
     );
   }
 
@@ -1324,9 +1394,11 @@ export async function warmWorker({
     url: new URL('health', base),
     locationIds,
     transientIds,
+    knownWaitingIds: locationIds.filter((id) => !targetReadyIds.includes(id)),
     expectedWorkerVersionId: expectedWorkerId,
     expectedRelease,
     requireTargetReadyAll,
+    allowWaiting,
     versionOverride,
     attempts: boundedAttempts,
     timeoutMs: boundedTimeoutMs,
@@ -1337,7 +1409,7 @@ export async function warmWorker({
     logger,
   });
 
-  if (requireTargetReadyAll && health.staleDataReady.length > 0) {
+  if (requireTargetReadyAll && health.staleDataReady.length > 0 && !allowWaiting) {
     throw new WarmupError(
       `target release still has stale forecast data: ${health.staleDataReady.join(', ')}.`,
     );
@@ -1349,16 +1421,45 @@ export async function warmWorker({
       + `${health.missing.length ? `still initializing: ${health.missing.join(', ')}` : 'all recovered before final health'}`,
     );
   }
-  logger.info(`[warm] release gate passed for ${locationIds.length} locations`);
-  return {
+  const result = {
     availableLocationIds: availableIds,
     targetReadyLocationIds: targetReadyIds,
-    compatibleFallbackLocationIds: compatibleFallbackIds,
     generationNotReadyLocationIds: generationNotReadyIds,
     verifiedPriorApiSchemaVersions,
     initializingLocationIds: health.missing,
     transientLocationIds: transientIds,
     staleDataLocationIds: health.staleDataReady,
+  };
+  if (!allowWaiting) {
+    logger.info(`[warm] release gate passed for ${locationIds.length} locations`);
+    return result;
+  }
+
+  const healthWaitingIds = health.kind === 'waiting' ? health.waitingLocationIds : [];
+  const waitingSet = new Set([
+    ...locationIds.filter((id) => !targetReadyIds.includes(id)),
+    ...healthWaitingIds,
+    ...health.staleDataReady,
+  ]);
+  const waitingLocationIds = locationIds.filter((id) => waitingSet.has(id));
+  const allWaitingHaveRetryHint = waitingLocationIds.length > 0
+    && waitingLocationIds.every((id) => initializationRetryAfterById.has(id));
+  const retryAfterSeconds = waitingLocationIds.length === 0
+    ? 0
+    : allWaitingHaveRetryHint
+      ? Math.max(...waitingLocationIds.map((id) => initializationRetryAfterById.get(id)))
+      : DEFAULT_WAIT_RETRY_AFTER_SECONDS;
+  const readyForPromotion = waitingLocationIds.length === 0;
+  logger.info(
+    readyForPromotion
+      ? '[warm] exact candidate is ready for promotion'
+      : `[warm] candidate remains waiting for ${waitingLocationIds.join(', ')}`,
+  );
+  return {
+    ...result,
+    readyForPromotion,
+    waitingLocationIds,
+    retryAfterSeconds,
   };
 }
 
@@ -1366,10 +1467,10 @@ function parseArguments(argv) {
   const values = {};
   let requireTargetReadyAll = false;
   let readOnly = false;
+  let allowWaiting = false;
   const known = new Set([
     '--base-url',
     '--expected-version',
-    '--compatible-min-version',
     '--expected-worker-version-id',
     '--worker-name',
     '--attempts',
@@ -1377,6 +1478,7 @@ function parseArguments(argv) {
     '--retry-delay-ms',
     '--summary-file',
     '--summary-title',
+    '--github-output',
   ]);
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -1388,6 +1490,10 @@ function parseArguments(argv) {
     }
     if (argument === '--read-only') {
       readOnly = true;
+      continue;
+    }
+    if (argument === '--allow-waiting') {
+      allowWaiting = true;
       continue;
     }
     if (!known.has(argument)) throw new WarmupError(`Unknown option: ${argument}`);
@@ -1403,7 +1509,6 @@ function parseArguments(argv) {
   return {
     baseUrl: values['--base-url'],
     expectedVersion: values['--expected-version'],
-    compatibleMinVersion: values['--compatible-min-version'],
     expectedWorkerVersionId: values['--expected-worker-version-id'],
     workerName: values['--worker-name'],
     attempts: values['--attempts'],
@@ -1411,8 +1516,10 @@ function parseArguments(argv) {
     retryDelayMs: values['--retry-delay-ms'],
     summaryFile: values['--summary-file'],
     summaryTitle: values['--summary-title'],
+    githubOutput: values['--github-output'],
     requireTargetReadyAll,
     readOnly,
+    allowWaiting,
   };
 }
 
@@ -1421,17 +1528,19 @@ function printHelp() {
 
 Options:
   --expected-version <n>  Override the checked-in payload version
-  --compatible-min-version <n>
-                          Audited oldest payload accepted by the release gate
   --expected-worker-version-id <uuid>
                           Exact Cloudflare version that must answer every stage
   --worker-name <name>    Route every request to that 0% version via Cloudflare's
                           version-override header (omit after 100% promotion)
   --require-target-ready-all
                           Require exact release metadata and fresh health for every
-                          public location; legacy fallback never passes
+                          public location; incomplete generations never pass
   --read-only             Never append warm=1; prove ordinary cached traffic without
                           triggering provider work
+  --allow-waiting         With exact-all readiness and --github-output, return success
+                          only for a validated not-yet-ready candidate
+  --github-output <path>  Write ready_for_promotion, waiting_location_ids, and
+                          retry_after_seconds for release automation
   --attempts <n>          Transport attempts per request (default: ${DEFAULT_ATTEMPTS})
   --timeout-ms <n>        Per-request timeout (default: ${DEFAULT_TIMEOUT_MS})
   --retry-delay-ms <n>    Initial retry delay (default: ${DEFAULT_RETRY_DELAY_MS})
@@ -1461,7 +1570,6 @@ export function formatWarmGateSummary({
   status,
   locations,
   targetReadyLocationIds = [],
-  compatibleFallbackLocationIds = [],
   generationNotReadyLocationIds = [],
   initializingLocationIds = [],
   activeLocationId,
@@ -1479,14 +1587,13 @@ export function formatWarmGateSummary({
     ? values.filter((id) => knownIds.has(id))
     : [];
   const ready = new Set(safeList(targetReadyLocationIds));
-  const fallback = new Set(safeList(compatibleFallbackLocationIds));
   const notReady = new Set(safeList(generationNotReadyLocationIds));
   const initializing = new Set(safeList(initializingLocationIds));
   const missing = ids.filter((id) => !ready.has(id));
   const lines = [
     `#### ${markdownText(title)}`,
     '',
-    `- Gate: ${status === 'passed' ? 'passed' : 'failed'}`,
+    `- Gate: ${status === 'passed' ? 'passed' : status === 'waiting' ? 'waiting' : 'failed'}`,
     `- Exact ready: ${ready.size}/${ids.length}`,
     `- Missing exact readiness: ${missing.length === 0 ? 'none' : missing.join(', ')}`,
     '- Locations:',
@@ -1498,7 +1605,6 @@ export function formatWarmGateSummary({
     if (ready.has(id)) state = 'exact target ready';
     else if (status === 'failed' && activeLocationId === id) state = 'failed during check';
     else if (initializing.has(id)) state = 'initializing';
-    else if (fallback.has(id)) state = 'fallback only (not exact)';
     else if (notReady.has(id)) state = 'target generation incomplete';
     lines.push(`  - ${markdownText(label)} (\`${markdownText(id)}\`): ${state}`);
   }
@@ -1507,27 +1613,52 @@ export function formatWarmGateSummary({
   return `${lines.join('\n')}\n`;
 }
 
+export function formatWarmAutomationOutput({
+  readyForPromotion,
+  waitingLocationIds,
+  retryAfterSeconds,
+}) {
+  if (typeof readyForPromotion !== 'boolean'
+    || !Array.isArray(waitingLocationIds)
+    || waitingLocationIds.some((id) => typeof id !== 'string' || !/^[a-z0-9-]+$/.test(id))
+    || new Set(waitingLocationIds).size !== waitingLocationIds.length
+    || !Number.isSafeInteger(retryAfterSeconds)
+    || retryAfterSeconds < 0
+    || (readyForPromotion && (waitingLocationIds.length !== 0 || retryAfterSeconds !== 0))
+    || (!readyForPromotion && (waitingLocationIds.length === 0 || retryAfterSeconds <= 0))) {
+    throw new WarmupError('Warm-up automation result is invalid.');
+  }
+  return [
+    `ready_for_promotion=${readyForPromotion}`,
+    `waiting_location_ids=${waitingLocationIds.join(',')}`,
+    `retry_after_seconds=${retryAfterSeconds}`,
+    '',
+  ].join('\n');
+}
+
 export async function runCli(argv = process.argv.slice(2), environment = process.env) {
   const options = parseArguments(argv);
   if (options.help) {
     printHelp();
     return;
   }
+  if (options.allowWaiting !== Boolean(options.githubOutput)) {
+    throw new WarmupError('--allow-waiting and --github-output must be used together.');
+  }
+  if (options.allowWaiting && !options.requireTargetReadyAll) {
+    throw new WarmupError('--allow-waiting requires --require-target-ready-all.');
+  }
 
   const contract = await loadReleaseContract();
   const expectedVersion = options.expectedVersion === undefined
     ? contract.expectedVersion
     : positiveInteger(options.expectedVersion, 'Expected payload version');
-  const compatibleMinVersion = options.compatibleMinVersion === undefined
-    ? compatibleForecastVersionFloor(expectedVersion)
-    : positiveInteger(options.compatibleMinVersion, 'Compatible minimum payload version');
   const expectedWorkerVersionId = options.expectedWorkerVersionId
     ?? environment.FRANK_EXPECTED_WORKER_VERSION_ID;
   const targetWorkerName = options.workerName ?? environment.FRANK_WORKER_NAME;
   const progress = {
     activeLocationId: undefined,
     targetReadyLocationIds: [],
-    compatibleFallbackLocationIds: [],
     generationNotReadyLocationIds: [],
     transientLocationIds: [],
   };
@@ -1540,16 +1671,16 @@ export async function runCli(argv = process.argv.slice(2), environment = process
       locationContracts: contract.locations,
       expectedVersion,
       expectedRelease: contract.release,
+      auditedPreviousReleases: contract.auditedPreviousReleases,
       auditedPriorApiReleases: contract.auditedPriorApiReleases,
-      compatibleMinVersion,
       expectedWorkerVersionId,
       workerName: targetWorkerName,
       requireTargetReadyAll: options.requireTargetReadyAll,
       readOnly: options.readOnly,
+      allowWaiting: options.allowWaiting,
       onProgress: async (update) => {
         progress.activeLocationId = update.phase === 'checking' ? update.locationId : undefined;
         progress.targetReadyLocationIds = update.targetReadyLocationIds;
-        progress.compatibleFallbackLocationIds = update.compatibleFallbackLocationIds;
         progress.generationNotReadyLocationIds = update.generationNotReadyLocationIds;
         progress.transientLocationIds = update.transientLocationIds;
       },
@@ -1564,11 +1695,9 @@ export async function runCli(argv = process.argv.slice(2), environment = process
   if (options.summaryFile) {
     await appendFile(options.summaryFile, formatWarmGateSummary({
       title: options.summaryTitle,
-      status: failure ? 'failed' : 'passed',
+      status: failure ? 'failed' : result?.readyForPromotion === false ? 'waiting' : 'passed',
       locations: contract.locations,
       targetReadyLocationIds: result?.targetReadyLocationIds ?? progress.targetReadyLocationIds,
-      compatibleFallbackLocationIds: result?.compatibleFallbackLocationIds
-        ?? progress.compatibleFallbackLocationIds,
       generationNotReadyLocationIds: result?.generationNotReadyLocationIds
         ?? progress.generationNotReadyLocationIds,
       initializingLocationIds: result?.initializingLocationIds ?? progress.transientLocationIds,
@@ -1577,6 +1706,13 @@ export async function runCli(argv = process.argv.slice(2), environment = process
     }), 'utf8');
   }
   if (failure) throw failure;
+  if (options.githubOutput) {
+    await appendFile(options.githubOutput, formatWarmAutomationOutput({
+      readyForPromotion: result.readyForPromotion,
+      waitingLocationIds: result.waitingLocationIds,
+      retryAfterSeconds: result.retryAfterSeconds,
+    }), 'utf8');
+  }
   return result;
 }
 
