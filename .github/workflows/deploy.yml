@@ -44,6 +44,15 @@ jobs:
       - name: Test
         run: npm run test
 
+      - name: Check generated Worker types
+        run: npm run worker:types:check
+
+      - name: Type-check Worker and runtime tests
+        run: npm run worker:typecheck
+
+      - name: Test Worker runtime
+        run: npm run test:worker-runtime
+
       - name: Validate Worker bundle
         run: npm run worker:dry-run
 
