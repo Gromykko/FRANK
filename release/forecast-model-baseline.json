@@ -18,9 +18,9 @@
     "src/features/forecast/weatherCodes.ts": "6fbc0a6438dbf323f094520c8f1a4701e4ce82949ea7a6fee75887a43b44d8ba",
     "worker/domain.ts": "7e99fc30129d52519d1979327aa6811c650302b40f56688d96a181cd990b0d56",
     "worker/execution.ts": "4a867944d1ec91af7e072e6a0e6551ae8ef619ffe6fbd144d7f459dc5312d25e",
-    "worker/index.ts": "132049293b6c10f769942eee5ba97baff32c09c52fe228c63615d0b2f52527bc",
+    "worker/index.ts": "cea6a56a7a60202b0c788d70016e489b1e51f1d19362ce380e25414af186fbf5",
     "worker/providerAvailability.ts": "49e826ba7f4967c55420b136252091df7e4f79dc98703594a31834f609e2f003",
-    "worker/providers.ts": "0296cbcac9ad2008798ec59527c65e65aae690b7a072d5952210943d1fa7c190",
+    "worker/providers.ts": "a852c54079dcc8110e32588290d544155a4fc6fc2a8037e1766a0731fc60702f",
     "worker/validation.ts": "77d7ae840b95f0687e7481e518262a784d3afa6ba64827ef4e4080e79886be34"
   },
   "locations": [

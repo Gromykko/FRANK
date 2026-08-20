@@ -28,6 +28,7 @@ function requireLocation(id: string): ForecastLocation {
 
 const HORSENS = requireLocation('horsens');
 const FORECAST_KEY = assembledForecastKey(HORSENS);
+const WARM_TOKEN = 'test-only-frank-warm-token-with-256-bits-of-entropy';
 type PublicHealthPayload = Omit<HealthPayload, 'ages' | 'storageUnavailable'>;
 
 function currentHorsensForecast(nowMs = Date.now()): ForecastData {
@@ -84,11 +85,18 @@ function currentHorsensForecast(nowMs = Date.now()): ForecastData {
   };
 }
 
-async function dispatch(path: string, method = 'GET'): Promise<Response> {
+async function dispatch(path: string, method = 'GET', warmToken?: string): Promise<Response> {
   const ctx = createExecutionContext();
   const response = await worker.fetch(
-    new Request(`https://frank.test${path}`, { method }),
-    env,
+    new Request(`https://frank.test${path}`, {
+      method,
+      ...(warmToken ? { headers: { Authorization: `Bearer ${warmToken}` } } : {}),
+    }),
+    {
+      CF_VERSION_METADATA: env.CF_VERSION_METADATA,
+      FRANK_FORECAST_CACHE: env.FRANK_FORECAST_CACHE,
+      FRANK_WARM_TOKEN: WARM_TOKEN,
+    },
     ctx,
   );
   await waitOnExecutionContext(ctx);
@@ -156,12 +164,21 @@ describe('Worker runtime integration contract', () => {
 
   it('serves deployment cache-readiness mode from real KV without provider work', async () => {
     const providerFetch = rejectLiveNetwork();
-    const response = await dispatch('/api/v1/forecast/horsens?warm=1');
+    const response = await dispatch('/api/v1/forecast/horsens?warm=1', 'GET', WARM_TOKEN);
 
     expect(response.status).toBe(200);
     const body = await response.json<ForecastData>();
     expect(body.sources.location?.id).toBe(HORSENS.id);
     expect(body.sources.payloadVersion).toBe(FORECAST_PAYLOAD_VERSION);
+    expect(providerFetch).not.toHaveBeenCalled();
+  });
+
+  it('hides unauthenticated deployment warming without provider work', async () => {
+    const providerFetch = rejectLiveNetwork();
+    const response = await dispatch('/api/v1/forecast/horsens?warm=1');
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: 'Not found' });
     expect(providerFetch).not.toHaveBeenCalled();
   });
 
@@ -206,7 +223,7 @@ describe('Worker runtime integration contract', () => {
     );
     vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    const first = await dispatch('/api/v1/forecast/horsens?warm=1');
+    const first = await dispatch('/api/v1/forecast/horsens?warm=1', 'GET', WARM_TOKEN);
     expect(first.status).toBe(503);
     expect(first.headers.get('retry-after')).toBe('600');
     expectCurrentWorkerVersion(first);
@@ -235,7 +252,7 @@ describe('Worker runtime integration contract', () => {
     });
 
     const callsAfterFirst = providerFetch.mock.calls.length;
-    const repeatedWarm = await dispatch('/api/v1/forecast/horsens?warm=1');
+    const repeatedWarm = await dispatch('/api/v1/forecast/horsens?warm=1', 'GET', WARM_TOKEN);
     expect(repeatedWarm.status).toBe(503);
     expect(providerFetch).toHaveBeenCalledTimes(callsAfterFirst);
   });

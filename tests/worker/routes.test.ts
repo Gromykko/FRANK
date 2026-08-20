@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import worker from '../../worker/index';
 import locationData from '../../src/config/locations.json';
 import type { ForecastLocation } from '../../src/config/locationTypes';
@@ -17,6 +17,36 @@ const LOCATIONS = locationData as ForecastLocation[];
 const LAST_COMPLETED_CHECK = new Date(Date.now() - 5 * 60_000).toISOString();
 const CURRENT_RUN = new Date().toISOString();
 const WORKER_VERSION_ID = 'cba7bd5e-93f4-4df7-8b61-8f00d5b6f3a1';
+const WARM_TOKEN = 'test-only-frank-warm-token-with-256-bits-of-entropy';
+const subtleWithTimingSafeEqual = crypto.subtle as SubtleCrypto & {
+  timingSafeEqual?: (left: ArrayBuffer | ArrayBufferView, right: ArrayBuffer | ArrayBufferView) => boolean;
+};
+const nativeTimingSafeEqual = subtleWithTimingSafeEqual.timingSafeEqual;
+
+beforeAll(() => {
+  if (nativeTimingSafeEqual) return;
+  Object.defineProperty(subtleWithTimingSafeEqual, 'timingSafeEqual', {
+    configurable: true,
+    value(left: ArrayBuffer | ArrayBufferView, right: ArrayBuffer | ArrayBufferView): boolean {
+      const leftBytes = ArrayBuffer.isView(left)
+        ? new Uint8Array(left.buffer, left.byteOffset, left.byteLength)
+        : new Uint8Array(left);
+      const rightBytes = ArrayBuffer.isView(right)
+        ? new Uint8Array(right.buffer, right.byteOffset, right.byteLength)
+        : new Uint8Array(right);
+      if (leftBytes.byteLength !== rightBytes.byteLength) throw new TypeError('Unequal lengths');
+      let difference = 0;
+      for (let index = 0; index < leftBytes.byteLength; index += 1) {
+        difference |= leftBytes[index] ^ rightBytes[index];
+      }
+      return difference === 0;
+    },
+  });
+});
+
+afterAll(() => {
+  if (!nativeTimingSafeEqual) delete subtleWithTimingSafeEqual.timingSafeEqual;
+});
 
 function locationById(id: string): ForecastLocation {
   const location = LOCATIONS.find((candidate) => candidate.id === id);
@@ -113,6 +143,7 @@ function makeRuntime(options: {
         store.set(key, value);
       },
     },
+    FRANK_WARM_TOKEN: WARM_TOKEN,
   };
   const ctx = {
     waitUntil(value: Promise<unknown>) {
@@ -124,6 +155,12 @@ function makeRuntime(options: {
 
 const request = (path: string, method = 'GET') =>
   new Request(`https://frank.test${path}`, { method });
+
+const authorizedWarmRequest = (path: string, token = WARM_TOKEN, method = 'GET') =>
+  new Request(`https://frank.test${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${token}` },
+  });
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
@@ -372,11 +409,57 @@ describe('Worker route HTTP contract', () => {
     expect(providerFetch).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['missing authorization', request('/api/v1/forecast/aarhus?warm=1')],
+    ['wrong authorization', authorizedWarmRequest('/api/v1/forecast/aarhus?warm=true', 'wrong-token')],
+  ])('hides candidate warming for %s before any cache or provider I/O', async (_label, warmRequest) => {
+    const runtime = makeRuntime({ exact: false });
+    const providerFetch = rejectProviderWork();
+
+    const response = await worker.fetch(warmRequest, runtime.env, runtime.ctx);
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: 'Not found' });
+    expect(runtime.gets).toHaveLength(0);
+    expect(runtime.puts).toHaveLength(0);
+    expect(runtime.waits).toHaveLength(0);
+    expect(providerFetch).not.toHaveBeenCalled();
+  });
+
+  it('requires warm authorization before method handling', async () => {
+    const runtime = makeRuntime({ exact: false });
+    const response = await worker.fetch(
+      request('/api/v1/forecast/aarhus?warm=1', 'OPTIONS'),
+      runtime.env,
+      runtime.ctx,
+    );
+
+    expect(response.status).toBe(404);
+    expect(runtime.gets).toHaveLength(0);
+  });
+
+  it('fails closed when the required warm secret binding is unavailable', async () => {
+    const runtime = makeRuntime({ exact: false });
+    runtime.env.FRANK_WARM_TOKEN = '';
+    const providerFetch = rejectProviderWork();
+
+    const response = await worker.fetch(
+      authorizedWarmRequest('/api/v1/forecast/aarhus?warm=1'),
+      runtime.env,
+      runtime.ctx,
+    );
+
+    expect(response.status).toBe(404);
+    expect(runtime.gets).toHaveLength(0);
+    expect(runtime.puts).toHaveLength(0);
+    expect(providerFetch).not.toHaveBeenCalled();
+  });
+
   it('does not expose candidate warming through the unversioned alias', async () => {
     const runtime = makeRuntime({ exact: false });
     const providerFetch = rejectProviderWork();
     const response = await worker.fetch(
-      request('/forecast/aarhus?warm=1'),
+      authorizedWarmRequest('/forecast/aarhus?warm=1'),
       runtime.env,
       runtime.ctx,
     );
@@ -396,7 +479,7 @@ describe('Worker route HTTP contract', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const first = await worker.fetch(
-      request('/api/v1/forecast/aarhus?warm=1'),
+      authorizedWarmRequest('/api/v1/forecast/aarhus?warm=1'),
       runtime.env,
       runtime.ctx,
     );
@@ -442,7 +525,7 @@ describe('Worker route HTTP contract', () => {
 
     const callsAfterFirst = providerFetch.mock.calls.length;
     const repeated = await worker.fetch(
-      request('/api/v1/forecast/aarhus?warm=1'),
+      authorizedWarmRequest('/api/v1/forecast/aarhus?warm=1'),
       runtime.env,
       runtime.ctx,
     );
@@ -469,7 +552,7 @@ describe('Worker route HTTP contract', () => {
     });
     const providerFetch = rejectProviderWork();
     const response = await worker.fetch(
-      request('/api/v1/forecast/kolding?warm=1'),
+      authorizedWarmRequest('/api/v1/forecast/kolding?warm=1'),
       runtime.env,
       runtime.ctx,
     );
@@ -557,7 +640,7 @@ describe('Worker route HTTP contract', () => {
     });
     const providerFetch = rejectProviderWork();
     const response = await worker.fetch(
-      request('/api/v1/forecast/vejle?warm=1'),
+      authorizedWarmRequest('/api/v1/forecast/vejle?warm=1'),
       runtime.env,
       runtime.ctx,
     );
@@ -573,7 +656,7 @@ describe('Worker route HTTP contract', () => {
     ));
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const response = await worker.fetch(
-      request('/api/v1/forecast/vejle?warm=1'),
+      authorizedWarmRequest('/api/v1/forecast/vejle?warm=1'),
       runtime.env,
       runtime.ctx,
     );

@@ -5,7 +5,7 @@ import {
   classifyBuildFailure,
   degradedSourcesAfterProbe,
   isMarineRunWithinFallbackAge,
-  marineRunAgeMs,
+  marineProbeDecision,
   shouldCheckInBackground,
 } from '../../worker/index';
 import { MARINE_INGREDIENT_CACHE_SCHEMA_VERSION } from '../../src/features/forecast/releaseContract';
@@ -334,22 +334,108 @@ describe('isMarineRunWithinFallbackAge (12-hour safety boundary)', () => {
   });
 });
 
-describe('marineRunAgeMs (probe gate)', () => {
-  const now = Date.parse('2026-07-11T18:30:00Z');
-  it('measures age from the OLDER of the two runs', () => {
-    const inst = { water: { collection: 'dkss_idw', id: '2026-07-11T120000Z' }, waves: { collection: 'wam_nsb', id: '2026-07-11T180000Z' } };
-    // older run is 12Z -> 6.5h old at 18:30Z
-    expect(marineRunAgeMs(inst, now)).toBe(6.5 * 3600_000);
+describe('marineProbeDecision (DMI publication schedule)', () => {
+  const sharedRun = {
+    water: { collection: 'dkss_idw', id: '2026-07-11T120000Z' },
+    waves: { collection: 'wam_nsb', id: '2026-07-11T120000Z' },
+  };
+  const expectedSharedRunAt = Date.parse('2026-07-11T21:30:00Z');
+
+  it('waits for the slower collection when water and waves share a run', () => {
+    expect(marineProbeDecision(
+      sharedRun,
+      undefined,
+      expectedSharedRunAt - 1,
+    )).toEqual({
+      shouldProbe: false,
+      nextProbeAtMs: expectedSharedRunAt,
+      reason: 'publication-window',
+    });
+    expect(marineProbeDecision(sharedRun, undefined, expectedSharedRunAt).shouldProbe).toBe(true);
   });
-  it('a run under 5h old gates the probe; a 6h-old run does not', () => {
-    const fresh = { water: { id: '2026-07-11T180000Z' }, waves: { id: '2026-07-11T180000Z' } };
-    const stale = { water: { id: '2026-07-11T120000Z' }, waves: { id: '2026-07-11T120000Z' } };
-    expect(marineRunAgeMs(fresh, now)).toBeLessThan(5 * 3600_000);   // skip probe
-    expect(marineRunAgeMs(stale, now)).toBeGreaterThan(5 * 3600_000); // probe
+
+  it('uses the other WAM completion delay when that is the slower shared-run source', () => {
+    const wamOnly = {
+      water: { collection: 'wam_nsb', id: '2026-07-11T120000Z' },
+      waves: { collection: 'wam_dw', id: '2026-07-11T120000Z' },
+    };
+    expect(marineProbeDecision(
+      wamOnly,
+      undefined,
+      Date.parse('2026-07-11T21:09:59.999Z'),
+    ).nextProbeAtMs).toBe(Date.parse('2026-07-11T21:10:00Z'));
   });
-  it('is Infinity (forces a probe) when a run id is missing', () => {
-    expect(marineRunAgeMs({ water: { id: '2026-07-11T120000Z' } }, now)).toBe(Infinity);
-    expect(marineRunAgeMs(undefined, now)).toBe(Infinity);
+
+  it('schedules from whichever held ingredient is on the older run', () => {
+    const waterLags = {
+      water: { collection: 'dkss_idw', id: '2026-07-11T120000Z' },
+      waves: { collection: 'wam_nsb', id: '2026-07-11T180000Z' },
+    };
+    expect(marineProbeDecision(
+      waterLags,
+      undefined,
+      Date.parse('2026-07-11T21:29:59.999Z'),
+    ).nextProbeAtMs).toBe(Date.parse('2026-07-11T21:30:00Z'));
+
+    const wavesLag = {
+      water: { collection: 'dkss_idw', id: '2026-07-11T180000Z' },
+      waves: { collection: 'wam_nsb', id: '2026-07-11T120000Z' },
+    };
+    expect(marineProbeDecision(
+      wavesLag,
+      undefined,
+      Date.parse('2026-07-11T20:54:59.999Z'),
+    ).nextProbeAtMs).toBe(Date.parse('2026-07-11T20:55:00Z'));
+  });
+
+  it('backs off for 20 minutes after a due check returned no newer run', () => {
+    const attemptedAt = Date.parse('2026-07-11T21:31:00Z');
+    expect(marineProbeDecision(
+      sharedRun,
+      new Date(attemptedAt).toISOString(),
+      Date.parse('2026-07-11T21:40:00Z'),
+    )).toEqual({
+      shouldProbe: false,
+      nextProbeAtMs: Date.parse('2026-07-11T21:51:00Z'),
+      reason: 'retry-backoff',
+    });
+    expect(marineProbeDecision(
+      sharedRun,
+      new Date(attemptedAt).toISOString(),
+      Date.parse('2026-07-11T21:51:00Z'),
+    ).shouldProbe).toBe(true);
+  });
+
+  it('does not mistake pre-window or future stamps for a completed due probe', () => {
+    expect(marineProbeDecision(
+      sharedRun,
+      '2026-07-11T21:29:59Z',
+      expectedSharedRunAt,
+    ).shouldProbe).toBe(true);
+    expect(marineProbeDecision(
+      sharedRun,
+      '2026-07-12T00:00:00Z',
+      expectedSharedRunAt,
+    ).shouldProbe).toBe(true);
+  });
+
+  it('always probes missing, invalid, future, unknown, and over-12-hour provenance', () => {
+    const now = Date.parse('2026-07-12T00:00:00.001Z');
+    const cases = [
+      undefined,
+      { water: sharedRun.water },
+      { water: { collection: 'dkss_idw', id: 'garbage' }, waves: sharedRun.waves },
+      { water: { collection: 'unknown', id: '2026-07-11T180000Z' }, waves: sharedRun.waves },
+      { water: { collection: 'dkss_idw', id: '2026-07-12T000001Z' }, waves: sharedRun.waves },
+      sharedRun,
+    ];
+    for (const instances of cases) {
+      expect(marineProbeDecision(
+        instances,
+        '2026-07-12T00:00:00Z',
+        now,
+      ).shouldProbe).toBe(true);
+    }
   });
 });
 

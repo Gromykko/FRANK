@@ -21,6 +21,7 @@ const SCRIPT_PATH = fileURLToPath(new URL('../../scripts/warm-worker.mjs', impor
 const openServers: Server[] = [];
 const silentLogger = { info: () => {}, warn: () => {} };
 const EXPECTED_WORKER_VERSION_ID = 'cba7bd5e-93f4-4df7-8b61-8f00d5b6f3a1';
+const WARM_TOKEN = 'test-only-frank-warm-token-with-256-bits-of-entropy';
 const PREVIOUS_WORKER_VERSION_ID = 'b667d0b0-cb02-482d-b418-bfb56826ee0f';
 type ReleaseMetadata = Awaited<ReturnType<typeof loadReleaseContract>>['release'];
 
@@ -336,6 +337,14 @@ describe('Worker deployment warm-up', () => {
     ], {})).rejects.toThrow('requires --require-target-ready-all');
   });
 
+  it('requires an operational token for provider-building CLI checks', async () => {
+    await expect(runCli([
+      '--base-url', 'https://frank.invalid',
+      '--expected-worker-version-id', EXPECTED_WORKER_VERSION_ID,
+      '--attempts', '1',
+    ], {})).rejects.toThrow('FRANK_WARM_TOKEN must be configured');
+  });
+
   it('formats an explicit city-by-city readiness summary', () => {
     const summary = formatWarmGateSummary({
       title: 'Candidate readiness',
@@ -404,6 +413,7 @@ describe('Worker deployment warm-up', () => {
     const previous = policy.auditedPreviousReleases[0];
     const baseUrl = await listen((request, response) => {
       if (request.url?.startsWith(`/api/v1/forecast/${location.id}`)) {
+        expect(request.headers.authorization).toBe(`Bearer ${WARM_TOKEN}`);
         return json(
           response,
           200,
@@ -434,6 +444,7 @@ describe('Worker deployment warm-up', () => {
       expectedVersion: current.payloadVersion,
       expectedRelease: current,
       auditedPreviousReleases: [previous],
+      warmToken: WARM_TOKEN,
       requireTargetReadyAll: true,
       allowWaiting: true,
       attempts: 1,
@@ -1976,7 +1987,10 @@ describe('Worker deployment warm-up', () => {
       '--attempts', '1',
       '--timeout-ms', '500',
       '--retry-delay-ms', '1',
-    ], { cwd: fileURLToPath(new URL('../..', import.meta.url)) });
+    ], {
+      cwd: fileURLToPath(new URL('../..', import.meta.url)),
+      env: { ...process.env, FRANK_WARM_TOKEN: WARM_TOKEN },
+    });
     child.stdout.resume();
     child.stderr.resume();
 
@@ -2011,7 +2025,10 @@ describe('Worker deployment warm-up', () => {
       '--attempts', '1',
       '--timeout-ms', '500',
       '--retry-delay-ms', '1',
-    ], { cwd: fileURLToPath(new URL('../..', import.meta.url)) });
+    ], {
+      cwd: fileURLToPath(new URL('../..', import.meta.url)),
+      env: { ...process.env, FRANK_WARM_TOKEN: WARM_TOKEN },
+    });
 
     let stderr = '';
     child.stderr.setEncoding('utf8');

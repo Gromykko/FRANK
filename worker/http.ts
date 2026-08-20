@@ -1,6 +1,29 @@
 export const ALLOW_READ_METHODS = 'GET, HEAD, OPTIONS';
 export const WORKER_VERSION_HEADER = 'X-FRANK-Worker-Version';
 
+const textEncoder = new TextEncoder();
+const UNCONFIGURED_WARM_TOKEN = 'frank-warm-token-is-not-configured';
+
+async function sha256(value: string): Promise<ArrayBuffer> {
+  return crypto.subtle.digest('SHA-256', textEncoder.encode(value));
+}
+
+export async function hasValidWarmAuthorization(
+  request: Request,
+  configuredToken: string | undefined,
+): Promise<boolean> {
+  const tokenConfigured = typeof configuredToken === 'string' && configuredToken.length > 0;
+  const expectedToken = tokenConfigured ? configuredToken : UNCONFIGURED_WARM_TOKEN;
+  const [providedHash, expectedHash] = await Promise.all([
+    sha256(request.headers.get('Authorization') ?? ''),
+    sha256(`Bearer ${expectedToken}`),
+  ]);
+
+  // Hashing first gives timingSafeEqual two fixed-size inputs. A missing
+  // binding still performs the same comparison and always fails closed.
+  return tokenConfigured && crypto.subtle.timingSafeEqual(providedHash, expectedHash);
+}
+
 export type WorkerRoute =
   | { kind: 'root' }
   | { kind: 'health' }

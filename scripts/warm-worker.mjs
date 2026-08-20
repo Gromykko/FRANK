@@ -610,7 +610,7 @@ function initializingPayloadMatches(payload, locationId, retryAfterHeader, expec
   );
 }
 
-async function requestJson(url, timeoutMs, fetchImpl, versionOverride) {
+async function requestJson(url, timeoutMs, fetchImpl, versionOverride, authorization) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   timeoutId.unref?.();
@@ -621,6 +621,7 @@ async function requestJson(url, timeoutMs, fetchImpl, versionOverride) {
       headers: {
         Accept: 'application/json',
         ...(versionOverride ? { [VERSION_OVERRIDE_HEADER]: versionOverride } : {}),
+        ...(authorization ? { Authorization: authorization } : {}),
       },
       redirect: 'error',
       signal: controller.signal,
@@ -673,6 +674,7 @@ async function requireForecastStage({
   expectedRelease,
   auditedPreviousReleases,
   versionOverride,
+  authorization,
   requireTargetVersion,
   retryInitializing,
   attempts,
@@ -686,7 +688,7 @@ async function requireForecastStage({
     : `target payload v${expectedVersion}`;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     logger.info(`[warm] ${label}: attempt ${attempt}/${attempts}`);
-    const result = await requestJson(url, timeoutMs, fetchImpl, versionOverride);
+    const result = await requestJson(url, timeoutMs, fetchImpl, versionOverride, authorization);
 
     // A versions deployment can reach the control plane before every edge sees
     // it, and an invalid override silently falls back to traffic percentages.
@@ -1208,6 +1210,7 @@ export async function warmWorker({
   auditedPreviousReleases = [],
   auditedPriorApiReleases = [],
   workerName: targetWorkerName,
+  warmToken,
   requireTargetReadyAll = false,
   readOnly = false,
   allowWaiting = false,
@@ -1242,6 +1245,9 @@ export async function warmWorker({
   }
   const targetWorker = workerName(targetWorkerName);
   const versionOverride = targetWorker ? `${targetWorker}="${expectedWorkerId}"` : null;
+  const warmAuthorization = typeof warmToken === 'string' && warmToken.length > 0
+    ? `Bearer ${warmToken}`
+    : null;
   if (typeof requireTargetReadyAll !== 'boolean') {
     throw new WarmupError('Target-readiness policy must be a boolean.');
   }
@@ -1316,6 +1322,7 @@ export async function warmWorker({
       expectedRelease,
       auditedPreviousReleases: previousReleases,
       versionOverride,
+      authorization: readOnly ? null : warmAuthorization,
       requireTargetVersion: requireTargetReadyAll,
       retryInitializing: readOnly && requireTargetReadyAll,
       attempts: boundedAttempts,
@@ -1546,6 +1553,8 @@ Options:
                           public location; incomplete generations never pass
   --read-only             Never append warm=1; prove ordinary cached traffic without
                           triggering provider work
+  FRANK_WARM_TOKEN        Required environment secret for every non-read-only run;
+                          sent only as a Bearer credential to warm forecast requests
   --allow-waiting         With exact-all readiness and --github-output, return success
                           only for a validated not-yet-ready candidate
   --github-output <path>  Write ready_for_promotion, waiting_location_ids, and
@@ -1657,6 +1666,12 @@ export async function runCli(argv = process.argv.slice(2), environment = process
   if (options.allowWaiting && !options.requireTargetReadyAll) {
     throw new WarmupError('--allow-waiting requires --require-target-ready-all.');
   }
+  if (!options.readOnly
+    && (typeof environment.FRANK_WARM_TOKEN !== 'string'
+      || environment.FRANK_WARM_TOKEN.length < 32
+      || environment.FRANK_WARM_TOKEN.length > 512)) {
+    throw new WarmupError('FRANK_WARM_TOKEN must be configured for provider-building warm checks.');
+  }
 
   const contract = await loadReleaseContract();
   const expectedVersion = options.expectedVersion === undefined
@@ -1684,6 +1699,7 @@ export async function runCli(argv = process.argv.slice(2), environment = process
       auditedPriorApiReleases: contract.auditedPriorApiReleases,
       expectedWorkerVersionId,
       workerName: targetWorkerName,
+      warmToken: environment.FRANK_WARM_TOKEN,
       requireTargetReadyAll: options.requireTargetReadyAll,
       readOnly: options.readOnly,
       allowWaiting: options.allowWaiting,

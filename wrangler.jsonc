@@ -16,6 +16,9 @@
       "head_sampling_rate": 1
     }
   },
+  "secrets": {
+    "required": ["FRANK_WARM_TOKEN"]
+  },
   "triggers": {
     "crons": ["*/10 * * * *"]
   },

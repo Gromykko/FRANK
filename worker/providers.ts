@@ -80,9 +80,12 @@ const WARNING_EXECUTION_BUDGET_MS = 5_000;
 // Worker now import one source of truth, so a partial hand-bump is impossible.
 export const PAYLOAD_VERSION = LEGACY_FORECAST_PAYLOAD_VERSION;
 
-// DMI publishes marine runs every six hours. Probing before five hours would
-// only spend provider quota; the one-hour margin covers skew/early publication.
-export const DMI_PROBE_QUIET_MS = 5 * 60 * 60 * 1000;
+const DMI_RUN_CYCLE_MS = 6 * 60 * 60 * 1000;
+const DMI_DKSS_COMPLETE_DELAY_MS = (3 * 60 + 20) * 60 * 1000;
+const DMI_WAM_NSB_COMPLETE_DELAY_MS = (2 * 60 + 45) * 60 * 1000;
+const DMI_OTHER_WAM_COMPLETE_DELAY_MS = 3 * 60 * 60 * 1000;
+const DMI_PUBLICATION_CUSHION_MS = 10 * 60 * 1000;
+const DMI_DUE_PROBE_BACKOFF_MS = 20 * 60 * 1000;
 
 function isMetForecastResponse(value: unknown): value is MetForecastResponse {
   if (!isRecord(value) || !isRecord(value.properties)) return false;
@@ -299,20 +302,101 @@ function assertMarineRunWithinFallbackAge(
   }
 }
 
-// Age of the OLDER of the two marine runs we hold (so if one source lags, we
-// still probe). Infinity if either run id is missing/unparseable - an
-// incomplete marine set must always trigger a probe.
-export function marineRunAgeMs(
+export interface MarineProbeDecision {
+  shouldProbe: boolean;
+  nextProbeAtMs: number;
+  reason: 'invalid' | 'expired' | 'publication-window' | 'retry-backoff' | 'due';
+}
+
+function dmiCompleteDelayMs(collection: unknown): number {
+  if (typeof collection !== 'string') return Number.NaN;
+  const normalized = collection.toLowerCase();
+  if (normalized.startsWith('dkss_')) return DMI_DKSS_COMPLETE_DELAY_MS;
+  if (normalized === 'wam_nsb') return DMI_WAM_NSB_COMPLETE_DELAY_MS;
+  if (normalized.startsWith('wam_')) return DMI_OTHER_WAM_COMPLETE_DELAY_MS;
+  return Number.NaN;
+}
+
+// DMI publishes WAM and DKSS four times daily (00/06/12/18Z). Its official
+// availability table says a complete run normally arrives after 2h45 for
+// WAM_NSB, 3h for the other WAM collections, and 3h20 for DKSS:
+// https://www.dmi.dk/friedata/dokumentation/data/forecast-data-availability
+//
+// Schedule the catalogue request for the NEXT run's expected completion, plus
+// ten minutes for normal publication/network skew. When both ingredients hold
+// the same run, the slower collection owns that time; when one lags, only the
+// older ingredient's next run matters. Missing, malformed, future-dated, or
+// over-policy provenance is never allowed to suppress a probe.
+export function marineProbeDecision(
   marineInstances: {
     water?: MarineRunRef;
     waves?: MarineRunRef;
   } | null | undefined,
-  now = Date.now(),
-): number {
-  const water = parseDmiInstanceMs(marineInstances?.water?.id);
-  const waves = parseDmiInstanceMs(marineInstances?.waves?.id);
-  if (!Number.isFinite(water) || !Number.isFinite(waves)) return Infinity;
-  return now - Math.min(water, waves);
+  lastAttemptAt?: string,
+  nowMs = Date.now(),
+): MarineProbeDecision {
+  const waterRunMs = parseDmiInstanceMs(marineInstances?.water?.id);
+  const wavesRunMs = parseDmiInstanceMs(marineInstances?.waves?.id);
+  const waterDelayMs = dmiCompleteDelayMs(marineInstances?.water?.collection);
+  const wavesDelayMs = dmiCompleteDelayMs(marineInstances?.waves?.collection);
+
+  if (![waterRunMs, wavesRunMs, waterDelayMs, wavesDelayMs].every(Number.isFinite)
+    || waterRunMs > nowMs
+    || wavesRunMs > nowMs) {
+    return { shouldProbe: true, nextProbeAtMs: nowMs, reason: 'invalid' };
+  }
+
+  if (nowMs - waterRunMs > MARINE_FALLBACK_MAX_AGE_MS
+    || nowMs - wavesRunMs > MARINE_FALLBACK_MAX_AGE_MS) {
+    return { shouldProbe: true, nextProbeAtMs: nowMs, reason: 'expired' };
+  }
+
+  let expectedAtMs: number;
+  if (waterRunMs === wavesRunMs) {
+    expectedAtMs = waterRunMs
+      + DMI_RUN_CYCLE_MS
+      + Math.max(waterDelayMs, wavesDelayMs)
+      + DMI_PUBLICATION_CUSHION_MS;
+  } else if (waterRunMs < wavesRunMs) {
+    expectedAtMs = waterRunMs
+      + DMI_RUN_CYCLE_MS
+      + waterDelayMs
+      + DMI_PUBLICATION_CUSHION_MS;
+  } else {
+    expectedAtMs = wavesRunMs
+      + DMI_RUN_CYCLE_MS
+      + wavesDelayMs
+      + DMI_PUBLICATION_CUSHION_MS;
+  }
+
+  if (nowMs < expectedAtMs) {
+    return {
+      shouldProbe: false,
+      nextProbeAtMs: expectedAtMs,
+      reason: 'publication-window',
+    };
+  }
+
+  // Once the expected publication window has opened, a successful catalogue
+  // check can legitimately return the same run for a few minutes. The stored
+  // check stamp proves we already tried after the due time, so wait at least
+  // 20 minutes before asking again. A pre-window or future/corrupt stamp cannot
+  // defer the first due probe.
+  const lastAttemptMs = Date.parse(lastAttemptAt ?? '');
+  if (Number.isFinite(lastAttemptMs)
+    && lastAttemptMs >= expectedAtMs
+    && lastAttemptMs <= nowMs) {
+    const retryAtMs = lastAttemptMs + DMI_DUE_PROBE_BACKOFF_MS;
+    if (nowMs < retryAtMs) {
+      return {
+        shouldProbe: false,
+        nextProbeAtMs: retryAtMs,
+        reason: 'retry-backoff',
+      };
+    }
+  }
+
+  return { shouldProbe: true, nextProbeAtMs: expectedAtMs, reason: 'due' };
 }
 
 function latestInstanceFromResponse(data: unknown): Pick<MarineInstance, 'id'> | undefined {
@@ -708,8 +792,8 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
       // `seedInstance`, NOT `instance`: the seed came from the cached payload,
       // i.e. the PREVIOUS run. Reporting the run we just failed to fetch wrote
       // a false provenance into cacheHealth.marineInstances, and both
-      // marineInstancesEqual (which then thinks the cache is current) and
-      // marineRunAgeMs (which then suppresses the catalog probe for 5h) read
+      // marineInstancesEqual (which then thinks the cache is current) and the
+      // schedule-aware catalogue gate (which then defers the next probe) read
       // it back as fact. Fall back to `instance` only if we have nothing.
       return { series: seedSeries, instance: seedInstance ?? instance, fallback: true, ...extra };
     }

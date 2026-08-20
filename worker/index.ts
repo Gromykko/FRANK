@@ -8,6 +8,7 @@ import type { ReleaseMetadata } from '../src/features/forecast/releaseContract';
 import { reviveReadings } from '../src/features/forecast/normalize';
 import { isValidForecastPayload } from '../src/features/forecast/validatePayload';
 import {
+  hasValidWarmAuthorization,
   headResponse,
   jsonResponse,
   matchRoute,
@@ -51,7 +52,6 @@ import {
   isProviderUnavailableError,
 } from './providerAvailability';
 import {
-  DMI_PROBE_QUIET_MS,
   buildForecastCache,
   classifyBuildFailure,
   degradedSourcesAfterProbe,
@@ -61,9 +61,9 @@ import {
   fetchMarineSeriesWithFallback,
   isBusyError,
   isMarineRunWithinFallbackAge,
+  marineProbeDecision,
   marineInstancesEqual,
   marineInstancesWithinFallbackAge,
-  marineRunAgeMs,
 } from './providers';
 import { errorMessage, isRecord } from './validation';
 import {
@@ -89,7 +89,7 @@ export {
   fetchMarineSeriesWithFallback,
   isBusyError,
   isMarineRunWithinFallbackAge,
-  marineRunAgeMs,
+  marineProbeDecision,
 };
 export { cronExecutionPolicy };
 // Re-exported so tests/worker/math.test.ts keeps importing them from the worker.
@@ -642,18 +642,21 @@ async function _refreshForecastCache(
     let marineProbeFailed = false;
     let marineProbeBusy = false;
     const knownMarine = cachedHealth?.marineInstances;
-    // Schedule-aware gate: DMI publishes a new marine run only every 6h
-    // (measured: run times 00/06/12/18Z, gaps exactly 6.00h), so a newer run
-    // cannot exist until 6h after the one we hold. Skip the catalog probe
-    // while our run is younger than that floor minus a 1h safety margin;
-    // once past it, probe every tick until a new run appears. A forced or
-    // rebuild-flagged refresh always probes.
+    // DMI's official completion windows determine when a newer marine run can
+    // actually exist. A short post-due backoff stops a late publication from
+    // being queried on every cron tick. Forced/recovery work and provenance
+    // outside the 12-hour safety policy always bypass the schedule.
     const knownMarineWithinPolicy = marineInstancesWithinFallbackAge(knownMarine);
+    const probeDecision = marineProbeDecision(
+      knownMarine,
+      cachedHealth?.lastAttemptAt,
+    );
     const canSkipProbe = Boolean(knownMarine?.water?.id && knownMarine?.waves?.id)
+      && !options.force
       && !options.forceRebuild
-      && !cachedHealth?.needsRebuild
+      && !cachedNeedsRecovery
       && knownMarineWithinPolicy
-      && marineRunAgeMs(knownMarine) < DMI_PROBE_QUIET_MS;
+      && !probeDecision.shouldProbe;
 
     if (canSkipProbe) {
       latestMarine = knownMarine;
@@ -729,6 +732,10 @@ async function _refreshForecastCache(
       // unchanged: keep the forecast, just record that we checked.
       const checkedCache = withCacheHealth(cached, 'current', {
         marineInstances: latestMarine,
+        // During the 20-minute post-due retry window no provider was checked.
+        // Preserve the attempt that established the backoff, or restamping
+        // every ten-minute cron would slide that window forward indefinitely.
+        preserveAttemptAt: probeDecision.reason === 'retry-backoff',
         checkedBy: options.reason ?? 'check',
         // No provider was contacted and the hourly rows are unchanged, so any
         // degradation the last real build recorded still describes this
@@ -985,7 +992,7 @@ async function handleForecastRequest(
   const isCurrentReleaseRoute = hasReleaseMetadata(requestedRelease, CURRENT_RELEASE);
   const deploymentWarm = versionedApiRoute
     && isCurrentReleaseRoute
-    && (url.searchParams.get('warm') === '1' || url.searchParams.get('warm') === 'true');
+    && isWarmQueryRequested(url);
   const forceRebuildRequested = url.searchParams.get('rebuild') === '1' || url.searchParams.get('rebuild') === 'true';
 
   if (forceRebuildRequested) {
@@ -1011,9 +1018,9 @@ async function handleForecastRequest(
   if (deploymentWarm) {
     if (cached) return preparedForecastResponse(cached, true, {}, requestedRelease);
 
-    // `warm=1` is the existing deployment candidate path. It is the only HTTP
-    // path allowed to build an empty generation, and it still honors the
-    // generation-scoped provider cooldown (no public rebuild bypass).
+    // Authenticated `warm=1` is the deployment candidate path. It is the only
+    // HTTP path allowed to build an empty generation, and it still honors the
+    // generation-scoped provider cooldown (no rebuild bypass).
     const retryAfterSeconds = await activeInitializationRetrySeconds(env, location);
     if (retryAfterSeconds > 0) {
       return fallback
@@ -1129,6 +1136,11 @@ async function handleStatusRequest(env: Env): Promise<Response> {
   return statusResponse(await loadHealthPayload(env));
 }
 
+function isWarmQueryRequested(url: URL): boolean {
+  const value = url.searchParams.get('warm');
+  return value === '1' || value === 'true';
+}
+
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     let responseRelease: Readonly<ReleaseMetadata> = CURRENT_RELEASE;
@@ -1154,6 +1166,16 @@ const worker = {
       if (!route) {
         const response = jsonResponse({ error: 'Not found' }, 404);
         return finalize(response);
+      }
+
+      // Candidate preparation is an operational capability, not a public API.
+      // Authenticate before method handling and before forecast/init KV reads,
+      // so every invalid warm probe is indistinguishable from an unknown route
+      // and can never reach a provider-building branch.
+      if (route.kind === 'forecast'
+        && isWarmQueryRequested(url)
+        && !await hasValidWarmAuthorization(request, env.FRANK_WARM_TOKEN)) {
+        return finalize(jsonResponse({ error: 'Not found' }, 404));
       }
 
       if (request.method === 'OPTIONS') {
