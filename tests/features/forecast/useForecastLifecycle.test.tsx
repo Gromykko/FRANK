@@ -11,11 +11,6 @@ import {
 } from '../../../src/features/forecast/releaseContract';
 import type { ReleaseMetadata } from '../../../src/features/forecast/releaseContract';
 
-vi.mock('../../../src/features/forecast/fetchForecast', () => ({
-  CAN_FETCH_FRESH_FORECAST: false,
-  fetchWeatherData: vi.fn(),
-}));
-
 import { useForecast } from '../../../src/features/forecast/useForecast';
 
 let host: HTMLDivElement;

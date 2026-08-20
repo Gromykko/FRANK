@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CURRENT_LOCATION } from '../../config/locations';
 import type { WeatherData } from './types';
-import { CAN_FETCH_FRESH_FORECAST, fetchWeatherData } from './fetchForecast';
 import { loadCachedWeatherData } from './cache';
 import { shouldApplyForecastUpdate } from './forecastOrdering';
 import type { ForecastInitialization } from './initialization';
@@ -262,9 +261,7 @@ export function useForecast(daylightOnly: boolean) {
     setError(null);
 
     try {
-      const loaded = CAN_FETCH_FRESH_FORECAST
-        ? { data: await fetchWeatherData(), from: 'worker' as const }
-        : await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
+      const loaded = await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
       const data = loaded.data;
 
       if (!data) {
@@ -321,7 +318,7 @@ export function useForecast(daylightOnly: boolean) {
         loaded.serverAuthority === true,
         loaded.serverFallback === true,
       );
-      settledState = CAN_FETCH_FRESH_FORECAST || loaded.from === 'worker'
+      settledState = loaded.from === 'worker'
         ? 'succeeded'
         : 'failed';
 
@@ -334,7 +331,7 @@ export function useForecast(daylightOnly: boolean) {
       // so an ordinary cold boot could show "Could not reach the forecast
       // service" seconds after reaching it perfectly well. Never re-derive a
       // fact from someone else's throttled bookkeeping when the caller has it.
-      if (forceRemoteRefresh && !CAN_FETCH_FRESH_FORECAST && loaded.from === 'local') {
+      if (forceRemoteRefresh && loaded.from === 'local') {
         settledError = loaded.failureKind === 'network'
           ? 'Could not reach the forecast service — showing the last saved forecast.'
           : 'Could not refresh forecast data. Showing the latest cached forecast if available.';

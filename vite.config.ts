@@ -135,34 +135,6 @@ export default defineConfig({
   // so 339 KB of charting downloaded and parsed on every first paint for a
   // panel that starts collapsed. Rolldown's default splitting respects the
   // dynamic import. Re-add only if the default output measurably regresses.
-  server: {
-    proxy: {
-      '/dmi-forecast': {
-        target: 'https://opendataapi.dmi.dk/v1/forecastedr',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/dmi-forecast/, ''),
-      },
-      // MET Norway rejects requests without an identifying User-Agent, which the
-      // browser cannot set. The dev proxy injects one so the client can fetch
-      // MET directly during local development.
-      '/met-forecast': {
-        target: 'https://api.met.no',
-        changeOrigin: true,
-        headers: {
-          'User-Agent': 'FRANK-kayak-forecast/1.0 (https://github.com/Gromykko/FRANK)',
-        },
-        rewrite: (path) => path.replace(/^\/met-forecast/, ''),
-      },
-      // MeteoAlarm's warning feed has no CORS headers, so the browser can't read
-      // it directly in dev; the proxy fronts it (production reads the worker
-      // payload, which already carries the parsed warnings).
-      '/meteoalarm': {
-        target: 'https://feeds.meteoalarm.org',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/meteoalarm/, ''),
-      },
-    },
-  },
   test: {
     environment: 'jsdom',
     setupFiles: ['./tests/setup.ts'],

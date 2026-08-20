@@ -32,7 +32,7 @@ Top to bottom: a device-style header (a CRT with a GERTY face — smile, straigh
 
 The client is Vite + React 19 + TypeScript, deployed to GitHub Pages. In production it reads a prepared forecast JSON from a Cloudflare Worker (`frank-forecast`, `worker/index.ts`), which runs a 10-minute cron: it checks MET's `Expires` header and DMI's model-run ids, rebuilds only when something actually changed, and stores one payload per location in generation-isolated KV keys. Each provider's last-good data is retained independently, so one provider being down degrades the payload (and says so) instead of freezing it. Marine retention has a hard safety limit: a normalized DMI run may bridge at most two missed six-hour model cycles (12 hours, inclusive), based on the run id supplied by DMI. Older, future-dated, or unparseable marine provenance is never assembled into a newly timestamped forecast; the last complete payload keeps its original `fetchedAt`, becomes visibly stale, and eventually fails `/health`. Ordinary and manual browser requests only read completed snapshots; they never contact weather providers or start background builds. Each scheduled location receives a fair share of a five-minute tick, so a slow provider cannot starve the last fjords.
 
-The Worker imports the client's own `normalize.ts`, `sun.ts`, and `weatherCodes.ts` (the shared forecast-core), so the two can't drift on the numbers the verdict runs on — which is why `normalize.ts` must stay pure (no client-only imports). In dev, the client skips the Worker and fetches MET/DMI directly through Vite proxies.
+The Worker imports the client's own `normalize.ts`, `sun.ts`, and `weatherCodes.ts` (the shared forecast-core), so the numbers the verdict runs on have one implementation — which is why `normalize.ts` must stay pure (no client-only imports). Development and production clients both use the Worker's versioned forecast contract; set `VITE_FORECAST_WORKER_BASE` when the UI should target a local Worker instead of the production default.
 
 Location availability is independent while a candidate is prepared, but production promotion is all-or-nothing. If a known location has no completed target-generation forecast, browser reads return a versioned `FORECAST_INITIALIZING` 503 with `Retry-After` and no provider detail. Only cron and the zero-traffic release warm-up may build; a ten-minute, generation-scoped cooldown prevents repeated candidate attempts from hammering a busy provider. The release stays at zero traffic until every public location is exact-ready, so first visitors never become builders and a partly ready generation never replaces production. Invalid provider shapes, unsupported 4xx responses, code errors, deadlines, and storage failures stay hard failures and can never be relabeled as initialization. `/health` remains red while any location is missing or stale, so monitoring stays honest.
 
@@ -48,7 +48,7 @@ The browser sends only the requested location id and ordinary HTTP metadata to t
 
 ```bash
 npm install          # Node >= 22, npm >= 10
-npm run dev          # Vite dev server, direct provider fetching via proxies
+npm run dev          # Vite UI using the configured forecast Worker
 npm run test         # Vitest
 npm run test:e2e:install # One-time local Chromium installation
 npm run test:e2e     # Production-build browser checks at desktop and phone widths
