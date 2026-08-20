@@ -4,7 +4,8 @@ import locationData from '../../src/config/locations.json';
 import type { ForecastLocation } from '../../src/config/locationTypes';
 import { FORECAST_PAYLOAD_VERSION } from '../../src/features/forecast/types';
 import { CURRENT_RELEASE } from '../../src/features/forecast/releaseContract';
-import type { ForecastData } from '../../worker/domain';
+import type { ForecastData, HealthLocationEntry } from '../../worker/domain';
+import { buildHealthPayload, statusResponse } from '../../worker/health';
 import {
   RELEASE_HEADER,
   assembledForecastKey,
@@ -204,20 +205,68 @@ describe('Worker route HTTP contract', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get('Content-Security-Policy')).toContain("default-src 'none'");
-    expect(body).toContain('class="frank-face"');
-    expect(body).toContain('class="sky"');
-    expect(body).toContain('--font-ui:Inter');
-    expect(body).toContain('--font-pixel:"VT323"');
-    expect(body).toContain('class="status-panel"');
+    expect(body).toContain('class="frank-device-shell rating-');
+    expect(body).toContain('class="frank-crt"');
+    expect(body).toContain('class="gerty-face" viewBox="3 3.5 10 9"');
+    expect(body).toContain('<rect x="4" y="5" width="1" height="1"/>');
+    expect(body).toContain('<span class="frank-nameplate">FRANK</span>');
+    expect(body).toContain('<span class="frank-location">Forecast worker</span>');
+    expect(body).toContain('class="frank-display"');
+    expect(body).toContain('class="pixel-sky"');
+    expect(body).toContain("--font-heading:'Inter'");
+    expect(body).toContain("--font-crt:'VT323'");
+    expect(body).toContain('--bg-gradient:linear-gradient(180deg,#e5f2fc 0%,#eef7fd 38rem,#f5f7fa 78rem)');
+    expect(body).toContain('--panel-bg:#f9fcff');
+    expect(body).toContain('--crt-screen:#0a0e14');
+    expect(body).toContain('class="instrument-panel"');
     expect(body).toContain('<thead>');
     expect(body).toContain('<tbody>');
     expect(body).toContain('@media (max-width:720px)');
-    expect(body).toContain('@media (max-width:350px)');
+    expect(body).toContain('@media (max-width:480px)');
+    expect(body).toContain('@media (max-width:360px)');
     expect(body.match(/data-label="Location"/g) ?? []).toHaveLength(LOCATIONS.length);
     expect(body.match(/data-label="Status"/g) ?? []).toHaveLength(LOCATIONS.length);
+    expect(body).not.toContain('F · R · A · N · K');
+    expect(body).not.toContain('backdrop-filter');
+    expect(body).not.toContain('class="banner');
     expect(body).not.toContain('<script');
     expect(body).not.toContain('@import');
     expect(body).not.toContain('url(');
+  });
+
+  it('maps healthy, partial, and failed health to the exact FRANK face expressions', async () => {
+    const healthyRuntime = makeRuntime();
+    const healthy = await worker.fetch(request('/status'), healthyRuntime.env, healthyRuntime.ctx);
+    const healthyBody = await healthy.text();
+    expect(healthyBody).toContain('class="frank-device-shell rating-safe"');
+    expect(healthyBody).toContain('<rect x="4" y="9" width="1" height="1"/>');
+
+    const now = Date.now();
+    const partialEntries: HealthLocationEntry[] = LOCATIONS.map((location) => ({
+      id: location.id,
+      areaName: location.areaName,
+      hasCache: true,
+      exactGenerationReady: false,
+      availabilitySource: 'generation:api1-model6',
+      fetchedAt: new Date(now).toISOString(),
+      cacheHealth: {
+        status: 'current',
+        lastAttemptAt: new Date(now).toISOString(),
+      },
+    }));
+    const partialBody = await statusResponse(
+      buildHealthPayload(partialEntries, false, now),
+    ).text();
+    expect(partialBody).toContain('class="frank-device-shell rating-caution"');
+    expect(partialBody).toContain('<rect x="5" y="10" width="1" height="1"/>');
+    expect(partialBody).not.toContain('<rect x="4" y="9" width="1" height="1"/>');
+
+    const failedRuntime = makeRuntime({ exact: false });
+    const failed = await worker.fetch(request('/status'), failedRuntime.env, failedRuntime.ctx);
+    const failedBody = await failed.text();
+    expect(failedBody).toContain('class="frank-device-shell rating-danger"');
+    expect(failedBody).toContain('<rect x="5" y="9" width="1" height="1"/>');
+    expect(failedBody).toContain('<rect x="4" y="10" width="1" height="1"/>');
   });
 
   it('shows degraded sources and the busy provider in the human status table', async () => {

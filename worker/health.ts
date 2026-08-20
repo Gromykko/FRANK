@@ -128,6 +128,28 @@ function formatUtcTimestamp(iso: string): string {
   return new Date(ms).toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC');
 }
 
+type FrankStatusRating = 'safe' | 'caution' | 'danger';
+
+// The status page cannot import React or the app stylesheet, so this is a
+// deliberately exact HTML rendering of src/components/GertyFace.tsx. Keep the
+// 16x16 pixel coordinates and cropped viewBox in lock-step with that component.
+function gertyStatusFace(rating: FrankStatusRating): string {
+  const eyes = [
+    [4, 5], [5, 5], [10, 5], [11, 5],
+    [4, 6], [5, 6], [10, 6], [11, 6],
+  ];
+  const mouths: Record<FrankStatusRating, number[][]> = {
+    safe: [[4, 9], [11, 9], [5, 10], [6, 10], [7, 10], [8, 10], [9, 10], [10, 10]],
+    caution: [[5, 10], [6, 10], [7, 10], [8, 10], [9, 10], [10, 10]],
+    danger: [[5, 9], [6, 9], [7, 9], [8, 9], [9, 9], [10, 9], [4, 10], [11, 10]],
+  };
+  const rects = (pixels: number[][]): string => pixels
+    .map(([x, y]) => `<rect x="${x}" y="${y}" width="1" height="1"/>`)
+    .join('');
+
+  return `<svg class="gerty-face" viewBox="3 3.5 10 9" shape-rendering="crispEdges" aria-hidden="true" focusable="false"><g class="gerty-eyes">${rects(eyes)}</g>${rects(mouths[rating])}</svg>`;
+}
+
 // Human diagnostic panel. It intentionally shares buildHealthPayload with the
 // machine alarm, always returns 200, and is self-contained under a strict CSP.
 export function statusResponse(health: HealthPayload): Response {
@@ -175,7 +197,7 @@ export function statusResponse(health: HealthPayload): Response {
       <td class="location-cell" data-label="Location"><strong>${escapeHtml(location.areaName)}</strong><br><span class="dim">${escapeHtml(location.id)}</span></td>
       <td data-label="Last check" class="${initialization ? 'warn' : missing ? 'bad' : level(age.checkAgeMs, HEALTH_MAX_CHECK_AGE_MS)}"><strong>${escapeHtml(formatAge(age.checkAgeMs))}</strong><br><span class="dim">${escapeHtml(checkDetail)}</span></td>
       <td data-label="Data age" class="${missing ? 'bad' : level(age.ageMs, HEALTH_MAX_DATA_AGE_MS)}"><strong>${escapeHtml(missing ? 'no forecast' : formatAge(age.ageMs))}</strong></td>
-      <td data-label="Status">${escapeHtml(status)}
+      <td data-label="Status" class="status-cell">${escapeHtml(status)}
         <br><span class="${location.exactGenerationReady ? 'good' : 'warn'}">${escapeHtml(generationState)}</span>
         ${providerState ? `<br><span class="warn">${escapeHtml(providerState)}</span>` : ''}</td>
       <td data-label="Degraded">${degraded ? `<span class="warn">${escapeHtml(degraded)}</span>` : '<span class="dim">none</span>'}</td>
@@ -183,11 +205,24 @@ export function statusResponse(health: HealthPayload): Response {
     </tr>`;
   }).join('');
 
-  const banner = health.ok && health.release.allLocationsReady
-    ? '<div class="banner good" role="status"><span class="signal" aria-hidden="true"></span><strong>WORKER LIVE · ALL LOCATIONS CURRENT</strong></div>'
+  const rating: FrankStatusRating = health.ok && health.release.allLocationsReady
+    ? 'safe'
     : health.ok
-      ? `<div class="banner warn" role="status"><span class="signal" aria-hidden="true"></span><strong>WORKER LIVE · TARGET GENERATION ${escapeHtml(health.release.ready.length)}/${escapeHtml(health.locations.length)} READY</strong></div>`
-    : `<div class="banner bad" role="status"><span class="signal" aria-hidden="true"></span><strong>ATTENTION — ${escapeHtml(health.reason ?? health.stalled.join(', '))}</strong></div>`;
+      ? 'caution'
+      : 'danger';
+  const displayMessage = rating === 'safe'
+    ? 'all locations current'
+    : rating === 'caution'
+      ? `${health.release.ready.length}/${health.locations.length} locations ready`
+      : 'check required';
+  const statusLabel = rating === 'safe'
+    ? 'All systems ready'
+    : rating === 'caution'
+      ? 'Release preparing'
+      : 'Operator attention';
+  const statusDetail = rating === 'danger'
+    ? `${statusLabel} · ${health.reason ?? health.stalled.join(', ')}`
+    : `${statusLabel} · independent provider cycles`;
 
   return htmlResponse(`<!doctype html>
 <html lang="en"><head>
@@ -197,135 +232,517 @@ export function statusResponse(health: HealthPayload): Response {
 <title>FRANK worker status</title>
 <style>
   :root {
-    color-scheme: light;
-    --sky-top:#dceefa; --sky-mid:#edf7fd; --sky-floor:#f5f7fa;
-    --panel:rgba(249,252,255,.92); --panel-edge:rgba(51,91,124,.16);
-    --text:#1a2332; --muted:#566577; --primary:#1d6fd1;
-    --good:#047857; --good-bg:#ecfdf5; --good-edge:#86efac;
-    --warn:#a15c00; --warn-bg:#fff7e6; --warn-edge:#f5c56b;
-    --bad:#b42318; --bad-bg:#fff1f0; --bad-edge:#f3aaa5;
-    --font-ui:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-    --font-pixel:"VT323","Courier New",ui-monospace,monospace;
+    color-scheme:light;
+    --font-heading:'Inter',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    --font-body:'Inter',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    --font-mono:'Inter',ui-monospace,'SFMono-Regular',Consolas,monospace;
+    --font-crt:'VT323','Courier New',ui-monospace,monospace;
+    --text-instrument:.6875rem;
+    --text-caption:.75rem;
+    --text-ui:.8125rem;
+    --text-body:.875rem;
+    --bg-app:#f5f7fa;
+    --bg-gradient:linear-gradient(180deg,#e5f2fc 0%,#eef7fd 38rem,#f5f7fa 78rem);
+    --pixel-cloud:rgba(255,255,255,.78);
+    --pixel-cloud-shade:rgba(104,151,188,.13);
+    --panel-bg:#f9fcff;
+    --panel-border:rgba(51,91,124,.13);
+    --module-bg:#f3f8fc;
+    --module-edge:rgba(51,91,124,.14);
+    --text-main:#1a2332;
+    --text-muted:#566577;
+    --primary:#1d6fd1;
+    --color-safe:#059669;
+    --color-caution:#d97706;
+    --color-danger:#dc2626;
+    --color-safe-text:#047857;
+    --color-caution-text:#b45309;
+    --color-danger-text:#b91c1c;
+    --shadow-lg:0 1px 2px rgba(46,78,107,.07);
+    --radius-md:8px;
+    --radius-sm:6px;
+    --frank-housing:var(--panel-bg);
+    --frank-housing-edge:rgba(26,35,50,.16);
+    --frank-housing-text:var(--text-main);
+    --crt-screen:#0a0e14;
   }
   * { box-sizing:border-box }
-  html { min-height:100%; background:var(--sky-floor) }
-  body { min-height:100vh; margin:0; padding:clamp(16px,3vw,34px); color:var(--text);
-         background:linear-gradient(180deg,var(--sky-top) 0,var(--sky-mid) 44rem,var(--sky-floor) 78rem);
-         font:14px/1.55 var(--font-ui); overflow-x:hidden }
-  .sky { position:fixed; inset:0; z-index:0; overflow:hidden; pointer-events:none }
-  .sky-cloud { position:absolute; width:132px; height:auto; opacity:.58 }
-  .sky-cloud path:first-child { fill:rgba(104,151,188,.13) }
-  .sky-cloud path:last-child { fill:rgba(255,255,255,.82) }
-  .sky-cloud.one { top:8vh; left:3vw }
-  .sky-cloud.two { top:38vh; right:3vw; width:96px; opacity:.46 }
-  .sky-cloud.three { top:78vh; left:7vw; width:154px; opacity:.38 }
-  .status-shell { position:relative; z-index:1; width:min(100%,1040px); margin:0 auto }
-  .brand { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:14px;
-           margin-bottom:16px; padding:10px 2px }
-  .frank-face { width:52px; height:52px; display:grid; place-items:center; border:1px solid #273142;
-                border-radius:50%; background:#080d13; box-shadow:0 2px 5px rgba(29,65,94,.16) }
-  .face-grid { position:relative; width:30px; height:24px }
-  .face-grid::before { content:""; position:absolute; top:3px; left:3px; width:6px; height:6px;
-                       background:#11b981; box-shadow:18px 0 #11b981 }
-  .face-grid::after { content:""; position:absolute; left:5px; bottom:2px; width:20px; height:7px;
-                      border-bottom:3px solid #11b981; border-radius:0 0 12px 12px }
-  .brand-name { margin:0 0 1px; color:var(--primary); font-size:11px; font-weight:800;
-                letter-spacing:.24em; text-transform:uppercase }
-  h1 { margin:0; font-size:clamp(20px,2.6vw,28px); line-height:1.15; letter-spacing:-.025em }
-  .brand-subtitle { margin:3px 0 0; color:var(--muted); font-size:12px }
-  .refresh-stamp { min-width:100px; padding:7px 10px; border:1px solid var(--panel-edge); border-radius:6px;
-                   background:rgba(249,252,255,.65); color:var(--muted); text-align:right; font-size:10px;
-                   letter-spacing:.09em; text-transform:uppercase }
-  .refresh-stamp strong { display:block; color:var(--text); font-size:13px; letter-spacing:.02em }
-  .banner { --tone:var(--primary); --tone-bg:#eef6ff; --tone-edge:#a8c9ee;
-            min-height:60px; margin-bottom:14px; padding:12px 16px; display:flex; align-items:center; gap:11px;
-            border:1px solid var(--tone-edge); border-radius:8px; background:var(--tone-bg);
-            box-shadow:0 1px 3px rgba(46,78,107,.07); color:var(--tone) }
-  .banner.good { --tone:var(--good); --tone-bg:var(--good-bg); --tone-edge:var(--good-edge) }
-  .banner.warn { --tone:var(--warn); --tone-bg:var(--warn-bg); --tone-edge:var(--warn-edge) }
-  .banner.bad { --tone:var(--bad); --tone-bg:var(--bad-bg); --tone-edge:var(--bad-edge) }
-  .banner strong { font:400 clamp(20px,2.7vw,27px)/1.05 var(--font-pixel); letter-spacing:.055em }
-  .signal { flex:0 0 auto; width:10px; height:10px; border-radius:2px; background:var(--tone);
-            box-shadow:0 0 0 4px color-mix(in srgb,var(--tone) 13%,transparent) }
-  .status-panel,.notes { border:1px solid var(--panel-edge); border-radius:8px; background:var(--panel);
-                         box-shadow:0 2px 9px rgba(46,78,107,.07); backdrop-filter:blur(8px) }
-  .status-panel { padding:clamp(12px,2vw,20px) }
-  .panel-head { display:flex; align-items:end; justify-content:space-between; gap:12px; margin:0 0 12px }
-  h2 { margin:0; font-size:12px; letter-spacing:.16em; text-transform:uppercase }
-  .panel-head p { margin:0; color:var(--muted); font-size:11px }
-  .table-wrap { width:100%; overflow-x:auto }
-  table { width:100%; border-collapse:collapse; table-layout:fixed }
-  th { padding:8px 10px; border-bottom:1px solid rgba(51,91,124,.2); color:var(--muted);
-       text-align:left; vertical-align:bottom; font-size:10px; font-weight:750; letter-spacing:.1em; text-transform:uppercase }
-  th:first-child,td:first-child { padding-left:4px; width:16% }
-  th:nth-child(2) { width:22% } th:nth-child(3) { width:10% } th:nth-child(4) { width:25% }
-  th:nth-child(5) { width:10% } th:nth-child(6) { width:17% }
-  td { padding:12px 10px; border-bottom:1px solid rgba(51,91,124,.11); vertical-align:top;
-       overflow-wrap:anywhere }
-  tbody tr:last-child td { border-bottom:0 }
-  .location-cell strong { font-size:14px }
-  .good { color:var(--good) } .warn { color:var(--warn) } .bad { color:var(--bad) }
-  .dim { color:var(--muted) } .mono { font:12px/1.5 var(--font-pixel); letter-spacing:.025em }
-  .hdr-sub { font-weight:500; text-transform:none; letter-spacing:0; opacity:.78 }
-  .notes { margin-top:14px; padding:clamp(16px,2.5vw,24px); color:var(--muted); font-size:12px }
-  .notes h2 { margin-bottom:12px; color:var(--text) }
-  .notes p { margin:0 0 12px; max-width:90ch }
-  .notes p:last-child { margin-bottom:0 }
-  code { padding:2px 5px; border:1px solid rgba(51,91,124,.14); border-radius:4px;
-         background:rgba(29,111,209,.07); color:var(--text); font:12px var(--font-pixel) }
+  html { min-height:100%; background:var(--bg-app) }
+  body {
+    position:relative;
+    min-height:100vh;
+    margin:0;
+    overflow-x:hidden;
+    color:var(--text-main);
+    background:var(--bg-gradient);
+    font:var(--text-body)/1.55 var(--font-body);
+  }
+  .pixel-sky {
+    position:absolute;
+    inset:0 0 auto;
+    z-index:0;
+    height:100vh;
+    height:100svh;
+    overflow:hidden;
+    pointer-events:none;
+    user-select:none;
+  }
+  .pixel-cloud {
+    position:absolute;
+    left:0;
+    color:var(--pixel-cloud);
+    opacity:.78;
+    will-change:transform;
+    animation:pixel-cloud-drift linear infinite;
+  }
+  .pixel-cloud svg { display:block; width:100%; height:auto; overflow:visible }
+  .pixel-cloud-body { fill:var(--pixel-cloud) }
+  .pixel-cloud-shade { fill:var(--pixel-cloud-shade) }
+  .pixel-cloud-one { top:9vh; width:138px; animation-duration:96s; animation-delay:-12s }
+  .pixel-cloud-two { top:44vh; width:102px; opacity:.56; animation-duration:124s; animation-delay:-97s }
+  .pixel-cloud-three { top:76vh; width:166px; opacity:.48; animation-duration:142s; animation-delay:-16s }
+  @keyframes pixel-cloud-drift {
+    from { transform:translate3d(-190px,0,0) }
+    to { transform:translate3d(calc(100vw + 190px),0,0) }
+  }
+  .status-shell {
+    position:relative;
+    z-index:1;
+    width:min(100%,820px);
+    margin:0 auto;
+    padding:clamp(14px,2.5vw,28px) clamp(12px,2.5vw,24px) 32px;
+  }
+  .sr-only {
+    position:absolute;
+    width:1px;
+    height:1px;
+    padding:0;
+    margin:-1px;
+    overflow:hidden;
+    clip:rect(0,0,0,0);
+    white-space:nowrap;
+    border:0;
+  }
+
+  /* Exact FRANK app housing: face CRT, seam-divided message screen and a
+     compact rectangular operations stamp. Status color stays inside the
+     screens instead of tinting the whole page. */
+  .frank-device-shell {
+    --frank-phosphor:var(--color-caution);
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+    padding:10px 16px 14px;
+    border:1px solid var(--frank-housing-edge);
+    border-radius:var(--radius-md);
+    background:var(--frank-housing);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.06),var(--shadow-lg);
+  }
+  .frank-device-shell.rating-safe { --frank-phosphor:var(--color-safe) }
+  .frank-device-shell.rating-caution { --frank-phosphor:var(--color-caution) }
+  .frank-device-shell.rating-danger { --frank-phosphor:var(--color-danger) }
+  .frank-cache {
+    align-self:center;
+    display:inline-flex;
+    max-width:100%;
+    align-items:center;
+    gap:6px;
+    padding-right:18px;
+    color:var(--text-muted);
+    font-size:var(--text-caption);
+    font-variant-numeric:tabular-nums;
+    text-align:center;
+  }
+  .frank-cache::before {
+    content:'';
+    flex:0 0 auto;
+    width:7px;
+    height:7px;
+    border-radius:50%;
+    background:var(--frank-phosphor);
+    box-shadow:0 0 4px var(--frank-phosphor);
+  }
+  .frank-device-columns {
+    display:grid;
+    grid-template-columns:auto minmax(0,1fr) 142px;
+    grid-template-areas:
+      'crt display actions'
+      'name . location';
+    column-gap:16px;
+    row-gap:10px;
+    min-width:0;
+  }
+  .frank-crt {
+    grid-area:crt;
+    position:relative;
+    place-self:center;
+    display:flex;
+    width:82px;
+    height:82px;
+    align-items:center;
+    justify-content:center;
+    overflow:hidden;
+    border:1px solid #05080d;
+    border-radius:50%;
+    color:var(--frank-phosphor);
+    background:var(--crt-screen);
+    box-shadow:inset 0 3px 8px rgba(0,0,0,.65),0 1px 0 rgba(255,255,255,.4);
+  }
+  .gerty-face {
+    z-index:1;
+    width:56px;
+    height:56px;
+    flex:0 0 auto;
+    image-rendering:pixelated;
+    filter:drop-shadow(0 0 4px color-mix(in srgb,currentColor 55%,transparent));
+  }
+  .gerty-face rect { fill:currentColor }
+  .gerty-eyes {
+    transform-box:fill-box;
+    transform-origin:center;
+    animation:gerty-blink 6s infinite;
+  }
+  @keyframes gerty-blink {
+    0%,90%,100% { transform:scaleY(1) }
+    93%,95% { transform:scaleY(.12) }
+    98% { transform:scaleY(1) }
+  }
+  .frank-nameplate {
+    grid-area:name;
+    place-self:center;
+    color:var(--frank-housing-text);
+    font-family:var(--font-heading);
+    font-size:var(--text-instrument);
+    font-weight:700;
+    line-height:1;
+    letter-spacing:.6em;
+    text-indent:.6em;
+    text-transform:uppercase;
+    opacity:.9;
+  }
+  .frank-cell-display {
+    grid-area:display;
+    display:flex;
+    align-items:center;
+    min-width:0;
+    padding:0 16px;
+    border-right:1px solid var(--frank-housing-edge);
+    border-left:1px solid var(--frank-housing-edge);
+  }
+  .frank-display {
+    position:relative;
+    display:flex;
+    flex:1 1 auto;
+    min-width:0;
+    min-height:58px;
+    align-items:center;
+    justify-content:center;
+    overflow:hidden;
+    padding:8px 12px;
+    border:1px solid #05080d;
+    border-radius:10px;
+    color:var(--frank-phosphor);
+    background:var(--crt-screen);
+    box-shadow:inset 0 3px 8px rgba(0,0,0,.6);
+    font:400 clamp(1.25rem,2.2vw,1.5625rem)/1.05 var(--font-crt);
+    letter-spacing:.05em;
+    text-align:center;
+  }
+  .frank-display-text {
+    position:relative;
+    z-index:1;
+    overflow-wrap:anywhere;
+    text-shadow:0 0 8px color-mix(in srgb,currentColor 60%,transparent);
+  }
+  .operation-stamp {
+    grid-area:actions;
+    align-self:stretch;
+    display:grid;
+    grid-template-columns:1fr;
+    align-content:center;
+    gap:2px;
+    min-width:0;
+    padding:10px 11px;
+    border:1px solid var(--module-edge);
+    border-radius:var(--radius-sm);
+    color:var(--text-muted);
+    background:var(--module-bg);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.65);
+    font-size:var(--text-instrument);
+    line-height:1.25;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+  }
+  .operation-stamp strong {
+    min-width:0;
+    margin-bottom:0;
+    overflow-wrap:anywhere;
+    color:var(--text-main);
+    font-size:var(--text-caption);
+    letter-spacing:.02em;
+    text-transform:none;
+  }
+  .frank-location {
+    grid-area:location;
+    place-self:center;
+    color:var(--frank-housing-text);
+    font-size:var(--text-caption);
+    font-weight:700;
+    letter-spacing:.18em;
+    line-height:1;
+    text-transform:uppercase;
+  }
+
+  .instrument-panel {
+    margin-top:12px;
+    overflow:hidden;
+    border:1px solid var(--panel-border);
+    border-radius:var(--radius-md);
+    background:var(--panel-bg);
+    box-shadow:var(--shadow-lg);
+  }
+  .panel-bezel {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+    min-height:42px;
+    padding:10px 16px;
+    border-bottom:1px solid var(--panel-border);
+    background:color-mix(in srgb,var(--primary) 3%,var(--panel-bg));
+  }
+  .panel-bezel h2 {
+    margin:0;
+    font-size:var(--text-caption);
+    letter-spacing:.16em;
+    text-transform:uppercase;
+  }
+  .panel-bezel p {
+    margin:0;
+    color:var(--text-muted);
+    font-size:var(--text-instrument);
+  }
+  .table-wrap { width:100%; padding:6px 10px 10px; overflow-x:auto }
+  table { width:100%; border-collapse:separate; border-spacing:0 6px; table-layout:fixed }
+  th {
+    padding:3px 9px 5px;
+    color:var(--text-muted);
+    text-align:left;
+    vertical-align:bottom;
+    font-size:.625rem;
+    font-weight:750;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+  }
+  th:first-child,td:first-child { width:16% }
+  th:nth-child(2) { width:22% }
+  th:nth-child(3) { width:10% }
+  th:nth-child(4) { width:25% }
+  th:nth-child(5) { width:10% }
+  th:nth-child(6) { width:17% }
+  td {
+    padding:10px 9px;
+    border-top:1px solid var(--module-edge);
+    border-bottom:1px solid var(--module-edge);
+    color:var(--text-main);
+    background:var(--module-bg);
+    vertical-align:top;
+    overflow-wrap:anywhere;
+  }
+  td:first-child {
+    padding-left:12px;
+    border-left:1px solid var(--module-edge);
+    border-radius:var(--radius-sm) 0 0 var(--radius-sm);
+  }
+  td:last-child {
+    padding-right:12px;
+    border-right:1px solid var(--module-edge);
+    border-radius:0 var(--radius-sm) var(--radius-sm) 0;
+  }
+  .location-cell strong { font-size:var(--text-body) }
+  .good { color:var(--color-safe-text) }
+  .warn { color:var(--color-caution-text) }
+  .bad { color:var(--color-danger-text) }
+  .dim { color:var(--text-muted) }
+  .mono { font:var(--text-caption)/1.45 var(--font-mono); letter-spacing:.01em }
+  .hdr-sub { font-weight:500; text-transform:none; letter-spacing:0; opacity:.82 }
+
+  .notes {
+    margin-top:12px;
+    border:1px solid var(--panel-border);
+    border-radius:var(--radius-md);
+    color:var(--text-muted);
+    background:var(--panel-bg);
+    box-shadow:var(--shadow-lg);
+    font-size:var(--text-caption);
+  }
+  .notes summary {
+    min-height:44px;
+    padding:12px 16px;
+    color:var(--text-main);
+    cursor:pointer;
+    font-weight:700;
+    letter-spacing:.12em;
+    text-transform:uppercase;
+  }
+  .notes-content {
+    padding:0 16px 16px;
+    border-top:1px solid var(--panel-border);
+  }
+  .notes p { max-width:90ch; margin:12px 0 0 }
+  code {
+    padding:2px 5px;
+    border:1px solid var(--module-edge);
+    border-radius:4px;
+    color:var(--text-main);
+    background:var(--module-bg);
+    font:var(--text-caption) var(--font-mono);
+  }
   a { color:var(--primary); font-weight:700; text-underline-offset:2px }
+
+  @media (min-width:1100px) {
+    .status-shell { width:min(100%,980px) }
+  }
+  @media (max-width:899px) {
+    .pixel-cloud-two,.pixel-cloud-three { display:none }
+  }
   @media (max-width:720px) {
-    body { padding:14px 12px 24px }
-    .sky-cloud.two,.sky-cloud.three { display:none }
-    .brand { grid-template-columns:auto minmax(0,1fr); gap:11px }
-    .refresh-stamp { grid-column:1 / -1; width:100%; display:flex; justify-content:space-between;
-                     align-items:center; text-align:left }
-    .refresh-stamp strong { display:inline }
-    .banner { align-items:flex-start; padding:12px 14px }
-    .table-wrap { overflow:visible }
+    .status-shell { padding:12px 10px 24px }
+    .panel-bezel { align-items:flex-start; flex-direction:column; gap:2px; padding:10px 12px }
+    .table-wrap { padding:8px; overflow:visible }
     table,tbody,tr,td { display:block; width:100% }
-    table { table-layout:auto }
-    thead { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden;
-            clip:rect(0,0,0,0); white-space:nowrap; border:0 }
-    tbody { display:grid; gap:10px }
-    tbody tr { display:grid; grid-template-columns:1fr 1fr; overflow:hidden;
-               border:1px solid rgba(51,91,124,.15); border-radius:7px; background:rgba(255,255,255,.38) }
-    td,th:first-child,td:first-child { width:auto }
-    td { min-width:0; padding:10px 11px; border:0; border-top:1px solid rgba(51,91,124,.09) }
-    td:nth-child(even) { border-left:1px solid rgba(51,91,124,.09) }
-    td::before { content:attr(data-label); display:block; margin-bottom:3px; color:var(--muted);
-                 font-size:9px; font-weight:800; letter-spacing:.1em; text-transform:uppercase }
-    td.location-cell { grid-column:1 / -1; padding:11px; border-top:0; border-left:0;
-                       background:rgba(29,111,209,.045) }
+    table { table-layout:auto; border-spacing:0 }
+    thead {
+      position:absolute;
+      width:1px;
+      height:1px;
+      padding:0;
+      margin:-1px;
+      overflow:hidden;
+      clip:rect(0,0,0,0);
+      white-space:nowrap;
+      border:0;
+    }
+    tbody { display:grid; gap:8px }
+    tbody tr {
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      overflow:hidden;
+      border:1px solid var(--module-edge);
+      border-radius:var(--radius-sm);
+      background:var(--module-bg);
+    }
+    td,th:first-child,td:first-child {
+      width:auto;
+      min-width:0;
+      padding:9px 10px;
+      border:0;
+      border-top:1px solid var(--module-edge);
+      border-radius:0;
+      background:transparent;
+    }
+    td:nth-child(even) { border-left:1px solid var(--module-edge) }
+    td::before {
+      content:attr(data-label);
+      display:block;
+      margin-bottom:3px;
+      color:var(--text-muted);
+      font-size:.625rem;
+      font-weight:800;
+      letter-spacing:.1em;
+      text-transform:uppercase;
+    }
+    td.location-cell {
+      grid-column:1/-1;
+      padding:10px;
+      border-top:0;
+      border-left:0;
+      background:color-mix(in srgb,var(--primary) 4%,var(--module-bg));
+    }
     .location-cell::before { display:none }
-    .location-cell strong { font-size:15px }
-    .panel-head { align-items:flex-start; flex-direction:column; gap:2px }
+    .location-cell strong { font-size:.9375rem }
+    td.status-cell {
+      grid-column:1/-1;
+      border-left:0;
+    }
+    .notes summary { padding:12px }
+    .notes-content { padding:0 12px 14px }
   }
-  @media (max-width:350px) {
-    .frank-face { width:46px; height:46px }
-    .banner strong { font-size:19px }
-    tbody tr { grid-template-columns:1fr }
-    td:nth-child(even) { border-left:0 }
-    .notes { padding:16px 14px }
+  @media (max-width:640px) {
+    .pixel-cloud-one { top:12vh; width:84px; opacity:.46; animation-delay:-24s }
   }
-  @media (prefers-reduced-transparency:reduce) {
-    .status-panel,.notes { background:#f9fcff; backdrop-filter:none }
+  @media (max-width:480px) {
+    .frank-device-shell { padding:10px 12px 12px }
+    .frank-cache { padding-right:0 }
+    .frank-device-columns {
+      grid-template-columns:64px minmax(0,1fr) 92px;
+      column-gap:12px;
+    }
+    .frank-crt { width:64px; height:64px }
+    .frank-crt .gerty-face { width:42px; height:42px }
+    .frank-cell-display { padding:0 12px }
+    .frank-display { min-height:56px; padding:6px 8px; font-size:1.3125rem }
+    .frank-nameplate { letter-spacing:.45em; text-indent:.45em }
+    .operation-stamp { padding:7px 8px; font-size:.625rem }
+    .operation-stamp strong { font-size:.6875rem }
+    .frank-location { font-size:.6875rem; letter-spacing:.08em }
+  }
+  @media (max-width:360px) {
+    .status-shell { padding-right:8px; padding-left:8px }
+    .frank-device-columns {
+      grid-template-columns:64px minmax(0,1fr);
+      grid-template-areas:
+        'crt actions'
+        'name location';
+      column-gap:16px;
+    }
+    .frank-cell-display { display:none }
+    .frank-nameplate { font-size:.625rem; letter-spacing:.35em; text-indent:.35em }
+    .operation-stamp {
+      grid-template-columns:minmax(0,1fr) auto;
+      align-items:center;
+      gap:3px 8px;
+      padding:7px 9px;
+    }
+    .operation-stamp strong { margin:0; text-align:right }
+    .frank-location { justify-self:end }
+  }
+  @media (prefers-reduced-motion:reduce) {
+    .pixel-cloud,.gerty-eyes { animation:none; will-change:auto }
+    .pixel-cloud-one { transform:translate3d(4vw,0,0) }
+    .pixel-cloud-two { transform:translate3d(86vw,0,0) }
+    .pixel-cloud-three { transform:translate3d(8vw,0,0) }
   }
 </style></head><body>
-<div class="sky" aria-hidden="true">
-  <svg class="sky-cloud one" viewBox="0 0 34 14"><path d="M2 11h5V9h4V6h3V4h5v2h4v2h6v3h3v2H2z"/><path d="M2 9h5V7h4V4h3V2h5v2h4v2h6v3h3v2H2z"/></svg>
-  <svg class="sky-cloud two" viewBox="0 0 29 13"><path d="M1 10h4V8h3V5h4V3h4v2h3v2h5v3h3v2H1z"/><path d="M1 8h4V6h3V3h4V1h4v2h3v2h5v3h3v2H1z"/></svg>
-  <svg class="sky-cloud three" viewBox="0 0 39 15"><path d="M2 12h6V9h5V7h3V4h5V2h5v3h3v2h5v2h3v3z"/><path d="M2 10h6V7h5V5h3V2h5V0h5v3h3v2h5v2h3v3z"/></svg>
+<div class="pixel-sky" aria-hidden="true">
+  <div class="pixel-cloud pixel-cloud-one"><svg viewBox="0 0 34 14" focusable="false" shape-rendering="crispEdges"><path class="pixel-cloud-shade" d="M2 11h5V9h4V6h3V4h5v2h4v2h6v3h3v2H2z"/><path class="pixel-cloud-body" d="M2 9h5V7h4V4h3V2h5v2h4v2h6v3h3v2H2z"/></svg></div>
+  <div class="pixel-cloud pixel-cloud-two"><svg viewBox="0 0 29 13" focusable="false" shape-rendering="crispEdges"><path class="pixel-cloud-shade" d="M1 10h4V8h3V5h4V3h4v2h3v2h5v3h3v2H1z"/><path class="pixel-cloud-body" d="M1 8h4V6h3V3h4V1h4v2h3v2h5v3h3v2H1z"/></svg></div>
+  <div class="pixel-cloud pixel-cloud-three"><svg viewBox="0 0 39 15" focusable="false" shape-rendering="crispEdges"><path class="pixel-cloud-shade" d="M2 12h6V9h5V7h3V4h5V2h5v3h3v2h5v2h3v3z"/><path class="pixel-cloud-body" d="M2 10h6V7h5V5h3V2h5V0h5v3h3v2h5v2h3v3z"/></svg></div>
 </div>
 <main class="status-shell">
-  <header class="brand">
-    <div class="frank-face" aria-hidden="true"><span class="face-grid"></span></div>
-    <div><p class="brand-name">F · R · A · N · K</p><h1>Forecast worker</h1><p class="brand-subtitle">Prepared forecast system status</p></div>
-    <div class="refresh-stamp"><span>Auto refresh</span><strong>30 seconds</strong></div>
+  <h1 class="sr-only">FRANK forecast worker status</h1>
+  <header class="frank-device-shell rating-${rating}">
+    <div class="frank-cache"><span>System checked ${escapeHtml(formatUtcTimestamp(health.checkedAt))}</span></div>
+    <div class="frank-device-columns">
+      <span class="frank-crt">${gertyStatusFace(rating)}</span>
+      <div class="frank-cell-display">
+        <div class="frank-display" role="status" aria-label="${escapeHtml(statusDetail)}">
+          <span id="frank-status-label" class="frank-display-text">${escapeHtml(displayMessage)}</span>
+        </div>
+      </div>
+      <div class="operation-stamp" aria-label="Status page operations">
+        <span>Auto refresh</span><strong>30 seconds</strong>
+      </div>
+      <span class="frank-nameplate">FRANK</span>
+      <span class="frank-location">Forecast worker</span>
+    </div>
   </header>
-  ${banner}
-  <section class="status-panel" aria-labelledby="locations-title">
-    <div class="panel-head"><h2 id="locations-title">Locations</h2><p>Independent forecast cycles</p></div>
+
+  <section class="instrument-panel" aria-labelledby="locations-title">
+    <div class="panel-bezel">
+      <h2 id="locations-title">Forecast locations</h2>
+      <p>${escapeHtml(statusDetail)}</p>
+    </div>
     <div class="table-wrap">
       <table>
         <thead><tr><th>Location</th><th>Last check<br><span class="hdr-sub">own cycle per location</span></th><th>Data age<br><span class="hdr-sub">last rebuild</span></th><th>Status<br><span class="hdr-sub">data generation</span></th><th>Degraded</th><th>Water / wave run</th></tr></thead>
@@ -333,39 +750,42 @@ export function statusResponse(health: HealthPayload): Response {
       </table>
     </div>
   </section>
-<footer class="notes">
-  <h2>How to read this panel</h2>
-  <p>Last check counts from the most recent time the worker asked MET and DMI whether
-  anything had changed. The schedule runs every 10 minutes, but the timestamp is only
-  written to storage once it is 15 minutes old, because each write comes out of a daily
-  quota. A figure of 15 or 20 minutes therefore does not mean a check was missed.</p>
 
-  <p>Each location also runs that cycle independently, so the four rows are normally out
-  of step with each other. One city reading 2 minutes while another reads 11 is the
-  expected picture, not a fault: a location's stamp is also rewritten whenever that
-  location rebuilds, which follows its own MET validity window. Visitor requests only
+  <details class="notes">
+    <summary>How to read this instrument</summary>
+    <div class="notes-content">
+      <p>Last check counts from the most recent time the worker asked MET and DMI whether
+      anything had changed. The schedule runs every 10 minutes, but the timestamp is only
+      written to storage once it is 15 minutes old, because each write comes out of a daily
+      quota. A figure of 15 or 20 minutes therefore does not mean a check was missed.</p>
+
+      <p>Each location also runs that cycle independently, so the four rows are normally out
+      of step with each other. One city reading 2 minutes while another reads 11 is the
+      expected picture, not a fault: a location's stamp is also rewritten whenever that
+      location rebuilds, which follows its own MET validity window. Visitor requests only
   read prepared snapshots and do not alter this clock. The rows only line up right after
-  a deploy, when all four are built at once. The alarm sits at
-  ${escapeHtml(health.checkStaleAfterMin)} minutes, well clear of the whole cycle.
-  Worst right now: ${escapeHtml(health.oldestCheckAgeMin ?? '?')} minutes.</p>
+      a deploy, when all four are built at once. The alarm sits at
+      ${escapeHtml(health.checkStaleAfterMin)} minutes, well clear of the whole cycle.
+      Worst right now: ${escapeHtml(health.oldestCheckAgeMin ?? '?')} minutes.</p>
 
-  <p>Data age counts from the last successful rebuild, and a figure that sits still is
-  normal here. MET declares each forecast valid for about 30 minutes through its
-  Expires header, so between reissues there is nothing new to build and the worker
-  skips the work on purpose. It alarms only past
-  ${escapeHtml(health.dataStaleAfterMin / 60)} hours, which would mean the checks are
-  succeeding while every rebuild fails. Worst right now:
-  ${escapeHtml(health.oldestAgeMin ?? '?')} minutes.</p>
+      <p>Data age counts from the last successful rebuild, and a figure that sits still is
+      normal here. MET declares each forecast valid for about 30 minutes through its
+      Expires header, so between reissues there is nothing new to build and the worker
+      skips the work on purpose. It alarms only past
+      ${escapeHtml(health.dataStaleAfterMin / 60)} hours, which would mean the checks are
+      succeeding while every rebuild fails. Worst right now:
+      ${escapeHtml(health.oldestAgeMin ?? '?')} minutes.</p>
 
-  <p>The word under Last check names what triggered it. <code>cron</code> is the
-  10-minute schedule. <code>release-candidate</code> is a deployment warm-up for this
-  immutable data generation. Ordinary visitors and the refresh
-  button only read prepared snapshots; they never start provider work.</p>
+      <p>The word under Last check names what triggered it. <code>cron</code> is the
+      10-minute schedule. <code>release-candidate</code> is a deployment warm-up for this
+      immutable data generation. Ordinary visitors and the refresh
+      button only read prepared snapshots; they never start provider work.</p>
 
-  <p>This page reloads every 30 seconds and is meant for reading. The machine-readable
-  alarm lives at <a href="/health">/health</a>, which returns 503 and a
-  <code>reason</code> when either clock trips.</p>
-</footer>
+      <p>This page reloads every 30 seconds and is meant for reading. The machine-readable
+      alarm lives at <a href="/health">/health</a>, which returns 503 and a
+      <code>reason</code> when either clock trips.</p>
+    </div>
+  </details>
 </main>
 </body></html>
 `);
