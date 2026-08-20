@@ -1272,6 +1272,11 @@ export async function warmWorker({
   if (!Array.isArray(locationIds) || locationIds.length === 0) {
     throw new WarmupError('At least one location is required.');
   }
+  for (const locationId of locationIds) {
+    if (typeof locationId !== 'string' || !/^[a-z0-9-]+$/.test(locationId)) {
+      throw new WarmupError('A location id is invalid.');
+    }
+  }
   if (!Array.isArray(locationContracts)) {
     throw new WarmupError('Location release contracts must be an array.');
   }
@@ -1281,17 +1286,15 @@ export async function warmWorker({
   // to build an empty target generation; the post-promotion smoke deliberately
   // omits it and only proves ordinary cached reads. A typed transient becomes
   // terminal amber for a warming request, so a struggling upstream is never
-  // hammered by the release gate.
+  // hammered by the release gate. Resumable exact-all preparation also stops
+  // at the first typed initialization: completed KV entries survive, and the
+  // next cycle advances through them until it reaches the next cold location.
   const transientIds = [];
   const availableIds = [];
   const targetReadyIds = [];
   const generationNotReadyIds = [];
   const initializationRetryAfterById = new Map();
   for (const locationId of locationIds) {
-    if (typeof locationId !== 'string' || !/^[a-z0-9-]+$/.test(locationId)) {
-      throw new WarmupError('A location id is invalid.');
-    }
-
     const forecastPath = `api/v${apiSchemaVersion}/forecast/${encodeURIComponent(locationId)}`;
     const url = new URL(forecastPath, base);
     if (!readOnly) url.searchParams.set('warm', '1');
@@ -1342,6 +1345,12 @@ export async function warmWorker({
       generationNotReadyLocationIds: [...generationNotReadyIds],
       transientLocationIds: [...transientIds],
     });
+    if (result === 'initializing' && requireTargetReadyAll && allowWaiting && !readOnly) {
+      logger.warn(
+        `[warm] forecast ${locationId}: exact initialization pauses further city warming; checking aggregate health`,
+      );
+      break;
+    }
   }
 
   // Partial availability requires at least one real 200 forecast response.

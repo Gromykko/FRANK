@@ -1225,24 +1225,36 @@ describe('Worker deployment warm-up', () => {
     );
   });
 
-  it('returns a resumable wait only for typed initialization with matching health', async () => {
+  it('pauses a busy cold cycle after one city and resumes through ready cities next cycle', async () => {
     const contract = await loadReleaseContract();
-    const locations = contract.locations.slice(0, 2);
+    const locations = contract.locations;
     const locationIds = locations.map(({ id }) => id);
-    const retryAfterById = new Map([
-      [locationIds[0], 120],
-      [locationIds[1], 300],
-    ]);
+    let cycle = 1;
     const requests: string[] = [];
     const baseUrl = await listen((request, response) => {
       requests.push(request.url ?? '');
       const match = request.url?.match(/^\/api\/v1\/forecast\/([a-z0-9-]+)\?warm=1$/);
       if (match) {
-        const retryAfter = retryAfterById.get(match[1]) ?? 600;
+        const locationId = match[1];
+        const location = locations.find(({ id }) => id === locationId);
+        if (cycle === 2 && locationIds.slice(0, 2).includes(locationId)) {
+          return json(
+            response,
+            200,
+            forecast(locationId, contract.expectedVersion, location?.coordinate, contract.release),
+            EXPECTED_WORKER_VERSION_ID,
+            exactReleaseHeaders(contract.release, true),
+          );
+        }
+        const expectedInitializingId = cycle === 1 ? locationIds[0] : locationIds[2];
+        if (locationId !== expectedInitializingId) {
+          return json(response, 500, { error: `unexpected warm request for ${locationId}` });
+        }
+        const retryAfter = cycle === 1 ? 120 : 300;
         return json(
           response,
           503,
-          initializing(match[1], retryAfter),
+          initializing(locationId, retryAfter),
           EXPECTED_WORKER_VERSION_ID,
           {
             ...exactReleaseHeaders(contract.release, false),
@@ -1251,7 +1263,8 @@ describe('Worker deployment warm-up', () => {
         );
       }
       if (request.url === '/health') {
-        const body = releaseHealth(locationIds, contract.release, { missing: locationIds });
+        const missing = cycle === 1 ? locationIds : locationIds.slice(2);
+        const body = releaseHealth(locationIds, contract.release, { missing });
         return json(
           response,
           503,
@@ -1263,7 +1276,7 @@ describe('Worker deployment warm-up', () => {
       return json(response, 404, { error: 'not found' });
     });
 
-    const result = await warmRelease({
+    const options = {
       baseUrl,
       locationIds,
       locationContracts: locations,
@@ -1275,18 +1288,38 @@ describe('Worker deployment warm-up', () => {
       timeoutMs: 500,
       retryDelayMs: 1,
       logger: silentLogger,
-    });
+    };
 
-    expect(result).toMatchObject({
+    const firstResult = await warmRelease(options);
+
+    expect(firstResult).toMatchObject({
       readyForPromotion: false,
       waitingLocationIds: locationIds,
-      retryAfterSeconds: 300,
+      retryAfterSeconds: 600,
       targetReadyLocationIds: [],
       initializingLocationIds: locationIds,
     });
     expect(requests).toEqual([
       `/api/v1/forecast/${locationIds[0]}?warm=1`,
+      '/health',
+    ]);
+
+    cycle = 2;
+    requests.length = 0;
+    const secondResult = await warmRelease(options);
+
+    expect(secondResult).toMatchObject({
+      readyForPromotion: false,
+      waitingLocationIds: locationIds.slice(2),
+      retryAfterSeconds: 600,
+      targetReadyLocationIds: locationIds.slice(0, 2),
+      initializingLocationIds: locationIds.slice(2),
+      transientLocationIds: [locationIds[2]],
+    });
+    expect(requests).toEqual([
+      `/api/v1/forecast/${locationIds[0]}?warm=1`,
       `/api/v1/forecast/${locationIds[1]}?warm=1`,
+      `/api/v1/forecast/${locationIds[2]}?warm=1`,
       '/health',
     ]);
   });
