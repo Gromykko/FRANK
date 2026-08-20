@@ -4,7 +4,7 @@ import {
   normalizeDegrees,
   currentSpeedFromComponents,
   currentDirectionFromComponents,
-} from '../../worker/index.js';
+} from '../../worker/index';
 
 describe('worker pure math functions', () => {
   describe('asNumber', () => {

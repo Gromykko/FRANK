@@ -1,8 +1,8 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "frank-forecast",
-  "main": "worker/index.js",
-  "compatibility_date": "2026-07-04",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-08-15",
   "workers_dev": true,
   "preview_urls": false,
   "observability": {

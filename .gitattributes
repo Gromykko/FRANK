@@ -1,0 +1,5 @@
+# Exact generated Cloudflare runtime declarations. Wrangler owns their
+# whitespace; marking the file generated keeps reviews focused on source and
+# prevents `git diff --check` from asking us to modify output that `--check`
+# correctly requires byte-for-byte.
+worker-configuration.d.ts linguist-generated=true whitespace=-trailing-space

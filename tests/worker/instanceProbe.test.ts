@@ -1,10 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-// @ts-expect-error - the Worker is plain JS with no type declarations
 import {
   cronExecutionPolicy,
   fetchLatestInstanceForCollections,
   tickOrder,
-} from '../../worker/index.js';
+} from '../../worker/index';
 
 // Which DMI model run is newest is a fact about DMI, not about a fjord, and all
 // four configured fjords probe the identical collection lists. Unmemoised, one

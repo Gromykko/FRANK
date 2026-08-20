@@ -1,4 +1,4 @@
-import type { ForecastLocation } from '../../config/locations';
+import type { ForecastLocation } from '../../config/locationTypes';
 
 function dayOfYear(year: number, monthIndex: number, day: number): number {
   const start = Date.UTC(year, 0, 0);

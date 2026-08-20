@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { FORECAST_PAYLOAD_VERSION } from '../src/features/forecast/types';
+import { PAYLOAD_VERSION } from '../worker/providers';
 import { hourIndexForNow } from '../src/features/forecast/useForecast';
 import { nextHourTideFor } from '../src/features/forecast/displayData';
 import { findLaunchWindows } from '../src/features/planner/findLaunchWindows';
@@ -13,20 +14,13 @@ import type { HourlyData } from '../src/features/forecast/types';
 // Every one of these exists because the thing it pins actually broke.
 
 // ---------------------------------------------------------------------------
-// The Worker and the client each carry their own copy of the payload version,
-// and they MUST stay equal: the stamp is what forces the Worker to rebuild a
-// cache its own new code did not produce. Both were hand-bumped 5 -> 6 in one
-// session with nothing coupling them, and bumping only the client sets
-// workerOutdated for every user until someone notices and deploys the Worker.
+// The Worker and browser import one dependency-free payload-version source.
+// Keep the public Worker alias pinned so a future refactor cannot quietly
+// replace it with another literal and recreate the old split-brain contract.
 // ---------------------------------------------------------------------------
-describe('payload version stays coupled across the two files', () => {
-  it('PAYLOAD_VERSION in the Worker equals FORECAST_PAYLOAD_VERSION in the client', () => {
-    // cwd, not import.meta.url: under the jsdom environment import.meta.url is
-    // an http: URL and readFileSync rejects it. Vitest runs from the repo root.
-    const worker = readFileSync(resolve(process.cwd(), 'worker/index.js'), 'utf8');
-    const match = worker.match(/^const PAYLOAD_VERSION = (\d+);/m);
-    expect(match, 'could not find `const PAYLOAD_VERSION = N;` in worker/index.js').not.toBeNull();
-    expect(Number(match![1])).toBe(FORECAST_PAYLOAD_VERSION);
+describe('payload version has one source of truth', () => {
+  it('exposes the shared contract through the Worker alias and browser API', () => {
+    expect(PAYLOAD_VERSION).toBe(FORECAST_PAYLOAD_VERSION);
   });
 });
 

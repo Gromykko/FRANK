@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-// @ts-expect-error - the worker is plain JS with no type declarations
 import {
   fetchMarineSeriesWithFallback,
   deriveMarineSeedsFromPayload,
@@ -8,7 +7,7 @@ import {
   isMarineRunWithinFallbackAge,
   marineRunAgeMs,
   shouldCheckInBackground,
-} from '../../worker/index.js';
+} from '../../worker/index';
 import { FORECAST_PAYLOAD_VERSION } from '../../src/features/forecast/types';
 
 // An in-memory stand-in for the KV binding (get(key,'json') / put(key,string)).

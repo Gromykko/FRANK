@@ -72,12 +72,9 @@ export interface WeatherWarning {
   coverage?: 'confirmed' | 'excluded' | 'unknown';
 }
 
-// Version of the forecast payload shape/sources this app expects. The worker
-// stamps the same number (PAYLOAD_VERSION in worker/index.js — keep in sync)
-// into every payload it builds; when the app receives an older stamp it warns
-// that the deployed worker is out of date instead of silently rendering data
-// built by previous logic.
-export const FORECAST_PAYLOAD_VERSION = 7;
+// Re-export the shared wire-contract constant so existing callers keep their
+// stable import path. The Worker imports the same dependency-free source.
+export { FORECAST_PAYLOAD_VERSION } from './payloadVersion';
 
 export interface WeatherData {
   hourly: HourlyData[];

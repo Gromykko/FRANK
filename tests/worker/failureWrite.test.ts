@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
-// @ts-expect-error - the Worker is plain JS with no type declarations
-import { shouldPersistFailureState } from '../../worker/index.js';
+import { shouldPersistFailureState } from '../../worker/index';
 
 // The KV write budget is 1,000/day for the whole app. This predicate is what
 // stands between a provider outage and an emptied allowance: a stale cache

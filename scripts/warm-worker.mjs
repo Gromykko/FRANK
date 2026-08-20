@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = path.resolve(SCRIPT_DIR, '..');
 const DEFAULT_LOCATIONS_FILE = path.join(REPOSITORY_ROOT, 'src', 'config', 'locations.json');
-const DEFAULT_CONTRACT_FILE = path.join(REPOSITORY_ROOT, 'src', 'features', 'forecast', 'types.ts');
+const DEFAULT_CONTRACT_FILE = path.join(REPOSITORY_ROOT, 'src', 'features', 'forecast', 'payloadVersion.ts');
 
 const DEFAULT_ATTEMPTS = 3;
 const DEFAULT_TIMEOUT_MS = 30_000;

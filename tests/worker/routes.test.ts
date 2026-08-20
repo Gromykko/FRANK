@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-// @ts-expect-error - the Worker is plain JS with no type declarations
-import worker from '../../worker/index.js';
+import worker from '../../worker/index';
 import { FORECAST_PAYLOAD_VERSION } from '../../src/features/forecast/types';
 
 const LAST_COMPLETED_CHECK = new Date(Date.now() - 5 * 60_000).toISOString();
