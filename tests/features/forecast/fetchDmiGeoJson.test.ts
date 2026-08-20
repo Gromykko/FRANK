@@ -19,6 +19,7 @@ function mockFetch(status: number) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe('fetchDmiGeoJson', () => {
@@ -52,5 +53,22 @@ describe('fetchDmiGeoJson', () => {
     }));
 
     await expect(fetchDmiGeoJson('dkss_idw', ['water-temperature'], CURRENT_LOCATION)).resolves.toEqual(payload);
+  });
+
+  it('uses a native timeout signal that remains attached while the body is consumed', async () => {
+    const payload = { type: 'FeatureCollection', features: [] };
+    const timeoutSignal = new AbortController().signal;
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeoutSignal);
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => payload,
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchDmiGeoJson('dkss_idw', ['water-temperature'], CURRENT_LOCATION);
+
+    expect(timeout).toHaveBeenCalledWith(25_000);
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ signal: timeoutSignal });
   });
 });

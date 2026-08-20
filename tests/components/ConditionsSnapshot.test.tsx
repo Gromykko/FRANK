@@ -116,4 +116,26 @@ describe('ConditionsSnapshot', () => {
     expect(container.querySelector('.snapshot-grid')?.textContent).toContain('-31 to +39 cm');
     expect(container.querySelector('.snapshot-sun')?.textContent).toContain('05.45');
   });
+
+  it('does not turn a whole outlook period into night styling from its start mark', () => {
+    const container = document.createElement('div');
+    container.innerHTML = renderToStaticMarkup(
+      <ConditionsSnapshot
+        {...props}
+        weatherDesc="Clear"
+        data={{
+          ...baseData,
+          weatherCode: 0,
+          symbolCode: 'clearsky_night',
+          isDay: false,
+          isLowConfidence: true,
+          blockSpanHours: 6,
+        }}
+      />,
+    );
+
+    const icon = container.querySelector('.weather-widget-icon');
+    expect(icon?.classList.contains('sun-spin')).toBe(true);
+    expect(icon?.classList.contains('moon-pulse')).toBe(false);
+  });
 });

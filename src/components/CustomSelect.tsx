@@ -16,6 +16,7 @@ export default function CustomSelect<T extends string | number>({ value, onChang
   const [isOpen, setIsOpen] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(-1);
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const listboxId = useId();
 
   useEffect(() => {
@@ -115,6 +116,7 @@ export default function CustomSelect<T extends string | number>({ value, onChang
     >
       <button
         type="button"
+        ref={triggerRef}
         onClick={() => !disabled && setIsOpen(!isOpen)}
         disabled={disabled}
         className="custom-select-trigger"
@@ -151,9 +153,15 @@ export default function CustomSelect<T extends string | number>({ value, onChang
               // tabbable options would fight that model and trap Tab in the list.
               tabIndex={-1}
               aria-selected={opt.value === value}
+              onMouseDown={(event) => {
+                // A pointer press otherwise focuses this temporary option;
+                // closing the popup then unmounts it and drops focus to body.
+                event.preventDefault();
+              }}
               onClick={() => {
                 if (opt.value !== value) onChange(opt.value);
                 setIsOpen(false);
+                triggerRef.current?.focus();
               }}
               className={`custom-select-option ${opt.value === value ? 'is-selected' : ''} ${i === focusedIndex ? 'is-focused' : ''}`}
             >

@@ -38,10 +38,10 @@ function cspMeta() {
   const policy = [
     "default-src 'self'",
     "script-src 'self'",
-    // Recharts and React set inline style ATTRIBUTES; the font CSS is fetched
-    // from Google. Self-hosting the two families would let both go away.
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "font-src 'self' https://fonts.gstatic.com",
+    // Recharts and React set inline style attributes. Both font families are
+    // bundled with the app, so production does not need any font CDN origins.
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self'",
     "img-src 'self' data:",
     `connect-src 'self' ${WORKER_ORIGIN}`,
     "base-uri 'self'",

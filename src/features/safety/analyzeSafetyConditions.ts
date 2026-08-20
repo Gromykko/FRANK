@@ -2,6 +2,8 @@ import type { HourlyData } from '../forecast/types';
 import { getWeatherDescription } from '../forecast/weatherCodes';
 import { CURRENT_LOCATION } from '../../config/locations';
 import type { ForecastLocation, WindSector } from '../../config/locations';
+import { assessBlockDaylight } from './blockDaylight';
+import type { SunTimes } from './blockDaylight';
 
 export type SafetyRating = 'safe' | 'caution' | 'danger';
 
@@ -19,6 +21,12 @@ export const RATING_WORD: Record<SafetyRating, string> = {
 // so the tide-conflict rule stays quiet. A gentle breeze opposing the tide
 // doesn't build the short steep waves the rule warns about.
 const CHOP_WIND_GATE_MS = 4.0;
+
+// DMI water level is stored in metres but shown to users in whole centimetres.
+// Changes of half a displayed centimetre or less are therefore treated as
+// steady: they are below the UI's precision and can be model/rounding noise,
+// not evidence that wind is opposing a real rising or falling movement.
+const WATER_LEVEL_TREND_TOLERANCE_M = 0.005;
 
 // A sector may wrap through north (min > max, e.g. 315°–45°): membership is
 // then "at or past min OR at or before max".
@@ -88,6 +96,18 @@ export interface SafetyAnalysis {
   reasons: SafetyReason[];
 }
 
+export interface SafetyAnalysisContext {
+  blockDaylight?: {
+    /**
+     * Whole-period UI ratings must disclose any night contained by a block.
+     * The launch-window planner deliberately defers that rule so it can first
+     * assess weather/marine conditions and then offer only the daylight slice.
+     */
+    mode?: 'whole-period' | 'defer-to-window';
+    sun?: SunTimes;
+  };
+}
+
 import type { SafetySettings } from './presets';
 import { floorCaution } from './presets';
 import { interpolate } from '../../i18n/interpolate';
@@ -119,8 +139,17 @@ export function resolveSectors(location: ForecastLocation, settings: SafetySetti
 const isReading = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 
+// Speeds and heights are magnitudes: a finite negative number is not a calm
+// reading, it is a malformed/sentinel value. Keep signed temperatures and tide
+// levels on isReading because sub-zero values are physically meaningful there.
+const isNonnegativeReading = (value: unknown): value is number =>
+  isReading(value) && value >= 0;
+
+const isBearing = (value: unknown): value is number =>
+  isReading(value) && value >= 0 && value < 360;
+
 export function getWindSpeedLabel(speed: number): string {
-  if (!isReading(speed)) return 'Unknown';
+  if (!isNonnegativeReading(speed)) return 'Unknown';
   if (speed <= 0.2) return 'Calm';
   if (speed <= 1.5) return 'Light Air';
   if (speed <= 3.3) return 'Light Breeze';
@@ -135,7 +164,7 @@ export function getWindSpeedLabel(speed: number): string {
 }
 
 export function getWaveHeightLabel(height: number): string {
-  if (!isReading(height)) return 'Unknown';
+  if (!isNonnegativeReading(height)) return 'Unknown';
   if (height <= 0.1) return 'Flat / Calm';
   if (height <= 0.5) return 'Smooth / Small Ripples';
   if (height <= 1.25) return 'Slight / Choppy';
@@ -153,7 +182,8 @@ export function analyzeSafetyConditions(
   // Reason texts route through this so the UI can pass the i18n t(); the
   // default is a plain English formatter with the same {0}-placeholder
   // semantics (findLaunchWindows and the tests use ratings/English as-is).
-  translate: Translate = interpolate
+  translate: Translate = interpolate,
+  context?: SafetyAnalysisContext,
 ): SafetyAnalysis {
   const reasons: SafetyReason[] = [];
   let rating: SafetyRating = 'safe';
@@ -183,7 +213,7 @@ export function analyzeSafetyConditions(
 
   // Wind speed feeds both the general limit and the per-sector caps, so it is
   // required as soon as either is on.
-  const hasWindSpeed = isReading(data.windSpeed);
+  const hasWindSpeed = isNonnegativeReading(data.windSpeed);
   if ((enableWindSpeed || enableCustom) && !hasWindSpeed) missing.push('wind speed');
 
   if (enableWindSpeed && hasWindSpeed) {
@@ -211,8 +241,15 @@ export function analyzeSafetyConditions(
   const enableWindGust = enableWindSpeed && (settings.enableWindGust ?? true);
   // MET issues no gust forecast for the longer-range blocks, so an absent gust
   // there is a known limit of the source, not a hole in this hour's data.
-  if (enableWindGust && !data.blockSpanHours && !isReading(data.windGust)) missing.push('wind gusts');
-  if (enableWindGust && isReading(data.windGust)) {
+  const hasWindGust = isNonnegativeReading(data.windGust);
+  if (
+    enableWindGust &&
+    !hasWindGust &&
+    // MET intentionally omits gusts from outlook blocks. Preserve that known
+    // exemption for NaN/missing, but never exempt a finite negative sentinel.
+    (!data.blockSpanHours || isReading(data.windGust))
+  ) missing.push('wind gusts');
+  if (enableWindGust && hasWindGust) {
     const gustLabel = translate(getWindSpeedLabel(data.windGust));
     const gustDangerLimit = settings.maxWindSpeedSafe + (settings.gustMargin ?? 2.5);
     if (data.windGust >= gustDangerLimit) {
@@ -234,7 +271,7 @@ export function analyzeSafetyConditions(
   // the wind falls within applies its own safe/danger caps; onshore/offshore
   // membership feeds the wind-against-water-level rule below (cross-shore
   // sectors set neither flag, so they opt out of it).
-  const hasWindDir = isReading(data.windDirection);
+  const hasWindDir = isBearing(data.windDirection);
   if (enableCustom && !hasWindDir) missing.push('wind direction');
   const sectors = enableCustom && hasWindSpeed && hasWindDir
     ? resolveSectors(CURRENT_LOCATION, settings)
@@ -268,12 +305,17 @@ export function analyzeSafetyConditions(
   // simply doesn't run — it's a refinement on top of the wind rules, not a
   // hazard of its own, so an absent tide series isn't reported as missing data.
   if (enableCustom && isReading(nextHourTide) && isReading(data.tideLevel) && hasWindSpeed) {
-    const isWaterRising = nextHourTide > data.tideLevel;
+    const waterLevelDelta = nextHourTide - data.tideLevel;
+    const waterTrend = waterLevelDelta > WATER_LEVEL_TREND_TOLERANCE_M
+      ? 'rising'
+      : waterLevelDelta < -WATER_LEVEL_TREND_TOLERANCE_M
+        ? 'falling'
+        : 'steady';
     // Offshore wind opposes rising water; onshore wind opposes falling water.
-    if ((isWaterRising && windIsOffshore) || (!isWaterRising && windIsOnshore)) {
+    if ((waterTrend === 'rising' && windIsOffshore) || (waterTrend === 'falling' && windIsOnshore)) {
       if (data.windSpeed > CHOP_WIND_GATE_MS) {
         if (rating !== 'danger') rating = 'caution';
-        addReason('caution', translate('Wind-against-water-level conflict: wind opposes {0} water level. Expect steeper chop.', translate(isWaterRising ? 'rising' : 'falling')));
+        addReason('caution', translate('Wind-against-water-level conflict: wind opposes {0} water level. Expect steeper chop.', translate(waterTrend)));
       }
     }
   }
@@ -292,8 +334,9 @@ export function analyzeSafetyConditions(
 
   const enableWaveHeight = settings.enableWaveHeight ?? true;
   const enableWaveCaution = settings.enableWaveCaution ?? true;
-  if (enableWaveHeight && !isReading(data.waveHeight)) missing.push('wave height');
-  if (enableWaveHeight && isReading(data.waveHeight)) {
+  const hasWaveHeight = isNonnegativeReading(data.waveHeight);
+  if (enableWaveHeight && !hasWaveHeight) missing.push('wave height');
+  if (enableWaveHeight && hasWaveHeight) {
     const waveLabel = translate(getWaveHeightLabel(data.waveHeight));
     // The danger ceiling always applies when wave height is enabled; the
     // "wave caution margin" toggle only controls the intermediate caution band.
@@ -346,12 +389,37 @@ export function analyzeSafetyConditions(
     addReason('caution', translate('{0} — worth keeping an eye on.', weatherDesc));
   }
 
-  // Longer-range outlook blocks span several hours across the day/night
-  // boundary, so they are never marked as nighttime (matching the meteogram,
-  // which doesn't dim them either).
-  if ((settings.daylightOnly ?? true) && !data.isDay && !data.blockSpanHours) {
-    if (rating !== 'danger') rating = 'caution';
-    addReason('caution', translate('Nighttime: outside sunrise-to-sunset paddling hours.'));
+  if (settings.daylightOnly ?? true) {
+    if (data.blockSpanHours) {
+      const mode = context?.blockDaylight?.mode ?? 'whole-period';
+      if (mode !== 'defer-to-window') {
+        const startMs = Date.parse(data.time);
+        const daylight = assessBlockDaylight(
+          startMs,
+          startMs + data.blockSpanHours * 3_600_000,
+          context?.blockDaylight?.sun,
+        );
+        if (daylight.status !== 'full') {
+          if (rating !== 'danger') rating = 'caution';
+          if (daylight.status === 'partial') {
+            addReason('caution', translate(
+              'Daylight: part of this outlook period is outside sunrise-to-sunset paddling hours.',
+            ));
+          } else if (daylight.status === 'none') {
+            addReason('caution', translate(
+              'Daylight: this outlook period has no complete hour within sunrise-to-sunset paddling hours.',
+            ));
+          } else {
+            addReason('caution', translate(
+              'Daylight: sunrise or sunset is unavailable for this outlook period, so FRANK cannot clear the whole period.',
+            ));
+          }
+        }
+      }
+    } else if (!data.isDay) {
+      if (rating !== 'danger') rating = 'caution';
+      addReason('caution', translate('Nighttime: outside sunrise-to-sunset paddling hours.'));
+    }
   }
 
   // An hour FRANK could not fully assess is never cleared. This runs before the
@@ -368,7 +436,7 @@ export function analyzeSafetyConditions(
     // Describe the conditions in the standard terms (Beaufort wind, sea state,
     // MET weather label) instead of repeating the numbers shown above. The
     // bands match getWaveHeightLabel, phrased for prose.
-    const seaState = translate(!isReading(data.waveHeight) ? 'sea state unknown'
+    const seaState = translate(!isNonnegativeReading(data.waveHeight) ? 'sea state unknown'
       : data.waveHeight <= 0.1 ? 'calm water'
       : data.waveHeight <= 0.5 ? 'small ripples'
       : data.waveHeight <= 1.25 ? 'choppy water'

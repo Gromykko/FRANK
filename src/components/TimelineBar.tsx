@@ -133,6 +133,9 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
     ].filter(Boolean).join(' ');
 
   const handleMouseDown = (e: React.MouseEvent) => {
+    // Only the primary button owns drag-to-scroll. A right-click must remain a
+    // normal context-menu gesture and must never leave selection disabled.
+    if (e.button !== 0) return;
     const el = scrollRef.current;
     if (!el) return;
     // A press on the native scrollbar (below the client area) must stay
@@ -159,7 +162,10 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
   const handleMouseLeave = () => {
     if (isDraggingRef.current) {
       isDraggingRef.current = false;
-      if (scrollRef.current) scrollRef.current.style.cursor = 'grab';
+      if (scrollRef.current) {
+        scrollRef.current.style.cursor = 'grab';
+        scrollRef.current.style.userSelect = '';
+      }
       snapToNearestColumn();
     }
   };
@@ -167,7 +173,10 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
   const handleMouseUp = () => {
     if (isDraggingRef.current) {
       isDraggingRef.current = false;
-      if (scrollRef.current) scrollRef.current.style.cursor = 'grab';
+      if (scrollRef.current) {
+        scrollRef.current.style.cursor = 'grab';
+        scrollRef.current.style.userSelect = '';
+      }
       snapToNearestColumn();
     }
   };
@@ -187,6 +196,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
   };
 
   const handleTabsMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
     const el = tabsRef.current;
     if (!el) return;
     tabsIsDraggingRef.current = true;
@@ -203,6 +213,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
       tabsIsDraggingRef.current = false;
       if (tabsRef.current) {
         tabsRef.current.style.cursor = 'grab';
+        tabsRef.current.style.userSelect = '';
         tabsRef.current.style.scrollSnapType = 'x mandatory'; // Restore snapping for swiping
       }
     }
@@ -480,10 +491,10 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
                 const { data: hourData, actualIndex, status, isDayStart, isOutlookStart } = h;
                 const isSelected = selectedIndex === actualIndex;
                 const isBlock = Boolean(hourData.blockSpanHours);
+                const isNight = !hourData.isDay && !isBlock;
                 const hourLabel = isBlock
                   ? blockHourRange(hourData.time, hourData.blockSpanHours as number).short
                   : locationHourLabel(hourData.time);
-                const isNight = !hourData.isDay && !isBlock;
 
                 return (
                   <div
@@ -675,6 +686,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
                 const { data: hourData, actualIndex, status, isDayStart, isOutlookStart } = h;
                 const isSelected = selectedIndex === actualIndex;
                 const isBlock = Boolean(hourData.blockSpanHours);
+                const isNight = !hourData.isDay && !isBlock;
                 const timeLabel = isBlock
                   ? blockHourRange(hourData.time, hourData.blockSpanHours as number).short
                   : locationHourLabel(hourData.time);
@@ -697,7 +709,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
                   `${t('Air')} ${formatReading(hourData.tempAir, 1)}°C`,
                   `${t('Water')} ${formatReading(hourData.tempWater, 1)}°C`,
                 ].join(', ');
-                const cellDescription = `${formatDateMedium(hourData.time)} ${timeLabel} - ${t(RATING_WORD[status]).toUpperCase()}${hourData.isDay ? '' : ` ${t('(Night)')}`}${isBlock ? ` ${t('(Longer range, more uncertain forecast)')}` : ''}. ${cellReadings}`;
+                const cellDescription = `${formatDateMedium(hourData.time)} ${timeLabel} - ${t(RATING_WORD[status]).toUpperCase()}${isNight ? ` ${t('(Night)')}` : ''}${isBlock ? ` ${t('(Longer range, more uncertain forecast)')}` : ''}. ${cellReadings}`;
                 return (
                   <button
                     key={`overlay-${actualIndex}`}

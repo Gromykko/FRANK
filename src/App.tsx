@@ -80,7 +80,12 @@ export default function App() {
       return;
     }
 
-    if (newSettings.daylightOnly && nextDisplayData[selectedHourIndex] && !nextDisplayData[selectedHourIndex].isDay) {
+    if (
+      newSettings.daylightOnly &&
+      nextDisplayData[selectedHourIndex] &&
+      !nextDisplayData[selectedHourIndex].blockSpanHours &&
+      !nextDisplayData[selectedHourIndex].isDay
+    ) {
       const firstDaylight = nextDisplayData.findIndex((h, idx) => idx >= selectedHourIndex && h.isDay);
       if (firstDaylight !== -1) {
         setSelectedHourIndex(firstDaylight);
@@ -88,11 +93,33 @@ export default function App() {
     }
   };
 
-  const allStatuses = useMemo(() => {
+  const sunTimes = useMemo(
+    () => weatherData
+      ? { sunrise: weatherData.sunrise, sunset: weatherData.sunset }
+      : undefined,
+    [weatherData],
+  );
+
+  // One canonical analysis per displayed row. The timeline/matrix and selected
+  // snapshot must consume these same objects; independently re-running safety
+  // logic previously let a block show one verdict in the matrix and another in
+  // its detail card when daylight context differed.
+  const allAnalyses = useMemo(() => {
     if (displayHourlyData.length === 0) return [];
     return displayHourlyData.map((hour, idx) =>
-      analyzeSafetyConditions(hour, settings, nextHourTideFor(displayHourlyData, idx), t).rating);
-  }, [displayHourlyData, settings, t]);
+      analyzeSafetyConditions(
+        hour,
+        settings,
+        nextHourTideFor(displayHourlyData, idx),
+        t,
+        { blockDaylight: { mode: 'whole-period', sun: sunTimes } },
+      ));
+  }, [displayHourlyData, settings, sunTimes, t]);
+
+  const allStatuses = useMemo(
+    () => allAnalyses.map((analysis) => analysis.rating),
+    [allAnalyses],
+  );
 
   const launchWindows = useMemo(
     () =>
@@ -100,9 +127,9 @@ export default function App() {
         displayHourlyData,
         settings,
         nowIndex,
-        weatherData ? { sunrise: weatherData.sunrise, sunset: weatherData.sunset } : undefined
+        sunTimes
       ),
-    [displayHourlyData, settings, nowIndex, weatherData]
+    [displayHourlyData, settings, nowIndex, sunTimes]
   );
 
   const handleTripModeChange = (mode: SafetySettings['tripMode']) => {
@@ -150,7 +177,7 @@ export default function App() {
   }
 
   const currentHourData = displayHourlyData[selectedHourIndex] ?? displayHourlyData[0];
-  const safety = analyzeSafetyConditions(currentHourData, settings, nextHourTideFor(displayHourlyData, selectedHourIndex), t);
+  const safety = allAnalyses[selectedHourIndex] ?? allAnalyses[0]!;
   const activeSafetyChecks = hasActiveSafetyChecks(settings);
   const {
     rating: safetyDisplayRating,
@@ -226,6 +253,7 @@ export default function App() {
   const cacheStatusClass = statusView.tone;
   const sourceLabel = statusView.label;
   const cacheStatusDetail = statusView.detail;
+  const cacheAriaLabel = `${sourceLabel.replace(/[.!?]+$/, '')}. ${cacheStatusExpandedDetail.replace(/[.!?]+$/, '')}.`;
   // One attribution per provider: MET carries the license, DMI lists the
   // marine models in parentheses.
   const dmiModels = [weatherData.sources.waves, weatherData.sources.water]
@@ -249,7 +277,7 @@ export default function App() {
         sourceLabel={sourceLabel}
         cacheDetail={cacheStatusDetail}
         cacheClass={cacheStatusClass}
-        cacheAriaLabel={`${sourceLabel}. ${cacheStatusExpandedDetail}.`}
+        cacheAriaLabel={cacheAriaLabel}
         refreshing={refreshing}
         onRefresh={() => refreshForecast(false, true, true)}
         themeMode={themeMode}
@@ -348,28 +376,28 @@ export default function App() {
 
           {/* ⑥ Detailed charts — power-user graphs (collapsed) */}
           <div className="panel charts-disclosure-section">
-              {/* A real <button>, not a div with role/tabIndex and a
-                  hand-rolled Enter/Space handler — the browser gives all of
-                  that for free, and the hand-rolled version read `showDetailedCharts`
-                  from a stale closure while the click path used the updater
-                  form. Matches the sibling disclosure in SafetyLimitsPanel. */}
-              <button
-                type="button"
-                className={`panel-collapse-header module-head ${showDetailedCharts ? 'is-open' : ''}`}
-                onClick={() => setShowDetailedCharts((current) => !current)}
-                aria-expanded={showDetailedCharts}
-                aria-controls="charts-disclosure-body"
-              >
-                <span className="charts-disclosure-copy">
-                  <h2 className="charts-disclosure-title">
-                    <ChartLine size={16} color="var(--primary)" /> {t('Detailed Graphs')}
-                  </h2>
-                  <span className="charts-disclosure-subtitle">{t('Wind, waves, water level, and temperature')}</span>
-                </span>
-                <div className="settings-collapse-chevron">
-                  {showDetailedCharts ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-                </div>
-              </button>
+              {/* One full-row native control inside its heading: valid
+                  h2 > button markup, and the pointer/keyboard hit areas are
+                  identical rather than splitting the row across two controls. */}
+              <h2 className="charts-disclosure-heading">
+                <button
+                  type="button"
+                  className={`panel-collapse-header module-head ${showDetailedCharts ? 'is-open' : ''}`}
+                  onClick={() => setShowDetailedCharts((current) => !current)}
+                  aria-expanded={showDetailedCharts}
+                  aria-controls="charts-disclosure-body"
+                >
+                  <span className="charts-disclosure-copy">
+                    <span className="charts-disclosure-title">
+                      <ChartLine size={16} color="var(--primary)" /> {t('Detailed Graphs')}
+                    </span>
+                    <span className="charts-disclosure-subtitle">{t('Wind, waves, water level, and temperature')}</span>
+                  </span>
+                  <span className="settings-collapse-chevron" aria-hidden="true">
+                    {showDetailedCharts ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                  </span>
+                </button>
+              </h2>
 
               {showDetailedCharts && (
                 <div className="charts-disclosure-body" id="charts-disclosure-body">

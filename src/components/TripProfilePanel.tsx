@@ -102,7 +102,7 @@ export default function TripProfilePanel({ tripMode, onTripModeChange }: TripPro
               className={`frank-mode ${isOn ? 'is-on' : ''}`}
               onClick={() => onTripModeChange(value)}
             >
-              <span className="frank-mode-label">{label}</span>
+              <span className="frank-mode-label">{t(label)}</span>
             </button>
           );
         })}
@@ -117,10 +117,10 @@ export default function TripProfilePanel({ tripMode, onTripModeChange }: TripPro
       {showInfo && (
         <div className="trip-profile-info" id="trip-profile-info-pop" role="note" ref={popRef}>
           <p>
-            <strong>Chill</strong>, <strong>Normal</strong> {t('and')} <strong>Pro</strong> {t('are presets — from the most cautious limits for beginners and easy trips to the loosest limits for experienced paddlers.')}
+            <strong>{t('Chill')}</strong>, <strong>{t('Normal')}</strong> {t('and')} <strong>{t('Pro')}</strong> {t('are presets — from the most cautious limits for beginners and easy trips to the loosest limits for experienced paddlers.')}
           </p>
           <p>
-            <strong>Custom</strong> {t('is your own set: change anything in Your Limits below and it lands there.')}
+            <strong>{t('Custom')}</strong> {t('is your own set: change anything in Your Limits below and it lands there.')}
           </p>
           <p className="trip-profile-info-note">
             {t('Picking a mode updates the exact numbers in Your Limits — the manual explains every rule.')}

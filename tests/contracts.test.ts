@@ -121,3 +121,34 @@ describe('block windows with no sun schedule', () => {
     expect(findLaunchWindows([block], settings, 0, undefined)).toHaveLength(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// A disclosure heading may contain a button; a button may not contain a
+// heading. The charts row also needs one equal pointer/keyboard target rather
+// than a mouse-only wrapper plus a smaller nested control.
+// ---------------------------------------------------------------------------
+describe('Detailed Graphs disclosure semantics', () => {
+  it('keeps one full-row native button directly inside the h2', () => {
+    const app = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf8');
+    const heading = app.match(/<h2 className="charts-disclosure-heading">([\s\S]*?)<\/h2>/)?.[1] ?? '';
+    expect(heading).toMatch(/^\s*<button/);
+    expect(heading).toContain('className={`panel-collapse-header module-head');
+    expect(heading).toContain('aria-expanded={showDetailedCharts}');
+    expect(heading).not.toContain('<h2');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The timeline and selected snapshot describe the same row. They therefore
+// must consume one canonical daylight-aware analysis array rather than call
+// the safety engine independently with different context.
+// ---------------------------------------------------------------------------
+describe('App safety-analysis consistency', () => {
+  it('derives matrix statuses and the selected snapshot from allAnalyses', () => {
+    const app = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf8');
+    expect(app).toContain('const allAnalyses = useMemo');
+    expect(app).toContain("{ blockDaylight: { mode: 'whole-period', sun: sunTimes } }");
+    expect(app).toContain('() => allAnalyses.map((analysis) => analysis.rating)');
+    expect(app).toContain('const safety = allAnalyses[selectedHourIndex] ?? allAnalyses[0]!;');
+  });
+});

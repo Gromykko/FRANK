@@ -112,7 +112,19 @@ export default function LocationSwitcher({ label }: { label: string }) {
                   role="menuitem"
                   aria-current={isCurrent ? 'true' : undefined}
                   className={`location-switcher-option ${isCurrent ? 'is-current' : ''}`}
-                  onClick={() => (isCurrent ? setOpen(false) : setLocation(loc.id))}
+                  onClick={() => {
+                    if (isCurrent) {
+                      setOpen(false);
+                      // The focused menu item is about to unmount; return focus
+                      // to the control that opened it instead of dropping to body.
+                      triggerRef.current?.focus();
+                      return;
+                    }
+                    // On a blocked-storage failure setLocation deliberately
+                    // does not reload. Leave the open menu and focused item in
+                    // place so another choice (or Escape) still works.
+                    if (!setLocation(loc.id)) return;
+                  }}
                 >
                   <span className="location-switcher-check">{isCurrent && <Check size={13} />}</span>
                   {loc.areaName}

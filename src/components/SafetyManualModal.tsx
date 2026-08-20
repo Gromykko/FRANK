@@ -185,7 +185,7 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
 
           <div>
             <h3 className="manual-h">{t('9. Daylight Rule')}</h3>
-            <p className="manual-p">{t('Many clubs prohibit paddling between sunset and sunrise without navigation lights and permission, so when this rule is on, hourly forecasts outside daylight are marked Caution (turn it off if night paddling is fine for you). Longer-range outlook periods are handled per launch window instead: windows with no daylight at all are dropped, and windows that span night hours show only their daylight part in the list.')}</p>
+            <p className="manual-p">{t('Many clubs prohibit paddling between sunset and sunrise without navigation lights and permission, so when this rule is on, hourly forecasts outside daylight are marked Caution (turn it off if night paddling is fine for you). A longer-range outlook block is marked Caution unless its whole period is daylight. Launch windows are handled separately: periods with no complete daylight hour are dropped, and partial periods show only their longest continuous daylight part.')}</p>
           </div>
 
           <div>

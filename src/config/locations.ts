@@ -88,13 +88,18 @@ export const AVAILABLE_LOCATIONS = FORECAST_LOCATIONS.map(({ id, name, areaName,
 // The active location is a module-load constant threaded through settings keys,
 // cache keys, and preset defaults, so switching cleanly means persisting the
 // choice and reloading (each city already keeps its own id-suffixed
-// settings/cache, so nothing is lost).
-export function setLocation(id: string): void {
-  if (id === CURRENT_LOCATION.id) return;
+// settings/cache, so nothing is lost). Returns false when the choice cannot be
+// persisted; callers must then leave the current page and picker intact.
+export function setLocation(id: string): boolean {
+  if (id === CURRENT_LOCATION.id) return true;
+  if (!FORECAST_LOCATIONS.some((location) => location.id === id)) return false;
   try {
     localStorage.setItem(LOCATION_STORAGE_KEY, id);
   } catch {
-    // If storage is blocked the switch just won't persist; nothing else breaks.
+    // Reloading here would resolve CURRENT_LOCATION from the unchanged value
+    // and make the picker appear broken. Stay on the working current forecast.
+    return false;
   }
   window.location.reload();
+  return true;
 }

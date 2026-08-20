@@ -115,6 +115,24 @@ describe('parseStoredSettings hardening', () => {
     expect(analyzeSafetyConditions({ ...baseData, windSpeed: 30 }, parsed).rating).toBe('danger');
   });
 
+  it('restores unknown enum strings instead of passing them into preset/planner branching', () => {
+    const parsed = parse({ tripMode: 'expert', tidePreference: 'surging' });
+    expect(parsed.tripMode).toBe(DEFAULT_SETTINGS.tripMode);
+    expect(parsed.tidePreference).toBe(DEFAULT_SETTINGS.tidePreference);
+  });
+
+  it('clamps sector caps to the range both UI steppers can represent', () => {
+    const parsed = parse({
+      sectorLimits: {
+        onshore: { safe: 25, caution: 25.5 },
+        offshore: { safe: -4, caution: 999 },
+      },
+    });
+
+    expect(parsed.sectorLimits.onshore).toEqual({ safe: 24.5, caution: 25 });
+    expect(parsed.sectorLimits.offshore).toEqual({ safe: 0, caution: 25 });
+  });
+
   it('drops a sector angle that is not a real bearing, falling back to curated geometry', () => {
     // `angle?.min ?? sector.min` lets a string through, and `"abc" >= 90` is
     // false — so the sector never matched any wind and its stricter

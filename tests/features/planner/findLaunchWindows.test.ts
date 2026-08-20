@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { findLaunchWindows } from '../../../src/features/planner/findLaunchWindows';
 import type { HourlyData } from '../../../src/features/forecast/types';
 import type { SafetySettings } from '../../../src/features/safety/presets';
+import { analyzeSafetyConditions } from '../../../src/features/safety/analyzeSafetyConditions';
 
 const baseSettings = {
   tripMode: 'custom',
@@ -314,7 +315,14 @@ describe('findLaunchWindows — longer-range block windows', () => {
 
     it('keeps a partially-daylit block run and flags daylightPartial', () => {
       // 06:00-12:00: 4 of 6 hours are after sunrise.
-      const windows = findLaunchWindows([makeBlock('2026-07-11T06:00:00')], baseSettings, 0, sun);
+      const block = makeBlock('2026-07-11T06:00:00');
+      // The same block is Caution when the matrix describes its whole period,
+      // but the planner deliberately defers daylight so it can offer the safe
+      // weather/marine portion clipped to complete daylight hours.
+      expect(analyzeSafetyConditions(block, baseSettings, undefined, undefined, {
+        blockDaylight: { sun },
+      }).rating).toBe('caution');
+      const windows = findLaunchWindows([block], baseSettings, 0, sun);
       expect(windows).toHaveLength(1);
       expect(windows[0].daylightPartial).toBe(true);
     });
@@ -411,16 +419,23 @@ describe('outlook blocks under Daylight Only', () => {
   });
 
   it('stores the slice on a genuinely partial block so the card cannot re-derive it differently', () => {
-    // The 12Z block covers 14:00-20:00 local; sunset 18:55 cuts it at 19:00.
+    // The 12Z block covers 14:00-20:00 local; sunset is 18:55. The 18:00-19:00
+    // hour is NOT wholly daylight, so the display must stop at 18:00.
     const eveningBlock = { ...nightBlock, time: '2026-10-04T12:00:00Z' };
     const settings = { ...baseSettings, minDuration: 2, daylightOnly: true } as SafetySettings;
     const windows = findLaunchWindows([eveningBlock], settings, 0, sun);
     expect(windows).toHaveLength(1);
     expect(windows[0].daylightPartial).toBe(true);
-    // 14:00 through 19:00 local = 5 paddleable hours out of a 6-hour block.
-    expect(windows[0].duration).toBe(5);
+    // 14:00 through 18:00 local = 4 complete daylight hours out of 6.
+    expect(windows[0].duration).toBe(4);
     expect(windows[0].daylightStartMs).toBe(Date.parse('2026-10-04T12:00:00Z'));
-    expect(windows[0].daylightEndMs).toBe(Date.parse('2026-10-04T17:00:00Z'));
+    expect(windows[0].daylightEndMs).toBe(Date.parse('2026-10-04T16:00:00Z'));
+  });
+
+  it('applies minDuration after excluding the hour that crosses sunset', () => {
+    const eveningBlock = { ...nightBlock, time: '2026-10-04T12:00:00Z' };
+    const settings = { ...baseSettings, minDuration: 5, daylightOnly: true } as SafetySettings;
+    expect(findLaunchWindows([eveningBlock], settings, 0, sun)).toEqual([]);
   });
 
   it('daylightOnly off still offers the whole block', () => {

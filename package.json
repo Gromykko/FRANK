@@ -12,10 +12,10 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "worker:deploy": "npx wrangler deploy",
-    "worker:dry-run": "npx wrangler deploy --dry-run",
-    "worker:dev": "npx wrangler dev",
-    "worker:tail": "npx wrangler tail frank-forecast",
+    "worker:deploy": "wrangler deploy",
+    "worker:dry-run": "wrangler deploy --dry-run",
+    "worker:dev": "wrangler dev",
+    "worker:tail": "wrangler tail frank-forecast",
     "test": "vitest run"
   },
   "dependencies": {
@@ -37,6 +37,7 @@
     "playwright": "^1.61.1",
     "typescript": "~6.0.2",
     "vite": "^8.1.1",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "wrangler": "4.124.0"
   }
 }

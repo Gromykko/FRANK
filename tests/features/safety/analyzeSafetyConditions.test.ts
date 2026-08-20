@@ -1,7 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { analyzeSafetyConditions, resolveSectors } from '../../../src/features/safety/analyzeSafetyConditions';
+import {
+  analyzeSafetyConditions,
+  getWaveHeightLabel,
+  getWindSpeedLabel,
+  resolveSectors,
+} from '../../../src/features/safety/analyzeSafetyConditions';
 import { metSymbolToWmoCode } from '../../../src/features/forecast/weatherCodes';
 import { CURRENT_LOCATION } from '../../../src/config/locations';
+import { da } from '../../../src/i18n/da';
+import { interpolate } from '../../../src/i18n/interpolate';
 import type { HourlyData } from '../../../src/features/forecast/types';
 import type { SafetySettings } from '../../../src/features/safety/presets';
 
@@ -96,6 +103,39 @@ describe('analyzeSafetyConditions', () => {
 
     const dataDanger = { ...baseData, tempWater: 8 };
     expect(analyzeSafetyConditions(dataDanger, baseSettings).rating).toBe('danger');
+  });
+
+  it('fails closed on negative magnitude sentinels instead of calling them calm or flat', () => {
+    for (const invalid of [
+      { windSpeed: -999 },
+      { windGust: -999 },
+      { waveHeight: -999 },
+    ]) {
+      const result = analyzeSafetyConditions({ ...baseData, ...invalid }, baseSettings);
+      expect(result.rating).toBe('caution');
+      expect(result.reasons.some((reason) => reason.text.includes('cannot clear'))).toBe(true);
+    }
+    expect(getWindSpeedLabel(-1)).toBe('Unknown');
+    expect(getWaveHeightLabel(-1)).toBe('Unknown');
+  });
+
+  it('rejects out-of-range bearings when directional rules need them', () => {
+    const settings = { ...baseSettings, enableCustomWindDirs: true } as SafetySettings;
+    for (const windDirection of [-1, 360, 999]) {
+      const result = analyzeSafetyConditions({ ...baseData, windDirection }, settings);
+      expect(result.rating).toBe('caution');
+      expect(result.reasons.some((reason) => reason.text.includes('wind direction'))).toBe(true);
+    }
+  });
+
+  it('keeps signed tide levels and temperatures as legitimate physical readings', () => {
+    const tide = analyzeSafetyConditions({ ...baseData, tideLevel: -1 }, baseSettings, -0.5);
+    expect(tide.rating).toBe('safe');
+    expect(tide.reasons.some((reason) => reason.text.includes('No reading'))).toBe(false);
+
+    const cold = analyzeSafetyConditions({ ...baseData, tempWater: -1 }, baseSettings);
+    expect(cold.rating).toBe('danger');
+    expect(cold.reasons.some((reason) => reason.text.startsWith('Water temperature:'))).toBe(true);
   });
 
   // (The wind-against-water-level rule is exercised thoroughly in the
@@ -275,10 +315,53 @@ describe('daylightOnly rule', () => {
     expect(analyzeSafetyConditions({ ...baseData, isDay: false }, settings).rating).toBe('safe');
   });
 
-  it('longer-range blocks are exempt even when isDay is false', () => {
-    const result = analyzeSafetyConditions({ ...baseData, isDay: false, blockSpanHours: 6 }, baseSettings);
+  it('leaves a fully-daylit outlook block unchanged', () => {
+    const block = { ...baseData, time: '2026-07-08T08:00:00Z', isDay: false, blockSpanHours: 6 };
+    const result = analyzeSafetyConditions(block, baseSettings, undefined, undefined, {
+      blockDaylight: {
+        sun: { sunrise: ['2026-07-08T07:00:00Z'], sunset: ['2026-07-08T20:00:00Z'] },
+      },
+    });
     expect(result.rating).toBe('safe');
-    expect(result.reasons.some(r => r.text.includes('Nighttime'))).toBe(false);
+    expect(result.reasons.some((reason) => reason.text.startsWith('Daylight:'))).toBe(false);
+  });
+
+  it('rates partial, absent, and unknown block daylight at least caution with an explicit reason', () => {
+    const block = { ...baseData, time: '2026-07-08T06:00:00Z', isDay: true, blockSpanHours: 6 };
+    const assess = (sun?: { sunrise: string[]; sunset: string[] }) =>
+      analyzeSafetyConditions(block, baseSettings, undefined, undefined, {
+        blockDaylight: { sun },
+      });
+
+    const partial = assess({ sunrise: ['2026-07-08T08:00:00Z'], sunset: ['2026-07-08T20:00:00Z'] });
+    expect(partial.rating).toBe('caution');
+    expect(partial.reasons.some((reason) => reason.text.includes('part of this outlook period is outside'))).toBe(true);
+
+    const translateDa = (key: string, ...args: Array<string | number>) =>
+      interpolate(da[key] ?? key, ...args);
+    const partialDa = analyzeSafetyConditions(block, baseSettings, undefined, translateDa, {
+      blockDaylight: {
+        sun: { sunrise: ['2026-07-08T08:00:00Z'], sunset: ['2026-07-08T20:00:00Z'] },
+      },
+    });
+    expect(partialDa.reasons.some((reason) => reason.text.startsWith('Dagslys:'))).toBe(true);
+
+    const none = assess({ sunrise: ['2026-07-08T14:00:00Z'], sunset: ['2026-07-08T20:00:00Z'] });
+    expect(none.rating).toBe('caution');
+    expect(none.reasons.some((reason) => reason.text.includes('no complete hour'))).toBe(true);
+
+    const unknown = assess();
+    expect(unknown.rating).toBe('caution');
+    expect(unknown.reasons.some((reason) => reason.text.includes('unavailable'))).toBe(true);
+  });
+
+  it('can deliberately defer block daylight to launch-window clipping', () => {
+    const block = { ...baseData, time: '2026-07-08T06:00:00Z', isDay: false, blockSpanHours: 6 };
+    const result = analyzeSafetyConditions(block, baseSettings, undefined, undefined, {
+      blockDaylight: { mode: 'defer-to-window' },
+    });
+    expect(result.rating).toBe('safe');
+    expect(result.reasons.some((reason) => reason.text.startsWith('Daylight:'))).toBe(false);
   });
 
   it('nighttime never escalates a danger hour downward and is still listed', () => {
@@ -367,6 +450,26 @@ describe('custom wind direction sectors', () => {
       expect(result.rating).toBe('safe');
     });
 
+    it('treats equal and sub-centimetre model noise as steady water', () => {
+      // The UI shows whole centimetres. These deltas are at or below half a
+      // displayed centimetre, so neither onshore nor offshore wind may invent
+      // an opposing falling/rising trend from rounding noise.
+      for (const nextLevel of [0, 0.005, -0.005, 0.004, -0.004]) {
+        const onshoreResult = analyzeSafetyConditions(
+          { ...baseData, windDirection: 90, windSpeed: 4.2, tideLevel: 0 },
+          sectorSettings,
+          nextLevel,
+        );
+        const offshoreResult = analyzeSafetyConditions(
+          { ...baseData, windDirection: 270, windSpeed: 4.2, tideLevel: 0 },
+          sectorSettings,
+          nextLevel,
+        );
+        expect(onshoreResult.reasons.some((reason) => reason.text.includes('conflict'))).toBe(false);
+        expect(offshoreResult.reasons.some((reason) => reason.text.includes('conflict'))).toBe(false);
+      }
+    });
+
     it('requires wind strictly above 4.0 m/s', () => {
       const atGate = analyzeSafetyConditions({ ...baseData, windDirection: 270, windSpeed: 4.0, tideLevel: 0 }, sectorSettings, 0.5);
       expect(atGate.rating).toBe('safe');
@@ -427,7 +530,17 @@ describe('rating combination rules', () => {
   });
 
   it('qualifies an all-clear when the reading is a longer-range block', () => {
-    const result = analyzeSafetyConditions({ ...baseData, blockSpanHours: 6 }, baseSettings);
+    const result = analyzeSafetyConditions(
+      { ...baseData, blockSpanHours: 6 },
+      baseSettings,
+      undefined,
+      undefined,
+      {
+        blockDaylight: {
+          sun: { sunrise: ['2026-07-08T06:00:00Z'], sunset: ['2026-07-08T20:00:00Z'] },
+        },
+      },
+    );
     expect(result.rating).toBe('safe');
     expect(result.reasons[0].text.startsWith('The outlook is within your limits')).toBe(true);
   });

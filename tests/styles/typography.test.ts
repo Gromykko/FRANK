@@ -37,4 +37,11 @@ describe('typography scale', () => {
 
     expect(charts).toContain('const TICK_FONT_SIZE = 11;');
   });
+
+  it('keeps the collapsed section title keyboard target at least 24px high', () => {
+    const components = stylesheets.find(({ path }) => path === 'src/components.css')?.source ?? '';
+    const rule = components.match(/\.collapse-title-btn\s*\{([^}]*)\}/)?.[1] ?? '';
+    const minHeight = Number(rule.match(/min-height:\s*([\d.]+)px/)?.[1]);
+    expect(minHeight).toBeGreaterThanOrEqual(24);
+  });
 });

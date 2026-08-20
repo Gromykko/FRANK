@@ -33,15 +33,20 @@ export interface CacheStatusInput {
 // alarming "hours old"). Kept out of App.tsx, which can't be driven into these
 // states in a test (the build embeds a static forecast cache).
 export function getCacheStatusView({ refreshing, cacheHealth, checkedAtLabel, offline, savedAtLabel }: CacheStatusInput, translate: Translate = interpolate): CacheStatusView {
+  const status = cacheHealth?.status;
+  const isStale = status === 'stale' || status === 'fallback';
   // Offline takes precedence: a green "Checked" would be dishonest with no
   // connection (nothing was just checked). But offline isn't a data problem —
-  // the saved forecast may be perfectly recent — so it reads as a calm neutral
-  // state ("showing your saved forecast"), not amber, not red.
+  // the saved forecast may be perfectly recent — so that case reads as calm
+  // neutral. If the cache underneath is already stale/fallback, keep its amber
+  // warning: losing the connection must not visually improve old data.
   if (offline) {
     return {
       label: translate('Offline'),
-      detail: savedAtLabel ? translate('Showing your saved forecast from {0}', savedAtLabel) : translate('Showing your saved forecast'),
-      tone: 'neutral',
+      detail: isStale
+        ? (savedAtLabel ? translate('Showing your older saved forecast from {0}', savedAtLabel) : translate('Showing your older saved forecast'))
+        : (savedAtLabel ? translate('Showing your saved forecast from {0}', savedAtLabel) : translate('Showing your saved forecast')),
+      tone: isStale ? 'watch' : 'neutral',
       partiallyDegraded: false,
       providerBusy: false,
       busyServiceName: '',
@@ -49,9 +54,7 @@ export function getCacheStatusView({ refreshing, cacheHealth, checkedAtLabel, of
     };
   }
 
-  const status = cacheHealth?.status;
   const isPending = status === 'pending';
-  const isStale = status === 'stale' || status === 'fallback';
   const providerBusy = Boolean(cacheHealth?.providerBusy);
 
   const busyServiceName = translate(cacheHealth?.busyProvider === 'weather'

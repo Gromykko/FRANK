@@ -10,6 +10,51 @@ const AUTO_REFRESH_THROTTLE_MS = 60 * 1000;
 // still shows the spinner briefly — a button that does nothing visible
 // reads as broken.
 const MIN_MANUAL_SPINNER_MS = 600;
+// The Worker performs a manual rebuild in the background. Poll once near the
+// common fast path, once after ordinary upstream latency, and once after the
+// Worker's bounded 24s execution budget. No unbounded polling loop.
+export const POST_REFRESH_PICKUP_DELAYS_MS = [2_000, 8_000, 30_000] as const;
+
+const cacheHealthSignature = (data: WeatherData): string => {
+  const health = data.sources.cacheHealth;
+  if (!health) return '';
+  return JSON.stringify({
+    status: health.status,
+    lastAttemptAt: health.lastAttemptAt,
+    message: health.message ?? null,
+    weatherExpires: health.weatherExpires ?? null,
+    weatherLastModified: health.weatherLastModified ?? null,
+    checkedBy: health.checkedBy ?? null,
+    needsRebuild: health.needsRebuild ?? null,
+    providerBusy: health.providerBusy ?? null,
+    busyProvider: health.busyProvider ?? null,
+    degradedSources: [...(health.degradedSources ?? [])].sort(),
+  });
+};
+
+// Pure ordering contract for refresh/pickup races. A new build always wins; an
+// old build never does. For the same build, only completed cache-health progress
+// is relevant. This is what lets a no-rebuild/failure/gated check clear pending
+// without allowing a late pending response to replace stable UI state.
+export function shouldApplyForecastUpdate(current: WeatherData | null, incoming: WeatherData): boolean {
+  if (!current) return true;
+
+  const currentFetchedMs = Date.parse(current.sources.fetchedAt);
+  const incomingFetchedMs = Date.parse(incoming.sources.fetchedAt);
+  if (incomingFetchedMs > currentFetchedMs) return true;
+  if (incomingFetchedMs < currentFetchedMs) return false;
+
+  const currentHealth = current.sources.cacheHealth;
+  const incomingHealth = incoming.sources.cacheHealth;
+  if (incomingHealth?.status === 'pending' && currentHealth?.status !== 'pending') return false;
+  if (!incomingHealth && currentHealth) return false;
+  if (cacheHealthSignature(current) === cacheHealthSignature(incoming)) return false;
+  if (currentHealth?.status === 'pending' && incomingHealth?.status !== 'pending') return true;
+
+  const currentAttemptMs = Date.parse(currentHealth?.lastAttemptAt ?? current.sources.fetchedAt);
+  const incomingAttemptMs = Date.parse(incomingHealth?.lastAttemptAt ?? incoming.sources.fetchedAt);
+  return incomingAttemptMs >= currentAttemptMs;
+}
 
 // Which row is happening RIGHT NOW: the one whose span CONTAINS the clock, not
 // the one whose start is nearest it. Nearest-start rounds up from :30 onward, so
@@ -60,9 +105,9 @@ export function useForecast(daylightOnly: boolean) {
     pickupTimersRef.current.forEach((id) => window.clearTimeout(id));
   }, []);
   const hasWeatherDataRef = useRef(false);
-  // Build time of the newest payload applied, so an out-of-order response
-  // can't overwrite a fresher one (see applyWeatherData).
-  const latestFetchedAtRef = useRef(-Infinity);
+  // Exact payload last applied. Besides build ordering, this lets same-build
+  // pickups advance stable cache health without resetting the user's selection.
+  const latestWeatherDataRef = useRef<WeatherData | null>(null);
   // The timestamp of the hour the user is currently viewing, so background
   // refreshes can restore their selection instead of snapping back to "now".
   const selectedTimeRef = useRef<string | null>(null);
@@ -90,16 +135,21 @@ export function useForecast(daylightOnly: boolean) {
   }, []);
 
   const applyWeatherData = useCallback((data: WeatherData, preferDaylight: boolean) => {
-    // Refreshes overlap (the 10-min interval, focus/visibility, and the two
+    // Refreshes overlap (the 10-min interval, focus/visibility, and the bounded
     // post-refresh pickups all race), and KV is last-write-wins across edge
     // nodes — so a later response can legitimately carry an OLDER build than
     // one already on screen. Without this the header's timestamp walks
     // backwards and a rebuilt forecast is replaced by the one it superseded.
-    const incomingMs = Date.parse(data.sources.fetchedAt);
-    if (Number.isFinite(incomingMs) && incomingMs < latestFetchedAtRef.current) return;
-    if (Number.isFinite(incomingMs)) latestFetchedAtRef.current = incomingMs;
+    const previousData = latestWeatherDataRef.current;
+    if (!shouldApplyForecastUpdate(previousData, data)) return;
+    latestWeatherDataRef.current = data;
 
     setWeatherData(data);
+
+    // A health-only pickup represents the same immutable forecast build. It
+    // must update the status line without re-running now/daylight selection or
+    // moving the hour the user chose.
+    if (previousData?.sources.fetchedAt === data.sources.fetchedAt) return;
 
     // Same rule as the derived nowIndex below, so the hour selected on load is
     // the hour the header calls "now".
@@ -198,18 +248,16 @@ export function useForecast(daylightOnly: boolean) {
 
       if (forceRemoteRefresh && !CAN_FETCH_FRESH_FORECAST) {
 
-        // The worker answers a forced refresh from cache instantly and
-        // rebuilds in the background. Pick the rebuilt forecast up with two
-        // silent cache reads: +8s covers the common case, +30s the slowest
-        // upstream; each is a plain ~0.5s GET that triggers nothing new.
+        // The worker answers a forced refresh from cache instantly and rebuilds
+        // in the background. Pending is response-only, so the completed status
+        // is picked up silently starting around 2s, with one final bounded read
+        // after the Worker's 24s execution budget.
         pickupTimersRef.current.forEach((id) => window.clearTimeout(id));
-        pickupTimersRef.current = [8_000, 30_000].map((delayMs) =>
+        pickupTimersRef.current = POST_REFRESH_PICKUP_DELAYS_MS.map((delayMs) =>
           window.setTimeout(async () => {
             try {
               const fresh = (await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true })).data;
-              if (fresh && fresh.sources.fetchedAt !== data.sources.fetchedAt) {
-                applyWeatherData(fresh, daylightOnlyRef.current);
-              }
+              if (fresh) applyWeatherData(fresh, daylightOnlyRef.current);
             } catch {
               // The 10-minute auto-refresh remains the retry path.
             }

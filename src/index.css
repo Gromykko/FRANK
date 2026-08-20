@@ -800,6 +800,11 @@ h1, h2, h3, h4, h5, h6 {
   gap: 12px;
 }
 
+.charts-disclosure-heading {
+  margin: 0;
+  font: inherit;
+}
+
 
 .charts-disclosure-copy {
   display: flex;

@@ -83,7 +83,10 @@ export default function ConditionsSnapshot({
         <div className="snapshot-row">
           <span className="snapshot-cell">
             <span className="snapshot-label">{t('Weather')}</span>
-            <WeatherWidgetIcon code={data.weatherCode} isNight={!data.isDay} size={18} />
+            {/* An outlook row describes a period, not its start instant. Its
+                isDay flag only reflects that start mark, so turning the whole
+                period into a moon icon would make a false night claim. */}
+            <WeatherWidgetIcon code={data.weatherCode} isNight={!data.isDay && !isBlock} size={18} />
             <span className="snapshot-value snapshot-desc" title={weatherDesc}>
               <span className="snapshot-weather-full" aria-hidden="true">{weatherDesc}</span>
               <span className="snapshot-weather-compact" aria-hidden="true">{compactWeatherDesc}</span>

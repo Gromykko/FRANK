@@ -1,6 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 // @ts-expect-error - the Worker is plain JS with no type declarations
-import { fetchLatestInstanceForCollections, resetInstanceProbeCache, tickOrder } from '../../worker/index.js';
+import {
+  cronExecutionPolicy,
+  fetchLatestInstanceForCollections,
+  tickOrder,
+} from '../../worker/index.js';
 
 // Which DMI model run is newest is a fact about DMI, not about a fjord, and all
 // four configured fjords probe the identical collection lists. Unmemoised, one
@@ -12,12 +16,17 @@ const instancesBody = (ids: string[]) => ({ instances: ids.map((id) => ({ id }))
 
 const originalFetch = globalThis.fetch;
 let calls: string[];
+let eventMemo: Map<string, Promise<unknown>>;
 
 beforeEach(() => {
-  resetInstanceProbeCache();
   calls = [];
+  eventMemo = new Map();
 });
-afterEach(() => { globalThis.fetch = originalFetch; });
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 const stubOk = (ids: string[]) => {
   globalThis.fetch = (async (url: string) => {
@@ -30,11 +39,15 @@ describe('fetchLatestInstanceForCollections memo', () => {
   it('asks DMI once for four locations sharing a collection list', async () => {
     stubOk(['2026-08-08T060000Z', '2026-08-08T120000Z']);
 
+    const first = fetchLatestInstanceForCollections(WATER, undefined, eventMemo);
+    const second = fetchLatestInstanceForCollections(WATER, undefined, eventMemo);
+    expect(second).toBe(first);
+
     const results = await Promise.all([
-      fetchLatestInstanceForCollections(WATER),
-      fetchLatestInstanceForCollections(WATER),
-      fetchLatestInstanceForCollections(WATER),
-      fetchLatestInstanceForCollections(WATER),
+      first,
+      second,
+      fetchLatestInstanceForCollections(WATER, undefined, eventMemo),
+      fetchLatestInstanceForCollections(WATER, undefined, eventMemo),
     ]);
 
     expect(calls).toHaveLength(1);
@@ -47,7 +60,7 @@ describe('fetchLatestInstanceForCollections memo', () => {
 
   it('picks the newest instance, not the last one listed', async () => {
     stubOk(['2026-08-08T120000Z', '2026-08-08T060000Z']);
-    const latest = await fetchLatestInstanceForCollections(WATER);
+    const latest = await fetchLatestInstanceForCollections(WATER, undefined, eventMemo);
     expect(latest.id).toBe('2026-08-08T120000Z');
   });
 
@@ -57,8 +70,8 @@ describe('fetchLatestInstanceForCollections memo', () => {
       return { ok: false, status: 429, text: async () => 'Server is busy' };
     }) as unknown as typeof fetch;
 
-    await expect(fetchLatestInstanceForCollections(WATER)).rejects.toThrow();
-    await expect(fetchLatestInstanceForCollections(WATER)).rejects.toThrow();
+    await expect(fetchLatestInstanceForCollections(WATER, undefined, eventMemo)).rejects.toThrow();
+    await expect(fetchLatestInstanceForCollections(WATER, undefined, eventMemo)).rejects.toThrow();
 
     // Once, not twice. A 429 means stop asking, and re-probing per location is
     // exactly the hammering that earns it. Note also that only the FIRST
@@ -67,12 +80,60 @@ describe('fetchLatestInstanceForCollections memo', () => {
     expect(calls).toHaveLength(1);
   });
 
-  it('starts asking again once the memo has expired', async () => {
+  it('never shares an I/O promise across two event memos', async () => {
     stubOk(['2026-08-08T060000Z']);
-    await fetchLatestInstanceForCollections(WATER);
-    resetInstanceProbeCache();                    // stands in for the 60s TTL
-    await fetchLatestInstanceForCollections(WATER);
+    const first = fetchLatestInstanceForCollections(WATER, undefined, new Map());
+    const second = fetchLatestInstanceForCollections(WATER, undefined, new Map());
+    expect(second).not.toBe(first);
+    await Promise.all([first, second]);
     expect(calls).toHaveLength(2);
+  });
+
+  it('deduplicates only inside one event and keeps each event\'s timeout policy', async () => {
+    stubOk(['2026-08-08T120000Z']);
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    const userMemo = new Map();
+
+    await Promise.all([
+      fetchLatestInstanceForCollections(WATER, { fetchTimeoutMs: 15_000 }, userMemo),
+      fetchLatestInstanceForCollections(WATER, { fetchTimeoutMs: 15_000 }, userMemo),
+    ]);
+    await fetchLatestInstanceForCollections(WATER, { fetchTimeoutMs: 50_000 }, new Map());
+
+    expect(calls).toHaveLength(2);
+    expect(timeoutSpy).toHaveBeenCalledWith(15_000);
+    expect(timeoutSpy).toHaveBeenCalledWith(50_000);
+  });
+
+  it('starts no upstream stage when the event deadline is already exhausted', async () => {
+    stubOk(['2026-08-08T120000Z']);
+
+    expect(() => fetchLatestInstanceForCollections(WATER, {
+      deadlineAt: Date.now(),
+      fetchTimeoutMs: 15_000,
+    }, new Map())).toThrow(/deadline/i);
+
+    expect(calls).toHaveLength(0);
+  });
+
+  it('does not begin another retry after the absolute deadline', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime('2026-08-20T12:00:00Z');
+    globalThis.fetch = (async (url: string) => {
+      calls.push(String(url));
+      return { ok: false, status: 503, text: async () => 'temporarily unavailable' };
+    }) as unknown as typeof fetch;
+
+    const pending = fetchLatestInstanceForCollections(WATER, {
+      deadlineAt: Date.now() + 1_000,
+      fetchTimeoutMs: 15_000,
+      maxAttempts: 3,
+    }, new Map());
+    const assertion = expect(pending).rejects.toThrow(/deadline/i);
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await assertion;
+    expect(calls).toHaveLength(1);
   });
 });
 
@@ -110,5 +171,38 @@ describe('tickOrder', () => {
     expect(tickOrder(undefined, fjords)).toEqual(fjords);
     expect(tickOrder(Number.NaN, fjords)).toEqual(fjords);
     expect(tickOrder(at('2026-08-08T15:40:00Z'), [])).toEqual([]);
+  });
+});
+
+describe('cronExecutionPolicy', () => {
+  it('caps an early location and preserves time for all four locations', () => {
+    const now = Date.parse('2026-08-20T12:00:00Z');
+    const tickDeadline = now + 5 * 60_000;
+
+    expect(cronExecutionPolicy(now, tickDeadline, 4)).toEqual({
+      deadlineAt: now + 70_000,
+      hardDeadlineAt: now + 70_000,
+      fetchTimeoutMs: 50_000,
+      maxAttempts: 1,
+      completionReserveMs: 10_000,
+    });
+  });
+
+  it('shrinks both the location and fetch budgets to the remaining fair share', () => {
+    const now = Date.parse('2026-08-20T12:00:00Z');
+    const policy = cronExecutionPolicy(now, now + 80_000, 4);
+
+    expect(policy).toMatchObject({
+      deadlineAt: now + 20_000,
+      fetchTimeoutMs: 20_000,
+      maxAttempts: 1,
+      completionReserveMs: 5_000,
+    });
+  });
+
+  it('refuses to start a location after the tick deadline', () => {
+    const now = Date.parse('2026-08-20T12:00:00Z');
+    expect(cronExecutionPolicy(now, now, 4)).toBeNull();
+    expect(cronExecutionPolicy(now, now + 60_000, 0)).toBeNull();
   });
 });

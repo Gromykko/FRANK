@@ -930,6 +930,7 @@
   margin: 0;
   display: inline-flex;
   align-items: center;
+  min-height: 24px;
   gap: 8px;
   font: inherit;
   letter-spacing: inherit;

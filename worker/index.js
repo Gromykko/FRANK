@@ -45,10 +45,21 @@ export {
 // parallel-and-throttled against a struggling upstream.
 const FETCH_TIMEOUT_MS = 15_000;
 const CRON_FETCH_TIMEOUT_MS = 50_000;
+// waitUntil work started by a browser request must be finished before 25s. The
+// one-second margin covers promise cleanup/logging after the final abort.
+const USER_BACKGROUND_EXECUTION_BUDGET_MS = 24_000;
+// Provider work stops before the event wall so cache-health assembly and the
+// final KV write still have a deterministic chance to finish.
+const USER_COMPLETION_RESERVE_MS = 4_000;
 
-// A single hanging location must not eat the tick and starve the rest. Checked
-// between locations, well inside the 10-minute cron period.
+// Four sequential locations share a five-minute tick. A hard 70s ceiling per
+// location spends at most 280s and preserves 20s for loop/Worker overhead.
 const CRON_TICK_BUDGET_MS = 5 * 60 * 1000;
+const CRON_LOCATION_BUDGET_MS = 70 * 1000;
+const CRON_COMPLETION_RESERVE_MS = 10_000;
+// Warnings are advisory. A stuck CAP feed must never consume the required
+// weather/marine budget or invalidate an otherwise complete forecast.
+const WARNING_EXECUTION_BUDGET_MS = 5_000;
 
 // /health judges TWO different clocks, because "the worker is dead" and "the
 // data is old" are different failures with different normal ranges. The first
@@ -116,7 +127,7 @@ const MET_RAW_KEY_PREFIX = 'met-raw';
 // serving forecasts built by previous logic. The app checks the same number
 // and warns when the deployed worker lags behind it — keep this in sync with
 // FORECAST_PAYLOAD_VERSION in src/features/forecast/types.ts.
-const PAYLOAD_VERSION = 6;
+const PAYLOAD_VERSION = 7;
 
 // Re-stamping "we checked, nothing changed" costs a KV WRITE, and the free tier
 // allows 1000 a day. The cron (every 10 min x 4 locations = 576 runs) was
@@ -149,8 +160,9 @@ const MANUAL_STAMP_MIN_WRITE_INTERVAL_MS = 10 * 60 * 1000;
 // How stale MET's last-good response may be and still be served (see the
 // fallback in fetchMetWeather).
 const MET_FALLBACK_MAX_AGE_MS = 6 * 60 * 60 * 1000;
-
-const activeRefreshes = new Map();
+// Marine models normally publish every six hours. After two missed cycles, an
+// old normalized run is no longer allowed to create a newly-stamped forecast.
+const MARINE_FALLBACK_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
 // Marine data still comes straight from DMI.
 function cacheKey(location) {
@@ -179,11 +191,13 @@ function buildMetUrl(location) {
 function corsHeaders() {
   return {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Max-Age': '86400',
   };
 }
+
+const ALLOW_READ_METHODS = 'GET, HEAD, OPTIONS';
 
 function jsonResponse(body, status = 200, extraHeaders = {}) {
   return new Response(`${JSON.stringify(body)}\n`, {
@@ -198,12 +212,81 @@ function jsonResponse(body, status = 200, extraHeaders = {}) {
   });
 }
 
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function headResponse(response) {
+  return new Response(null, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
 }
 
 function retryDelay(attempt) {
   return RETRY_BASE_DELAY_MS * 2 ** attempt + Math.floor(Math.random() * 500);
+}
+
+function deadlineError(stage, deadlineKind = 'hard') {
+  const error = new Error(`Execution deadline reached before ${stage}`);
+  error.name = 'ExecutionDeadlineError';
+  error.deadlineKind = deadlineKind;
+  return error;
+}
+
+function executionPolicy(policy = {}) {
+  return {
+    deadlineAt: policy.deadlineAt ?? Number.POSITIVE_INFINITY,
+    hardDeadlineAt: policy.hardDeadlineAt ?? policy.deadlineAt ?? Number.POSITIVE_INFINITY,
+    fetchTimeoutMs: policy.fetchTimeoutMs ?? FETCH_TIMEOUT_MS,
+    maxAttempts: policy.maxAttempts ?? MAX_FETCH_ATTEMPTS,
+    completionReserveMs: Math.max(0, policy.completionReserveMs ?? 0),
+  };
+}
+
+function remainingExecutionMs(policy) {
+  return policy.deadlineAt - Date.now();
+}
+
+function assertBeforeDeadline(policy, stage) {
+  if (remainingExecutionMs(policy) <= 0) throw deadlineError(stage);
+}
+
+function remainingProviderMs(policy) {
+  return remainingExecutionMs(policy) - policy.completionReserveMs;
+}
+
+function assertBeforeProviderDeadline(policy, stage) {
+  if (remainingProviderMs(policy) <= 0) {
+    throw deadlineError(`${stage} (completion reserve reached)`, 'provider');
+  }
+}
+
+function rethrowIfDeadlineReached(error, policy, stage) {
+  if (error?.name === 'ExecutionDeadlineError' && error?.deadlineKind !== 'provider') throw error;
+  assertBeforeDeadline(policy, stage);
+}
+
+async function delayWithinDeadline(ms, policy, stage) {
+  assertBeforeProviderDeadline(policy, stage);
+  const remainingMs = remainingProviderMs(policy);
+  const delayMs = Number.isFinite(remainingMs) ? Math.min(ms, remainingMs) : ms;
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
+  assertBeforeProviderDeadline(policy, stage);
+}
+
+async function awaitWithinDeadline(start, policy, stage) {
+  assertBeforeDeadline(policy, stage);
+  const promise = start();
+  const remainingMs = remainingExecutionMs(policy);
+  if (!Number.isFinite(remainingMs)) return promise;
+
+  let timeoutId;
+  const deadline = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(deadlineError(stage)), Math.max(1, remainingMs));
+  });
+  try {
+    return await Promise.race([promise, deadline]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 // AbortSignal.timeout stays armed for the whole exchange, body included. A
@@ -211,13 +294,12 @@ function retryDelay(attempt) {
 // arrive, leaving every `.json()`/`.text()` below able to hang indefinitely on
 // an upstream that answers 200 and then stalls the stream — which in the cron's
 // sequential loop starves every location after it.
-function fetchWithTimeout(url, init = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+function fetchWithTimeout(url, init = {}, policy = executionPolicy()) {
+  assertBeforeProviderDeadline(policy, `fetch ${url}`);
+  const remainingMs = remainingProviderMs(policy);
+  const timeoutMs = Math.max(1, Math.floor(Math.min(policy.fetchTimeoutMs, remainingMs)));
   return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
 }
-
-// Set for the duration of a cron tick so the fetch helpers below pick the
-// patient timeout without threading it through eight call signatures.
-let currentFetchTimeoutMs = FETCH_TIMEOUT_MS;
 
 // One structured line per upstream call: which source, how long, what happened.
 // Without this, "is DMI slow or is our timeout wrong?" could only be answered by
@@ -228,17 +310,18 @@ function logUpstream(source, startedAt, outcome, extra = '') {
   console.log(`upstream ${source} ${outcome} ${ms}ms${extra ? ' ' + extra : ''}`);
 }
 
-async function fetchJsonWithRetries(url, label) {
+async function fetchJsonWithRetries(url, label, policy = executionPolicy()) {
   let lastError;
 
-  for (let attempt = 0; attempt < MAX_FETCH_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt < policy.maxAttempts; attempt++) {
+    assertBeforeProviderDeadline(policy, `${label} attempt ${attempt + 1}`);
     const startedAt = Date.now();
     try {
       const response = await fetchWithTimeout(url, {
         headers: {
           Accept: 'application/geo+json, application/json',
         },
-      }, currentFetchTimeoutMs);
+      }, policy);
 
       if (response.ok) {
         const json = await response.json();
@@ -247,8 +330,19 @@ async function fetchJsonWithRetries(url, label) {
       }
 
       logUpstream(label, startedAt, `http-${response.status}`);
-      const message = await response.text();
-      lastError = new Error(`${label} failed: ${response.status} ${message.slice(0, 180)}`);
+      const providerMessage = (await response.text()).slice(0, 180);
+      // Provider response bodies are useful diagnostics, but they are not a
+      // stable part of FRANK's public cache-health contract. Keep the detail in
+      // owner-only Worker logs and expose only our structured status below.
+      if (providerMessage) {
+        console.warn({
+          event: 'upstream_http_error',
+          source: label,
+          status: response.status,
+          providerMessage,
+        });
+      }
+      lastError = new Error(`${label} failed with HTTP ${response.status}`);
       lastError.status = response.status;
       // Any 4xx (incl. 429 "Server is busy") is terminal: retrying with
       // backoff is how a single refresh became an 18-request, 30-second
@@ -265,8 +359,8 @@ async function fetchJsonWithRetries(url, label) {
         String(lastError.message ?? '').slice(0, 120));
     }
 
-    if (attempt < MAX_FETCH_ATTEMPTS - 1) {
-      await delay(retryDelay(attempt));
+    if (attempt < policy.maxAttempts - 1) {
+      await delayWithinDeadline(retryDelay(attempt), policy, `${label} retry`);
     }
   }
 
@@ -280,6 +374,28 @@ function parseDmiInstanceMs(id) {
     return new Date(`${compact[1]}T${compact[2]}:${compact[3]}:${compact[4]}Z`).getTime();
   }
   return new Date(id).getTime();
+}
+
+// A retained marine ingredient may bridge one missed six-hour publication, but
+// not an open-ended outage. At exactly two cycles (12h) it is still allowed;
+// anything older, future-dated, missing, or unparseable cannot be used to build
+// and freshly timestamp another forecast.
+export function isMarineRunWithinFallbackAge(instance, nowMs = Date.now()) {
+  const runMs = parseDmiInstanceMs(instance?.id);
+  if (!Number.isFinite(runMs)) return false;
+  const ageMs = nowMs - runMs;
+  return ageMs >= 0 && ageMs <= MARINE_FALLBACK_MAX_AGE_MS;
+}
+
+function marineInstancesWithinFallbackAge(instances, nowMs = Date.now()) {
+  return isMarineRunWithinFallbackAge(instances?.water, nowMs)
+    && isMarineRunWithinFallbackAge(instances?.waves, nowMs);
+}
+
+function assertMarineRunWithinFallbackAge(instance, label = instance?.collection ?? 'marine') {
+  if (!isMarineRunWithinFallbackAge(instance)) {
+    throw new Error(`DMI ${label} run is older than the 12-hour marine safety limit.`);
+  }
 }
 
 // Age of the OLDER of the two marine runs we hold (so if one source lags, we
@@ -314,23 +430,19 @@ function latestInstanceFromResponse(data) {
 // cron tick that loops 4 locations asked DMI the same two questions 8 times,
 // ~2.1s of the tick, against the one provider that actively rate-limits us.
 //
-// Memoised per collection list for a minute: shorter than the 10-minute tick, so
-// each tick still asks fresh, and far shorter than DMI's 6-hourly publishing, so
-// nothing is missed. Module-global, therefore per isolate, therefore a cold
-// start just pays full price once. It also makes a tick self-consistent: without
-// it, DMI publishing mid-loop left some fjords on the new run and some on the
-// old, which reads as a fault in /health when it is only probe timing.
-const instanceProbeCache = new Map();
-const INSTANCE_PROBE_TTL_MS = 60 * 1000;
+// A scheduled event supplies one event-local memo, making its four locations
+// self-consistent without retaining request-scoped I/O promises in module
+// globals. Separate HTTP/scheduled events can never inherit one another's
+// promise, deadline, or failure.
 
 // Which fjord the cron visits first, rotated by tick.
 //
 // The tick has a 5-minute budget and the locations are refreshed one after
 // another, so a slow upstream can spend the budget before the loop reaches the
-// end. A timeout is retried, which makes one fetch worth up to 3 x 50s, so two
-// slow locations can consume the whole tick. With a fixed order that starved the
-// SAME fjords every tick for as long as the provider stayed slow - their data
-// just aged until /health alarmed an hour later.
+// end. Each location now gets one bounded upstream attempt plus a completion
+// reserve; the 10-minute cron itself is the retry schedule. With a fixed order,
+// earlier versions still starved the SAME fjords whenever a provider stayed
+// slow, so their data aged until /health alarmed an hour later.
 //
 // Rotating by the scheduled minute turns a permanent starvation into an
 // occasional missed tick, spread evenly. Derived from the tick's own clock so it
@@ -343,17 +455,35 @@ export function tickOrder(scheduledTime, list = locations) {
   return [...list.slice(offset), ...list.slice(0, offset)];
 }
 
-// Exported for tests: a per-isolate memo has no other way to be reset between
-// cases, and a stale entry leaking across them would hide the very thing the
-// test is checking.
-export function resetInstanceProbeCache() {
-  instanceProbeCache.clear();
+// Pure budget calculation kept separate from the scheduled loop so its
+// fairness guarantee is regression-tested. `null` means the tick has no usable
+// time left. Each early location receives at most its fair share, so it cannot
+// consume time reserved for locations later in the rotated order.
+export function cronExecutionPolicy(nowMs, tickDeadlineAt, locationsRemaining) {
+  const remainingMs = tickDeadlineAt - nowMs;
+  if (remainingMs <= 0 || locationsRemaining <= 0) return null;
+  const locationBudgetMs = Math.min(
+    CRON_LOCATION_BUDGET_MS,
+    Math.floor(remainingMs / locationsRemaining),
+  );
+  if (locationBudgetMs <= 0) return null;
+  return executionPolicy({
+    deadlineAt: Math.min(tickDeadlineAt, nowMs + locationBudgetMs),
+    fetchTimeoutMs: Math.min(CRON_FETCH_TIMEOUT_MS, locationBudgetMs),
+    maxAttempts: 1,
+    completionReserveMs: Math.min(
+      CRON_COMPLETION_RESERVE_MS,
+      Math.floor(locationBudgetMs / 4),
+    ),
+  });
 }
 
-export function fetchLatestInstanceForCollections(collections) {
-  const key = collections.join(',');
-  const memo = instanceProbeCache.get(key);
-  if (memo && Date.now() - memo.at < INSTANCE_PROBE_TTL_MS) return memo.promise;
+export function fetchLatestInstanceForCollections(collections, policyInput, eventMemo) {
+  const policy = executionPolicy(policyInput);
+  assertBeforeDeadline(policy, `DMI ${collections.join(',')} instance probe`);
+  const key = `instance-probe:${collections.join(',')}`;
+  const memo = eventMemo?.get(key);
+  if (memo) return memo;
 
   // The PROMISE is cached, not its result. Caching the result only would have
   // deduplicated nothing here: water and waves are probed with Promise.allSettled
@@ -365,17 +495,18 @@ export function fetchLatestInstanceForCollections(collections) {
   // asking", and re-probing once per location is exactly the hammering that
   // earned it. The first caller always awaits, so the stored rejection is never
   // an unhandled one.
-  const promise = probeLatestInstanceForCollections(collections);
-  instanceProbeCache.set(key, { at: Date.now(), promise });
+  const promise = probeLatestInstanceForCollections(collections, policy);
+  eventMemo?.set(key, promise);
   return promise;
 }
 
-async function probeLatestInstanceForCollections(collections) {
+async function probeLatestInstanceForCollections(collections, policy) {
   let lastError;
 
   for (const collection of collections) {
+    assertBeforeProviderDeadline(policy, `DMI ${collection} collection fallback`);
     try {
-      const data = await fetchJsonWithRetries(buildInstancesUrl(collection), `DMI ${collection} instances`);
+      const data = await fetchJsonWithRetries(buildInstancesUrl(collection), `DMI ${collection} instances`, policy);
       const latest = latestInstanceFromResponse(data);
       if (latest) {
         return {
@@ -386,21 +517,24 @@ async function probeLatestInstanceForCollections(collections) {
       lastError = new Error(`DMI ${collection} returned no usable instances`);
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
-      // Rate limiting is host-wide: the fallback collection lives on the
-      // same busy server, so cascading to it just multiplies the load.
-      // Fall through to fallbacks only for 404s/empty instance lists.
-      if (lastError.status === 429) throw lastError;
+      // Collection fallbacks are for a missing collection (404) or a usable
+      // response with no instances. Timeouts/5xx are host failures: asking the
+      // same host under another collection name only spends the cleanup budget
+      // and used to drive the event all the way to its hard deadline.
+      if (lastError.status !== 404) throw lastError;
     }
   }
 
   throw lastError ?? new Error(`No DMI instances found for ${collections.join(', ')}`);
 }
 
-async function fetchLatestMarineInstances(location) {
+async function fetchLatestMarineInstances(location, policy, eventMemo) {
+  assertBeforeDeadline(policy, `marine instance probes for ${location.id}`);
   const results = await Promise.allSettled([
-    fetchLatestInstanceForCollections(location.dmiCollections.water),
-    fetchLatestInstanceForCollections(location.dmiCollections.waves),
+    fetchLatestInstanceForCollections(location.dmiCollections.water, policy, eventMemo),
+    fetchLatestInstanceForCollections(location.dmiCollections.waves, policy, eventMemo),
   ]);
+  assertBeforeDeadline(policy, `marine instance probe results for ${location.id}`);
 
   const water = results[0].status === 'fulfilled' ? results[0].value : undefined;
   const waves = results[1].status === 'fulfilled' ? results[1].value : undefined;
@@ -424,10 +558,11 @@ function marineInstancesEqual(left, right) {
   );
 }
 
-async function fetchDmiGeoJson(collection, parameters, location, instanceId) {
+async function fetchDmiGeoJson(collection, parameters, location, instanceId, policy) {
   return fetchJsonWithRetries(
     buildDmiUrl(collection, parameters, location, instanceId),
-    `DMI ${collection}`
+    `DMI ${collection}`,
+    policy
   );
 }
 
@@ -443,12 +578,18 @@ function mapMetPayload(data, lastModified, expiresMs) {
   };
 }
 
-async function fetchMetWeather(env, location) {
+async function fetchMetWeather(env, location, policy) {
+  assertBeforeDeadline(policy, `MET cache read for ${location.id}`);
   const rawKey = `${MET_RAW_KEY_PREFIX}:${location.id}`;
   let stored = null;
   try {
-    stored = await env.FRANK_FORECAST_CACHE.get(rawKey, 'json');
-  } catch {
+    stored = await awaitWithinDeadline(
+      () => env.FRANK_FORECAST_CACHE.get(rawKey, 'json'),
+      policy,
+      `MET retained cache read for ${location.id}`,
+    );
+  } catch (error) {
+    rethrowIfDeadlineReached(error, policy, `MET retained cache read recovery for ${location.id}`);
     stored = null;
   }
 
@@ -464,7 +605,7 @@ async function fetchMetWeather(env, location) {
 
   try {
     const metStartedAt = Date.now();
-    const response = await fetchWithTimeout(buildMetUrl(location), { headers }, currentFetchTimeoutMs);
+    const response = await fetchWithTimeout(buildMetUrl(location), { headers }, policy);
     logUpstream(`met:${location.id}`, metStartedAt, response.status === 304 ? 'not-modified' : `http-${response.status}`);
 
     if (response.status === 304 && stored?.body) {
@@ -476,8 +617,16 @@ async function fetchMetWeather(env, location) {
     }
 
     if (!response.ok) {
-      const message = await response.text();
-      throw new Error(`MET Norway weather failed: ${response.status} ${message.slice(0, 180)}`);
+      const providerMessage = (await response.text()).slice(0, 180);
+      console.warn({
+        event: 'upstream_http_error',
+        source: `met:${location.id}`,
+        status: response.status,
+        ...(providerMessage ? { providerMessage } : {}),
+      });
+      const error = new Error(`MET Norway weather failed with HTTP ${response.status}`);
+      error.status = response.status;
+      throw error;
     }
 
     const data = await response.json();
@@ -487,14 +636,20 @@ async function fetchMetWeather(env, location) {
 
     if (lastModified) {
       try {
-        await env.FRANK_FORECAST_CACHE.put(rawKey, JSON.stringify({ lastModified, body: data }));
-      } catch {
+        await awaitWithinDeadline(
+          () => env.FRANK_FORECAST_CACHE.put(rawKey, JSON.stringify({ lastModified, body: data })),
+          policy,
+          `MET retained cache write for ${location.id}`,
+        );
+      } catch (error) {
+        rethrowIfDeadlineReached(error, policy, `MET retained cache write recovery for ${location.id}`);
         // Storing the conditional-request state is best-effort.
       }
     }
 
     return { ...mapMetPayload(data, lastModified, expiresMs), fallback: false };
   } catch (error) {
+    rethrowIfDeadlineReached(error, policy, `MET fallback for ${location.id}`);
     // MET unreachable but we hold its last response: build with that rather
     // than freezing the whole payload. The NaN expires maps to a short TTL,
     // so the next check retries MET soon.
@@ -510,7 +665,10 @@ async function fetchMetWeather(env, location) {
     // must stay well above MET's ~30-min publish cadence, or an ordinary single
     // failed fetch would start rejecting a body that is genuinely current.
     const storedBodyAgeMs = Date.now() - Date.parse(stored?.lastModified ?? '');
-    if (stored?.body && Number.isFinite(storedBodyAgeMs) && storedBodyAgeMs < MET_FALLBACK_MAX_AGE_MS) {
+    if (stored?.body
+      && Number.isFinite(storedBodyAgeMs)
+      && storedBodyAgeMs >= 0
+      && storedBodyAgeMs < MET_FALLBACK_MAX_AGE_MS) {
       // MET always returns data when reachable, so a MET fallback is always a
       // real transport failure - degraded, not merely "not published yet".
       return { ...mapMetPayload(stored.body, stored.lastModified, Number.NaN), fallback: true, degraded: true, busy: isBusyError(error?.message) };
@@ -523,33 +681,54 @@ async function fetchMetWeather(env, location) {
 // freeze the other's fresh data ("split retention, single serving": each
 // ingredient falls back independently, the served payload stays one
 // combined object where every hour has both weather and marine data).
-const MARINE_INGREDIENT_KEY_PREFIX = 'frank-marine-ingredient';
+// This cache contains NORMALIZED series, not raw provider responses. Its schema
+// therefore changes whenever forecast normalization changes. Keeping the
+// payload version in both the key and envelope prevents an old normalized run
+// from being reused and then stamped as a new-version assembled forecast.
+const MARINE_INGREDIENT_KEY_PREFIX = `frank-marine-ingredient:v${PAYLOAD_VERSION}`;
 
-export async function fetchMarineSeriesWithFallback(env, location, kind, instance, parameters, mapFeatures, seedSeries, seedInstance) {
+export async function fetchMarineSeriesWithFallback(env, location, kind, instance, parameters, mapFeatures, seedSeries, seedInstance, policyInput) {
+  const policy = executionPolicy(policyInput);
+  assertBeforeDeadline(policy, `${kind} marine cache read for ${location.id}`);
+  assertMarineRunWithinFallbackAge(instance, instance?.collection ?? kind);
   const key = `${MARINE_INGREDIENT_KEY_PREFIX}:${kind}:${location.id}`;
 
   let stored = null;
   try {
-    stored = await env.FRANK_FORECAST_CACHE.get(key, 'json');
-  } catch {
+    stored = await awaitWithinDeadline(
+      () => env.FRANK_FORECAST_CACHE.get(key, 'json'),
+      policy,
+      `${kind} retained cache read for ${location.id}`,
+    );
+  } catch (error) {
+    rethrowIfDeadlineReached(error, policy, `${kind} retained cache read recovery for ${location.id}`);
     stored = null;
   }
 
   // Same run we already hold data for: reuse it, no network call. DMI runs
   // change only every ~6h, so an hourly weather rebuild must not re-pull
   // identical marine data (measured: gaps between runs are exactly 6.00h).
-  if (stored && stored.collection === instance.collection && stored.id === instance.id
-    && Array.isArray(stored.series) && stored.series.length > 0) {
+  const hasCurrentStoredSeries = stored?.schemaVersion === PAYLOAD_VERSION
+    && Array.isArray(stored.series) && stored.series.length > 0
+    && isMarineRunWithinFallbackAge(stored);
+
+  if (hasCurrentStoredSeries
+    && stored.collection === instance.collection
+    && stored.id === instance.id) {
     return { series: stored.series, instance, fallback: false };
   }
 
   // Fall back to the run we already hold (retained ingredient, else the seed
   // from the cached payload). `extra` distinguishes WHY we fell back.
   const fallbackToHeld = (extra) => {
-    if (Array.isArray(stored?.series) && stored.series.length > 0) {
+    // Re-evaluate against the current clock. A request can begin exactly at
+    // the 12h boundary and cross it while waiting for the provider; a decision
+    // made before that wait must not authorize a newly-stamped old fallback.
+    if (hasCurrentStoredSeries && isMarineRunWithinFallbackAge(stored)) {
       return { series: stored.series, instance: { collection: stored.collection, id: stored.id }, fallback: true, ...extra };
     }
-    if (Array.isArray(seedSeries) && seedSeries.length > 0) {
+    if (Array.isArray(seedSeries) && seedSeries.length > 0
+      && isMarineRunWithinFallbackAge(seedInstance)) {
       // `seedInstance`, NOT `instance`: the seed came from the cached payload,
       // i.e. the PREVIOUS run. Reporting the run we just failed to fetch wrote
       // a false provenance into cacheHealth.marineInstances, and both
@@ -563,8 +742,9 @@ export async function fetchMarineSeriesWithFallback(env, location, kind, instanc
 
   let data;
   try {
-    data = await fetchDmiGeoJson(instance.collection, parameters, location, instance.id);
+    data = await fetchDmiGeoJson(instance.collection, parameters, location, instance.id, policy);
   } catch (error) {
+    rethrowIfDeadlineReached(error, policy, `${kind} retained fallback for ${location.id}`);
     // Transport error (429/5xx/network): we genuinely could not refresh this
     // source. Show the held run and flag it degraded (amber).
     const held = fallbackToHeld({ degraded: true, busy: isBusyError(error?.message) });
@@ -572,11 +752,25 @@ export async function fetchMarineSeriesWithFallback(env, location, kind, instanc
     throw error;
   }
 
+  // The provider wait may itself cross the retention boundary. Even a 200
+  // response must not turn a now-over-age model run into a fresh payload.
+  assertMarineRunWithinFallbackAge(instance, instance.collection);
+
   const series = mapFeatures(data.features);
   if (series.length > 0) {
     try {
-      await env.FRANK_FORECAST_CACHE.put(key, JSON.stringify({ collection: instance.collection, id: instance.id, series }));
-    } catch {
+      await awaitWithinDeadline(
+        () => env.FRANK_FORECAST_CACHE.put(key, JSON.stringify({
+          schemaVersion: PAYLOAD_VERSION,
+          collection: instance.collection,
+          id: instance.id,
+          series,
+        })),
+        policy,
+        `${kind} retained cache write for ${location.id}`,
+      );
+    } catch (error) {
+      rethrowIfDeadlineReached(error, policy, `${kind} retained cache write recovery for ${location.id}`);
       // Retention is best-effort.
     }
     return { series, instance, fallback: false };
@@ -626,13 +820,28 @@ export function deriveMarineSeedsFromPayload(cached) {
 // warnings (last-good retention, like the marine sources) so a brief feed
 // hiccup during a rebuild can't blank an active warning; a reachable feed that
 // simply has no warnings correctly returns [] and lets expired ones clear.
-async function fetchWarnings(location, seedWarnings, now = Date.now()) {
+function advisoryWarningPolicy(parentPolicy) {
+  const providerDeadlineAt = parentPolicy.deadlineAt - parentPolicy.completionReserveMs;
+  const budgetMs = Math.max(0, Math.min(
+    WARNING_EXECUTION_BUDGET_MS,
+    providerDeadlineAt - Date.now(),
+  ));
+  return executionPolicy({
+    deadlineAt: Date.now() + budgetMs,
+    hardDeadlineAt: parentPolicy.hardDeadlineAt ?? parentPolicy.deadlineAt,
+    fetchTimeoutMs: Math.min(parentPolicy.fetchTimeoutMs, WARNING_EXECUTION_BUDGET_MS),
+    maxAttempts: 1,
+  });
+}
+
+async function fetchWarnings(location, seedWarnings, policy, now = Date.now()) {
   if (!location.emmaId) return [];
   try {
+    assertBeforeDeadline(policy, `warning feed for ${location.id}`);
     const response = await fetchWithTimeout(METEOALARM_DENMARK_FEED, {
       headers: { Accept: '*/*' },
       cf: { cacheTtl: 300, cacheEverything: true },
-    }, currentFetchTimeoutMs);
+    }, policy);
     if (!response.ok) throw new Error(`MeteoAlarm feed failed: ${response.status}`);
     const warnings = parseMeteoalarmFeed(await response.text(), location.emmaId);
     // Kommune-coverage soft filter (public CAP detail per warning): may only
@@ -642,23 +851,33 @@ async function fetchWarnings(location, seedWarnings, now = Date.now()) {
       const detail = await fetchWithTimeout(url, {
         headers: { Accept: '*/*' },
         cf: { cacheTtl: 300, cacheEverything: true },
-      }, currentFetchTimeoutMs);
+      }, policy);
       if (!detail.ok) throw new Error(`CAP detail failed: ${detail.status}`);
       return detail.text();
     });
   } catch {
+    // The warning policy has a deliberately short child deadline. Reaching it
+    // is an advisory-feed failure, not the parent event's hard deadline: carry
+    // forward still-active warnings while the required forecast finishes. Only
+    // the parent's true wall clock may prevent this tiny recovery step.
+    if ((policy.hardDeadlineAt ?? policy.deadlineAt) - Date.now() <= 0) {
+      throw deadlineError(`warning fallback for ${location.id}`);
+    }
     return (seedWarnings ?? []).filter((w) => Number.isFinite(Date.parse(w?.expires)) && Date.parse(w.expires) > now);
   }
 }
 
-async function buildForecastCache(env, location, marineInstances, marineSeeds, warningSeed) {
+async function buildForecastCache(env, location, marineInstances, marineSeeds, warningSeed, policy) {
+  assertBeforeDeadline(policy, `forecast build for ${location.id}`);
   const seedInstances = marineSeeds?.instances;
+  const warningPolicy = advisoryWarningPolicy(policy);
   const results = await Promise.allSettled([
-    fetchMetWeather(env, location),
-    fetchMarineSeriesWithFallback(env, location, 'water', marineInstances.water, DKSS_PARAMETERS, mapWaterFeatures, marineSeeds?.water, seedInstances?.water),
-    fetchMarineSeriesWithFallback(env, location, 'waves', marineInstances.waves, WAM_PARAMETERS, mapWaveFeatures, marineSeeds?.waves, seedInstances?.waves),
-    fetchWarnings(location, warningSeed),
+    fetchMetWeather(env, location, policy),
+    fetchMarineSeriesWithFallback(env, location, 'water', marineInstances.water, DKSS_PARAMETERS, mapWaterFeatures, marineSeeds?.water, seedInstances?.water, policy),
+    fetchMarineSeriesWithFallback(env, location, 'waves', marineInstances.waves, WAM_PARAMETERS, mapWaveFeatures, marineSeeds?.waves, seedInstances?.waves, policy),
+    fetchWarnings(location, warningSeed, warningPolicy),
   ]);
+  assertBeforeDeadline(policy, `forecast assembly for ${location.id}`);
 
   // Only weather + both marine sources are required to build; the warnings leg
   // (last) is advisory - a down feed yields an empty stripe, never a failure.
@@ -669,6 +888,12 @@ async function buildForecastCache(env, location, marineInstances, marineSeeds, w
 
   const [met, water, wave] = results.slice(0, 3).map(r => r.value);
   const warnings = results[3].status === 'fulfilled' ? results[3].value : [];
+
+  // Marine may have completed before a slower MET/warning leg. Recheck at the
+  // exact assembly boundary so the final fetchedAt can never outlive the 12h
+  // provenance policy merely because another Promise kept the build waiting.
+  assertMarineRunWithinFallbackAge(water.instance, water.instance?.collection ?? 'water');
+  assertMarineRunWithinFallbackAge(wave.instance, wave.instance?.collection ?? 'waves');
 
   const weatherSeries = met.weatherSeries;
   const waterSeries = water.series;
@@ -782,11 +1007,10 @@ function buildCacheHealth(status, data, options = {}) {
   const marineInstances = options.marineInstances ?? previousHealth?.marineInstances;
   const weatherExpires = options.weatherExpires ?? previousHealth?.weatherExpires;
   const weatherLastModified = options.weatherLastModified ?? previousHealth?.weatherLastModified;
-  const message = options.error
-    ? options.error instanceof Error
-      ? options.error.message.slice(0, 240)
-      : String(options.error).slice(0, 240)
-    : options.message;
+  // Cache health is returned by the public forecast and /health endpoints.
+  // Persist only deliberately-authored public copy; raw provider errors belong
+  // in logs and can contain unstable or internal response details.
+  const message = options.message;
 
   return {
     status,
@@ -829,6 +1053,17 @@ export function classifyBuildFailure(message) {
   return { busy, busyProvider };
 }
 
+// A failed marine run-catalog probe means we could not verify that the held
+// water/wave run is still the newest one. The values remain usable, but they are
+// now explicitly last-good ingredients and must not render as a green, fully
+// checked forecast.
+export function degradedSourcesAfterProbe(degradedSources = [], marineProbeFailed = false) {
+  return [...new Set([
+    ...degradedSources,
+    ...(marineProbeFailed ? ['water', 'waves'] : []),
+  ])];
+}
+
 function withCacheHealth(data, status, options = {}) {
   return {
     ...data,
@@ -839,8 +1074,13 @@ function withCacheHealth(data, status, options = {}) {
   };
 }
 
-async function readCachedForecast(env, location) {
-  const raw = await env.FRANK_FORECAST_CACHE.get(cacheKey(location));
+async function readCachedForecast(env, location, policyInput) {
+  const policy = executionPolicy(policyInput);
+  const raw = await awaitWithinDeadline(
+    () => env.FRANK_FORECAST_CACHE.get(cacheKey(location)),
+    policy,
+    `forecast cache read for ${location.id}`,
+  );
   if (!raw) return null;
 
   try {
@@ -851,8 +1091,13 @@ async function readCachedForecast(env, location) {
   }
 }
 
-async function writeCachedForecast(env, location, data) {
-  await env.FRANK_FORECAST_CACHE.put(cacheKey(location), JSON.stringify(data));
+async function writeCachedForecast(env, location, data, policyInput) {
+  const policy = executionPolicy(policyInput);
+  await awaitWithinDeadline(
+    () => env.FRANK_FORECAST_CACHE.put(cacheKey(location), JSON.stringify(data)),
+    policy,
+    `forecast cache write for ${location.id}`,
+  );
 }
 
 // Whether a failed check is worth a KV write. Exported only so the decision has
@@ -897,7 +1142,12 @@ export function shouldCheckInBackground(location, data, minIntervalMs, memoryMsO
 }
 
 async function _refreshForecastCache(env, location, options = {}) {
-  const cached = await readCachedForecast(env, location);
+  const policy = executionPolicy(options.executionPolicy);
+  assertBeforeDeadline(policy, `refresh start for ${location.id}`);
+  // Browser-triggered background work already read this payload to answer the
+  // request. Reusing that event-local value removes a redundant KV operation
+  // and guarantees the waitUntil task enters its bounded try/catch immediately.
+  const cached = options.cached ?? await readCachedForecast(env, location, policy);
   const cachedNeedsRecovery = (() => {
     const health = cached?.sources?.cacheHealth;
     return health?.status === 'stale' || health?.status === 'fallback' || health?.needsRebuild;
@@ -948,9 +1198,10 @@ async function _refreshForecastCache(env, location, options = {}) {
 
     // Weather freshness comes from MET's own Expires header stored on the run we
     // built against; only marine ids need a probe here. If the probe itself is
-    // down (DMI busy), continue with the runs we already know about - the
-    // per-source ingredient fallbacks below still let fresh weather through.
+    // down, keep the previously assembled forecast and mark its marine inputs
+    // degraded rather than re-dating unverified water/wave data.
     let marineProbeFailed = false;
+    let marineProbeBusy = false;
     const knownMarine = cachedHealth?.marineInstances;
     // Schedule-aware gate: DMI publishes a new marine run only every 6h
     // (measured: run times 00/06/12/18Z, gaps exactly 6.00h), so a newer run
@@ -958,20 +1209,31 @@ async function _refreshForecastCache(env, location, options = {}) {
     // while our run is younger than that floor minus a 1h safety margin;
     // once past it, probe every tick until a new run appears. A forced or
     // rebuild-flagged refresh always probes.
+    const knownMarineWithinPolicy = marineInstancesWithinFallbackAge(knownMarine);
     const canSkipProbe = Boolean(knownMarine?.water?.id && knownMarine?.waves?.id)
       && !options.forceRebuild
       && !cachedHealth?.needsRebuild
+      && knownMarineWithinPolicy
       && marineRunAgeMs(knownMarine) < DMI_PROBE_QUIET_MS;
 
     if (canSkipProbe) {
       latestMarine = knownMarine;
     } else {
       try {
-        latestMarine = await fetchLatestMarineInstances(location);
+        latestMarine = await fetchLatestMarineInstances(location, policy, options.eventMemo);
       } catch (probeError) {
+        rethrowIfDeadlineReached(probeError, policy, `marine probe failure handling for ${location.id}`);
         if (!knownMarine?.water?.id || !knownMarine?.waves?.id) throw probeError;
+        console.error(JSON.stringify({
+          event: 'marine_instance_probe_failed',
+          locationId: location.id,
+          error: probeError instanceof Error
+            ? { name: probeError.name, message: probeError.message }
+            : { message: String(probeError) },
+        }));
         latestMarine = knownMarine;
         marineProbeFailed = true;
+        marineProbeBusy = classifyBuildFailure(probeError?.message).busy;
       }
     }
 
@@ -980,6 +1242,32 @@ async function _refreshForecastCache(env, location, options = {}) {
     const weatherStale = !Number.isFinite(weatherExpiredMs) || Date.now() >= weatherExpiredMs;
 
     const marineUnchanged = marineInstancesEqual(cachedHealth?.marineInstances, latestMarine);
+    const latestMarineWithinPolicy = marineInstancesWithinFallbackAge(latestMarine);
+
+    if (marineProbeFailed && cached) {
+      // We could not verify whether DMI has published a newer run. Do not use
+      // unexpired MET as permission to call the combined forecast current, and
+      // do not rebuild/re-date it from unverified marine ingredients. Keep the
+      // last assembled fetchedAt so its age remains honest and /health can trip.
+      const heldCache = withCacheHealth(cached, 'stale', {
+        marineInstances: latestMarine,
+        needsRebuild: cachedHealth?.needsRebuild || !latestMarineWithinPolicy,
+        checkedBy: options.reason ?? 'failed-check',
+        degradedSources: degradedSourcesAfterProbe(cachedHealth?.degradedSources, true),
+        ...(marineProbeBusy ? { providerBusy: true, busyProvider: 'marine' } : {}),
+        message: marineProbeBusy
+          ? 'Marine service busy; keeping the last completed forecast.'
+          : 'Marine service unavailable; keeping the last completed forecast.',
+      });
+      if (shouldPersistFailureState(cachedHealth, heldCache.sources.cacheHealth)) {
+        try {
+          await writeCachedForecast(env, location, heldCache, policy);
+        } catch (writeError) {
+          console.error(`Could not persist marine probe failure for ${location.id}:`, writeError);
+        }
+      }
+      return heldCache;
+    }
 
     const cacheAlreadyCurrent =
       cached &&
@@ -987,6 +1275,8 @@ async function _refreshForecastCache(env, location, options = {}) {
       !cachedHealth?.needsRebuild &&
       hasCurrentForecastWindow(cached) &&
       marineUnchanged &&
+      latestMarineWithinPolicy &&
+      !marineProbeFailed &&
       !weatherStale;
 
     if (cacheAlreadyCurrent) {
@@ -1012,17 +1302,25 @@ async function _refreshForecastCache(env, location, options = {}) {
         ? MANUAL_STAMP_MIN_WRITE_INTERVAL_MS
         : CHECKED_STAMP_MIN_WRITE_INTERVAL_MS;
       if (!Number.isFinite(storedStampMs) || stampAgeMs >= minIntervalMs) {
-        await writeCachedForecast(env, location, checkedCache);
+        await writeCachedForecast(env, location, checkedCache, policy);
       }
       return checkedCache;
     }
 
-    const built = await buildForecastCache(env, location, latestMarine, deriveMarineSeedsFromPayload(cached), cached?.warnings);
+    const built = await buildForecastCache(
+      env,
+      location,
+      latestMarine,
+      deriveMarineSeedsFromPayload(cached),
+      cached?.warnings,
+      policy,
+    );
     // The build can succeed on last-good ingredients while a provider is
     // down; the payload is then still the freshest combination obtainable,
     // so it ships as 'current' with the degradation named in the message.
+    const degradedSources = degradedSourcesAfterProbe(built.degradedSources, marineProbeFailed);
     const fallbackNotes = [
-      ...(built.degradedSources ?? []),
+      ...degradedSources,
       ...(marineProbeFailed ? ['marine run schedule'] : []),
     ];
     const fresh = withCacheHealth(built.forecast, 'current', {
@@ -1033,8 +1331,9 @@ async function _refreshForecastCache(env, location, options = {}) {
       // Names the sources riding on last-good data (weather/water/waves) so
       // the client can show a calm "from an earlier update" note, and whether
       // it was because their provider was busy.
-      ...(built.degradedSources?.length ? { degradedSources: built.degradedSources } : {}),
+      ...(degradedSources.length ? { degradedSources } : {}),
       ...((built.degradedBusy || marineProbeFailed) ? { providerBusy: true } : {}),
+      ...(marineProbeFailed ? { busyProvider: 'marine' } : {}),
       ...(fallbackNotes.length
         ? { message: `Provider partly unavailable; using last good data for: ${fallbackNotes.join(', ')}.` }
         : {}),
@@ -1045,13 +1344,29 @@ async function _refreshForecastCache(env, location, options = {}) {
     // 'stale' verdict, then try to write THAT too and propagate. So the caller
     // gets the real forecast either way; only the persistence is lost.
     try {
-      await writeCachedForecast(env, location, fresh);
+      await writeCachedForecast(env, location, fresh, policy);
     } catch (writeError) {
       console.error(`Could not persist rebuilt forecast for ${location.id}:`, writeError);
     }
     return fresh;
   } catch (error) {
+    // At the hard wall-clock boundary, do no more assembly and start no KV
+    // write. Returning the last assembled payload preserves its original
+    // fetchedAt; a prolonged outage therefore ages naturally into /health's
+    // data-staleness failure instead of being freshly re-stamped.
+    if ((error?.name === 'ExecutionDeadlineError' && error?.deadlineKind !== 'provider')
+      || remainingExecutionMs(policy) <= 0) {
+      if (cached) return cached;
+      throw error;
+    }
     if (cached) {
+      console.error(JSON.stringify({
+        event: 'forecast_refresh_failed',
+        locationId: location.id,
+        error: error instanceof Error
+          ? { name: error.name, message: error.message }
+          : { message: String(error) },
+      }));
       const previousMarine = cached.sources?.cacheHealth?.marineInstances;
       const newMarineNeedsRebuild = Boolean(latestMarine && !marineInstancesEqual(previousMarine, latestMarine));
       const { busy, busyProvider } = classifyBuildFailure(error?.message);
@@ -1060,7 +1375,7 @@ async function _refreshForecastCache(env, location, options = {}) {
         needsRebuild: options.forceRebuild || newMarineNeedsRebuild,
         checkedBy: options.reason ?? 'failed-check',
         ...(busy ? { providerBusy: true, busyProvider } : {}),
-        error,
+        message: 'Forecast refresh failed; keeping the last completed forecast.',
       });
 
       // This was the one KV write with no throttle at all, and it sits on the
@@ -1071,7 +1386,7 @@ async function _refreshForecastCache(env, location, options = {}) {
       // shouldPersistFailureState for what survives that.
       if (shouldPersistFailureState(cached.sources?.cacheHealth, failedCache.sources?.cacheHealth)) {
         try {
-          await writeCachedForecast(env, location, failedCache);
+          await writeCachedForecast(env, location, failedCache, policy);
         } catch (writeError) {
           console.error(`Could not persist failure state for ${location.id}:`, writeError);
         }
@@ -1086,28 +1401,32 @@ async function _refreshForecastCache(env, location, options = {}) {
 }
 
 async function refreshForecastCache(env, location, options = {}) {
-  const key = cacheKey(location);
-  
-  if (activeRefreshes.has(key)) {
-    return activeRefreshes.get(key);
-  }
+  const key = `refresh:${cacheKey(location)}`;
+  const memo = options.eventMemo;
+  if (memo?.has(key)) return memo.get(key);
 
   const promise = _refreshForecastCache(env, location, options);
-  activeRefreshes.set(key, promise);
-  
+  memo?.set(key, promise);
   try {
     return await promise;
   } finally {
-    activeRefreshes.delete(key);
+    memo?.delete(key);
   }
 }
 
-async function handleForecastRequest(request, env, ctx, locationId) {
-  // Read-only endpoint: a POST/PUT must not be able to drive a refresh.
-  if (request.method !== 'GET' && request.method !== 'HEAD') {
-    return jsonResponse({ error: 'Method not allowed' }, 405);
-  }
+function userExecutionPolicy() {
+  return executionPolicy({
+    deadlineAt: Date.now() + USER_BACKGROUND_EXECUTION_BUDGET_MS,
+    fetchTimeoutMs: FETCH_TIMEOUT_MS,
+    // A browser refresh gets one bounded attempt. The next page visit/manual
+    // tap is the retry schedule; spending the event on in-place retries leaves
+    // no time to persist the truthful stale/degraded outcome.
+    maxAttempts: 1,
+    completionReserveMs: USER_COMPLETION_RESERVE_MS,
+  });
+}
 
+async function handleForecastRequest(request, env, ctx, locationId, eventMemo) {
   const location = findLocation(locationId);
   if (!location) {
     return jsonResponse({ error: `Unknown forecast location: ${locationId}` }, 404);
@@ -1126,31 +1445,27 @@ async function handleForecastRequest(request, env, ctx, locationId) {
     // nothing worth waiting for: answer instantly from cache and run the
     // forced rebuild in the background (measured worst case of the old
     // synchronous wait: 30s of DMI retry backoff ending in the same stale
-    // payload). The lastAttemptAt stamp below is response-only - never
-    // written to KV - and tells the client its explicit attempt was just
-    // initiated, keeping the "unreachable service" detection truthful.
+    // payload). The response is explicitly pending and keeps the timestamp of
+    // the last COMPLETED check. Re-dating lastAttemptAt here used to make the
+    // header claim "Checked just now" before any provider had answered.
     const cached = await readCachedForecast(env, location);
     if (cached) {
       ctx.waitUntil(refreshForecastCache(env, location, {
         force: true,
         reason: 'manual',
         minIntervalMs: MANUAL_CHECK_MIN_INTERVAL_MS,
+        executionPolicy: userExecutionPolicy(),
+        eventMemo,
+        cached,
       }));
-      // Only re-stamp a HEALTHY cache. Advancing lastAttemptAt while keeping a
-      // 'stale' status re-dated the previous failure, so the client rendered
-      // "the forecast could not be refreshed on the last try (14:35)" against a
-      // time at which nothing had been tried yet. The failure's own timestamp
-      // is the truthful one; the background rebuild will move it when it
-      // actually completes.
       const cachedHealth = cached.sources?.cacheHealth;
-      const failed = cachedHealth?.status === 'stale' || cachedHealth?.status === 'fallback';
       return jsonResponse({
         ...cached,
         sources: {
           ...cached.sources,
           cacheHealth: {
             ...cachedHealth,
-            ...(failed ? {} : { lastAttemptAt: new Date().toISOString() }),
+            status: 'pending',
             checkedBy: 'manual',
           },
         },
@@ -1160,6 +1475,8 @@ async function handleForecastRequest(request, env, ctx, locationId) {
       force: true,
       reason: 'manual',
       minIntervalMs: MANUAL_CHECK_MIN_INTERVAL_MS,
+      executionPolicy: userExecutionPolicy(),
+      eventMemo,
     });
     return jsonResponse(data);
   }
@@ -1170,6 +1487,9 @@ async function handleForecastRequest(request, env, ctx, locationId) {
       ctx.waitUntil(refreshForecastCache(env, location, {
         reason: 'user-background',
         minIntervalMs: USER_BACKGROUND_CHECK_MIN_INTERVAL_MS,
+        executionPolicy: userExecutionPolicy(),
+        eventMemo,
+        cached,
       }));
     }
     return jsonResponse(cached);
@@ -1179,6 +1499,8 @@ async function handleForecastRequest(request, env, ctx, locationId) {
     force: true,
     reason: 'cold-start',
     minIntervalMs: 0,
+    executionPolicy: userExecutionPolicy(),
+    eventMemo,
   });
   return jsonResponse(data);
 }
@@ -1283,6 +1605,9 @@ function htmlResponse(html, status = 200) {
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
+      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      'Referrer-Policy': 'no-referrer',
+      'X-Frame-Options': 'DENY',
       'X-Content-Type-Options': 'nosniff',
     },
   });
@@ -1400,48 +1725,68 @@ ${banner}
 
 export default {
   async fetch(request, env, ctx) {
-    if (request.method === 'OPTIONS') {
-      return new Response(null, {
-        status: 204,
-        headers: corsHeaders(),
-      });
-    }
-
     try {
+      // Request-scoped only: never retain I/O promises in module state across
+      // Cloudflare events.
+      const eventMemo = new Map();
       const url = new URL(request.url);
       const normalizedPath = url.pathname.replace(/\/+$/, '') || '/';
+      const forecastMatch = normalizedPath.match(/^\/forecast\/([a-z0-9-]+)$/);
+      const knownRoute = normalizedPath === '/'
+        || normalizedPath === '/health'
+        || normalizedPath === '/status'
+        || Boolean(forecastMatch);
+
+      if (!knownRoute) {
+        const response = jsonResponse({ error: 'Not found' }, 404);
+        return request.method === 'HEAD' ? headResponse(response) : response;
+      }
+
+      if (request.method === 'OPTIONS') {
+        return new Response(null, {
+          status: 204,
+          headers: {
+            ...corsHeaders(),
+            Allow: ALLOW_READ_METHODS,
+          },
+        });
+      }
+
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        return jsonResponse(
+          { error: 'Method not allowed' },
+          405,
+          { Allow: ALLOW_READ_METHODS },
+        );
+      }
+
+      let response;
 
       if (normalizedPath === '/') {
-        return jsonResponse({
+        response = jsonResponse({
           ok: true,
           service: 'frank-forecast',
           endpoints: [...locations.map((l) => `/forecast/${l.id}`), '/health', '/status'],
         });
+      } else if (normalizedPath === '/health') {
+        response = await handleHealthRequest(env);
+      } else if (normalizedPath === '/status') {
+        response = await handleStatusRequest(env);
+      } else {
+        response = await handleForecastRequest(request, env, ctx, forecastMatch[1], eventMemo);
       }
 
-      if (normalizedPath === '/health') {
-        return await handleHealthRequest(env);
-      }
-
-      if (normalizedPath === '/status') {
-        return await handleStatusRequest(env);
-      }
-
-      const forecastMatch = normalizedPath.match(/^\/forecast\/([a-z0-9-]+)$/);
-      if (forecastMatch) {
-        return await handleForecastRequest(request, env, ctx, forecastMatch[1]);
-      }
-
-      return jsonResponse({ error: 'Not found' }, 404);
+      return request.method === 'HEAD' ? headResponse(response) : response;
     } catch (error) {
       // Reachable only because the handlers above are AWAITED. Returning their
       // promises un-awaited let a rejection escape this try entirely, so a
       // failure surfaced as an opaque 5xx with no CORS headers and no log line.
       console.error('Worker request failed:', error);
-      return jsonResponse({
+      const response = jsonResponse({
         error: 'Forecast service failed',
         message: 'An internal error occurred while fetching or processing forecast data.',
       }, 503);
+      return request.method === 'HEAD' ? headResponse(response) : response;
     }
   },
 
@@ -1449,31 +1794,36 @@ export default {
     // Nobody is waiting on a cron tick, so it can afford to wait out a slow
     // provider rather than call it broken (see CRON_FETCH_TIMEOUT_MS).
     const tickStartedAt = Date.now();
-    currentFetchTimeoutMs = CRON_FETCH_TIMEOUT_MS;
+    const tickDeadlineAt = tickStartedAt + CRON_TICK_BUDGET_MS;
+    const eventMemo = new Map();
     try {
       // Isolate failures per location: a rebuild throw (no cached payload + a
       // provider outage) must not starve the remaining locations of their cron
       // refresh for the whole tick.
-      for (const location of tickOrder(event?.scheduledTime)) {
+      const orderedLocations = tickOrder(event?.scheduledTime);
+      for (const [index, location] of orderedLocations.entries()) {
         // ...and neither must a location that merely takes a very long time.
         // The per-location try/catch below isolates THROWS, not the shared
         // wall clock, so one hanging upstream could consume the tick and leave
         // the last locations silently unrefreshed every time.
-        if (Date.now() - tickStartedAt > CRON_TICK_BUDGET_MS) {
-          console.error(`Cron tick budget spent; skipping ${location.id} until the next tick`);
-          continue;
+        const locationsRemaining = orderedLocations.length - index;
+        const policy = cronExecutionPolicy(Date.now(), tickDeadlineAt, locationsRemaining);
+        if (!policy) {
+          console.error(`Cron tick deadline reached; skipping ${location.id} until the next tick`);
+          break;
         }
         try {
           await refreshForecastCache(env, location, {
             reason: 'cron',
             minIntervalMs: CRON_CHECK_MIN_INTERVAL_MS,
+            executionPolicy: policy,
+            eventMemo,
           });
         } catch (error) {
           console.error(`Cron refresh failed for ${location.id}:`, error);
         }
       }
     } finally {
-      currentFetchTimeoutMs = FETCH_TIMEOUT_MS;
       console.log(`cron tick done in ${Date.now() - tickStartedAt}ms`);
     }
   },

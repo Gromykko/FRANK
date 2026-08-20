@@ -113,6 +113,8 @@ export const da: Record<string, string> = {
   'Offline': 'Offline',
   'Showing your saved forecast from {0}': 'Viser din gemte prognose fra {0}',
   'Showing your saved forecast': 'Viser din gemte prognose',
+  'Showing your older saved forecast from {0}': 'Viser din ældre gemte prognose fra {0}',
+  'Showing your older saved forecast': 'Viser din ældre gemte prognose',
   'Weather service': 'Vejrtjenesten',
   'Waves & water service': 'Bølge- og vandstandstjenesten',
   'Forecast services': 'Prognosetjenesterne',
@@ -213,6 +215,12 @@ export const da: Record<string, string> = {
   '{0} — rough out there, probably one to skip.': '{0} — barskt derude, nok en dag at springe over.',
   '{0} — worth keeping an eye on.': '{0} — værd at holde øje med.',
   'Nighttime: outside sunrise-to-sunset paddling hours.': 'Nat: uden for rotimerne mellem solopgang og solnedgang.',
+  'Daylight: part of this outlook period is outside sunrise-to-sunset paddling hours.':
+    'Dagslys: en del af denne udsigtsperiode ligger uden for rotimerne mellem solopgang og solnedgang.',
+  'Daylight: this outlook period has no complete hour within sunrise-to-sunset paddling hours.':
+    'Dagslys: denne udsigtsperiode har ingen hel time mellem solopgang og solnedgang.',
+  'Daylight: sunrise or sunset is unavailable for this outlook period, so FRANK cannot clear the whole period.':
+    'Dagslys: solopgang eller solnedgang mangler for denne udsigtsperiode, så FRANK kan ikke frikende hele perioden.',
   "Everything's within your limits — {0}, {1}, {2}.": 'Alt er inden for dine grænser — {0}, {1}, {2}.',
   'The outlook is within your limits — {0}, {1}, {2}.': 'Udsigten ligger inden for dine grænser — {0}, {1}, {2}.',
   'calm water': 'roligt vand',
@@ -422,6 +430,10 @@ export const da: Record<string, string> = {
   'Trip Profile': 'Turprofil',
   'About the modes': 'Om profilerne',
   'How cautious should FRANK be for you?': 'Hvor forsigtig skal FRANK være for dig?',
+  'Chill': 'Rolig',
+  'Normal': 'Normal',
+  'Pro': 'Pro',
+  'Custom': 'Egen',
   'are presets — from the most cautious limits for beginners and easy trips to the loosest limits for experienced paddlers.':
     'er forudindstillinger — fra de mest forsigtige grænser til begyndere og lette ture til de løseste grænser for erfarne roere.',
   'is your own set: change anything in Your Limits below and it lands there.':
@@ -435,7 +447,7 @@ export const da: Record<string, string> = {
   'How FRANK Decides': 'Sådan vurderer FRANK',
   'Your personal limits': 'Dine personlige grænser',
   'Changes apply immediately and switch you to Custom mode. Pick a preset in the Trip Profile at the top (Chill, Normal, Pro) to go back.':
-    'Ændringer træder i kraft med det samme og skifter dig til Custom. Vælg en forudindstilling i turprofilen øverst (Chill, Normal, Pro) for at gå tilbage.',
+    'Ændringer træder i kraft med det samme og skifter dig til Egen. Vælg en forudindstilling i turprofilen øverst (Rolig, Normal, Pro) for at gå tilbage.',
   'Decrease {0}': 'Sænk {0}',
   'Increase {0}': 'Hæv {0}',
   'Max Wind': 'Maks vind',
@@ -606,8 +618,8 @@ export const da: Record<string, string> = {
   'Caution. Thermal layers or wetsuit strongly recommended.': 'Pas på. Termolag eller våddragt anbefales kraftigt.',
   'Danger. Drysuit or heavy wetsuit required.': 'Fare. Tørdragt eller tyk våddragt påkrævet.',
   '9. Daylight Rule': '9. Dagslysregel',
-  'Many clubs prohibit paddling between sunset and sunrise without navigation lights and permission, so when this rule is on, hourly forecasts outside daylight are marked Caution (turn it off if night paddling is fine for you). Longer-range outlook periods are handled per launch window instead: windows with no daylight at all are dropped, and windows that span night hours show only their daylight part in the list.':
-    'Mange klubber forbyder roning mellem solnedgang og solopgang uden lanterner og tilladelse, så når denne regel er slået til, markeres timeprognoser uden for dagslys som Pas på (slå den fra, hvis natroning er i orden for dig). Langtidsudsigtens perioder håndteres i stedet pr. rovindue: vinduer helt uden dagslys udelades, og vinduer, der spænder over nattetimer, viser kun deres dagslysdel i listen.',
+  'Many clubs prohibit paddling between sunset and sunrise without navigation lights and permission, so when this rule is on, hourly forecasts outside daylight are marked Caution (turn it off if night paddling is fine for you). A longer-range outlook block is marked Caution unless its whole period is daylight. Launch windows are handled separately: periods with no complete daylight hour are dropped, and partial periods show only their longest continuous daylight part.':
+    'Mange klubber forbyder roning mellem solnedgang og solopgang uden lanterner og tilladelse, så når denne regel er slået til, markeres timeprognoser uden for dagslys som Pas på (slå den fra, hvis natroning er i orden for dig). En blok i langtidsudsigten markeres som Pas på, medmindre hele perioden ligger i dagslys. Rovinduer håndteres separat: perioder uden en hel time i dagslys udelades, og delvise perioder viser kun deres længste sammenhængende del i dagslys.',
   '10. Launch Windows': '10. Rovinduer',
   'A launch window is an unbroken run of Good-to-go hours — an hour rated Take care or Rough breaks the run:':
     'Et rovindue er en ubrudt række af Klar til at ro-timer — en time vurderet Pas på eller Bliv i land bryder rækken:',

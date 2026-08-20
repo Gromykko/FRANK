@@ -111,6 +111,9 @@ const BOOLEAN_FLAGS = [
   'enableWaterTemp', 'enableCustomWindDirs', 'daylightOnly',
 ] as const;
 
+const TRIP_MODES: readonly SafetySettings['tripMode'][] = ['default', 'beginner', 'pro', 'custom'];
+const TIDE_PREFERENCES: readonly SafetySettings['tidePreference'][] = ['any', 'high', 'low', 'incoming'];
+
 function coerceNumericLimits(s: SafetySettings): SafetySettings {
   const out = { ...s };
   for (const { key, decimals, min, max } of NUMERIC_LIMITS) {
@@ -123,6 +126,11 @@ function coerceNumericLimits(s: SafetySettings): SafetySettings {
   for (const flag of BOOLEAN_FLAGS) {
     if (typeof out[flag] !== 'boolean') (out[flag] as boolean) = DEFAULT_SETTINGS[flag];
   }
+  // TypeScript types stop at the localStorage boundary. Unknown enum strings
+  // must not reach getPresetSettings (where they select no preset) or the
+  // planner (where an unknown tide preference silently behaves like "any").
+  if (!TRIP_MODES.includes(out.tripMode)) out.tripMode = DEFAULT_SETTINGS.tripMode;
+  if (!TIDE_PREFERENCES.includes(out.tidePreference)) out.tidePreference = DEFAULT_SETTINGS.tidePreference;
   // Angles are the one field `??` in resolveSectors can't defend: a string
   // survives it and `"abc" >= 90` is false, so the sector silently never
   // matches and its stricter directional cap vanishes. Drop anything that
@@ -137,18 +145,21 @@ function coerceNumericLimits(s: SafetySettings): SafetySettings {
   }
   // Sector caps come from the same untrusted blob and feed the same comparisons.
   const sectorLimits: SafetySettings['sectorLimits'] = {};
-  const inCapRange = (value: unknown, max: number) =>
-    typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= max;
+  const isFiniteNumber = (value: unknown): value is number =>
+    typeof value === 'number' && Number.isFinite(value);
   for (const [id, cap] of Object.entries(out.sectorLimits ?? {})) {
-    // A sector whose caps are unusable is DROPPED rather than clamped, so
-    // resolveSectors falls back to this location's curated values — the right
-    // fallback here is the fjord's own cap, not one global default.
-    //
-    // Range, not just type: these were the last thresholds exempt from the
-    // bounds check, so a stored `{ safe: 999, caution: 999 }` was accepted and
-    // silently switched that direction's cap off while the UI still showed it.
-    if (!inCapRange(cap?.safe, 25) || !inCapRange(cap?.caution, 25 + MIN_CAUTION_GAP)) continue;
-    sectorLimits[id] = { safe: roundToDecimals(cap.safe, 1), caution: roundToDecimals(cap.caution, 1) };
+    // Non-numbers are unusable, so drop the override and fall back to this
+    // location's curated cap. Finite out-of-range numbers are recoverable:
+    // clamp them to exactly what both steppers can represent. In particular,
+    // safe must stop one shared gap below 25 so danger never becomes 25.5 and
+    // leaves the UI with min > max and permanently disabled controls.
+    if (!isFiniteNumber(cap?.safe) || !isFiniteNumber(cap?.caution)) continue;
+    const safe = roundToDecimals(clampNumber(cap.safe, 0, 25 - MIN_CAUTION_GAP, 0), 1);
+    const requestedCaution = roundToDecimals(clampNumber(cap.caution, 0, 25, 25), 1);
+    sectorLimits[id] = {
+      safe,
+      caution: roundToDecimals(floorCaution(safe, requestedCaution), 1),
+    };
   }
   out.sectorLimits = sectorLimits;
   return out;

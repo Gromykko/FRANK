@@ -142,6 +142,13 @@ export default function StatusBar({
             role="group"
             aria-label={cacheAriaLabel}
           >
+            {/* aria-busy changes are not a reliable spoken announcement on a
+                labelled group. Keep one real atomic live-region text node so
+                refresh start and its settled result are both announced while
+                focus remains on the refresh button. */}
+            <span className="sr-only" role="status" aria-atomic="true">
+              {cacheAriaLabel}
+            </span>
             <span className="frank-cache-text">
               <span className="frank-cache-source">{sourceLabel}</span>
               {cacheDetail && <span className="frank-cache-detail">{cacheDetail}</span>}

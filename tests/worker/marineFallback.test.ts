@@ -1,6 +1,15 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 // @ts-expect-error - the worker is plain JS with no type declarations
-import { fetchMarineSeriesWithFallback, deriveMarineSeedsFromPayload, classifyBuildFailure, marineRunAgeMs, shouldCheckInBackground } from '../../worker/index.js';
+import {
+  fetchMarineSeriesWithFallback,
+  deriveMarineSeedsFromPayload,
+  classifyBuildFailure,
+  degradedSourcesAfterProbe,
+  isMarineRunWithinFallbackAge,
+  marineRunAgeMs,
+  shouldCheckInBackground,
+} from '../../worker/index.js';
+import { FORECAST_PAYLOAD_VERSION } from '../../src/features/forecast/types';
 
 // An in-memory stand-in for the KV binding (get(key,'json') / put(key,string)).
 function makeEnv(seed: Record<string, unknown> = {}) {
@@ -22,9 +31,24 @@ function makeEnv(seed: Record<string, unknown> = {}) {
 const LOCATION = { id: 'test', areaName: 'Test Fjord', coordinate: { longitude: 9.9, latitude: 55.8 } };
 const WATER_INSTANCE = { collection: 'dkss_idw', id: '2026-07-11T120000Z' };
 const identityMap = (features: unknown) => features as Array<{ timeMs: number }>;
+const CURRENT_INGREDIENT_KEY = `frank-marine-ingredient:v${FORECAST_PAYLOAD_VERSION}:water:test`;
+const retainedEnvelope = (id: string, series: unknown[]) => ({
+  schemaVersion: FORECAST_PAYLOAD_VERSION,
+  collection: 'dkss_idw',
+  id,
+  series,
+});
 
 const originalFetch = globalThis.fetch;
-afterEach(() => { globalThis.fetch = originalFetch; });
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime('2026-07-11T13:00:00Z');
+});
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 // 429 is terminal (no retry), so a busy provider fails fast.
 function stubFetchBusy() {
@@ -42,12 +66,16 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     expect(result.fallback).toBe(false);
     expect(result.series).toEqual(series);
     // Retained for the next outage, tagged with the run it came from.
-    expect(JSON.parse(env.store.get('frank-marine-ingredient:water:test')!)).toMatchObject({ collection: 'dkss_idw', id: '2026-07-11T120000Z' });
+    expect(JSON.parse(env.store.get(CURRENT_INGREDIENT_KEY)!)).toMatchObject({
+      schemaVersion: FORECAST_PAYLOAD_VERSION,
+      collection: 'dkss_idw',
+      id: '2026-07-11T120000Z',
+    });
   });
 
   it('reuses the retained run WITHOUT a network call when the run id is unchanged', async () => {
     const retained = [{ time: '2026-07-11T12:00:00Z', timeMs: Date.parse('2026-07-11T12:00:00Z'), tideLevel: 0.5 }];
-    const env = makeEnv({ 'frank-marine-ingredient:water:test': { collection: 'dkss_idw', id: '2026-07-11T120000Z', series: retained } });
+    const env = makeEnv({ [CURRENT_INGREDIENT_KEY]: retainedEnvelope('2026-07-11T120000Z', retained) });
     let fetched = false;
     globalThis.fetch = (async () => { fetched = true; throw new Error('should not fetch'); }) as typeof fetch;
 
@@ -59,10 +87,36 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     expect(result.series).toEqual(retained);
   });
 
+  it('never re-blesses a normalized ingredient written by an older payload version', async () => {
+    const legacy = [{ time: '2026-07-11T12:00:00Z', timeMs: Date.parse('2026-07-11T12:00:00Z'), tideLevel: 999 }];
+    const fresh = [{ time: '2026-07-11T12:00:00Z', timeMs: Date.parse('2026-07-11T12:00:00Z'), tideLevel: 0.4 }];
+    const env = makeEnv({
+      'frank-marine-ingredient:water:test': {
+        collection: 'dkss_idw',
+        id: '2026-07-11T120000Z',
+        series: legacy,
+      },
+    });
+    let fetches = 0;
+    globalThis.fetch = (async () => {
+      fetches += 1;
+      return { ok: true, status: 200, json: async () => ({ features: fresh }) };
+    }) as typeof fetch;
+
+    const result = await fetchMarineSeriesWithFallback(env, LOCATION, 'water', WATER_INSTANCE, ['x'], identityMap);
+
+    expect(fetches).toBe(1);
+    expect(result.series).toEqual(fresh);
+    expect(JSON.parse(env.store.get(CURRENT_INGREDIENT_KEY)!)).toMatchObject({
+      schemaVersion: FORECAST_PAYLOAD_VERSION,
+      series: fresh,
+    });
+  });
+
   it('serves the retained ingredient (its own older run id) when the provider is busy - DEGRADED', async () => {
     stubFetchBusy();
     const retained = [{ time: '2026-07-11T06:00:00Z', timeMs: Date.parse('2026-07-11T06:00:00Z'), tideLevel: 0.2 }];
-    const env = makeEnv({ 'frank-marine-ingredient:water:test': { collection: 'dkss_idw', id: '2026-07-11T060000Z', series: retained } });
+    const env = makeEnv({ [CURRENT_INGREDIENT_KEY]: retainedEnvelope('2026-07-11T060000Z', retained) });
 
     const result = await fetchMarineSeriesWithFallback(env, LOCATION, 'water', WATER_INSTANCE, ['x'], identityMap);
 
@@ -77,7 +131,7 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     // 200 OK but no features for the requested (new) run = not published yet.
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ features: [] }) })) as typeof fetch;
     const retained = [{ time: '2026-07-11T06:00:00Z', timeMs: Date.parse('2026-07-11T06:00:00Z'), tideLevel: 0.2 }];
-    const env = makeEnv({ 'frank-marine-ingredient:water:test': { collection: 'dkss_idw', id: '2026-07-11T060000Z', series: retained } });
+    const env = makeEnv({ [CURRENT_INGREDIENT_KEY]: retainedEnvelope('2026-07-11T060000Z', retained) });
 
     const result = await fetchMarineSeriesWithFallback(env, LOCATION, 'water', WATER_INSTANCE, ['x'], identityMap);
 
@@ -91,7 +145,16 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     stubFetchBusy();
     const seed = [{ time: '2026-07-11T09:00:00Z', timeMs: Date.parse('2026-07-11T09:00:00Z'), tideLevel: 0.3 }];
 
-    const result = await fetchMarineSeriesWithFallback(makeEnv(), LOCATION, 'water', WATER_INSTANCE, ['x'], identityMap, seed);
+    const result = await fetchMarineSeriesWithFallback(
+      makeEnv(),
+      LOCATION,
+      'water',
+      WATER_INSTANCE,
+      ['x'],
+      identityMap,
+      seed,
+      WATER_INSTANCE,
+    );
 
     expect(result.fallback).toBe(true);
     expect(result.series).toEqual(seed);
@@ -102,6 +165,90 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     await expect(
       fetchMarineSeriesWithFallback(makeEnv(), LOCATION, 'water', WATER_INSTANCE, ['x'], identityMap)
     ).rejects.toThrow(/429|busy/i);
+  });
+
+  it('does not use retained or seeded marine runs older than two publication cycles', async () => {
+    stubFetchBusy();
+    const oldId = '2026-07-10T180000Z'; // 19h old at the fixed 13:00 clock
+    const oldSeries = [{ time: '2026-07-10T18:00:00Z', timeMs: Date.parse('2026-07-10T18:00:00Z'), tideLevel: 0.9 }];
+    const env = makeEnv({ [CURRENT_INGREDIENT_KEY]: retainedEnvelope(oldId, oldSeries) });
+
+    await expect(fetchMarineSeriesWithFallback(
+      env,
+      LOCATION,
+      'water',
+      WATER_INSTANCE,
+      ['x'],
+      identityMap,
+      oldSeries,
+      { collection: 'dkss_idw', id: oldId },
+    )).rejects.toThrow(/429|busy/i);
+  });
+
+  it('refuses an old or unparseable requested run before cache or network work begins', async () => {
+    let fetched = false;
+    globalThis.fetch = (async () => {
+      fetched = true;
+      throw new Error('must not fetch');
+    }) as typeof fetch;
+
+    await expect(fetchMarineSeriesWithFallback(
+      makeEnv(),
+      LOCATION,
+      'water',
+      { collection: 'dkss_idw', id: '2026-07-10T180000Z' },
+      ['x'],
+      identityMap,
+    )).rejects.toThrow(/12-hour marine safety limit/i);
+    await expect(fetchMarineSeriesWithFallback(
+      makeEnv(),
+      LOCATION,
+      'water',
+      { collection: 'dkss_idw', id: 'not-a-dmi-run' },
+      ['x'],
+      identityMap,
+    )).rejects.toThrow(/12-hour marine safety limit/i);
+    expect(fetched).toBe(false);
+  });
+
+  it('rechecks the 12-hour boundary after an in-flight provider response', async () => {
+    const exactBoundary = Date.parse('2026-07-11T18:00:00Z');
+    vi.setSystemTime(exactBoundary);
+    const boundaryRun = { collection: 'dkss_idw', id: '2026-07-11T060000Z' };
+    globalThis.fetch = (async () => {
+      // The run was exactly 12h old when the request began, but became unsafe
+      // while the provider call was in flight. A 200 must not re-date it.
+      vi.setSystemTime(exactBoundary + 1);
+      return { ok: true, status: 200, json: async () => ({ features: [{ timeMs: exactBoundary }] }) };
+    }) as typeof fetch;
+
+    await expect(fetchMarineSeriesWithFallback(
+      makeEnv(),
+      LOCATION,
+      'water',
+      boundaryRun,
+      ['x'],
+      identityMap,
+    )).rejects.toThrow(/12-hour marine safety limit/i);
+  });
+});
+
+describe('isMarineRunWithinFallbackAge (12-hour safety boundary)', () => {
+  const run = { collection: 'dkss_idw', id: '2026-07-11T060000Z' };
+  const exactBoundary = Date.parse('2026-07-11T18:00:00Z');
+
+  it('allows exactly two missed six-hour cycles, inclusively', () => {
+    expect(isMarineRunWithinFallbackAge(run, exactBoundary)).toBe(true);
+  });
+
+  it('rejects the first millisecond past the boundary', () => {
+    expect(isMarineRunWithinFallbackAge(run, exactBoundary + 1)).toBe(false);
+  });
+
+  it('rejects unparseable and future-dated provenance', () => {
+    expect(isMarineRunWithinFallbackAge({ id: 'garbage' }, exactBoundary)).toBe(false);
+    expect(isMarineRunWithinFallbackAge({ id: '2026-07-11T180001Z' }, exactBoundary)).toBe(false);
+    expect(isMarineRunWithinFallbackAge(undefined, exactBoundary)).toBe(false);
   });
 });
 
@@ -141,6 +288,17 @@ describe('classifyBuildFailure', () => {
 
   it('is not busy for a non-429 error', () => {
     expect(classifyBuildFailure('DMI dkss_idw failed: 500 Internal Server Error').busy).toBe(false);
+  });
+});
+
+describe('degradedSourcesAfterProbe', () => {
+  it('marks both marine ingredients degraded when the run catalogue could not be checked', () => {
+    expect(degradedSourcesAfterProbe([], true)).toEqual(['water', 'waves']);
+    expect(degradedSourcesAfterProbe(['weather', 'waves'], true)).toEqual(['weather', 'waves', 'water']);
+  });
+
+  it('leaves a successful probe\'s source state unchanged', () => {
+    expect(degradedSourcesAfterProbe(['weather'], false)).toEqual(['weather']);
   });
 });
 

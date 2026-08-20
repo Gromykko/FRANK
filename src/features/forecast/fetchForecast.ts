@@ -66,19 +66,15 @@ function delay(ms: number): Promise<void> {
 }
 
 async function fetchWithTimeout(url: string): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
-  try {
-    return await fetch(url, {
-      headers: {
-        Accept: 'application/geo+json, application/json',
-      },
-      signal: controller.signal,
-    });
-  } finally {
-    window.clearTimeout(timeoutId);
-  }
+  // Keep the signal alive for the response BODY too. The old manual timer was
+  // cleared as soon as fetch() returned headers, so response.json()/text()
+  // could hang forever on a stalled body and hold the whole dev refresh open.
+  return fetch(url, {
+    headers: {
+      Accept: 'application/geo+json, application/json',
+    },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
 }
 
 const METEOALARM_FEED_URL = import.meta.env.DEV
@@ -90,27 +86,28 @@ const METEOALARM_FEED_URL = import.meta.env.DEV
 // its own fetch — the shared helper forces a geo+json Accept the XML feed 406s.
 async function fetchWarnings(location: ForecastLocation): Promise<WeatherWarning[]> {
   if (!location.emmaId) return [];
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     // MeteoAlarm's server 406s on a specific XML Accept — it only serves */*.
     const response = await fetch(METEOALARM_FEED_URL, {
       headers: { Accept: '*/*' },
-      signal: controller.signal,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     if (!response.ok) return [];
     const warnings = parseMeteoalarmFeed(await response.text(), location.emmaId);
     // Same coverage soft filter as the worker; a browser CORS failure on the
     // detail endpoint just leaves warnings region-level (fail-open).
     return await enrichWarningCoverage(warnings, location.kommuneAliases, async (url) => {
-      const detail = await fetch(url, { headers: { Accept: '*/*' } });
+      const detail = await fetch(url, {
+        headers: { Accept: '*/*' },
+        // Each CAP document gets its own budget. Previously detail requests had
+        // no signal and could keep a best-effort warning fetch pending forever.
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
       if (!detail.ok) throw new Error(`CAP detail failed: ${detail.status}`);
       return detail.text();
     });
   } catch {
     return [];
-  } finally {
-    window.clearTimeout(timeoutId);
   }
 }
 

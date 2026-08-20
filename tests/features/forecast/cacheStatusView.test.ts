@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { getCacheStatusView, deriveCacheStatus } from '../../../src/features/forecast/cacheStatusView';
+import { da } from '../../../src/i18n/da';
+import { interpolate } from '../../../src/i18n/interpolate';
 
 type Health = NonNullable<Parameters<typeof getCacheStatusView>[0]['cacheHealth']>;
 const view = (cacheHealth: Partial<Health> | undefined, refreshing = false) =>
@@ -23,6 +25,35 @@ describe('getCacheStatusView', () => {
     expect(v.detail).toBe('Showing your saved forecast from 18:40');
     expect(v.tone).toBe('neutral');
     expect(v.label).not.toMatch(/Checked/);
+  });
+
+  it('offline stays amber when the saved cache is already stale', () => {
+    const v = getCacheStatusView({
+      refreshing: false,
+      cacheHealth: { status: 'stale', lastAttemptAt: '' } as Health,
+      checkedAtLabel: '20:07',
+      offline: true,
+      savedAtLabel: '12:10',
+    });
+    expect(v).toMatchObject({
+      label: 'Offline',
+      detail: 'Showing your older saved forecast from 12:10',
+      tone: 'watch',
+    });
+  });
+
+  it('says explicitly in Danish when an offline saved forecast is older', () => {
+    const translateDa = (key: string, ...args: Array<string | number>) =>
+      interpolate(da[key] ?? key, ...args);
+    const v = getCacheStatusView({
+      refreshing: false,
+      cacheHealth: { status: 'fallback', lastAttemptAt: '' } as Health,
+      checkedAtLabel: '20:07',
+      offline: true,
+      savedAtLabel: '12:10',
+    }, translateDa);
+    expect(v.detail).toBe('Viser din ældre gemte prognose fra 12:10');
+    expect(v.tone).toBe('watch');
   });
 
   it('a busy MARINE provider (no cache) is calm amber and names the service, no "hours old"', () => {

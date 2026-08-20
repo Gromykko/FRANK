@@ -2,6 +2,7 @@ import { CURRENT_LOCATION } from '../../config/locations';
 import type { ForecastLocation } from '../../config/locations';
 import type { WeatherData } from './types';
 import { reviveReadings } from './normalize';
+import { isValidForecastPayload } from './validatePayload';
 
 const DEFAULT_FORECAST_WORKER_BASE = 'https://frank-forecast.alswatchs.workers.dev';
 const WEATHER_CACHE_KEY_PREFIX = 'frank_weather_data_v2';
@@ -11,25 +12,6 @@ const FORECAST_WORKER_BASE = (import.meta.env.VITE_FORECAST_WORKER_BASE ?? DEFAU
 
 function getWeatherCacheKey(location: ForecastLocation): string {
   return `${WEATHER_CACHE_KEY_PREFIX}_${location.id}`;
-}
-
-// Deliberately does NOT check payloadVersion. The Worker is deployed by hand,
-// separately from the client, so the client is routinely the newer of the two
-// for a while after a release. Hard-rejecting an older stamp here turns that
-// window into a dead "can't reach the forecast" screen for every user — worse
-// than showing the last good forecast alongside the "worker out of date"
-// banner that deriveCacheStatus raises for exactly this case.
-function isWeatherData(value: unknown): value is WeatherData {
-  const candidate = value as WeatherData | null;
-
-  return Boolean(
-    candidate &&
-      Array.isArray(candidate.hourly) &&
-      candidate.hourly.length > 0 &&
-      Array.isArray(candidate.sunrise) &&
-      Array.isArray(candidate.sunset) &&
-      candidate.sources?.fetchedAt
-  );
 }
 
 function hasCurrentForecastWindow(data: WeatherData): boolean {
@@ -46,6 +28,17 @@ function hasCurrentForecastWindow(data: WeatherData): boolean {
 }
 
 export function saveCachedWeatherData(data: WeatherData, location: ForecastLocation) {
+  // New writes must always carry an explicit compatible version and matching
+  // location. The relaxed unversioned policy is only for already-saved legacy
+  // data in readLocalCachedWeatherData below.
+  if (!isValidForecastPayload(data, location)) return;
+
+  // `pending` exists only on the immediate response to ?refresh=1 while the
+  // Worker rebuilds in waitUntil. It is not durable forecast health. Persisting
+  // it overwrites the last completed status and can leave "Checking…" stuck
+  // across reloads when the completed check keeps the same fetchedAt.
+  if (data.sources.cacheHealth?.status === 'pending') return;
+
   try {
     localStorage.setItem(getWeatherCacheKey(location), JSON.stringify(data));
   } catch {
@@ -65,7 +58,22 @@ function readLocalCachedWeatherData(location: ForecastLocation): WeatherData | n
     // deriveCacheStatus marks data older than six hours as stale and App shows
     // the caution banner. Rejecting it here instead strands an offline paddler
     // on the no-forecast screen despite having actionable hours on the device.
-    if (isWeatherData(parsed) && hasCurrentForecastWindow(parsed)) {
+    if (isValidForecastPayload(parsed, location, { allowLegacyMissingVersion: true }) && hasCurrentForecastWindow(parsed)) {
+      if (parsed.sources.cacheHealth?.status === 'pending') {
+        // Heal copies written by older clients before pending became
+        // response-only. The overwritten completed status cannot be recovered,
+        // so stale is the conservative stable state: usable data, amber honesty,
+        // and never a permanent in-flight claim.
+        const healed: WeatherData = {
+          ...parsed,
+          sources: {
+            ...parsed.sources,
+            cacheHealth: { ...parsed.sources.cacheHealth, status: 'stale' },
+          },
+        };
+        saveCachedWeatherData(healed, location);
+        return healed;
+      }
       return parsed;
     }
   } catch {
@@ -109,9 +117,18 @@ async function readWorkerCachedWeatherData(location: ForecastLocation, forceRefr
     // forecast — hourly rows running days ahead — was refused here, so
     // loadCachedWeatherData returned null and users got the dead "Kan ikke nå
     // prognosen" screen instead of the forecast plus "Viser ældre data". Same
-    // mistake the payloadVersion check already documents: degrading with a
-    // warning beats failing shut.
-    if (isWeatherData(parsed) && hasCurrentForecastWindow(parsed)) {
+    // Older compatible stamps stay accepted so Worker and Pages can deploy
+    // independently. A NEWER stamp is different: this client cannot know its
+    // contract, so it must not render or overwrite the compatible last-good
+    // local copy.
+    if (isValidForecastPayload(parsed, location) && hasCurrentForecastWindow(parsed)) {
+      if (parsed.sources.cacheHealth?.status === 'pending') {
+        // A forced refresh returns the existing Worker cache with a transient
+        // pending overlay. Keep the browser's completed snapshot on screen
+        // during the 600ms button spinner; silent pickups below will apply the
+        // completed health even when the forecast build itself does not change.
+        return readLocalCachedWeatherData(location) ?? parsed;
+      }
       saveCachedWeatherData(parsed, location);
       return parsed;
     }
