@@ -2,10 +2,16 @@ name: Release FRANK production
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: [Validate FRANK]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: '*/10 * * * *'
 
-# Production is one conservative release mode. Even a UI-only commit passes
-# the exact-all Worker gate; there is no checkbox that can accidentally bypass
-# data readiness for a commit that also changed shared forecast code.
+# Validation stays read-only. Automatic delivery is deliberately opt-in; a
+# manual dispatch remains available while automation is disabled or during
+# recovery. All trigger modes converge on the same immutable release contract.
 permissions:
   contents: read
 
@@ -13,22 +19,256 @@ concurrency:
   group: frank-production
   cancel-in-progress: false
 
+env:
+  FRANK_WORKER_BASE_URL: https://frank-forecast.alswatchs.workers.dev
+  FRANK_WORKER_SCRIPT: frank-forecast
+
 jobs:
+  requested_source:
+    name: Select requested validated source
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (vars.FRANK_AUTO_RELEASE_ENABLED == 'true' &&
+        ((github.event_name == 'workflow_run' &&
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'push' &&
+          github.event.workflow_run.head_branch == 'main') ||
+        github.event_name == 'schedule'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      trigger_mode: ${{ steps.source.outputs.trigger_mode }}
+      current: ${{ steps.source.outputs.current }}
+    steps:
+      - name: Resolve immutable source SHA
+        id: source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_SOURCE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          source_sha="${EVENT_SOURCE_SHA,,}"
+          if [[ ! "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Release source is not a full Git SHA."
+            exit 1
+          fi
+
+          case "$GITHUB_EVENT_NAME" in
+            workflow_dispatch) trigger_mode=manual ;;
+            workflow_run) trigger_mode=validated-main ;;
+            schedule) trigger_mode=scheduled-resume ;;
+            *) echo "::error::Unsupported release trigger."; exit 1 ;;
+          esac
+
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          current=false
+          if [[ "$source_sha" == "${current_main,,}" ]]; then current=true; fi
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "trigger_mode=$trigger_mode" >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+
+          echo "### Release source" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Trigger: \`$trigger_mode\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Candidate: \`$source_sha\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Current main: \`${current_main,,}\`" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$current" != true ]]; then
+            echo "- Decision: superseded before release work" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  release_source:
+    name: Resolve release or split recovery source
+    needs: requested_source
+    if: needs.requested_source.outputs.current == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: worker-production
+      deployment: false
+    outputs:
+      source_sha: ${{ steps.plan.outputs.effective_source_sha }}
+      trigger_mode: ${{ needs.requested_source.outputs.trigger_mode }}
+      recovery_mode: ${{ steps.plan.outputs.recovery_mode }}
+      action: ${{ steps.resolve.outputs.action }}
+      proceed: ${{ steps.proceed.outputs.proceed }}
+      waiting_location_ids: ${{ steps.precheck.outputs.waiting_location_ids }}
+      retry_after_seconds: ${{ steps.precheck.outputs.retry_after_seconds }}
+    steps:
+      - name: Checkout requested main SHA
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.requested_source.outputs.source_sha }}
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install pinned release tooling
+        run: npm ci
+
+      - name: Check release-control credentials
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          FRANK_WARM_TOKEN: ${{ secrets.FRANK_WARM_TOKEN }}
+        run: |
+          if [[ -z "$CLOUDFLARE_API_TOKEN" || -z "$CLOUDFLARE_ACCOUNT_ID" \
+            || -z "$FRANK_WARM_TOKEN" ]]; then
+            echo "::error::Cloudflare credentials and FRANK_WARM_TOKEN are not configured for worker-production."
+            exit 1
+          fi
+
+      - name: Inspect immutable Worker release state
+        id: resolve
+        run: |
+          node scripts/resolve-worker-release.mjs \
+            --source-sha '${{ needs.requested_source.outputs.source_sha }}' \
+            --github-output "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Read coordinated production journal
+        id: coordinated
+        run: npm run release:coordinated -- read --github-output "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Select desired source or repair-forward source
+        id: plan
+        shell: bash
+        env:
+          ACTION: ${{ steps.resolve.outputs.action }}
+          ACTIVE_WORKER_VERSION: ${{ steps.resolve.outputs.production_version_id }}
+          ACTIVE_WORKER_SOURCE: ${{ steps.resolve.outputs.production_source_sha }}
+          JOURNAL_ESTABLISHED: ${{ steps.coordinated.outputs.established }}
+          JOURNAL_WORKER_VERSION: ${{ steps.coordinated.outputs.worker_version_id }}
+          JOURNAL_SOURCE_SHA: ${{ steps.coordinated.outputs.source_sha }}
+          REQUESTED_SOURCE_SHA: ${{ needs.requested_source.outputs.source_sha }}
+          TRIGGER_MODE: ${{ needs.requested_source.outputs.trigger_mode }}
+        run: |
+          effective_source_sha="$REQUESTED_SOURCE_SHA"
+          recovery_mode=false
+
+          if [[ "$JOURNAL_ESTABLISHED" == true \
+            && "$ACTIVE_WORKER_VERSION" != "$JOURNAL_WORKER_VERSION" ]]; then
+            if [[ ! "$ACTIVE_WORKER_SOURCE" =~ ^[0-9a-f]{40}$ \
+              || "$ACTIVE_WORKER_SOURCE" == "$JOURNAL_SOURCE_SHA" ]]; then
+              echo "::error::Production is ahead of the journal without a safe deterministic source identity."
+              exit 1
+            fi
+            effective_source_sha="$ACTIVE_WORKER_SOURCE"
+            recovery_mode=true
+          elif [[ "$JOURNAL_ESTABLISHED" != true \
+            && "$ACTIVE_WORKER_SOURCE" =~ ^[0-9a-f]{40}$ \
+            && "$ACTIVE_WORKER_SOURCE" != "$REQUESTED_SOURCE_SHA" ]]; then
+            # A first-baseline run may have promoted Worker A before Pages or
+            # the journal completed, while main has already moved to B.
+            effective_source_sha="$ACTIVE_WORKER_SOURCE"
+            recovery_mode=true
+          fi
+
+          admitted=true
+          if [[ "$TRIGGER_MODE" == scheduled-resume ]]; then
+            admitted=false
+            if [[ "$recovery_mode" == true \
+              || "$ACTION" == stage \
+              || "$ACTION" == warm \
+              || "$ACTION" == replace-staged \
+              || ("$JOURNAL_ESTABLISHED" == true \
+                && "$JOURNAL_SOURCE_SHA" != "$REQUESTED_SOURCE_SHA") \
+              || ("$JOURNAL_ESTABLISHED" != true && "$ACTION" == complete) ]]; then
+              admitted=true
+            fi
+          fi
+
+          if [[ "$effective_source_sha" != "$REQUESTED_SOURCE_SHA" ]]; then
+            git cat-file -e "$effective_source_sha^{commit}" 2>/dev/null \
+              || git fetch --no-tags origin "$effective_source_sha"
+            git cat-file -e "$effective_source_sha^{commit}"
+          fi
+
+          precheck_needed=false
+          if [[ "$admitted" == true \
+            && "$TRIGGER_MODE" == scheduled-resume \
+            && "$recovery_mode" != true \
+            && "$ACTION" == warm ]]; then
+            precheck_needed=true
+          fi
+
+          echo "effective_source_sha=$effective_source_sha" >> "$GITHUB_OUTPUT"
+          echo "recovery_mode=$recovery_mode" >> "$GITHUB_OUTPUT"
+          echo "admitted=$admitted" >> "$GITHUB_OUTPUT"
+          echo "precheck_needed=$precheck_needed" >> "$GITHUB_OUTPUT"
+
+          echo "### Release control preflight" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Requested main: \`$REQUESTED_SOURCE_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Effective source: \`$effective_source_sha\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Worker action: \`$ACTION\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Repair-forward: \`$recovery_mode\`" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$admitted" != true ]]; then
+            echo "No unfinished release exists for the current main SHA." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Retry only immutable shadow readiness before rebuilding
+        id: precheck
+        if: steps.plan.outputs.precheck_needed == 'true'
+        run: |
+          npm run worker:warm -- \
+            --base-url "$FRANK_WORKER_BASE_URL" \
+            --worker-name "$FRANK_WORKER_SCRIPT" \
+            --expected-worker-version-id '${{ steps.resolve.outputs.candidate_version_id }}' \
+            --require-target-ready-all \
+            --allow-waiting \
+            --github-output "$GITHUB_OUTPUT" \
+            --summary-file "$GITHUB_STEP_SUMMARY" \
+            --summary-title "Scheduled shadow readiness" \
+            --attempts 3 \
+            --retry-delay-ms 3000
+        env:
+          FRANK_WARM_TOKEN: ${{ secrets.FRANK_WARM_TOKEN }}
+
+      - name: Decide whether expensive validation is needed
+        id: proceed
+        shell: bash
+        env:
+          ADMITTED: ${{ steps.plan.outputs.admitted }}
+          PRECHECK_NEEDED: ${{ steps.plan.outputs.precheck_needed }}
+          PRECHECK_READY: ${{ steps.precheck.outputs.ready_for_promotion }}
+        run: |
+          proceed="$ADMITTED"
+          if [[ "$PRECHECK_NEEDED" == true && "$PRECHECK_READY" != true ]]; then
+            proceed=false
+            echo "The immutable candidate is still waiting; full CI and Pages rebuild were skipped." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "proceed=$proceed" >> "$GITHUB_OUTPUT"
+
   build:
-    if: github.ref == 'refs/heads/main'
+    name: Validate and build exact candidate
+    needs: release_source
+    if: >-
+      needs.release_source.result == 'success' &&
+      needs.release_source.outputs.proceed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     outputs:
       build_id: ${{ steps.release.outputs.build_id }}
     steps:
-      - name: Checkout dispatched commit
+      - name: Checkout exact release commit
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.release_source.outputs.source_sha }}
+          fetch-depth: 0
 
       - name: Verify exact release commit
         shell: bash
-        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+        run: test "$(git rev-parse HEAD)" = '${{ needs.release_source.outputs.source_sha }}'
 
       - name: Setup Node
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
@@ -78,8 +318,8 @@ jobs:
         run: |
           build_id="$(npm run --silent release:build-id)"
           echo "build_id=$build_id" >> "$GITHUB_OUTPUT"
-          echo "### Release candidate" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Commit: \`$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Tested candidate" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: \`${{ needs.release_source.outputs.source_sha }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Pages build: \`$build_id\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload exact Pages artifact
@@ -87,30 +327,46 @@ jobs:
         with:
           path: dist
 
-  worker_release:
-    needs: build
+  shadow:
+    name: Classify and prepare shadow release
+    needs: [release_source, build]
     runs-on: ubuntu-latest
-    # Leave enough time for bounded provider calls and, critically, the
-    # restoration steps. A job-level cancellation cannot safely repair traffic.
     timeout-minutes: 30
+    permissions:
+      contents: read
+      pages: read
     environment:
       name: worker-production
-      url: https://frank-forecast.alswatchs.workers.dev
-    env:
-      FRANK_WORKER_BASE_URL: https://frank-forecast.alswatchs.workers.dev
-      FRANK_WORKER_SCRIPT: frank-forecast
+      deployment: false
     outputs:
+      action: ${{ steps.resolve.outputs.action }}
+      impact: ${{ steps.decision.outputs.impact }}
+      pages_changed: ${{ steps.decision.outputs.pages_changed }}
+      worker_change: ${{ steps.decision.outputs.worker_change }}
+      release_state: ${{ steps.state.outputs.release_state }}
+      ready_for_promotion: ${{ steps.state.outputs.ready_for_promotion }}
       candidate_version: ${{ steps.candidate.outputs.version_id }}
-      previous_version: ${{ steps.previous.outputs.version_id }}
+      previous_version: ${{ steps.resolve.outputs.production_version_id }}
+      previous_attestation: ${{ steps.attest.outputs.release_attestation }}
+      kv_gc_allowed: ${{ steps.attest.outputs.kv_gc_allowed }}
+      baseline_marker_required: ${{ steps.attest.outputs.baseline_marker_required }}
+      journal_established: ${{ steps.coordinated.outputs.established }}
+      journal_source_sha: ${{ steps.coordinated.outputs.source_sha }}
+      journal_pages_content_id: ${{ steps.coordinated.outputs.pages_content_id }}
+      journal_pages_artifact_build_id: ${{ steps.coordinated.outputs.pages_artifact_build_id }}
+      candidate_pages_content_id: ${{ steps.decision.outputs.pages_content_id }}
+      waiting_location_ids: ${{ steps.candidate_gate.outputs.waiting_location_ids }}
+      retry_after_seconds: ${{ steps.candidate_gate.outputs.retry_after_seconds }}
     steps:
-      - name: Checkout dispatched commit
+      - name: Checkout exact release commit with production history
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.release_source.outputs.source_sha }}
+          fetch-depth: 0
 
       - name: Verify exact release commit
         shell: bash
-        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+        run: test "$(git rev-parse HEAD)" = '${{ needs.release_source.outputs.source_sha }}'
 
       - name: Setup Node
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
@@ -121,119 +377,580 @@ jobs:
       - name: Install pinned release tooling
         run: npm ci
 
-      - name: Check deployment credentials
+      - name: Check shadow credentials
         shell: bash
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          FRANK_WARM_TOKEN: ${{ secrets.FRANK_WARM_TOKEN }}
         run: |
-          if [[ -z "$CLOUDFLARE_API_TOKEN" || -z "$CLOUDFLARE_ACCOUNT_ID" ]]; then
-            echo "::error::Cloudflare deployment credentials are not configured for worker-production."
+          if [[ -z "$CLOUDFLARE_API_TOKEN" || -z "$CLOUDFLARE_ACCOUNT_ID" \
+            || -z "$FRANK_WARM_TOKEN" ]]; then
+            echo "::error::Cloudflare credentials and FRANK_WARM_TOKEN are not configured for worker-production."
             exit 1
           fi
 
-      - name: Capture exact production version
-        id: previous
-        shell: bash
+      - name: Resolve resumable immutable candidate
+        id: resolve
         run: |
-          version_id="$(npm run --silent worker:active-version)"
-          echo "version_id=$version_id" >> "$GITHUB_OUTPUT"
+          node scripts/resolve-worker-release.mjs \
+            --source-sha '${{ needs.release_source.outputs.source_sha }}' \
+            --github-output "$GITHUB_OUTPUT"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Attest captured production release
-        id: previous_attestation
+        id: attest
         run: |
           npm run worker:attest-active-release -- \
             --base-url "$FRANK_WORKER_BASE_URL" \
             --worker-name "$FRANK_WORKER_SCRIPT" \
-            --expected-worker-version-id '${{ steps.previous.outputs.version_id }}' \
+            --expected-worker-version-id '${{ steps.resolve.outputs.production_version_id }}' \
             --github-output "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Read coordinated production journal
+        id: coordinated
+        run: npm run release:coordinated -- read --github-output "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Verify coordinated or recoverable split state
+        id: topology
+        shell: bash
+        env:
+          JOURNAL_ESTABLISHED: ${{ steps.coordinated.outputs.established }}
+          JOURNAL_WORKER_VERSION: ${{ steps.coordinated.outputs.worker_version_id }}
+          ACTIVE_WORKER_VERSION: ${{ steps.resolve.outputs.production_version_id }}
+          ACTIVE_WORKER_SOURCE: ${{ steps.resolve.outputs.production_source_sha }}
+          CANDIDATE_SOURCE: ${{ needs.release_source.outputs.source_sha }}
+          ATTESTATION_MODE: ${{ steps.attest.outputs.mode }}
+        run: |
+          mode=bootstrap
+          if [[ "$JOURNAL_ESTABLISHED" == true ]]; then
+            if [[ "$ACTIVE_WORKER_VERSION" == "$JOURNAL_WORKER_VERSION" ]]; then
+              mode=coordinated
+            elif [[ "$ACTIVE_WORKER_SOURCE" == "$CANDIDATE_SOURCE" ]]; then
+              mode=worker-ahead
+            else
+              echo "::error::Active Worker is neither the coordinated version nor this candidate."
+              exit 1
+            fi
+          elif [[ "$ATTESTATION_MODE" == bootstrap-unproven && -n "$ACTIVE_WORKER_SOURCE" ]]; then
+            echo "::error::Unproven bootstrap Worker unexpectedly has a deterministic release tag."
+            exit 1
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+
+      - name: Build candidate impact snapshot
+        run: |
+          node scripts/release-impact-snapshot.mjs \
+            --source-sha '${{ needs.release_source.outputs.source_sha }}' \
+            --provenance candidate \
+            --output candidate-impact.json
+
+      - name: Build coordinated production snapshot
+        if: steps.coordinated.outputs.established == 'true'
+        shell: bash
+        env:
+          BASE_SOURCE_SHA: ${{ steps.coordinated.outputs.source_sha }}
+        run: |
+          if [[ ! "$BASE_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Coordinated journal source SHA is invalid."
+            exit 1
+          fi
+          git cat-file -e "$BASE_SOURCE_SHA^{commit}" 2>/dev/null || git fetch --no-tags origin "$BASE_SOURCE_SHA"
+          node scripts/release-impact-snapshot.mjs \
+            --source-sha "$BASE_SOURCE_SHA" \
+            --provenance attested-production \
+            --output coordinated-impact.json
+
+      - name: Check live Pages against the coordinated journal
+        id: live_pages
+        if: steps.coordinated.outputs.established == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOURNAL_BUILD_ID: ${{ steps.coordinated.outputs.pages_artifact_build_id }}
+        run: |
+          page_url="$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq '.html_url')"
+          matches_journal=false
+          if node scripts/verify-pages-release.mjs \
+            --base-url "$page_url" \
+            --expected-build-id "$JOURNAL_BUILD_ID" \
+            --attempts 1 \
+            --timeout-ms 10000 \
+            --retry-delay-ms 1; then
+            matches_journal=true
+          fi
+          echo "matches_journal=$matches_journal" >> "$GITHUB_OUTPUT"
+          if [[ "$matches_journal" != true ]]; then
+            echo "Live Pages differs from the coordinated journal; the tested artifact will be repaired forward." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Classify post-baseline release impact
+        id: classify
+        if: steps.coordinated.outputs.established == 'true'
+        run: |
+          node scripts/release-impact.mjs \
+            --trusted-base coordinated-impact.json \
+            --trusted-base-sha '${{ steps.coordinated.outputs.source_sha }}' \
+            --candidate candidate-impact.json \
+            --candidate-sha '${{ needs.release_source.outputs.source_sha }}' \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Preserve the one-time conservative bootstrap
+        id: bootstrap
+        if: steps.coordinated.outputs.established != 'true'
+        shell: bash
+        run: |
+          warm_locations="$(jq -c '[.locations[].id]' candidate-impact.json)"
+          echo "impact=forecast-semantic" >> "$GITHUB_OUTPUT"
+          echo "automatic_promotion_allowed=true" >> "$GITHUB_OUTPUT"
+          echo "blocking_reasons=[]" >> "$GITHUB_OUTPUT"
+          echo "warm_location_ids=$warm_locations" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve effective release branch
+        id: decision
+        shell: bash
+        env:
+          RAW_IMPACT: ${{ steps.classify.outputs.impact || steps.bootstrap.outputs.impact }}
+          AUTOMATIC_ALLOWED: ${{ steps.classify.outputs.automatic_promotion_allowed || steps.bootstrap.outputs.automatic_promotion_allowed }}
+          BLOCKING_REASONS: ${{ steps.classify.outputs.blocking_reasons || steps.bootstrap.outputs.blocking_reasons }}
+          WARM_LOCATION_IDS: ${{ steps.classify.outputs.warm_location_ids || steps.bootstrap.outputs.warm_location_ids }}
+          JOURNAL_ESTABLISHED: ${{ steps.coordinated.outputs.established }}
+          LIVE_PAGES_MATCHES_JOURNAL: ${{ steps.live_pages.outputs.matches_journal }}
+        run: |
+          pages_changed=true
+          if [[ "$JOURNAL_ESTABLISHED" == true ]]; then
+            candidate_pages="$(jq -r '.pagesBuildId' candidate-impact.json)"
+            production_pages="$(jq -r '.pagesBuildId' coordinated-impact.json)"
+            if [[ "$production_pages" != '${{ steps.coordinated.outputs.pages_content_id }}' ]]; then
+              echo "::error::Coordinated journal Pages content does not match its source snapshot."
+              exit 1
+            fi
+            if [[ "$candidate_pages" == "$production_pages" ]]; then pages_changed=false; fi
+            if [[ "$LIVE_PAGES_MATCHES_JOURNAL" != true ]]; then pages_changed=true; fi
+          else
+            candidate_pages="$(jq -r '.pagesBuildId' candidate-impact.json)"
+          fi
+
+          impact="$RAW_IMPACT"
+          if [[ "$impact" == none || "$impact" == pages-only ]]; then
+            if [[ "$pages_changed" == true ]]; then impact=pages-only; else impact=none; fi
+          fi
+          worker_change=false
+          case "$impact" in
+            worker-nonsemantic|location-change|forecast-semantic) worker_change=true ;;
+            none|pages-only|breaking-api) ;;
+            *) echo "::error::Unknown release impact: $impact"; exit 1 ;;
+          esac
+
+          echo "impact=$impact" >> "$GITHUB_OUTPUT"
+          echo "pages_changed=$pages_changed" >> "$GITHUB_OUTPUT"
+          echo "pages_content_id=$candidate_pages" >> "$GITHUB_OUTPUT"
+          echo "worker_change=$worker_change" >> "$GITHUB_OUTPUT"
+          echo "automatic_promotion_allowed=$AUTOMATIC_ALLOWED" >> "$GITHUB_OUTPUT"
+          echo "blocking_reasons=$BLOCKING_REASONS" >> "$GITHUB_OUTPUT"
+          echo "warm_location_ids=$WARM_LOCATION_IDS" >> "$GITHUB_OUTPUT"
+
+      - name: Recheck effective source before any shadow mutation
+        id: fresh
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECOVERY_MODE: ${{ needs.release_source.outputs.recovery_mode }}
+          ACTION: ${{ steps.resolve.outputs.action }}
+          ACTIVE_WORKER_SOURCE: ${{ steps.resolve.outputs.production_source_sha }}
+          SOURCE_SHA: ${{ needs.release_source.outputs.source_sha }}
+        run: |
+          current=false
+          if [[ "$RECOVERY_MODE" == true ]]; then
+            if [[ "$ACTION" == complete && "$ACTIVE_WORKER_SOURCE" == "$SOURCE_SHA" ]]; then
+              current=true
+            fi
+          else
+            current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+            if [[ "${current_main,,}" == "$SOURCE_SHA" ]]; then current=true; fi
+          fi
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          if [[ "$current" != true ]]; then
+            echo "Candidate was superseded before staging; production was not changed." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Block unsafe automatic branches
+        if: steps.fresh.outputs.current == 'true'
+        shell: bash
+        env:
+          IMPACT: ${{ steps.decision.outputs.impact }}
+          AUTOMATIC_ALLOWED: ${{ steps.decision.outputs.automatic_promotion_allowed }}
+          BLOCKING_REASONS: ${{ steps.decision.outputs.blocking_reasons }}
+        run: |
+          if [[ "$IMPACT" == breaking-api || "$AUTOMATIC_ALLOWED" != true ]]; then
+            echo "::error::Release requires an audited expand-contract change: $BLOCKING_REASONS"
+            exit 1
+          fi
+
+      - name: Remove irrelevant or superseded zero-traffic candidate
+        id: clear_staged
+        if: >-
+          steps.fresh.outputs.current == 'true' &&
+          steps.resolve.outputs.deployment_mode == 'staged' &&
+          (steps.decision.outputs.worker_change != 'true' ||
+            steps.resolve.outputs.action == 'replace-staged')
+        run: |
+          npm run worker:deploy-versions -- \
+            '${{ steps.resolve.outputs.production_version_id }}@100%' \
+            --yes \
+            --message 'Remove superseded zero-traffic candidate before ${{ needs.release_source.outputs.source_sha }}'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Verify captured production after zero-traffic cleanup
+        if: steps.clear_staged.outcome == 'success'
+        run: |
+          npm run --silent worker:verify-deployment -- \
+            '${{ steps.resolve.outputs.production_version_id }}@100'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Upload candidate Worker version without traffic
         id: upload
-        shell: bash
+        if: >-
+          steps.fresh.outputs.current == 'true' &&
+          steps.decision.outputs.worker_change == 'true' &&
+          (steps.resolve.outputs.action == 'upload' ||
+            (steps.resolve.outputs.action == 'replace-staged' &&
+              steps.resolve.outputs.candidate_version_id == ''))
         run: |
-          version_tag="gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           npm run worker:upload-version -- \
-            --tag "$version_tag" \
-            --message "Candidate for $GITHUB_SHA" \
+            --tag '${{ steps.resolve.outputs.candidate_tag }}' \
+            --message 'Candidate for ${{ needs.release_source.outputs.source_sha }}' \
             --strict
-          echo "tag=$version_tag" >> "$GITHUB_OUTPUT"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Resolve immutable candidate version
+      - name: Resolve exact candidate version
         id: candidate
+        if: >-
+          steps.fresh.outputs.current == 'true' &&
+          steps.decision.outputs.worker_change == 'true'
         shell: bash
-        run: |
-          version_id="$(npm run --silent worker:version-by-tag -- '${{ steps.upload.outputs.tag }}')"
-          echo "version_id=$version_id" >> "$GITHUB_OUTPUT"
         env:
+          ACTION: ${{ steps.resolve.outputs.action }}
+          RESOLVED_CANDIDATE: ${{ steps.resolve.outputs.candidate_version_id }}
+          PRODUCTION_VERSION: ${{ steps.resolve.outputs.production_version_id }}
+          CANDIDATE_TAG: ${{ steps.resolve.outputs.candidate_tag }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          case "$ACTION" in
+            upload) version_id="$(npm run --silent worker:version-by-tag -- "$CANDIDATE_TAG")" ;;
+            stage|warm) version_id="$RESOLVED_CANDIDATE" ;;
+            replace-staged)
+              version_id="$RESOLVED_CANDIDATE"
+              if [[ -z "$version_id" ]]; then
+                version_id="$(npm run --silent worker:version-by-tag -- "$CANDIDATE_TAG")"
+              fi
+              ;;
+            complete) version_id="$PRODUCTION_VERSION" ;;
+            *) echo "::error::Unsupported resolved Worker action: $ACTION"; exit 1 ;;
+          esac
+          if [[ -z "$version_id" ]]; then
+            echo "::error::Candidate version was not resolved."
+            exit 1
+          fi
+          echo "version_id=$version_id" >> "$GITHUB_OUTPUT"
 
       - name: Include candidate at zero traffic
         id: stage
-        shell: bash
+        if: >-
+          steps.candidate.outputs.version_id != '' &&
+          (steps.resolve.outputs.action == 'upload' ||
+            steps.resolve.outputs.action == 'stage' ||
+            steps.resolve.outputs.action == 'replace-staged')
         run: |
           npm run worker:deploy-versions -- \
-            '${{ steps.previous.outputs.version_id }}@100%' \
+            '${{ steps.resolve.outputs.production_version_id }}@100%' \
             '${{ steps.candidate.outputs.version_id }}@0%' \
             --yes \
-            --message "Stage $GITHUB_SHA at zero traffic"
+            --message 'Stage ${{ needs.release_source.outputs.source_sha }} at zero traffic'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Verify zero-traffic deployment
-        run: npm run --silent worker:verify-deployment -- '${{ steps.previous.outputs.version_id }}@100' '${{ steps.candidate.outputs.version_id }}@0'
+        if: >-
+          steps.candidate.outputs.version_id != '' &&
+          steps.resolve.outputs.action != 'complete'
+        run: |
+          npm run --silent worker:verify-deployment -- \
+            '${{ steps.resolve.outputs.production_version_id }}@100' \
+            '${{ steps.candidate.outputs.version_id }}@0'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Build shadow caches and verify exact candidate
-        id: candidate_gate
+      - name: Build shadow caches without failing on typed provider wait
+        id: candidate_warm
+        if: >-
+          steps.candidate.outputs.version_id != '' &&
+          steps.decision.outputs.impact != 'worker-nonsemantic' &&
+          steps.resolve.outputs.action != 'complete'
         run: |
           npm run worker:warm -- \
             --base-url "$FRANK_WORKER_BASE_URL" \
             --worker-name "$FRANK_WORKER_SCRIPT" \
             --expected-worker-version-id '${{ steps.candidate.outputs.version_id }}' \
             --require-target-ready-all \
+            --allow-waiting \
+            --github-output "$GITHUB_OUTPUT" \
             --summary-file "$GITHUB_STEP_SUMMARY" \
             --summary-title "Candidate shadow readiness" \
             --attempts 6 \
             --retry-delay-ms 5000
+        env:
+          FRANK_WARM_TOKEN: ${{ secrets.FRANK_WARM_TOKEN }}
+
+      - name: Inspect reusable or already-promoted caches read-only
+        id: candidate_read
+        if: >-
+          steps.candidate.outputs.version_id != '' &&
+          (steps.decision.outputs.impact == 'worker-nonsemantic' ||
+            steps.resolve.outputs.action == 'complete')
+        run: |
+          npm run worker:warm -- \
+            --base-url "$FRANK_WORKER_BASE_URL" \
+            --expected-worker-version-id '${{ steps.candidate.outputs.version_id }}' \
+            --require-target-ready-all \
+            --read-only \
+            --allow-waiting \
+            --github-output "$GITHUB_OUTPUT" \
+            --summary-file "$GITHUB_STEP_SUMMARY" \
+            --summary-title "Candidate read-only readiness" \
+            --attempts 6 \
+            --retry-delay-ms 5000
+
+      - name: Collect typed candidate readiness
+        id: candidate_gate
+        if: steps.candidate.outputs.version_id != ''
+        shell: bash
+        env:
+          WARM_READY: ${{ steps.candidate_warm.outputs.ready_for_promotion }}
+          WARM_WAITING: ${{ steps.candidate_warm.outputs.waiting_location_ids }}
+          WARM_RETRY: ${{ steps.candidate_warm.outputs.retry_after_seconds }}
+          READ_READY: ${{ steps.candidate_read.outputs.ready_for_promotion }}
+          READ_WAITING: ${{ steps.candidate_read.outputs.waiting_location_ids }}
+          READ_RETRY: ${{ steps.candidate_read.outputs.retry_after_seconds }}
+        run: |
+          ready="${WARM_READY:-$READ_READY}"
+          waiting="${WARM_WAITING:-$READ_WAITING}"
+          retry="${WARM_RETRY:-$READ_RETRY}"
+          if [[ "$ready" != true && "$ready" != false ]]; then
+            echo "::error::Candidate gate did not return typed readiness."
+            exit 1
+          fi
+          echo "ready_for_promotion=$ready" >> "$GITHUB_OUTPUT"
+          echo "waiting_location_ids=${waiting:-[]}" >> "$GITHUB_OUTPUT"
+          echo "retry_after_seconds=${retry:-0}" >> "$GITHUB_OUTPUT"
+
+      - name: Recheck main after shadow preparation
+        id: fresh_after_gate
+        if: >-
+          steps.candidate.outputs.version_id != '' &&
+          steps.resolve.outputs.action != 'complete'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.release_source.outputs.source_sha }}
+        run: |
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          current=false
+          if [[ "${current_main,,}" == "$SOURCE_SHA" ]]; then current=true; fi
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          if [[ "$current" != true ]]; then
+            echo "Candidate was superseded while preparing caches and will be removed from traffic state." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Discard superseded prepared candidate
+        id: discard_superseded
+        if: steps.fresh_after_gate.outputs.current == 'false'
+        run: |
+          npm run worker:deploy-versions -- \
+            '${{ steps.resolve.outputs.production_version_id }}@100%' \
+            --yes \
+            --message 'Discard superseded shadow ${{ needs.release_source.outputs.source_sha }}'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Verify production after superseded candidate cleanup
+        if: steps.discard_superseded.outcome == 'success'
+        run: |
+          npm run --silent worker:verify-deployment -- \
+            '${{ steps.resolve.outputs.production_version_id }}@100'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Restore captured production after a hard shadow failure
+        id: restore
+        if: >-
+          failure() &&
+          steps.resolve.outputs.production_version_id != '' &&
+          steps.resolve.outputs.action != 'complete' &&
+          (steps.clear_staged.outcome != 'skipped' ||
+            steps.stage.outcome != 'skipped' ||
+            steps.discard_superseded.outcome != 'skipped' ||
+            steps.resolve.outputs.action == 'warm')
+        run: |
+          npm run worker:deploy-versions -- \
+            '${{ steps.resolve.outputs.production_version_id }}@100%' \
+            --yes \
+            --message 'Restore production after failed shadow release ${{ needs.release_source.outputs.source_sha }}'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Verify restored production after a hard shadow failure
+        if: ${{ always() && steps.restore.outcome != 'skipped' }}
+        run: npm run --silent worker:verify-deployment -- '${{ steps.resolve.outputs.production_version_id }}@100'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Record shadow outcome
+        id: state
+        if: always()
+        shell: bash
+        env:
+          CURRENT: ${{ steps.fresh.outputs.current }}
+          IMPACT: ${{ steps.decision.outputs.impact }}
+          ACTION: ${{ steps.resolve.outputs.action }}
+          TRIGGER_MODE: ${{ needs.release_source.outputs.trigger_mode }}
+          GATE_READY: ${{ steps.candidate_gate.outputs.ready_for_promotion }}
+          CANDIDATE_VERSION: ${{ steps.candidate.outputs.version_id }}
+          POST_GATE_CURRENT: ${{ steps.fresh_after_gate.outputs.current }}
+        run: |
+          release_state=failed
+          ready=false
+          if [[ "$CURRENT" != true ]]; then
+            release_state=superseded
+          elif [[ -n "$CANDIDATE_VERSION" && "$ACTION" != complete \
+            && "$POST_GATE_CURRENT" != true ]]; then
+            release_state=superseded
+          elif [[ "$IMPACT" == none ]]; then
+            release_state=noop
+          elif [[ "$IMPACT" == pages-only ]]; then
+            release_state=pages-ready
+          elif [[ "$GATE_READY" == true ]]; then
+            release_state=ready
+            ready=true
+          elif [[ "$GATE_READY" == false ]]; then
+            release_state=waiting
+          fi
+          echo "release_state=$release_state" >> "$GITHUB_OUTPUT"
+          echo "ready_for_promotion=$ready" >> "$GITHUB_OUTPUT"
+
+          echo "### Impact-aware release" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Impact: \`$IMPACT\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- State: \`$release_state\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Worker action: \`$ACTION\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Waiting locations: \`${{ steps.candidate_gate.outputs.waiting_location_ids || 'none' }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Retry after: \`${{ steps.candidate_gate.outputs.retry_after_seconds || '0' }} seconds\`" >> "$GITHUB_STEP_SUMMARY"
+
+  promote_worker:
+    name: Promote exact-ready Worker
+    needs: [release_source, build, shadow]
+    if: >-
+      needs.shadow.outputs.worker_change == 'true' &&
+      needs.shadow.outputs.ready_for_promotion == 'true' &&
+      needs.shadow.outputs.release_state == 'ready' &&
+      needs.shadow.outputs.action != 'complete'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: worker-production
+      url: https://frank-forecast.alswatchs.workers.dev
+    outputs:
+      version_id: ${{ needs.shadow.outputs.candidate_version }}
+    steps:
+      - name: Checkout exact release commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.release_source.outputs.source_sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install pinned release tooling
+        run: npm ci
+
+      - name: Check production credentials
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [[ -z "$CLOUDFLARE_API_TOKEN" || -z "$CLOUDFLARE_ACCOUNT_ID" ]]; then
+            echo "::error::Cloudflare credentials are not configured for worker-production."
+            exit 1
+          fi
+
+      - name: Verify exact staged deployment before promotion
+        run: |
+          npm run --silent worker:verify-deployment -- \
+            '${{ needs.shadow.outputs.previous_version }}@100' \
+            '${{ needs.shadow.outputs.candidate_version }}@0'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Fail closed if main moved before promotion
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "${current_main,,}" != '${{ needs.release_source.outputs.source_sha }}' ]]; then
+            echo "::error::Candidate is no longer current main; it will be discarded without promotion."
+            exit 1
+          fi
 
       - name: Promote exact-ready candidate to all traffic
         id: promote
-        shell: bash
         run: |
           npm run worker:deploy-versions -- \
-            '${{ steps.candidate.outputs.version_id }}@100%' \
+            '${{ needs.shadow.outputs.candidate_version }}@100%' \
             --yes \
-            --message "Promote exact-ready release $GITHUB_SHA"
+            --message 'Promote exact-ready release ${{ needs.release_source.outputs.source_sha }}'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Verify promoted deployment
-        run: npm run --silent worker:verify-deployment -- '${{ steps.candidate.outputs.version_id }}@100'
+        run: npm run --silent worker:verify-deployment -- '${{ needs.shadow.outputs.candidate_version }}@100'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Verify exact-ready ordinary traffic
-        id: ordinary_gate
         run: |
           npm run worker:warm -- \
             --base-url "$FRANK_WORKER_BASE_URL" \
-            --expected-worker-version-id '${{ steps.candidate.outputs.version_id }}' \
+            --expected-worker-version-id '${{ needs.shadow.outputs.candidate_version }}' \
             --require-target-ready-all \
             --read-only \
             --summary-file "$GITHUB_STEP_SUMMARY" \
@@ -241,75 +958,48 @@ jobs:
             --attempts 5 \
             --retry-delay-ms 3000
 
-      - name: Restore captured production version after failure
+      - name: Restore captured production version after promotion failure
         id: restore
-        # Staging can mutate the control plane and still exit non-zero. Once a
-        # candidate upload succeeded, normalize every later failure back to the
-        # exact captured deployment instead of relying on a step outcome guess.
-        if: ${{ failure() && steps.previous.outputs.version_id != '' && steps.upload.outcome == 'success' }}
-        shell: bash
+        if: ${{ failure() }}
         run: |
           npm run worker:deploy-versions -- \
-            '${{ steps.previous.outputs.version_id }}@100%' \
+            '${{ needs.shadow.outputs.previous_version }}@100%' \
             --yes \
-            --message "Restore exact production after failed release $GITHUB_SHA"
+            --message 'Restore exact production after failed release ${{ needs.release_source.outputs.source_sha }}'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Verify restored production version
-        # Verify even when Wrangler reported that restoration failed: the API
-        # may have accepted the change before the client lost its response.
         if: ${{ always() && steps.restore.outcome != 'skipped' }}
-        run: npm run --silent worker:verify-deployment -- '${{ steps.previous.outputs.version_id }}@100'
+        run: npm run --silent worker:verify-deployment -- '${{ needs.shadow.outputs.previous_version }}@100'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Record coordinated Worker baseline
-        id: baseline_marker
-        # The first pre-architecture Worker cannot attest release metadata.
-        # Record the successful handover once; any later unproven capture then
-        # fails closed instead of repeatedly receiving the bootstrap exception.
-        if: ${{ success() && steps.previous_attestation.outputs.baseline_marker_required == 'true' }}
-        run: npm run worker:mark-baseline
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      - name: Garbage-collect superseded forecast generations
-        id: kv_gc
-        # This is deliberately after the restoration steps. A cleanup failure
-        # must never roll traffic back to a Worker whose stale KV generation
-        # may already have been deleted.
-        if: ${{ success() && steps.previous_attestation.outputs.kv_gc_allowed == 'true' }}
-        run: |
-          npm run worker:gc-kv -- \
-            --apply \
-            --attested-active-release '${{ steps.previous_attestation.outputs.release_attestation }}'
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      - name: Summarize Worker release
+      - name: Summarize Worker promotion
         if: always()
         shell: bash
         run: |
-          echo "### Worker release gate" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Commit: \`$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Previous version: \`${{ steps.previous.outputs.version_id || 'not captured' }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Captured release: \`${{ steps.previous_attestation.outputs.mode || 'not attested' }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Candidate version: \`${{ steps.candidate.outputs.version_id || 'not resolved' }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Candidate gate: exact current target" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Compatibility gate: breaking APIs blocked without continuous adapters" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Post-promotion gate: read-only ordinary traffic" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Superseded KV cleanup: \`${{ steps.kv_gc.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Baseline marker: \`${{ steps.baseline_marker.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Worker production" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Previous: \`${{ needs.shadow.outputs.previous_version }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Candidate: \`${{ needs.shadow.outputs.candidate_version }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Promotion: \`${{ steps.promote.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Automatic restore: \`${{ steps.restore.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
 
   pages_release:
-    needs: [build, worker_release]
+    name: Publish tested Pages artifact
+    needs: [release_source, build, shadow, promote_worker]
+    if: >-
+      always() &&
+      needs.build.result == 'success' &&
+      needs.shadow.result == 'success' &&
+      needs.shadow.outputs.pages_changed == 'true' &&
+      (needs.shadow.outputs.impact == 'pages-only' ||
+        (needs.shadow.outputs.worker_change == 'true' &&
+          needs.shadow.outputs.ready_for_promotion == 'true' &&
+          (needs.shadow.outputs.action == 'complete' ||
+            needs.promote_worker.result == 'success')))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -319,16 +1009,33 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Checkout dispatched commit
+      - name: Checkout exact release commit
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.release_source.outputs.source_sha }}
 
       - name: Setup Node
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
+
+      - name: Fail closed if main moved before Pages-only publication
+        if: >-
+          needs.shadow.outputs.impact == 'pages-only' &&
+          needs.release_source.outputs.recovery_mode != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.release_source.outputs.source_sha }}
+        run: |
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "${current_main,,}" != "$SOURCE_SHA" ]]; then
+            echo "::error::Pages-only candidate is no longer current main; nothing was published."
+            exit 1
+          fi
 
       - name: Deploy the tested Pages artifact
         id: deployment
@@ -340,12 +1047,229 @@ jobs:
             --base-url '${{ steps.deployment.outputs.page_url }}' \
             --expected-build-id '${{ needs.build.outputs.build_id }}'
 
-      - name: Summarize production release
+      - name: Summarize Pages publication
         if: always()
         shell: bash
         run: |
-          echo "### Production release" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Commit: \`$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Worker: \`${{ needs.worker_release.outputs.candidate_version }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Pages production" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: \`${{ needs.release_source.outputs.source_sha }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Pages build: \`${{ needs.build.outputs.build_id }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- URL: ${{ steps.deployment.outputs.page_url }}" >> "$GITHUB_STEP_SUMMARY"
+
+  finalize_release:
+    name: Record coordinated production
+    needs: [release_source, build, shadow, promote_worker, pages_release]
+    if: >-
+      always() &&
+      needs.build.result == 'success' &&
+      needs.shadow.result == 'success' &&
+      (needs.shadow.outputs.impact == 'none' ||
+        (needs.shadow.outputs.impact == 'pages-only' &&
+          needs.pages_release.result == 'success') ||
+        (needs.shadow.outputs.worker_change == 'true' &&
+          needs.shadow.outputs.ready_for_promotion == 'true' &&
+          (needs.shadow.outputs.action == 'complete' ||
+            needs.promote_worker.result == 'success') &&
+          (needs.shadow.outputs.pages_changed != 'true' ||
+            needs.pages_release.result == 'success')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pages: read
+    environment:
+      name: worker-production
+      deployment: false
+    steps:
+      - name: Checkout exact coordinated source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.release_source.outputs.source_sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install pinned release tooling
+        run: npm ci
+
+      - name: Guard a no-op journal advance against stale main
+        if: >-
+          needs.shadow.outputs.impact == 'none' &&
+          needs.release_source.outputs.recovery_mode != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.release_source.outputs.source_sha }}
+        run: |
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "${current_main,,}" != "$SOURCE_SHA" ]]; then
+            echo "::error::No-op source is no longer current main; journal was not advanced."
+            exit 1
+          fi
+
+      - name: Resolve exact live identities for the journal
+        id: live_identity
+        shell: bash
+        env:
+          WORKER_CHANGE: ${{ needs.shadow.outputs.worker_change }}
+          PAGES_CHANGED: ${{ needs.shadow.outputs.pages_changed }}
+          PREVIOUS_WORKER_VERSION: ${{ needs.shadow.outputs.previous_version }}
+          CANDIDATE_WORKER_VERSION: ${{ needs.shadow.outputs.candidate_version }}
+          JOURNAL_PAGES_ARTIFACT_BUILD_ID: ${{ needs.shadow.outputs.journal_pages_artifact_build_id }}
+          DEPLOYED_PAGE_URL: ${{ needs.pages_release.outputs.page_url }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          worker_version="$PREVIOUS_WORKER_VERSION"
+          if [[ "$WORKER_CHANGE" == true ]]; then worker_version="$CANDIDATE_WORKER_VERSION"; fi
+
+          pages_artifact_build_id="$JOURNAL_PAGES_ARTIFACT_BUILD_ID"
+          if [[ "$PAGES_CHANGED" == true ]]; then
+            pages_artifact_build_id='${{ needs.build.outputs.build_id }}'
+          fi
+
+          page_url="$DEPLOYED_PAGE_URL"
+          if [[ -z "$page_url" ]]; then
+            page_url="$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq '.html_url')"
+          fi
+          if [[ -z "$worker_version" || -z "$pages_artifact_build_id" || -z "$page_url" ]]; then
+            echo "::error::Coordinated live identity is incomplete."
+            exit 1
+          fi
+
+          echo "worker_version_id=$worker_version" >> "$GITHUB_OUTPUT"
+          echo "pages_artifact_build_id=$pages_artifact_build_id" >> "$GITHUB_OUTPUT"
+          echo "page_url=$page_url" >> "$GITHUB_OUTPUT"
+
+      - name: Reverify exact live Worker deployment
+        run: |
+          npm run --silent worker:verify-deployment -- \
+            '${{ steps.live_identity.outputs.worker_version_id }}@100'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Reverify changed Worker readiness without provider calls
+        if: needs.shadow.outputs.worker_change == 'true'
+        run: |
+          npm run worker:warm -- \
+            --base-url "$FRANK_WORKER_BASE_URL" \
+            --expected-worker-version-id '${{ steps.live_identity.outputs.worker_version_id }}' \
+            --require-target-ready-all \
+            --read-only \
+            --summary-file "$GITHUB_STEP_SUMMARY" \
+            --summary-title "Final live Worker readiness" \
+            --attempts 5 \
+            --retry-delay-ms 3000
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Reattest unchanged Worker API identity without forecast freshness
+        id: unchanged_worker_attestation
+        if: needs.shadow.outputs.worker_change != 'true'
+        run: |
+          npm run worker:attest-active-release -- \
+            --base-url "$FRANK_WORKER_BASE_URL" \
+            --worker-name "$FRANK_WORKER_SCRIPT" \
+            --expected-worker-version-id '${{ steps.live_identity.outputs.worker_version_id }}' \
+            --github-output "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Reverify exact live Pages artifact
+        run: |
+          node scripts/verify-pages-release.mjs \
+            --base-url '${{ steps.live_identity.outputs.page_url }}' \
+            --expected-build-id '${{ steps.live_identity.outputs.pages_artifact_build_id }}'
+
+      - name: Record coordinated Worker baseline
+        id: baseline_marker
+        if: needs.shadow.outputs.baseline_marker_required == 'true'
+        run: npm run worker:mark-baseline
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Record coordinated Worker and Pages identity
+        id: coordinated
+        shell: bash
+        env:
+          IMPACT: ${{ needs.shadow.outputs.impact }}
+          JOURNAL_ESTABLISHED: ${{ needs.shadow.outputs.journal_established }}
+          JOURNAL_SOURCE_SHA: ${{ needs.shadow.outputs.journal_source_sha }}
+          CANDIDATE_PAGES_CONTENT_ID: ${{ needs.shadow.outputs.candidate_pages_content_id }}
+          LIVE_WORKER_VERSION: ${{ steps.live_identity.outputs.worker_version_id }}
+          LIVE_PAGES_ARTIFACT_BUILD_ID: ${{ steps.live_identity.outputs.pages_artifact_build_id }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          expected_previous=none
+          if [[ "$JOURNAL_ESTABLISHED" == true ]]; then expected_previous="$JOURNAL_SOURCE_SHA"; fi
+
+          npm run release:coordinated -- record \
+            --source-sha '${{ needs.release_source.outputs.source_sha }}' \
+            --worker-version-id "$LIVE_WORKER_VERSION" \
+            --pages-content-id "$CANDIDATE_PAGES_CONTENT_ID" \
+            --pages-artifact-build-id "$LIVE_PAGES_ARTIFACT_BUILD_ID" \
+            --expected-previous-source-sha "$expected_previous" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Garbage-collect superseded forecast generations
+        id: kv_gc
+        if: >-
+          needs.shadow.outputs.kv_gc_allowed == 'true' &&
+          needs.shadow.outputs.journal_established == 'true' &&
+          needs.shadow.outputs.worker_change == 'true'
+        continue-on-error: true
+        run: |
+          npm run worker:gc-kv -- \
+            --apply \
+            --attested-active-release '${{ needs.shadow.outputs.previous_attestation }}'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Summarize coordinated release
+        if: always()
+        shell: bash
+        run: |
+          echo "### Coordinated production journal" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Source: \`${{ needs.release_source.outputs.source_sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Worker: \`${{ steps.coordinated.outputs.worker_version_id || 'not recorded' }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Pages content: \`${{ steps.coordinated.outputs.pages_content_id || 'not recorded' }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Pages artifact: \`${{ steps.coordinated.outputs.pages_artifact_build_id || 'not recorded' }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Baseline marker: \`${{ steps.baseline_marker.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- KV maintenance: \`${{ steps.kv_gc.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  release_summary:
+    name: Summarize release outcome
+    needs: [requested_source, release_source, build, shadow, promote_worker, pages_release, finalize_release]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Explain release state
+        shell: bash
+        run: |
+          echo "### FRANK delivery result" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Source: \`${{ needs.release_source.outputs.source_sha || 'not selected' }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Impact: \`${{ needs.shadow.outputs.impact || 'not classified' }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- State: \`${{ needs.shadow.outputs.release_state || 'not started' }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Shadow preparation: \`${{ needs.shadow.result }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Worker production: \`${{ needs.promote_worker.result }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Pages production: \`${{ needs.pages_release.result }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Coordinated journal: \`${{ needs.finalize_release.result }}\`" >> "$GITHUB_STEP_SUMMARY"
+          if [[ '${{ needs.release_source.outputs.proceed }}' == false \
+            && '${{ needs.release_source.outputs.action }}' == warm ]]; then
+            echo "- Scheduled precheck: waiting on \`${{ needs.release_source.outputs.waiting_location_ids || 'unknown' }}\`" \
+              >> "$GITHUB_STEP_SUMMARY"
+            echo "Full CI and the Pages artifact were not rebuilt on this waiting tick." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [[ '${{ needs.shadow.outputs.release_state }}' == waiting ]]; then
+            echo "The candidate remains at zero traffic. A later scheduled run may resume it." >> "$GITHUB_STEP_SUMMARY"
+          fi

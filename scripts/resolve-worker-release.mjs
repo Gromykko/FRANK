@@ -8,7 +8,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 //     [--github-output <path>]
 // GitHub outputs: action, source_sha, candidate_tag, deployment_mode,
 // production_version_id/source_sha, candidate_version_id, and the currently
-// staged candidate version/source identities (when present).
+// staged candidate version/source identities (when present). Deployed source
+// identities come from exact `versions view <id>` reads; the capped recent
+// list is used only to discover an uploaded version that is not deployed.
 
 const execFileAsync = promisify(execFile);
 const WRANGLER_CLI = fileURLToPath(new URL('../node_modules/wrangler/bin/wrangler.js', import.meta.url));
@@ -91,33 +93,54 @@ function deploymentFingerprint(value) {
   ].join(':');
 }
 
-function resolveTaggedCandidate(versionsList, candidateTag) {
+function normalizeVersionView(value, expectedVersionId, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${label} did not return a version object.`);
+  }
+  const versionId = requireVersionId(value.id, label);
+  if (versionId !== expectedVersionId) {
+    throw new Error(`${label} returned a different Worker version ID.`);
+  }
+  const annotations = value.annotations;
+  if (!annotations || typeof annotations !== 'object' || Array.isArray(annotations)) {
+    throw new Error(`${label} annotations are malformed.`);
+  }
+  const tag = annotations['workers/tag'];
+  if (tag !== undefined && typeof tag !== 'string') {
+    throw new Error(`${label} tag is malformed.`);
+  }
+  const sourceMatch = typeof tag === 'string' ? SOURCE_TAG.exec(tag) : null;
+  return Object.freeze({
+    versionId,
+    tag: tag ?? '',
+    sourceSha: sourceMatch ? sourceMatch[1].toLowerCase() : '',
+  });
+}
+
+function resolveTaggedCandidate(versionsList, candidateTag, deployedVersions) {
   if (!Array.isArray(versionsList)) {
     throw new Error('Expected Wrangler versions list output to be an array.');
   }
 
-  const matches = versionsList.filter(
-    (version) => version?.annotations?.['workers/tag'] === candidateTag,
-  );
-  if (matches.length > 1) {
+  const deployedIds = new Set(deployedVersions.map(({ versionId }) => versionId));
+  const matches = deployedVersions
+    .filter(({ tag }) => tag === candidateTag)
+    .map(({ versionId }) => versionId);
+  for (const version of versionsList) {
+    if (version?.annotations?.['workers/tag'] !== candidateTag) continue;
+    const versionId = requireVersionId(
+      version?.id,
+      `Worker candidate tagged ${candidateTag}`,
+    );
+    // Exact `versions view` responses are authoritative for deployed IDs. The
+    // recent-version list is capped and must never supply their identities.
+    if (!deployedIds.has(versionId)) matches.push(versionId);
+  }
+  if (new Set(matches).size !== matches.length || matches.length > 1) {
     throw new Error(`Candidate tag ${candidateTag} identifies more than one Worker version.`);
   }
   if (matches.length === 0) return '';
-  return requireVersionId(matches[0]?.id, `Worker candidate tagged ${candidateTag}`);
-}
-
-function sourceShaForVersion(versionsList, versionId) {
-  if (!Array.isArray(versionsList)) {
-    throw new Error('Expected Wrangler versions list output to be an array.');
-  }
-  const matches = versionsList.filter((version) => version?.id === versionId);
-  if (matches.length !== 1) {
-    throw new Error(`Captured production version ${versionId} is missing or ambiguous.`);
-  }
-  const tag = matches[0]?.annotations?.['workers/tag'];
-  if (typeof tag !== 'string') return '';
-  const match = SOURCE_TAG.exec(tag);
-  return match ? match[1].toLowerCase() : '';
+  return matches[0];
 }
 
 /**
@@ -134,25 +157,37 @@ export function resolveWorkerReleasePlan({
   sourceSha,
   deploymentStatus,
   versionsList,
+  productionVersionView,
+  stagedCandidateVersionView,
 } = {}) {
   const normalizedSha = requireSourceSha(sourceSha);
   const candidateTag = candidateTagForSourceSha(normalizedSha);
   const deployment = normalizeDeploymentStatus(deploymentStatus);
-  const taggedCandidateVersionId = resolveTaggedCandidate(versionsList, candidateTag);
-  const productionSourceSha = sourceShaForVersion(
-    versionsList,
+  const productionVersion = normalizeVersionView(
+    productionVersionView,
     deployment.productionVersionId,
+    'Wrangler production version view',
   );
+  const stagedCandidateVersion = deployment.mode === 'staged'
+    ? normalizeVersionView(
+        stagedCandidateVersionView,
+        deployment.stagedCandidateVersionId,
+        'Wrangler staged candidate version view',
+      )
+    : null;
+  const taggedCandidateVersionId = resolveTaggedCandidate(
+    versionsList,
+    candidateTag,
+    [productionVersion, ...(stagedCandidateVersion ? [stagedCandidateVersion] : [])],
+  );
+  const productionSourceSha = productionVersion.sourceSha;
 
   let action;
   let candidateVersionId = taggedCandidateVersionId;
   let stagedCandidateVersionId = deployment.stagedCandidateVersionId;
   let stagedCandidateSourceSha = '';
   if (deployment.mode === 'staged') {
-    stagedCandidateSourceSha = sourceShaForVersion(
-      versionsList,
-      deployment.stagedCandidateVersionId,
-    );
+    stagedCandidateSourceSha = stagedCandidateVersion.sourceSha;
     if (taggedCandidateVersionId === deployment.stagedCandidateVersionId) {
       action = 'warm';
     } else {
@@ -207,8 +242,9 @@ async function runWranglerJson(args, label, execFileImpl) {
 }
 
 /**
- * Read-only, cross-platform inspection. The deployment is read twice so a
- * concurrent control-plane change cannot be mistaken for a resumable state.
+ * Read-only, cross-platform inspection. The deployment is read twice around
+ * the recent-list and exact-version reads so a concurrent control-plane change
+ * cannot be mistaken for a resumable state.
  */
 export async function inspectWorkerRelease({
   sourceSha,
@@ -229,6 +265,19 @@ export async function inspectWorkerRelease({
     'Wrangler versions list',
     execFileImpl,
   );
+  const deployment = normalizeDeploymentStatus(deploymentBefore);
+  const productionVersionView = await runWranglerJson(
+    ['versions', 'view', deployment.productionVersionId, '--json'],
+    'Wrangler production version view',
+    execFileImpl,
+  );
+  const stagedCandidateVersionView = deployment.mode === 'staged'
+    ? await runWranglerJson(
+        ['versions', 'view', deployment.stagedCandidateVersionId, '--json'],
+        'Wrangler staged candidate version view',
+        execFileImpl,
+      )
+    : undefined;
   const deploymentAfter = await runWranglerJson(
     ['deployments', 'status', '--json'],
     'Wrangler deployment status',
@@ -242,6 +291,8 @@ export async function inspectWorkerRelease({
     sourceSha: normalizedSha,
     deploymentStatus: deploymentAfter,
     versionsList,
+    productionVersionView,
+    stagedCandidateVersionView,
   });
 }
 
