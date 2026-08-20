@@ -11,21 +11,20 @@ import {
   supportedForecastApiPaths,
 } from './releaseContract';
 import type { ReleaseMetadata } from './releaseContract';
+import { FORECAST_WORKER_BASE } from './workerBase';
 
-const DEFAULT_FORECAST_WORKER_BASE = 'https://frank-forecast.alswatchs.workers.dev';
 const WEATHER_CACHE_KEY_PREFIX = 'frank_weather_data_v2';
 const CACHED_WORKER_FETCH_TIMEOUT_MS = 12 * 1000;
 const AUTHORITY_MARKER_SCHEMA_VERSION = 1;
 const AUTHORITY_MARKERS_TO_RETAIN = 8;
-
-const FORECAST_WORKER_BASE = (import.meta.env.VITE_FORECAST_WORKER_BASE ?? DEFAULT_FORECAST_WORKER_BASE).replace(/\/$/, '');
+const FORECAST_GENERATIONS_TO_RETAIN = 2;
 
 function getLegacyWeatherCacheKey(location: Pick<ForecastLocation, 'id'>): string {
   return `${WEATHER_CACHE_KEY_PREFIX}_${location.id}`;
 }
 
 function getAuthorityMarkerPrefix(location: ForecastLocation): string {
-  return `${getLegacyWeatherCacheKey(location)}_authority_`;
+  return `${getLegacyWeatherCacheKey(location)}_config${location.forecastConfigRevision}_authority_`;
 }
 
 type BrowserForecastReleaseIdentity = Pick<
@@ -34,11 +33,16 @@ type BrowserForecastReleaseIdentity = Pick<
 >;
 
 export function forecastReleaseCacheKey(
-  location: Pick<ForecastLocation, 'id'>,
+  location: Pick<ForecastLocation, 'id' | 'forecastConfigRevision'>,
   release: BrowserForecastReleaseIdentity,
 ): string {
+  if (!Number.isSafeInteger(location.forecastConfigRevision)
+    || location.forecastConfigRevision < 1) {
+    throw new Error(`Invalid forecast config revision for location ${location.id}.`);
+  }
   return [
     getLegacyWeatherCacheKey(location),
+    `config${location.forecastConfigRevision}`,
     `api${release.apiSchemaVersion}`,
     `model${release.modelRevision}`,
     `generation_${encodeURIComponent(release.dataGenerationId)}`,
@@ -61,9 +65,9 @@ function getWeatherCacheKey(location: ForecastLocation, data: WeatherData): stri
     && release.payloadVersion > 0
     && payloadVersion === release.payloadVersion
   ) {
-    // Never trust the human generation label as the only partition. API,
-    // model and payload can each change independently, and an accidental
-    // unchanged label must still create a different offline slot.
+    // Never trust the human generation label as the only partition. Location
+    // config, API, model and payload can each change independently, and an
+    // accidental unchanged label must still create a different offline slot.
     return forecastReleaseCacheKey(location, release);
   }
 
@@ -75,7 +79,7 @@ function getWeatherCacheKeys(location: ForecastLocation): string[] {
   const legacyKey = getLegacyWeatherCacheKey(location);
   const escapedLegacyKey = legacyKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const versionedKeyPattern = new RegExp(
-    `^${escapedLegacyKey}_(?:api\\d+_model\\d+_generation_.+_payload\\d+|v\\d+)$`,
+    `^${escapedLegacyKey}_(?:config${location.forecastConfigRevision}_api\\d+_model\\d+_generation_.+_payload\\d+|v\\d+)$`,
   );
   return [
     ...Object.keys(localStorage).filter((key) => versionedKeyPattern.test(key)),
@@ -136,6 +140,125 @@ function authorityMarkerEntries(location: ForecastLocation): Array<{
     || right.storageKey.localeCompare(left.storageKey));
 }
 
+type AuthorityMarkerEntry = ReturnType<typeof authorityMarkerEntries>[number];
+
+function compatibleAuthorityMarkerEntries(
+  location: ForecastLocation,
+): AuthorityMarkerEntry[] {
+  const compatibleReleaseSlots = new Set<string>();
+
+  for (const cacheKey of getWeatherCacheKeys(location)) {
+    try {
+      const raw = localStorage.getItem(cacheKey);
+      if (!raw) continue;
+      const data = reviveReadings(JSON.parse(raw));
+      if (
+        data.sources?.release
+        && isValidForecastPayload(data, location, { requireReleaseMetadata: true })
+        && getWeatherCacheKey(location, data) === cacheKey
+      ) {
+        compatibleReleaseSlots.add(cacheKey);
+      }
+    } catch {
+      // Corrupt, legacy and future-contract slots are never GC evidence. They
+      // remain available to the shell that owns their contract.
+    }
+  }
+
+  return authorityMarkerEntries(location)
+    .filter(({ marker }) => compatibleReleaseSlots.has(marker.cacheKey));
+}
+
+function newestDistinctAuthorityCacheKeys(
+  entries: readonly AuthorityMarkerEntry[],
+  limit: number,
+): Set<string> {
+  const cacheKeys = new Set<string>();
+  for (const { marker } of entries) {
+    if (cacheKeys.size >= limit) break;
+    cacheKeys.add(marker.cacheKey);
+  }
+  return cacheKeys;
+}
+
+function trimCompatibleAuthorityJournal(
+  location: ForecastLocation,
+  limit: number,
+): void {
+  const entries = compatibleAuthorityMarkerEntries(location);
+  if (entries.length <= limit) return;
+
+  // Keep the newest marker for every retained generation before filling the
+  // remaining journal capacity with duplicate observations. Otherwise eight
+  // ordinary refreshes of the current generation would evict the sole N-1
+  // marker and make a later rollback indistinguishable from an unknown slot.
+  const keep = new Set<string>();
+  const representedCacheKeys = new Set<string>();
+  for (const entry of entries) {
+    if (representedCacheKeys.has(entry.marker.cacheKey)) continue;
+    if (representedCacheKeys.size >= limit) break;
+    representedCacheKeys.add(entry.marker.cacheKey);
+    keep.add(entry.storageKey);
+  }
+  for (const entry of entries) {
+    if (keep.size >= limit) break;
+    keep.add(entry.storageKey);
+  }
+  for (const entry of entries) {
+    if (!keep.has(entry.storageKey)) localStorage.removeItem(entry.storageKey);
+  }
+}
+
+function pruneObsoleteForecastGenerations(location: ForecastLocation): void {
+  const initialEntries = compatibleAuthorityMarkerEntries(location);
+  const retainedCacheKeys = newestDistinctAuthorityCacheKeys(
+    initialEntries,
+    FORECAST_GENERATIONS_TO_RETAIN,
+  );
+  const obsoleteCacheKeys = [...new Set(
+    initialEntries
+      .map(({ marker }) => marker.cacheKey)
+      .filter((cacheKey) => !retainedCacheKeys.has(cacheKey)),
+  )];
+
+  for (const cacheKey of obsoleteCacheKeys) {
+    // Re-read the append-only journal before each deletion. A response from a
+    // second tab may have completed since this sweep began; request-start
+    // ordering, rather than completion order, still decides current and N-1.
+    let latestEntries = compatibleAuthorityMarkerEntries(location);
+    if (newestDistinctAuthorityCacheKeys(
+      latestEntries,
+      FORECAST_GENERATIONS_TO_RETAIN,
+    ).has(cacheKey)) continue;
+
+    for (const entry of latestEntries) {
+      if (entry.marker.cacheKey === cacheKey) {
+        localStorage.removeItem(entry.storageKey);
+      }
+    }
+
+    // Close the common cross-tab interleave between the first journal read and
+    // marker removal. If a newly appended authority marker promoted this slot,
+    // leave both it and its payload intact for the next deterministic sweep.
+    latestEntries = compatibleAuthorityMarkerEntries(location);
+    if (newestDistinctAuthorityCacheKeys(
+      latestEntries,
+      FORECAST_GENERATIONS_TO_RETAIN,
+    ).has(cacheKey)) continue;
+    for (const entry of latestEntries) {
+      if (entry.marker.cacheKey === cacheKey) {
+        localStorage.removeItem(entry.storageKey);
+      }
+    }
+
+    // `cacheKey` came from a fully validated, exact release-scoped slot. Never
+    // enumerate broad application prefixes here: legacy forecasts, user
+    // preferences, safety limits and the service worker's Cache Storage are
+    // intentionally outside this generation-only garbage collector.
+    localStorage.removeItem(cacheKey);
+  }
+}
+
 function rememberServerAuthority(
   location: ForecastLocation,
   cacheKey: string,
@@ -152,26 +275,23 @@ function rememberServerAuthority(
     const random = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
     const storageKey = `${prefix}${Math.trunc(requestStartedAtMs)}_${random}`;
     // Make space before the append. If quota pressure still wins, remove only
-    // older FRANK authority markers and retry once; forecast slots themselves
-    // remain available to older shells during the handover.
-    for (const entry of authorityMarkerEntries(location).slice(AUTHORITY_MARKERS_TO_RETAIN - 1)) {
-      localStorage.removeItem(entry.storageKey);
-    }
+    // compatible FRANK authority markers and retry once. Future-contract and
+    // legacy markers remain owned by the shells that wrote them.
+    trimCompatibleAuthorityJournal(location, AUTHORITY_MARKERS_TO_RETAIN - 1);
     try {
       localStorage.setItem(storageKey, JSON.stringify(marker));
     } catch {
-      for (const entry of authorityMarkerEntries(location).slice(1)) {
-        localStorage.removeItem(entry.storageKey);
-      }
+      trimCompatibleAuthorityJournal(location, 1);
       localStorage.setItem(storageKey, JSON.stringify(marker));
     }
 
     // Markers are append-only so two tabs cannot lose a compare-and-set race.
-    // Keep a small journal: the newest valid marker decides, while older ones
-    // preserve ordering if a later payload slot becomes corrupt or expires.
-    for (const entry of authorityMarkerEntries(location).slice(AUTHORITY_MARKERS_TO_RETAIN)) {
-      localStorage.removeItem(entry.storageKey);
-    }
+    // Retain the production-authoritative generation and its immediate
+    // compatible predecessor. A rollback simply appends a newer observation,
+    // so the former current generation becomes N-1 instead of being guessed
+    // from model numbers or payload timestamps.
+    pruneObsoleteForecastGenerations(location);
+    trimCompatibleAuthorityJournal(location, AUTHORITY_MARKERS_TO_RETAIN);
   } catch {
     // Authority persistence is an offline enhancement. The validated network
     // response remains authoritative for the current in-memory session.
@@ -237,6 +357,35 @@ function persistCachedWeatherData(
     // Caching also provides the offline fallback, but storage can be blocked;
     // the live forecast remains usable for the current session.
     return null;
+  }
+}
+
+async function persistServerAuthoritativeWeatherData(
+  data: WeatherData,
+  location: ForecastLocation,
+  requestStartedAtMs: number,
+): Promise<string | null> {
+  const persistAndRecordAuthority = (): string | null => {
+    const cacheKey = persistCachedWeatherData(data, location);
+    if (cacheKey) rememberServerAuthority(location, cacheKey, requestStartedAtMs);
+    return cacheKey;
+  };
+
+  // Payload, authority marker and N-2 sweep form one cross-tab transaction.
+  // Without an origin-wide lock, one tab can persist a rollback payload while
+  // another tab deletes that same formerly-N-2 slot just before its new marker
+  // is appended. Web Locks serializes participating current/N-1 shells; the
+  // synchronous fallback preserves normal offline caching on older browsers,
+  // with the append-only journal's repeated reads remaining best-effort there.
+  const lockManager = globalThis.navigator?.locks;
+  if (!lockManager) return persistAndRecordAuthority();
+  try {
+    return await lockManager.request(
+      `frank-forecast-cache:${location.id}:config${location.forecastConfigRevision}`,
+      persistAndRecordAuthority,
+    );
+  } catch {
+    return persistAndRecordAuthority();
   }
 }
 
@@ -519,7 +668,6 @@ async function readWorkerCachedWeatherData(
           serverFallback: false,
         };
       }
-      const cacheKey = persistCachedWeatherData(parsed, location);
       const generationRole = resolved.usedAvailabilityFallback
         ? 'fallback'
         : classifyResponseGeneration(response, parsed);
@@ -529,11 +677,17 @@ async function readWorkerCachedWeatherData(
       // but across generations it gets the same non-demotion treatment as an
       // explicit ready=false fallback.
       const serverFallback = generationRole !== 'authority';
-      if (cacheKey && serverAuthority) {
+      if (serverAuthority) {
         // Only a completed, fully validated HTTP 200 can change offline
         // generation authority. Initialization, malformed/error responses,
         // local saves and transient pending overlays never create a marker.
-        rememberServerAuthority(location, cacheKey, requestStartedAtMs);
+        await persistServerAuthoritativeWeatherData(
+          parsed,
+          location,
+          requestStartedAtMs,
+        );
+      } else {
+        persistCachedWeatherData(parsed, location);
       }
       return {
         data: parsed,

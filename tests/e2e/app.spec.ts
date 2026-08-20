@@ -108,40 +108,71 @@ test('the complete dashboard stays inside every supported viewport', async ({ pa
   expect(overflowPx).toBeLessThanOrEqual(1);
 });
 
-test('a first-build location has a complete, neutral recovery screen', async ({ page }, testInfo) => {
+test('zero ready locations produce one calm app-wide preparation screen', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === 'service-worker-chromium');
   const mock = await mockInitializingForecastWorker(page);
 
   await page.goto('./');
 
-  await expect(page.getByRole('heading', { name: 'Klargør prognosen for Horsens Fjord' })).toBeVisible();
-  await expect(page.getByRole('status')).toContainText('ingen sikkerhedsvurdering eller rovinduer');
+  await expect(page.getByRole('heading', { name: 'Vejrudsigterne gøres klar' })).toBeVisible();
+  await expect(page.getByRole('status')).toContainText('ingen komplet prognose');
+  await expect(page.locator('.initialization-card')).not.toContainText('Horsens Fjord');
+  await expect(page.locator('.initialization-card')).not.toContainText(/Næste tjek|10 min/);
   await expect(page.locator('.frank-device')).toHaveCount(0);
   await expect(page.locator('.timeline-slider-panel')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: /Horsens Fjord.*klargøres/ })).toBeVisible();
+  await expect(page.locator('.location-switcher')).toHaveCount(0);
+  await expect(page.locator('.initialization-ready-option')).toHaveCount(0);
 
-  const retry = page.getByRole('button', { name: 'Tjek nu' });
+  const retry = page.getByRole('button', { name: 'Tjek igen' });
+  const retryShape = await retry.evaluate((button) => {
+    const style = getComputedStyle(button);
+    const bounds = button.getBoundingClientRect();
+    return {
+      width: bounds.width,
+      height: bounds.height,
+      radius: Number.parseFloat(style.borderRadius),
+    };
+  });
+  expect(retryShape.width).toBeGreaterThan(retryShape.height * 2);
+  expect(retryShape.height).toBeGreaterThanOrEqual(44);
+  expect(retryShape.radius).toBeLessThanOrEqual(8);
+
+  const skyMask = await page.locator('.pixel-sky').evaluate((sky) => {
+    const style = getComputedStyle(sky);
+    return style.maskImage || style.getPropertyValue('-webkit-mask-image');
+  });
+  expect(skyMask).toBe('none');
+
   const requestsBeforeRetry = mock.requests.length;
   await retry.click();
   await expect.poll(() => mock.requests.length).toBe(requestsBeforeRetry + 1);
-
-  await page.getByRole('button', { name: /Horsens Fjord.*klargøres/ }).click();
-  await expect(page.getByRole('menuitem')).toHaveCount(4);
-  await expect(page.getByRole('menuitem', { name: /Horsens Fjord.*klargøres/ }))
-    .toHaveAttribute('aria-current', 'true');
 
   const overflowPx = await page.evaluate(() => (
     Math.max(document.body.scrollWidth, document.documentElement.scrollWidth)
       - document.documentElement.clientWidth
   ));
   expect(overflowPx).toBeLessThanOrEqual(1);
+});
+
+test('partial runtime recovery offers only locations with usable forecasts', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === 'service-worker-chromium');
+  const mock = await mockInitializingForecastWorker(page, { availableLocationIds: ['vejle'] });
+
+  await page.goto('./');
+
+  await expect(page.getByRole('heading', { name: 'Prognosen for Horsens Fjord gøres klar' })).toBeVisible();
+  await expect(page.getByRole('status')).toContainText('1 af 4 områder');
+  await expect(page.locator('.initialization-ready-option')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: /Vejle Fjord.*klar/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Aarhus Bugt.*klar/ })).toHaveCount(0);
+  await expect(page.locator('.location-switcher')).toHaveCount(0);
 
   await Promise.all([
     page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
-    page.getByRole('menuitem', { name: 'Vejle Fjord' }).click(),
+    page.getByRole('button', { name: /Vejle Fjord.*klar/ }).click(),
   ]);
-  await expect(page.getByRole('heading', { name: 'Klargør prognosen for Vejle Fjord' })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Vejle Fjord.*klargøres/ })).toBeVisible();
+  await expect(page.locator('.app-footer')).toBeVisible();
+  await expect(page.locator('.location-switcher-btn')).toContainText('Vejle');
   await expect.poll(() => mock.requests.some((url) => url.pathname.endsWith('/forecast/vejle'))).toBe(true);
 });
 

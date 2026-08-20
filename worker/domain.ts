@@ -76,12 +76,16 @@ export interface RefreshOptions {
 export type EventMemo = Map<string, Promise<unknown>>;
 
 export interface MetRawCache {
+  locationId: string;
+  forecastConfigRevision: number;
   lastModified: string;
   body: import('../src/features/forecast/normalize').MetForecastResponse;
 }
 
 export interface MarineIngredientEnvelope extends MarineInstance {
   schemaVersion: number;
+  locationId: string;
+  forecastConfigRevision: number;
   series: SeriesPoint[];
 }
 
@@ -139,6 +143,7 @@ export interface HealthLocationEntry {
     | 'none';
   fetchedAt?: string;
   cacheHealth?: WorkerCacheHealth;
+  initialization?: ForecastInitializationMarker;
 }
 
 export interface HealthReleaseReadiness {
@@ -151,11 +156,14 @@ export interface HealthReleaseReadiness {
 }
 
 export interface ForecastInitializationMarker {
-  schemaVersion: 1;
+  schemaVersion: 2;
   status: 'initializing';
   locationId: string;
+  forecastConfigRevision: number;
   lastAttemptAt: string;
   retryAfterSeconds: number;
+  provider: BusyProvider;
+  busy: boolean;
 }
 
 export interface ForecastInitializingPayload {

@@ -106,17 +106,30 @@ export const da: Record<string, string> = {
     'Det seneste klargøringstjek blev ikke færdigt. FRANK bliver ved med at prøve automatisk.',
 
   // ── ForecastInitializingScreen ────────────────────────────────────────────
-  'First forecast': 'Første prognose',
-  'Preparing the forecast for {0}': 'Klargør prognosen for {0}',
-  'FRANK is building the first complete forecast for {0}. Until it is ready, no safety verdict or launch windows are shown.':
-    'FRANK bygger den første komplette prognose for {0}. Indtil den er klar, vises ingen sikkerhedsvurdering eller rovinduer.',
-  'FRANK checks again automatically. The next check is in about {0} min.':
-    'FRANK tjekker igen automatisk. Næste tjek er om cirka {0} min.',
+  'Forecast data': 'Prognosedata',
+  'Forecasts are being prepared': 'Vejrudsigterne gøres klar',
+  'The forecast for {0} is being prepared': 'Prognosen for {0} gøres klar',
+  'Opening the forecast for {0}': 'Åbner prognosen for {0}',
+  'Checking forecast availability…': 'Tjekker tilgængelige prognoser…',
+  'Preparation in progress': 'Klargøring i gang',
+  'There is no complete forecast to show yet. Safety verdicts and launch windows stay hidden until forecast data is ready.':
+    'Der er endnu ingen komplet prognose at vise. Sikkerhedsvurderinger og rovinduer forbliver skjult, indtil prognosedata er klar.',
+  '{0} of {1} areas already have a complete forecast. You can open one now while FRANK prepares the others.':
+    '{0} af {1} områder har allerede en komplet prognose. Du kan åbne en nu, mens FRANK klargør de andre.',
+  'A complete forecast is available. FRANK is opening it now.':
+    'En komplet prognose er klar. FRANK åbner den nu.',
+  'The selected forecast is not ready yet. Safety verdicts and launch windows stay hidden until complete data is available.':
+    'Den valgte prognose er ikke klar endnu. Sikkerhedsvurderinger og rovinduer forbliver skjult, indtil der er komplette data.',
+  'FRANK checks again automatically. This screen updates as forecasts become available.':
+    'FRANK tjekker automatisk igen. Skærmen opdateres, efterhånden som prognoserne bliver klar.',
   "You're offline. FRANK will continue as soon as this device is back online.":
     'Du er offline. FRANK fortsætter, så snart enheden er online igen.',
-  'Check now': 'Tjek nu',
-  'Choose another location:': 'Vælg et andet sted:',
+  'Check again': 'Tjek igen',
+  'Forecasts ready now': 'Prognoser klar nu',
+  'ready': 'klar',
   'preparing': 'klargøres',
+  'FRANK could not save that location in this browser. Try again or check the browser’s site-data settings.':
+    'FRANK kunne ikke gemme stedet i denne browser. Prøv igen, eller kontrollér browserens indstillinger for webstedsdata.',
 
   // ── StatusBar ──────────────────────────────────────────────────────────────
   '{0}. {1}. FRANK says: {2}.': '{0}. {1}. FRANK siger: {2}.',

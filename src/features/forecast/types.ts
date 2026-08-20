@@ -113,6 +113,7 @@ export interface WeatherData {
     };
     location?: {
       id: string;
+      forecastConfigRevision: number;
       name: string;
       areaName: string;
     };

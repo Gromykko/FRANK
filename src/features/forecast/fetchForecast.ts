@@ -263,6 +263,7 @@ export async function fetchWeatherData(location = CURRENT_LOCATION): Promise<Wea
         },
         location: {
           id: location.id,
+          forecastConfigRevision: location.forecastConfigRevision,
           name: location.name,
           areaName: location.areaName,
         },

@@ -12,6 +12,7 @@ const FIXTURE_NOW_MS = Date.parse(FIXTURE_NOW_ISO);
 
 interface FixtureLocation {
   id: string;
+  forecastConfigRevision: number;
   name: string;
   areaName: string;
   coordinate: { latitude: number; longitude: number };
@@ -81,6 +82,7 @@ export function buildForecastFixture(locationId: string, nowMs = FIXTURE_NOW_MS)
       coordinate: location.coordinate,
       location: {
         id: location.id,
+        forecastConfigRevision: location.forecastConfigRevision,
         name: location.name,
         areaName: location.areaName,
       },
@@ -100,14 +102,32 @@ export interface ForecastMock {
   stop: () => Promise<void>;
 }
 
-export async function mockInitializingForecastWorker(page: Page): Promise<ForecastMock> {
+export async function mockInitializingForecastWorker(
+  page: Page,
+  { availableLocationIds = [] }: { availableLocationIds?: string[] } = {},
+): Promise<ForecastMock> {
   const requests: URL[] = [];
+  const availableIds = new Set(availableLocationIds);
   const handler = async (route: Route) => {
     const url = new URL(route.request().url());
     const locationId = url.pathname.split('/').filter(Boolean).at(-1) ?? '';
     const location = locationById.get(locationId);
     if (!location) throw new Error(`Unknown fixture location: ${locationId}`);
     requests.push(url);
+    if (availableIds.has(locationId)) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json; charset=utf-8',
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff',
+          ...releaseHeaders(true),
+        },
+        body: JSON.stringify(buildForecastFixture(locationId)),
+      });
+      return;
+    }
     await route.fulfill({
       status: 503,
       contentType: 'application/json; charset=utf-8',
@@ -133,11 +153,46 @@ export async function mockInitializingForecastWorker(page: Page): Promise<Foreca
     });
   };
 
+  const healthHandler = async (route: Route) => {
+    const available = locations
+      .map(({ id }) => id)
+      .filter((id) => availableIds.has(id));
+    const missing = locations
+      .map(({ id }) => id)
+      .filter((id) => !availableIds.has(id));
+    await route.fulfill({
+      status: missing.length === 0 ? 200 : 503,
+      contentType: 'application/json; charset=utf-8',
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+      },
+      body: JSON.stringify({
+        service: 'frank-forecast',
+        checkedAt: FIXTURE_NOW_ISO,
+        release: {
+          target: { ...CURRENT_RELEASE },
+          allLocationsReady: missing.length === 0,
+          ready: available,
+          available,
+          fallback: [],
+          missing,
+        },
+      }),
+    });
+  };
+
   const routePattern = '**/forecast/**';
+  const healthRoutePattern = '**/health';
   await page.route(routePattern, handler);
+  await page.route(healthRoutePattern, healthHandler);
   return {
     requests,
-    stop: () => page.unroute(routePattern, handler),
+    stop: async () => {
+      await page.unroute(routePattern, handler);
+      await page.unroute(healthRoutePattern, healthHandler);
+    },
   };
 }
 

@@ -1,8 +1,9 @@
-import { RefreshCw, Waves } from 'lucide-react';
-import { CURRENT_LOCATION } from '../config/locations';
+import { useEffect, useRef, useState } from 'react';
+import { Waves } from 'lucide-react';
+import { AVAILABLE_LOCATIONS, CURRENT_LOCATION, setLocation } from '../config/locations';
+import { useForecastAvailability } from '../features/forecast/useForecastAvailability';
 import type { ForecastInitializationState } from '../features/forecast/useForecast';
 import { useLang } from '../i18n';
-import LocationSwitcher from './LocationSwitcher';
 import PrivacyNotice from './PrivacyNotice';
 
 interface ForecastInitializingScreenProps {
@@ -21,29 +22,68 @@ export default function ForecastInitializingScreen({
   onRetry,
 }: ForecastInitializingScreenProps) {
   const { t } = useLang();
-  const retryMinutes = Math.max(
-    1,
-    Math.ceil((initialization.nextRetryAtMs - Date.now()) / 60_000),
+  const { availability, settled } = useForecastAvailability(initialization.nextRetryAtMs);
+  const [locationSwitchFailed, setLocationSwitchFailed] = useState(false);
+  const attemptedCurrentOpenRef = useRef(false);
+  const availableIds = new Set(availability?.availableLocationIds ?? []);
+  const readyLocations = AVAILABLE_LOCATIONS.filter(({ id }) => availableIds.has(id));
+  const currentIsAvailable = availableIds.has(CURRENT_LOCATION.id);
+  const hasKnownZeroAvailability = Boolean(availability && readyLocations.length === 0);
+  const hasPartialAvailability = Boolean(
+    availability && readyLocations.length > 0 && !currentIsAvailable,
   );
+
+  // /health may notice that the selected location recovered before its next
+  // scheduled forecast read. Open it once immediately; the ordinary lifecycle
+  // remains responsible for all later Retry-After checks if an edge races.
+  useEffect(() => {
+    if (!currentIsAvailable) {
+      attemptedCurrentOpenRef.current = false;
+      return;
+    }
+    if (refreshing || attemptedCurrentOpenRef.current) return;
+    attemptedCurrentOpenRef.current = true;
+    onRetry();
+  }, [currentIsAvailable, onRetry, refreshing]);
+
+  const title = hasKnownZeroAvailability || (!settled && !availability)
+    ? t('Forecasts are being prepared')
+    : hasPartialAvailability || (settled && !availability)
+      ? t('The forecast for {0} is being prepared', initialization.location.areaName)
+      : t('Opening the forecast for {0}', initialization.location.areaName);
 
   return (
     <main className="container app-main initialization-page" aria-labelledby="initialization-title">
-      <section className="panel initialization-card" aria-busy={refreshing}>
-        <div className="initialization-mark" aria-hidden="true">
-          <Waves size={28} strokeWidth={1.8} />
-          <span className="initialization-pulse" />
+      <section className="panel initialization-card" aria-busy={refreshing || !settled}>
+        <div className="initialization-progress" aria-hidden="true">
+          <Waves size={20} strokeWidth={1.8} />
+          <span>{t(refreshing || !settled ? 'Checking forecast availability…' : 'Preparation in progress')}</span>
         </div>
 
         <div className="initialization-status" role="status" aria-live="polite" aria-atomic="true">
-          <p className="initialization-eyebrow">{t('First forecast')}</p>
-          <h1 className="initialization-title" id="initialization-title">
-            {t('Preparing the forecast for {0}', initialization.location.areaName)}
-          </h1>
-          <p className="initialization-copy">
-            {t('FRANK is building the first complete forecast for {0}. Until it is ready, no safety verdict or launch windows are shown.', initialization.location.areaName)}
-          </p>
+          <p className="initialization-eyebrow">{t('Forecast data')}</p>
+          <h1 className="initialization-title" id="initialization-title">{title}</h1>
+
+          {hasKnownZeroAvailability ? (
+            <p className="initialization-copy">
+              {t('There is no complete forecast to show yet. Safety verdicts and launch windows stay hidden until forecast data is ready.')}
+            </p>
+          ) : hasPartialAvailability ? (
+            <p className="initialization-copy">
+              {t('{0} of {1} areas already have a complete forecast. You can open one now while FRANK prepares the others.', readyLocations.length, AVAILABLE_LOCATIONS.length)}
+            </p>
+          ) : currentIsAvailable ? (
+            <p className="initialization-copy">
+              {t('A complete forecast is available. FRANK is opening it now.')}
+            </p>
+          ) : (
+            <p className="initialization-copy">
+              {t('The selected forecast is not ready yet. Safety verdicts and launch windows stay hidden until complete data is available.')}
+            </p>
+          )}
+
           <p className="initialization-copy initialization-auto-retry">
-            {t('FRANK checks again automatically. The next check is in about {0} min.', retryMinutes)}
+            {t('FRANK checks again automatically. This screen updates as forecasts become available.')}
           </p>
           {!online && (
             <p className="initialization-note">
@@ -57,22 +97,39 @@ export default function ForecastInitializingScreen({
 
         <button
           type="button"
-          className="btn-control initialization-retry"
+          className="initialization-retry"
           onClick={onRetry}
           disabled={refreshing}
         >
-          <RefreshCw
-            size={17}
-            className={refreshing ? 'initialization-retry-icon is-spinning' : 'initialization-retry-icon'}
-            aria-hidden="true"
-          />
-          {t(refreshing ? 'Checking…' : 'Check now')}
+          {t(refreshing ? 'Checking…' : 'Check again')}
         </button>
 
-        <div className="initialization-location" role="group" aria-label={t('Choose location')}>
-          <span className="initialization-location-copy">{t('Choose another location:')}</span>
-          <LocationSwitcher label={CURRENT_LOCATION.areaName} currentState="initializing" />
-        </div>
+        {hasPartialAvailability && (
+          <div className="initialization-ready" role="group" aria-label={t('Forecasts ready now')}>
+            <span className="initialization-ready-label">{t('Forecasts ready now')}</span>
+            <div className="initialization-ready-list">
+              {readyLocations.map((location) => (
+                <button
+                  type="button"
+                  className="initialization-ready-option"
+                  key={location.id}
+                  onClick={() => {
+                    setLocationSwitchFailed(false);
+                    if (!setLocation(location.id)) setLocationSwitchFailed(true);
+                  }}
+                >
+                  <span>{location.areaName}</span>
+                  <span className="initialization-ready-state">{t('ready')}</span>
+                </button>
+              ))}
+            </div>
+            {locationSwitchFailed && (
+              <p className="initialization-note" role="alert">
+                {t('FRANK could not save that location in this browser. Try again or check the browser’s site-data settings.')}
+              </p>
+            )}
+          </div>
+        )}
       </section>
       <PrivacyNotice />
     </main>

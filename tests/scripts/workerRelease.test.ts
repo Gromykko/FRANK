@@ -24,6 +24,7 @@ describe('Worker release workflow ordering', () => {
     const fullCi = workflow.indexOf('End-to-end test exact artifact');
     const pagesArtifact = workflow.indexOf('Upload exact Pages artifact');
     const capture = workflow.indexOf('Capture exact production version');
+    const attestation = workflow.indexOf('Attest captured production release');
     const upload = workflow.indexOf('Upload candidate Worker version without traffic');
     const stage = workflow.indexOf('Include candidate at zero traffic');
     const stagedVerification = workflow.indexOf('Verify zero-traffic deployment');
@@ -31,6 +32,9 @@ describe('Worker release workflow ordering', () => {
     const promote = workflow.indexOf('Promote exact-ready candidate to all traffic');
     const ordinaryTraffic = workflow.indexOf('Verify exact-ready ordinary traffic');
     const restore = workflow.indexOf('Restore captured production version after failure');
+    const restoreVerification = workflow.indexOf('Verify restored production version');
+    const baselineMarker = workflow.indexOf('Record coordinated Worker baseline');
+    const cleanup = workflow.indexOf('Garbage-collect superseded forecast generations');
     const pagesDeploy = workflow.indexOf('Deploy the tested Pages artifact');
     const pagesSmoke = workflow.indexOf('Verify exact Pages build and every shell asset');
 
@@ -38,6 +42,7 @@ describe('Worker release workflow ordering', () => {
       fullCi,
       pagesArtifact,
       capture,
+      attestation,
       upload,
       stage,
       stagedVerification,
@@ -45,29 +50,55 @@ describe('Worker release workflow ordering', () => {
       promote,
       ordinaryTraffic,
       restore,
+      restoreVerification,
+      baselineMarker,
+      cleanup,
       pagesDeploy,
       pagesSmoke,
     ])
       .not.toContain(-1);
     expect(fullCi).toBeLessThan(pagesArtifact);
     expect(pagesArtifact).toBeLessThan(capture);
-    expect(capture).toBeLessThan(upload);
+    expect(capture).toBeLessThan(attestation);
+    expect(attestation).toBeLessThan(upload);
     expect(upload).toBeLessThan(stage);
     expect(stage).toBeLessThan(stagedVerification);
     expect(stagedVerification).toBeLessThan(overrideWarm);
     expect(overrideWarm).toBeLessThan(promote);
     expect(promote).toBeLessThan(ordinaryTraffic);
     expect(ordinaryTraffic).toBeLessThan(restore);
-    expect(restore).toBeLessThan(pagesDeploy);
+    expect(restore).toBeLessThan(restoreVerification);
+    expect(restoreVerification).toBeLessThan(baselineMarker);
+    expect(baselineMarker).toBeLessThan(cleanup);
+    expect(cleanup).toBeLessThan(pagesDeploy);
     expect(pagesDeploy).toBeLessThan(pagesSmoke);
     expect(workflow).toContain("steps.previous.outputs.version_id }}@100%'");
     expect(workflow).toContain("steps.candidate.outputs.version_id }}@0%'");
     expect(workflow).toContain('--worker-name "$FRANK_WORKER_SCRIPT"');
-    expect(workflow.match(/--worker-name/g)).toHaveLength(1);
+    expect(workflow.match(/--worker-name/g)).toHaveLength(2);
+    expect(workflow).toContain(
+      "--expected-worker-version-id '${{ steps.previous.outputs.version_id }}'",
+    );
+    expect(workflow).toContain('--github-output "$GITHUB_OUTPUT"');
     expect(workflow.match(/--require-target-ready-all/g)).toHaveLength(2);
     expect(workflow.match(/--read-only/g)).toHaveLength(1);
+    expect(workflow.match(/--summary-file "\$GITHUB_STEP_SUMMARY"/g)).toHaveLength(2);
+    expect(workflow).toContain('--summary-title "Candidate shadow readiness"');
+    expect(workflow).toContain('--summary-title "Post-promotion read-only readiness"');
     expect(workflow.indexOf('--read-only')).toBeGreaterThan(ordinaryTraffic);
     expect(workflow.indexOf('--read-only')).toBeLessThan(restore);
+    expect(workflow.indexOf('--read-only')).toBeLessThan(cleanup);
+    expect(workflow).toContain('npm run worker:gc-kv --');
+    expect(workflow).toContain('--attested-active-release');
+    expect(workflow).toContain(
+      "steps.previous_attestation.outputs.kv_gc_allowed == 'true'",
+    );
+    expect(workflow).toContain(
+      "steps.previous_attestation.outputs.baseline_marker_required == 'true'",
+    );
+    expect(workflow.slice(cleanup)).not.toContain(
+      'Restore captured production version after failure',
+    );
     expect(workflow).toContain('needs: [build, worker_release]');
     expect(workflow).toContain('ref: ${{ github.sha }}');
     expect(workflow).toContain("steps.upload.outcome == 'success'");

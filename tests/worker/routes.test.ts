@@ -58,6 +58,7 @@ function cachedForecast(locationId = 'horsens'): ForecastData {
       coordinate: location.coordinate,
       location: {
         id: location.id,
+        forecastConfigRevision: location.forecastConfigRevision,
         name: location.name,
         areaName: location.areaName,
       },
@@ -190,6 +191,29 @@ describe('Worker route HTTP contract', () => {
     expect(response.headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'");
     expect(response.headers.get('Referrer-Policy')).toBe('no-referrer');
     expect(response.headers.get('X-Frame-Options')).toBe('DENY');
+    const body = await response.text();
+    expect(body).toContain('Visitor requests only\n  read prepared snapshots');
+    expect(body).not.toContain("visitor's request prompts a check");
+    expect(body).toContain('EXACT GENERATION READY');
+  });
+
+  it('shows degraded sources and the busy provider in the human status table', async () => {
+    const horsens = cachedForecast();
+    horsens.sources.cacheHealth = {
+      ...horsens.sources.cacheHealth,
+      providerBusy: true,
+      busyProvider: 'marine',
+      degradedSources: ['waves'],
+    };
+    const runtime = makeRuntime({
+      seed: { [assembledForecastKey(locationById('horsens'))]: horsens },
+    });
+
+    const response = await worker.fetch(request('/status'), runtime.env, runtime.ctx);
+    const body = await response.text();
+
+    expect(body).toContain('provider busy · marine');
+    expect(body).toContain('<span class="warn">waves</span>');
   });
 
   it('keeps the unversioned bootstrap route as an exact canonical alias', async () => {
@@ -306,6 +330,38 @@ describe('Worker route HTTP contract', () => {
       .toBe(true);
     await Promise.all(runtime.waits);
 
+    const marker = JSON.parse(runtime.store.get(initializationStateKey(location)) ?? 'null');
+    expect(marker).toMatchObject({
+      schemaVersion: 2,
+      status: 'initializing',
+      locationId: location.id,
+      forecastConfigRevision: location.forecastConfigRevision,
+      provider: 'marine',
+      busy: true,
+    });
+
+    const health = await worker.fetch(request('/health'), runtime.env, runtime.ctx);
+    const healthBody = await health.json();
+    expect(healthBody.locations.find(
+      (entry: { id: string }) => entry.id === location.id,
+    )).toMatchObject({
+      hasCache: false,
+      exactGenerationReady: false,
+      initialization: {
+        schemaVersion: 2,
+        status: 'initializing',
+        provider: 'marine',
+        busy: true,
+      },
+    });
+
+    const status = await worker.fetch(request('/status'), runtime.env, runtime.ctx);
+    const statusBody = await status.text();
+    expect(statusBody).toContain('INITIALIZING');
+    expect(statusBody).toContain('initialization attempt ·');
+    expect(statusBody).toContain('provider busy · marine');
+    expect(statusBody).not.toContain('private detail');
+
     const callsAfterFirst = providerFetch.mock.calls.length;
     const repeated = await worker.fetch(
       request('/api/v1/forecast/aarhus?warm=1'),
@@ -322,11 +378,14 @@ describe('Worker route HTTP contract', () => {
       exact: false,
       seed: {
         [initializationStateKey(location)]: {
-          schemaVersion: 1,
+          schemaVersion: 2,
           status: 'initializing',
           locationId: location.id,
+          forecastConfigRevision: location.forecastConfigRevision,
           lastAttemptAt: new Date().toISOString(),
           retryAfterSeconds: 600,
+          provider: 'marine',
+          busy: false,
         },
       },
     });
@@ -341,16 +400,80 @@ describe('Worker route HTTP contract', () => {
     expect(providerFetch).not.toHaveBeenCalled();
   });
 
+  it('distinguishes a non-busy provider outage while a first forecast initializes', async () => {
+    const location = locationById('horsens');
+    const marker = {
+      schemaVersion: 2,
+      status: 'initializing',
+      locationId: location.id,
+      forecastConfigRevision: location.forecastConfigRevision,
+      lastAttemptAt: new Date().toISOString(),
+      retryAfterSeconds: 600,
+      provider: 'weather',
+      busy: false,
+    };
+    const runtime = makeRuntime({
+      exact: false,
+      seed: { [initializationStateKey(location)]: marker },
+    });
+    const providerFetch = rejectProviderWork();
+
+    const health = await worker.fetch(request('/health'), runtime.env, runtime.ctx);
+    const healthBody = await health.json();
+    expect(healthBody.locations.find(
+      (entry: { id: string }) => entry.id === location.id,
+    )?.initialization).toEqual(marker);
+
+    const status = await worker.fetch(request('/status'), runtime.env, runtime.ctx);
+    const statusBody = await status.text();
+    expect(statusBody).toContain('provider unavailable · weather');
+    expect(statusBody).not.toContain('provider busy · weather');
+    expect(providerFetch).not.toHaveBeenCalled();
+  });
+
+  it('does not report an expired initialization marker as active', async () => {
+    const location = locationById('horsens');
+    const runtime = makeRuntime({
+      exact: false,
+      seed: {
+        [initializationStateKey(location)]: {
+          schemaVersion: 2,
+          status: 'initializing',
+          locationId: location.id,
+          forecastConfigRevision: location.forecastConfigRevision,
+          lastAttemptAt: new Date(Date.now() - 11 * 60_000).toISOString(),
+          retryAfterSeconds: 600,
+          provider: 'services',
+          busy: true,
+        },
+      },
+    });
+    const providerFetch = rejectProviderWork();
+
+    const health = await worker.fetch(request('/health'), runtime.env, runtime.ctx);
+    const healthBody = await health.json();
+    expect(healthBody.locations.find(
+      (entry: { id: string }) => entry.id === location.id,
+    )).not.toHaveProperty('initialization');
+
+    const status = await worker.fetch(request('/status'), runtime.env, runtime.ctx);
+    expect(await status.text()).toContain('awaiting provider data');
+    expect(providerFetch).not.toHaveBeenCalled();
+  });
+
   it('lets a completed target generation win over a leftover cooldown marker', async () => {
     const location = locationById('vejle');
     const runtime = makeRuntime({
       seed: {
         [initializationStateKey(location)]: {
-          schemaVersion: 1,
+          schemaVersion: 2,
           status: 'initializing',
           locationId: location.id,
+          forecastConfigRevision: location.forecastConfigRevision,
           lastAttemptAt: new Date().toISOString(),
           retryAfterSeconds: 600,
+          provider: 'weather',
+          busy: true,
         },
       },
     });

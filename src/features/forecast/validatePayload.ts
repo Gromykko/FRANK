@@ -246,6 +246,8 @@ export function isValidForecastPayload(
   requestedLocation: ForecastLocation,
   options: ForecastPayloadValidationOptions = {},
 ): value is WeatherData {
+  if (!Number.isSafeInteger(requestedLocation.forecastConfigRevision)
+    || requestedLocation.forecastConfigRevision < 1) return false;
   if (!isRecord(value)) return false;
   if (!hasValidHourlyRows(value.hourly)) return false;
   if (!isStrictlyIncreasingTimestampArray(value.sunrise) || !isStrictlyIncreasingTimestampArray(value.sunset)) return false;
@@ -275,8 +277,11 @@ export function isValidForecastPayload(
   const location = sources.location;
   if (!isRecord(location)) return false;
   if (!isNonEmptyString(location.id) || !isNonEmptyString(location.name) || !isNonEmptyString(location.areaName)) return false;
+  if (!Number.isSafeInteger(location.forecastConfigRevision)
+    || location.forecastConfigRevision !== requestedLocation.forecastConfigRevision) return false;
   // ID is the routing identity. Names are display copy and may legitimately
-  // differ briefly while Pages and the Worker deploy independently.
+  // differ briefly while Pages and the Worker deploy independently. The
+  // forecast-config revision is data provenance and must match exactly.
   if (location.id !== requestedLocation.id) return false;
 
   return true;

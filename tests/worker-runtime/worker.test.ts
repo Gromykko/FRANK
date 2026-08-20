@@ -66,6 +66,7 @@ function currentHorsensForecast(nowMs = Date.now()): ForecastData {
       coordinate: HORSENS.coordinate,
       location: {
         id: HORSENS.id,
+        forecastConfigRevision: HORSENS.forecastConfigRevision,
         name: HORSENS.name,
         areaName: HORSENS.areaName,
       },
@@ -143,6 +144,7 @@ describe('Worker runtime integration contract', () => {
     const body = await response.json<ForecastData>();
     expect(body.sources.location).toEqual({
       id: HORSENS.id,
+      forecastConfigRevision: HORSENS.forecastConfigRevision,
       name: HORSENS.name,
       areaName: HORSENS.areaName,
     });
@@ -223,10 +225,13 @@ describe('Worker runtime integration contract', () => {
       'json',
     );
     expect(marker).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       status: 'initializing',
       locationId: HORSENS.id,
+      forecastConfigRevision: HORSENS.forecastConfigRevision,
       retryAfterSeconds: 600,
+      provider: 'marine',
+      busy: true,
     });
 
     const callsAfterFirst = providerFetch.mock.calls.length;

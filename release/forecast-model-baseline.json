@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "release": {
+    "apiSchemaVersion": 1,
+    "modelRevision": 7,
+    "assembledCacheSchema": 1,
+    "marineCacheSchema": 1,
+    "dataGenerationId": "api1-model7",
+    "payloadVersion": 7
+  },
+  "semanticInputs": {
+    "src/features/forecast/normalize.ts": "2468188d2e01b3a50405e64ecf7fb809b0006468769fa69bf8c14805c1253b24",
+    "src/features/forecast/parseWarnings.ts": "987c06d81248e03f6ad96470f0fb3ef9a2250780dfda1c3cf093fb2c59da8091",
+    "src/features/forecast/providerUrls.ts": "bcb26c08e8ec0562ffb6aba26101edbf25acd3e36424907cda5b453abee5dedf",
+    "src/features/forecast/sun.ts": "c36999f0ae4bbb071a608c43b6774592d439e1d6ab87a4f58808fd8c26c444d5",
+    "src/features/forecast/types.ts": "2d73b013a475bf2c4eb6afa3bd4e528bcc962b5205a39b39c5aa584b8fbda5c2",
+    "src/features/forecast/validatePayload.ts": "f05cb45eb615efad0224d9b95841e88114e448f38197005eef025f46d8ab279a",
+    "src/features/forecast/weatherCodes.ts": "6fbc0a6438dbf323f094520c8f1a4701e4ce82949ea7a6fee75887a43b44d8ba",
+    "worker/domain.ts": "7e99fc30129d52519d1979327aa6811c650302b40f56688d96a181cd990b0d56",
+    "worker/execution.ts": "4a867944d1ec91af7e072e6a0e6551ae8ef619ffe6fbd144d7f459dc5312d25e",
+    "worker/index.ts": "132049293b6c10f769942eee5ba97baff32c09c52fe228c63615d0b2f52527bc",
+    "worker/providerAvailability.ts": "49e826ba7f4967c55420b136252091df7e4f79dc98703594a31834f609e2f003",
+    "worker/providers.ts": "0296cbcac9ad2008798ec59527c65e65aae690b7a072d5952210943d1fa7c190",
+    "worker/validation.ts": "77d7ae840b95f0687e7481e518262a784d3afa6ba64827ef4e4080e79886be34"
+  },
+  "locations": [
+    {
+      "id": "aarhus",
+      "forecastConfigRevision": 1,
+      "inputHash": "edc78aae12a5cd591d7dc906c9440311ee3c361c0831259955317f33ab2f240b"
+    },
+    {
+      "id": "horsens",
+      "forecastConfigRevision": 1,
+      "inputHash": "65b7fb60159916f371f020c3727ac215d5365509b3853b5c2c0c7d0a2778d5b7"
+    },
+    {
+      "id": "kolding",
+      "forecastConfigRevision": 1,
+      "inputHash": "38f86c90e6399a531860af0896e0aa927d9ffae5095757ed6b95101fed90a754"
+    },
+    {
+      "id": "vejle",
+      "forecastConfigRevision": 1,
+      "inputHash": "989cb21cb0965932bd0ace46a10df8f58c2311b1ee541c617779b6f5c48f7b56"
+    }
+  ]
+}

@@ -20,9 +20,13 @@ function forecastRepresentation(data: WeatherData): string {
       `model:${release.modelRevision}`,
       `generation:${release.dataGenerationId}`,
       `payload:${release.payloadVersion}`,
+      `location-config:${data.sources.location?.forecastConfigRevision ?? 'missing'}`,
     ].join(':');
   }
-  return `legacy:payload:${data.sources.payloadVersion ?? 'missing'}`;
+  return [
+    `legacy:payload:${data.sources.payloadVersion ?? 'missing'}`,
+    `location-config:${data.sources.location?.forecastConfigRevision ?? 'missing'}`,
+  ].join(':');
 }
 
 const cacheHealthSignature = (data: WeatherData): string => {

@@ -1,8 +1,13 @@
 import { pathToFileURL } from 'node:url';
+import { assertForecastModelBaseline } from './forecast-model-contract.mjs';
 import { loadReleaseContract } from './warm-worker.mjs';
 
 export async function checkReleaseContract() {
   const contract = await loadReleaseContract();
+  await assertForecastModelBaseline({
+    release: contract.release,
+    locations: contract.locations,
+  });
   return {
     apiSchemaVersion: contract.release.apiSchemaVersion,
     dataGenerationId: contract.release.dataGenerationId,

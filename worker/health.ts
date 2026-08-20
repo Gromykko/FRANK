@@ -29,7 +29,11 @@ export function buildHealthPayload(
     // Data age: when this location's forecast was last built.
     ageMs: age(entry.fetchedAt),
     // Liveness: when the Worker last checked upstream for this location.
-    checkAgeMs: age(entry.cacheHealth?.lastAttemptAt ?? entry.fetchedAt),
+    checkAgeMs: age(
+      entry.cacheHealth?.lastAttemptAt
+      ?? entry.initialization?.lastAttemptAt
+      ?? entry.fetchedAt,
+    ),
   }));
 
   const notChecking = ages
@@ -118,6 +122,12 @@ function formatAge(ageMs: number): string {
   return `${hours}h ${String(min % 60).padStart(2, '0')}m`;
 }
 
+function formatUtcTimestamp(iso: string): string {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return 'unknown time';
+  return new Date(ms).toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC');
+}
+
 // Human diagnostic panel. It intentionally shares buildHealthPayload with the
 // machine alarm, always returns 200, and is self-contained under a strict CSP.
 export function statusResponse(health: HealthPayload): Response {
@@ -136,13 +146,38 @@ export function statusResponse(health: HealthPayload): Response {
       ? `${escapeHtml(cacheHealth.marineInstances.water?.id ?? '—')}<br><span class="dim">${escapeHtml(cacheHealth.marineInstances.waves?.id ?? '—')}</span>`
       : '—';
     const missing = !location.hasCache;
+    const initialization = missing ? location.initialization : undefined;
+    const generationState = location.exactGenerationReady
+      ? 'EXACT GENERATION READY'
+      : missing
+        ? 'GENERATION MISSING'
+        : `FALLBACK · ${location.availabilitySource}`;
+    const providerState = initialization
+      ? initialization.busy
+        ? `provider busy · ${initialization.provider}`
+        : `provider unavailable · ${initialization.provider}`
+      : cacheHealth.providerBusy
+        ? `provider busy${cacheHealth.busyProvider ? ` · ${cacheHealth.busyProvider}` : ''}`
+        : missing
+          ? 'awaiting provider data'
+          : '';
+    const checkDetail = initialization
+      ? `initialization attempt · ${formatUtcTimestamp(initialization.lastAttemptAt)}`
+      : cacheHealth.checkedBy ?? '—';
+    const status = health.storageUnavailable
+      ? 'STORAGE UNAVAILABLE'
+      : initialization
+        ? 'INITIALIZING'
+        : missing
+          ? 'AWAITING DATA'
+          : cacheHealth.status ?? 'unknown';
     return `<tr>
       <td><strong>${escapeHtml(location.areaName)}</strong><br><span class="dim">${escapeHtml(location.id)}</span></td>
-      <td class="${missing ? 'bad' : level(age.checkAgeMs, HEALTH_MAX_CHECK_AGE_MS)}"><strong>${escapeHtml(formatAge(age.checkAgeMs))}</strong><br><span class="dim">${escapeHtml(cacheHealth.checkedBy ?? '—')}</span></td>
-      <td class="${missing ? 'bad' : level(age.ageMs, HEALTH_MAX_DATA_AGE_MS)}"><strong>${escapeHtml(formatAge(age.ageMs))}</strong></td>
-      <td>${escapeHtml(health.storageUnavailable ? 'STORAGE UNAVAILABLE' : missing ? 'NO FORECAST' : cacheHealth.status ?? 'unknown')}
-        <br><span class="${location.exactGenerationReady ? 'good' : 'warn'}">${escapeHtml(location.availabilitySource)}</span>
-        ${cacheHealth.providerBusy ? '<br><span class="warn">provider busy</span>' : ''}</td>
+      <td class="${initialization ? 'warn' : missing ? 'bad' : level(age.checkAgeMs, HEALTH_MAX_CHECK_AGE_MS)}"><strong>${escapeHtml(formatAge(age.checkAgeMs))}</strong><br><span class="dim">${escapeHtml(checkDetail)}</span></td>
+      <td class="${missing ? 'bad' : level(age.ageMs, HEALTH_MAX_DATA_AGE_MS)}"><strong>${escapeHtml(missing ? 'no forecast' : formatAge(age.ageMs))}</strong></td>
+      <td>${escapeHtml(status)}
+        <br><span class="${location.exactGenerationReady ? 'good' : 'warn'}">${escapeHtml(generationState)}</span>
+        ${providerState ? `<br><span class="warn">${escapeHtml(providerState)}</span>` : ''}</td>
       <td>${degraded ? `<span class="warn">${escapeHtml(degraded)}</span>` : '<span class="dim">none</span>'}</td>
       <td class="dim mono">${runs}</td>
     </tr>`;
@@ -197,9 +232,9 @@ ${banner}
   <p>Each location also runs that cycle independently, so the four rows are normally out
   of step with each other. One city reading 2 minutes while another reads 11 is the
   expected picture, not a fault: a location's stamp is also rewritten whenever that
-  location rebuilds, which follows its own MET validity window, and again whenever a
-  visitor's request prompts a check for it. The rows only line up right after a deploy,
-  when all four are built at once. The alarm sits at
+  location rebuilds, which follows its own MET validity window. Visitor requests only
+  read prepared snapshots and do not alter this clock. The rows only line up right after
+  a deploy, when all four are built at once. The alarm sits at
   ${escapeHtml(health.checkStaleAfterMin)} minutes, well clear of the whole cycle.
   Worst right now: ${escapeHtml(health.oldestCheckAgeMin ?? '?')} minutes.</p>
 

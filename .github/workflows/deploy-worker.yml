@@ -142,6 +142,18 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
+      - name: Attest captured production release
+        id: previous_attestation
+        run: |
+          npm run worker:attest-active-release -- \
+            --base-url "$FRANK_WORKER_BASE_URL" \
+            --worker-name "$FRANK_WORKER_SCRIPT" \
+            --expected-worker-version-id '${{ steps.previous.outputs.version_id }}' \
+            --github-output "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Upload candidate Worker version without traffic
         id: upload
         shell: bash
@@ -186,12 +198,15 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Build shadow caches and verify exact candidate
+        id: candidate_gate
         run: |
           npm run worker:warm -- \
             --base-url "$FRANK_WORKER_BASE_URL" \
             --worker-name "$FRANK_WORKER_SCRIPT" \
             --expected-worker-version-id '${{ steps.candidate.outputs.version_id }}' \
             --require-target-ready-all \
+            --summary-file "$GITHUB_STEP_SUMMARY" \
+            --summary-title "Candidate shadow readiness" \
             --attempts 6 \
             --retry-delay-ms 5000
 
@@ -214,12 +229,15 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Verify exact-ready ordinary traffic
+        id: ordinary_gate
         run: |
           npm run worker:warm -- \
             --base-url "$FRANK_WORKER_BASE_URL" \
             --expected-worker-version-id '${{ steps.candidate.outputs.version_id }}' \
             --require-target-ready-all \
             --read-only \
+            --summary-file "$GITHUB_STEP_SUMMARY" \
+            --summary-title "Post-promotion read-only readiness" \
             --attempts 5 \
             --retry-delay-ms 3000
 
@@ -248,6 +266,31 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
+      - name: Record coordinated Worker baseline
+        id: baseline_marker
+        # The first pre-architecture Worker cannot attest release metadata.
+        # Record the successful handover once; any later unproven capture then
+        # fails closed instead of repeatedly receiving the bootstrap exception.
+        if: ${{ success() && steps.previous_attestation.outputs.baseline_marker_required == 'true' }}
+        run: npm run worker:mark-baseline
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Garbage-collect superseded forecast generations
+        id: kv_gc
+        # This is deliberately after the restoration steps. A cleanup failure
+        # must never roll traffic back to a Worker whose stale KV generation
+        # may already have been deleted.
+        if: ${{ success() && steps.previous_attestation.outputs.kv_gc_allowed == 'true' }}
+        run: |
+          npm run worker:gc-kv -- \
+            --apply \
+            --attested-active-release '${{ steps.previous_attestation.outputs.release_attestation }}'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Summarize Worker release
         if: always()
         shell: bash
@@ -255,10 +298,13 @@ jobs:
           echo "### Worker release gate" >> "$GITHUB_STEP_SUMMARY"
           echo "- Commit: \`$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Previous version: \`${{ steps.previous.outputs.version_id || 'not captured' }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Captured release: \`${{ steps.previous_attestation.outputs.mode || 'not attested' }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Candidate version: \`${{ steps.candidate.outputs.version_id || 'not resolved' }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Candidate gate: exact current target" >> "$GITHUB_STEP_SUMMARY"
           echo "- Compatibility gate: breaking APIs blocked without continuous adapters" >> "$GITHUB_STEP_SUMMARY"
           echo "- Post-promotion gate: read-only ordinary traffic" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Superseded KV cleanup: \`${{ steps.kv_gc.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Baseline marker: \`${{ steps.baseline_marker.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Promotion: \`${{ steps.promote.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Automatic restore: \`${{ steps.restore.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
 

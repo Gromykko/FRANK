@@ -1,6 +1,7 @@
 [
   {
     "id": "horsens",
+    "forecastConfigRevision": 1,
     "name": "Horsens",
     "areaName": "Horsens Fjord",
     "subtitle": "Horsens",
@@ -77,6 +78,7 @@
   },
   {
     "id": "vejle",
+    "forecastConfigRevision": 1,
     "name": "Vejle",
     "areaName": "Vejle Fjord",
     "subtitle": "Vejle",
@@ -124,6 +126,7 @@
   },
   {
     "id": "kolding",
+    "forecastConfigRevision": 1,
     "name": "Kolding",
     "areaName": "Kolding Fjord",
     "subtitle": "Kolding",
@@ -164,6 +167,7 @@
   },
   {
     "id": "aarhus",
+    "forecastConfigRevision": 1,
     "name": "Aarhus",
     "areaName": "Aarhus Bugt",
     "subtitle": "Aarhus",

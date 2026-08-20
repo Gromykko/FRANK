@@ -55,6 +55,7 @@ function forecast(): WeatherData {
       coordinate: CURRENT_LOCATION.coordinate,
       location: {
         id: CURRENT_LOCATION.id,
+        forecastConfigRevision: CURRENT_LOCATION.forecastConfigRevision,
         name: CURRENT_LOCATION.name,
         areaName: CURRENT_LOCATION.areaName,
       },

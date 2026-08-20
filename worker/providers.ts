@@ -90,15 +90,25 @@ function isMetForecastResponse(value: unknown): value is MetForecastResponse {
   return Array.isArray(timeseries) && timeseries.every((entry) => isRecord(entry));
 }
 
-function isMetRawCache(value: unknown): value is MetRawCache {
+function isMetRawCache(
+  value: unknown,
+  location: Pick<ForecastLocation, 'id' | 'forecastConfigRevision'>,
+): value is MetRawCache {
   return isRecord(value)
+    && value.locationId === location.id
+    && value.forecastConfigRevision === location.forecastConfigRevision
     && typeof value.lastModified === 'string'
     && isMetForecastResponse(value.body);
 }
 
-function isMarineIngredientEnvelope(value: unknown): value is MarineIngredientEnvelope {
+function isMarineIngredientEnvelope(
+  value: unknown,
+  location: Pick<ForecastLocation, 'id' | 'forecastConfigRevision'>,
+): value is MarineIngredientEnvelope {
   return isRecord(value)
     && typeof value.schemaVersion === 'number'
+    && value.locationId === location.id
+    && value.forecastConfigRevision === location.forecastConfigRevision
     && typeof value.collection === 'string'
     && typeof value.id === 'string'
     && Array.isArray(value.series);
@@ -497,7 +507,7 @@ async function fetchMetWeather(
       policy,
       `MET retained cache read for ${location.id}`,
     );
-    stored = isMetRawCache(retained) ? retained : null;
+    stored = isMetRawCache(retained, location) ? retained : null;
   } catch (error) {
     rethrowIfDeadlineReached(error, policy, `MET retained cache read recovery for ${location.id}`);
     stored = null;
@@ -571,7 +581,12 @@ async function fetchMetWeather(
     if (lastModified) {
       try {
         await awaitWithinDeadline(
-          () => env.FRANK_FORECAST_CACHE.put(rawKey, JSON.stringify({ lastModified, body: data })),
+          () => env.FRANK_FORECAST_CACHE.put(rawKey, JSON.stringify({
+            locationId: location.id,
+            forecastConfigRevision: location.forecastConfigRevision,
+            lastModified,
+            body: data,
+          })),
           policy,
           `MET retained cache write for ${location.id}`,
         );
@@ -622,11 +637,15 @@ async function fetchMetWeather(
 // ingredient falls back independently, the served payload stays one
 // combined object where every hour has both weather and marine data).
 // This cache contains NORMALIZED series, not raw provider responses. Its own
-// schema and the compiled data generation are present in both key and envelope;
-// neither is coupled to the browser payload version.
+// cache schema and location-config identity are present in both key and
+// envelope; the compiled release axes are additionally present in the key.
+// None of these identities is coupled to the browser payload version.
 export async function fetchMarineSeriesWithFallback<TFeature>(
   env: Env,
-  location: Pick<ForecastLocation, 'id' | 'areaName' | 'coordinate'>,
+  location: Pick<
+    ForecastLocation,
+    'id' | 'forecastConfigRevision' | 'areaName' | 'coordinate'
+  >,
   kind: MarineKind,
   instance: MarineInstance,
   parameters: string[],
@@ -647,7 +666,7 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
       policy,
       `${kind} retained cache read for ${location.id}`,
     );
-    stored = isMarineIngredientEnvelope(retained) ? retained : null;
+    stored = isMarineIngredientEnvelope(retained, location) ? retained : null;
   } catch (error) {
     rethrowIfDeadlineReached(error, policy, `${kind} retained cache read recovery for ${location.id}`);
     stored = null;
@@ -723,6 +742,8 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
       await awaitWithinDeadline(
         () => env.FRANK_FORECAST_CACHE.put(key, JSON.stringify({
           schemaVersion: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
+          locationId: location.id,
+          forecastConfigRevision: location.forecastConfigRevision,
           collection: instance.collection,
           id: instance.id,
           series,
@@ -971,6 +992,7 @@ export async function buildForecastCache(
         },
         location: {
           id: location.id,
+          forecastConfigRevision: location.forecastConfigRevision,
           name: location.name,
           areaName: location.areaName,
         },

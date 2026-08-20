@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { appendFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import ts from 'typescript';
@@ -75,6 +75,10 @@ const DIRECTION_READING_FIELDS = new Set([
   'currentDirection',
 ]);
 const SUPPORTED_BLOCK_SPANS = new Set([6, 12]);
+// FRANK currently has one continuously materialized public representation.
+// Do not raise this pin merely by editing release metadata: a breaking API
+// needs a real adapter that cron rebuilds for old clients on every cycle.
+const IMPLEMENTED_CONTINUOUS_API_SCHEMA_VERSION = 1;
 
 class WarmupError extends Error {
   constructor(message) {
@@ -271,12 +275,24 @@ export function parseReleasePolicy(source) {
   if (!validReleaseMetadata(release)) {
     throw new WarmupError('The current release descriptor is invalid.');
   }
+  if (release.apiSchemaVersion !== IMPLEMENTED_CONTINUOUS_API_SCHEMA_VERSION) {
+    throw new WarmupError(
+      `Breaking API v${release.apiSchemaVersion} is blocked. `
+      + `FRANK currently continuously materializes only API v${IMPLEMENTED_CONTINUOUS_API_SCHEMA_VERSION}; `
+      + 'implement and test an old-format adapter before changing the current API schema.',
+    );
+  }
   if (!positiveUniqueApiVersions(supportedApiSchemaVersions)) {
     throw new WarmupError('The supported API schema list is invalid.');
   }
   if (!Array.isArray(auditedPreviousReleases)
     || !auditedPreviousReleases.every(validReleaseMetadata)) {
     throw new WarmupError('An audited previous release descriptor is invalid.');
+  }
+  if (auditedPreviousReleases.length > 1) {
+    throw new WarmupError(
+      'The release contract may retain only the current and one previous forecast generation.',
+    );
   }
 
   // The Worker resolves the first full descriptor for each prior API schema.
@@ -370,6 +386,10 @@ export async function loadReleaseContract({
     || !Number.isFinite(location?.coordinate?.longitude))) {
     throw new WarmupError('The location manifest contains an invalid coordinate.');
   }
+  if (locations.some((location) => !Number.isSafeInteger(location?.forecastConfigRevision)
+    || location.forecastConfigRevision < 1)) {
+    throw new WarmupError('The location manifest contains an invalid forecastConfigRevision.');
+  }
 
   const policy = parseReleasePolicy(contractSource);
   const { release } = policy;
@@ -379,10 +399,17 @@ export async function loadReleaseContract({
     locationIds: ids,
     locations: locations.map((location) => ({
       id: location.id,
+      name: location.name,
+      areaName: location.areaName,
+      forecastConfigRevision: location.forecastConfigRevision,
       coordinate: {
         latitude: location.coordinate.latitude,
         longitude: location.coordinate.longitude,
       },
+      timezone: location.timezone,
+      dmiCollections: location.dmiCollections,
+      emmaId: location.emmaId,
+      kommuneAliases: location.kommuneAliases,
     })),
     expectedVersion,
     release,
@@ -1125,6 +1152,7 @@ export async function warmWorker({
   healthPropagationRetryDelayMs = DEFAULT_HEALTH_RETRY_DELAY_MS,
   fetchImpl = fetch,
   logger = consoleLogger,
+  onProgress,
 }) {
   const base = normalizeBaseUrl(baseUrl);
   const boundedAttempts = positiveInteger(attempts, 'Attempts');
@@ -1157,6 +1185,9 @@ export async function warmWorker({
   }
   if (typeof readOnly !== 'boolean') {
     throw new WarmupError('Read-only forecast policy must be a boolean.');
+  }
+  if (onProgress !== undefined && typeof onProgress !== 'function') {
+    throw new WarmupError('Warm-up progress reporter must be a function.');
   }
   if (expectedRelease !== undefined && !validReleaseMetadata(expectedRelease)) {
     throw new WarmupError('Expected release metadata is invalid.');
@@ -1192,6 +1223,14 @@ export async function warmWorker({
     const forecastPath = `api/v${apiSchemaVersion}/forecast/${encodeURIComponent(locationId)}`;
     const url = new URL(forecastPath, base);
     if (!readOnly) url.searchParams.set('warm', '1');
+    await onProgress?.({
+      phase: 'checking',
+      locationId,
+      targetReadyLocationIds: [...targetReadyIds],
+      compatibleFallbackLocationIds: [...compatibleFallbackIds],
+      generationNotReadyLocationIds: [...generationNotReadyIds],
+      transientLocationIds: [...transientIds],
+    });
     const result = await requireForecastStage({
       label: `forecast ${locationId}`,
       url,
@@ -1224,6 +1263,15 @@ export async function warmWorker({
       availableIds.push(locationId);
       generationNotReadyIds.push(locationId);
     }
+    await onProgress?.({
+      phase: 'checked',
+      locationId,
+      outcome: result,
+      targetReadyLocationIds: [...targetReadyIds],
+      compatibleFallbackLocationIds: [...compatibleFallbackIds],
+      generationNotReadyLocationIds: [...generationNotReadyIds],
+      transientLocationIds: [...transientIds],
+    });
   }
 
   // Partial availability requires at least one real 200 forecast response.
@@ -1327,6 +1375,8 @@ function parseArguments(argv) {
     '--attempts',
     '--timeout-ms',
     '--retry-delay-ms',
+    '--summary-file',
+    '--summary-title',
   ]);
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -1359,6 +1409,8 @@ function parseArguments(argv) {
     attempts: values['--attempts'],
     timeoutMs: values['--timeout-ms'],
     retryDelayMs: values['--retry-delay-ms'],
+    summaryFile: values['--summary-file'],
+    summaryTitle: values['--summary-title'],
     requireTargetReadyAll,
     readOnly,
   };
@@ -1382,7 +1434,77 @@ Options:
                           triggering provider work
   --attempts <n>          Transport attempts per request (default: ${DEFAULT_ATTEMPTS})
   --timeout-ms <n>        Per-request timeout (default: ${DEFAULT_TIMEOUT_MS})
-  --retry-delay-ms <n>    Initial retry delay (default: ${DEFAULT_RETRY_DELAY_MS})`);
+  --retry-delay-ms <n>    Initial retry delay (default: ${DEFAULT_RETRY_DELAY_MS})
+  --summary-file <path>   Append city-by-city readiness to a private CI summary file
+  --summary-title <text>  Heading for that summary section`);
+}
+
+function markdownText(value) {
+  return String(value)
+    .replaceAll('\\', '\\\\')
+    .replaceAll('\r', ' ')
+    .replaceAll('\n', ' ')
+    .replaceAll('`', '\\`')
+    .replaceAll('*', '\\*')
+    .replaceAll('_', '\\_');
+}
+
+function fallbackLocationLabel(id) {
+  return id
+    .split('-')
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+    .join(' ');
+}
+
+export function formatWarmGateSummary({
+  title = 'Worker forecast readiness',
+  status,
+  locations,
+  targetReadyLocationIds = [],
+  compatibleFallbackLocationIds = [],
+  generationNotReadyLocationIds = [],
+  initializingLocationIds = [],
+  activeLocationId,
+  errorMessage,
+}) {
+  if (!Array.isArray(locations) || locations.length === 0) {
+    throw new WarmupError('Warm-up summary locations are invalid.');
+  }
+  const ids = locations.map((location) => location?.id);
+  if (ids.some((id) => typeof id !== 'string') || new Set(ids).size !== ids.length) {
+    throw new WarmupError('Warm-up summary location ids are invalid.');
+  }
+  const knownIds = new Set(ids);
+  const safeList = (values) => Array.isArray(values)
+    ? values.filter((id) => knownIds.has(id))
+    : [];
+  const ready = new Set(safeList(targetReadyLocationIds));
+  const fallback = new Set(safeList(compatibleFallbackLocationIds));
+  const notReady = new Set(safeList(generationNotReadyLocationIds));
+  const initializing = new Set(safeList(initializingLocationIds));
+  const missing = ids.filter((id) => !ready.has(id));
+  const lines = [
+    `#### ${markdownText(title)}`,
+    '',
+    `- Gate: ${status === 'passed' ? 'passed' : 'failed'}`,
+    `- Exact ready: ${ready.size}/${ids.length}`,
+    `- Missing exact readiness: ${missing.length === 0 ? 'none' : missing.join(', ')}`,
+    '- Locations:',
+  ];
+  for (const location of locations) {
+    const id = location.id;
+    const label = location.areaName ?? location.name ?? fallbackLocationLabel(id);
+    let state = 'not reached';
+    if (ready.has(id)) state = 'exact target ready';
+    else if (status === 'failed' && activeLocationId === id) state = 'failed during check';
+    else if (initializing.has(id)) state = 'initializing';
+    else if (fallback.has(id)) state = 'fallback only (not exact)';
+    else if (notReady.has(id)) state = 'target generation incomplete';
+    lines.push(`  - ${markdownText(label)} (\`${markdownText(id)}\`): ${state}`);
+  }
+  if (errorMessage) lines.push(`- Failure: ${markdownText(errorMessage).slice(0, 500)}`);
+  lines.push('');
+  return `${lines.join('\n')}\n`;
 }
 
 export async function runCli(argv = process.argv.slice(2), environment = process.env) {
@@ -1402,23 +1524,60 @@ export async function runCli(argv = process.argv.slice(2), environment = process
   const expectedWorkerVersionId = options.expectedWorkerVersionId
     ?? environment.FRANK_EXPECTED_WORKER_VERSION_ID;
   const targetWorkerName = options.workerName ?? environment.FRANK_WORKER_NAME;
+  const progress = {
+    activeLocationId: undefined,
+    targetReadyLocationIds: [],
+    compatibleFallbackLocationIds: [],
+    generationNotReadyLocationIds: [],
+    transientLocationIds: [],
+  };
+  let result;
+  let failure;
+  try {
+    result = await warmWorker({
+      baseUrl: options.baseUrl ?? environment.FRANK_WORKER_BASE_URL,
+      locationIds: contract.locationIds,
+      locationContracts: contract.locations,
+      expectedVersion,
+      expectedRelease: contract.release,
+      auditedPriorApiReleases: contract.auditedPriorApiReleases,
+      compatibleMinVersion,
+      expectedWorkerVersionId,
+      workerName: targetWorkerName,
+      requireTargetReadyAll: options.requireTargetReadyAll,
+      readOnly: options.readOnly,
+      onProgress: async (update) => {
+        progress.activeLocationId = update.phase === 'checking' ? update.locationId : undefined;
+        progress.targetReadyLocationIds = update.targetReadyLocationIds;
+        progress.compatibleFallbackLocationIds = update.compatibleFallbackLocationIds;
+        progress.generationNotReadyLocationIds = update.generationNotReadyLocationIds;
+        progress.transientLocationIds = update.transientLocationIds;
+      },
+      ...(options.attempts === undefined ? {} : { attempts: options.attempts }),
+      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      ...(options.retryDelayMs === undefined ? {} : { retryDelayMs: options.retryDelayMs }),
+    });
+  } catch (error) {
+    failure = error;
+  }
 
-  await warmWorker({
-    baseUrl: options.baseUrl ?? environment.FRANK_WORKER_BASE_URL,
-    locationIds: contract.locationIds,
-    locationContracts: contract.locations,
-    expectedVersion,
-    expectedRelease: contract.release,
-    auditedPriorApiReleases: contract.auditedPriorApiReleases,
-    compatibleMinVersion,
-    expectedWorkerVersionId,
-    workerName: targetWorkerName,
-    requireTargetReadyAll: options.requireTargetReadyAll,
-    readOnly: options.readOnly,
-    ...(options.attempts === undefined ? {} : { attempts: options.attempts }),
-    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
-    ...(options.retryDelayMs === undefined ? {} : { retryDelayMs: options.retryDelayMs }),
-  });
+  if (options.summaryFile) {
+    await appendFile(options.summaryFile, formatWarmGateSummary({
+      title: options.summaryTitle,
+      status: failure ? 'failed' : 'passed',
+      locations: contract.locations,
+      targetReadyLocationIds: result?.targetReadyLocationIds ?? progress.targetReadyLocationIds,
+      compatibleFallbackLocationIds: result?.compatibleFallbackLocationIds
+        ?? progress.compatibleFallbackLocationIds,
+      generationNotReadyLocationIds: result?.generationNotReadyLocationIds
+        ?? progress.generationNotReadyLocationIds,
+      initializingLocationIds: result?.initializingLocationIds ?? progress.transientLocationIds,
+      activeLocationId: progress.activeLocationId,
+      errorMessage: failure instanceof Error ? failure.message : undefined,
+    }), 'utf8');
+  }
+  if (failure) throw failure;
+  return result;
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : '';

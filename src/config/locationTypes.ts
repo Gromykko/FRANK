@@ -1,5 +1,9 @@
 export interface ForecastLocation {
   id: string;
+  // Cache/provenance identity for forecast-bearing configuration. Start a new
+  // location at 1 and increment this before changing coordinates, provider
+  // collections, timezone, or warning coverage inputs for an existing id.
+  forecastConfigRevision: number;
   name: string;
   areaName: string;
   subtitle: string;

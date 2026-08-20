@@ -341,6 +341,15 @@ body {
   }
 }
 
+/* The normal dashboard mask keeps clouds in its wide side rails. The first-
+   build card is much narrower, so reusing that mask made clouds vanish in
+   empty air hundreds of pixels before the card. On this one screen the opaque
+   panel itself supplies the exact visual occlusion boundary. */
+#root:has(.initialization-page) .pixel-sky {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
 @media (max-width: 899px) {
   .pixel-cloud-two,
   .pixel-cloud-three {
@@ -1023,30 +1032,27 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .initialization-card {
-  width: min(100%, 560px);
+  width: min(100%, 580px);
   text-align: center;
   padding: clamp(28px, 6vw, 48px);
 }
 
-.initialization-mark {
-  position: relative;
-  width: 64px;
-  height: 64px;
-  margin: 0 auto 20px;
-  display: grid;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--primary) 35%, var(--panel-border));
-  border-radius: 50%;
+.initialization-progress {
+  width: fit-content;
+  min-height: 36px;
+  margin: 0 auto 22px;
+  padding: 7px 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--panel-border));
+  border-radius: var(--radius-sm);
   color: var(--primary);
-  background: var(--primary-bg);
-}
-
-.initialization-pulse {
-  position: absolute;
-  inset: -1px;
-  border: 1px solid color-mix(in srgb, var(--primary) 45%, transparent);
-  border-radius: inherit;
-  animation: initialization-pulse 2.4s ease-out infinite;
+  background: color-mix(in srgb, var(--primary-bg) 72%, var(--panel-bg));
+  font-size: var(--text-ui);
+  font-weight: 750;
+  line-height: 1.35;
 }
 
 .initialization-eyebrow {
@@ -1088,6 +1094,9 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .initialization-retry {
+  appearance: none;
+  width: auto;
+  height: auto;
   min-width: 138px;
   min-height: 44px;
   margin: 24px auto 0;
@@ -1095,7 +1104,26 @@ h1, h2, h3, h4, h5, h6 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--primary) 34%, var(--control-border));
+  border-radius: var(--radius-sm);
+  background: var(--primary-bg);
+  color: var(--primary);
+  font: inherit;
+  font-size: var(--text-ui);
+  font-weight: 750;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.initialization-retry:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary-bg) 60%, var(--primary) 12%);
+}
+
+.initialization-retry:focus-visible,
+.initialization-ready-option:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 .initialization-retry:disabled {
@@ -1103,45 +1131,62 @@ h1, h2, h3, h4, h5, h6 {
   opacity: 0.72;
 }
 
-.initialization-retry-icon.is-spinning {
-  animation: spin 1s linear infinite;
-}
-
-.initialization-location {
+.initialization-ready {
   margin-top: 24px;
   padding-top: 20px;
   border-top: 1px solid var(--panel-border);
+}
+
+.initialization-ready-label {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--text-muted);
+  font-size: var(--text-ui);
+  font-weight: 700;
+}
+
+.initialization-ready-list {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  color: var(--text-muted);
-  font-size: var(--text-ui);
 }
 
-.initialization-location .frank-location {
-  color: var(--text-main);
-}
-
-.initialization-location .location-switcher-btn {
+.initialization-ready-option {
+  appearance: none;
   min-height: 44px;
-  margin: 0;
-  padding: 7px 10px;
+  padding: 8px 10px 8px 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
   background: var(--panel-bg);
+  color: var(--text-main);
+  font: inherit;
+  font-size: var(--text-ui);
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
-.initialization-location .location-switcher-menu {
-  left: 50%;
-  right: auto;
-  transform: translateX(-50%);
-  text-align: left;
+.initialization-ready-option:hover {
+  border-color: var(--primary);
+  background: var(--primary-bg);
 }
 
-@keyframes initialization-pulse {
-  0% { transform: scale(0.92); opacity: 0.7; }
-  75%, 100% { transform: scale(1.26); opacity: 0; }
+.initialization-ready-state {
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--panel-border));
+  border-radius: 4px;
+  background: var(--primary-bg);
+  color: var(--primary);
+  font-size: var(--text-caption);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 @media (max-width: 380px) {
@@ -1155,14 +1200,12 @@ h1, h2, h3, h4, h5, h6 {
     padding: 24px 16px;
   }
 
-  .initialization-location {
+  .initialization-ready-list {
+    align-items: stretch;
     flex-direction: column;
   }
-}
 
-@media (prefers-reduced-motion: reduce) {
-  .initialization-pulse,
-  .initialization-retry-icon.is-spinning {
-    animation: none !important;
+  .initialization-ready-option {
+    width: 100%;
   }
 }

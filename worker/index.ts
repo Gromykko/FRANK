@@ -34,6 +34,7 @@ import {
 } from './execution';
 import type { ExecutionPolicy, ExecutionPolicyInput } from './execution';
 import type {
+  BusyProvider,
   CacheHealthOptions,
   CacheHealthStatus,
   EventMemo,
@@ -68,6 +69,7 @@ import { errorMessage, isRecord } from './validation';
 import {
   RELEASE_IDENTITY,
   AUDITED_PREVIOUS_GENERATIONS,
+  INITIALIZATION_STATE_SCHEMA_VERSION,
   assembledForecastKey,
   assembledForecastKeyForRelease,
   hasReleaseMetadata,
@@ -126,7 +128,7 @@ const CANDIDATE_BUILD_EXECUTION_BUDGET_MS = 24_000;
 // final KV write still have a deterministic chance to finish.
 const CANDIDATE_COMPLETION_RESERVE_MS = 4_000;
 
-const INITIALIZATION_SCHEMA_VERSION = 1;
+const INITIALIZATION_PAYLOAD_SCHEMA_VERSION = 1;
 const INITIALIZATION_RETRY_SECONDS = 10 * 60;
 // KV requires expirationTtl >= 60 seconds. A little extra lifetime lets a
 // caller calculate the remaining retry delay even if it arrives near the
@@ -155,11 +157,16 @@ const CRON_CHECK_MIN_INTERVAL_MS = 4 * 60 * 1000;
 // four locations against an allowance of 1000.
 const CHECKED_STAMP_MIN_WRITE_INTERVAL_MS = 15 * 60 * 1000;
 
-function cacheKey(location: Pick<ForecastLocation, 'id'>): string {
+type ForecastCacheLocation = Pick<
+  ForecastLocation,
+  'id' | 'forecastConfigRevision'
+>;
+
+function cacheKey(location: ForecastCacheLocation): string {
   return assembledForecastKey(location);
 }
 
-function initializationKey(location: Pick<ForecastLocation, 'id'>): string {
+function initializationKey(location: ForecastCacheLocation): string {
   return initializationStateKey(location);
 }
 
@@ -389,7 +396,7 @@ async function readAuditedPreviousGenerationForecast(
 
 async function writeCachedForecast(
   env: Env,
-  location: Pick<ForecastLocation, 'id'>,
+  location: ForecastCacheLocation,
   data: ForecastData,
   policyInput?: ExecutionPolicyInput,
 ): Promise<void> {
@@ -403,21 +410,26 @@ async function writeCachedForecast(
 
 function isInitializationMarker(
   value: unknown,
-  location: Pick<ForecastLocation, 'id'>,
+  location: ForecastCacheLocation,
 ): value is ForecastInitializationMarker {
   if (!isRecord(value) || typeof value.lastAttemptAt !== 'string') return false;
   const lastAttemptMs = Date.parse(value.lastAttemptAt);
   return Number.isFinite(lastAttemptMs)
     && lastAttemptMs <= Date.now()
-    && value.schemaVersion === INITIALIZATION_SCHEMA_VERSION
+    && value.schemaVersion === INITIALIZATION_STATE_SCHEMA_VERSION
     && value.status === 'initializing'
     && value.locationId === location.id
-    && value.retryAfterSeconds === INITIALIZATION_RETRY_SECONDS;
+    && value.forecastConfigRevision === location.forecastConfigRevision
+    && value.retryAfterSeconds === INITIALIZATION_RETRY_SECONDS
+    && (value.provider === 'weather'
+      || value.provider === 'marine'
+      || value.provider === 'services')
+    && typeof value.busy === 'boolean';
 }
 
 async function readInitializationMarker(
   env: Env,
-  location: Pick<ForecastLocation, 'id'>,
+  location: ForecastCacheLocation,
   policyInput?: ExecutionPolicyInput,
 ): Promise<ForecastInitializationMarker | null> {
   const policy = executionPolicy(policyInput);
@@ -444,16 +456,20 @@ async function readInitializationMarker(
 
 async function writeInitializationMarker(
   env: Env,
-  location: Pick<ForecastLocation, 'id'>,
+  location: ForecastCacheLocation,
+  providerState: { provider: BusyProvider; busy: boolean },
   policyInput?: ExecutionPolicyInput,
 ): Promise<ForecastInitializationMarker> {
   const policy = executionPolicy(policyInput);
   const marker: ForecastInitializationMarker = {
-    schemaVersion: INITIALIZATION_SCHEMA_VERSION,
+    schemaVersion: INITIALIZATION_STATE_SCHEMA_VERSION,
     status: 'initializing',
     locationId: location.id,
+    forecastConfigRevision: location.forecastConfigRevision,
     lastAttemptAt: new Date().toISOString(),
     retryAfterSeconds: INITIALIZATION_RETRY_SECONDS,
+    provider: providerState.provider,
+    busy: providerState.busy,
   };
   await awaitWithinDeadline(
     () => env.FRANK_FORECAST_CACHE.put(
@@ -472,7 +488,7 @@ async function writeInitializationMarker(
 const lastInitializationFailureAt = new Map<string, number>();
 
 function initializationRetrySeconds(
-  location: Pick<ForecastLocation, 'id'>,
+  location: ForecastCacheLocation,
   marker?: ForecastInitializationMarker | null,
   nowMs = Date.now(),
 ): number {
@@ -500,7 +516,7 @@ function forecastInitializingResponse(
     Math.ceil(retryAfterSeconds),
   ));
   const payload: ForecastInitializingPayload = {
-    schemaVersion: INITIALIZATION_SCHEMA_VERSION,
+    schemaVersion: INITIALIZATION_PAYLOAD_SCHEMA_VERSION,
     status: 'initializing',
     code: 'FORECAST_INITIALIZING',
     message: 'Forecast for this location is being prepared. Please try again shortly.',
@@ -554,7 +570,7 @@ export function shouldPersistFailureState(
 const lastCheckAt = new Map<string, number>();
 
 export function shouldCheckInBackground(
-  location: Pick<ForecastLocation, 'id'>,
+  location: ForecastCacheLocation,
   data: { sources?: { cacheHealth?: Pick<WorkerCacheHealth, 'lastAttemptAt'> } } | null | undefined,
   minIntervalMs: number,
   memoryMsOverride?: number,
@@ -826,7 +842,10 @@ async function _refreshForecastCache(
       // Persist only an explicitly classified transient outcome. Writing an
       // "attempt started" marker before provider validation would let a code
       // or schema failure masquerade as initialization to later callers.
-      const marker = await writeInitializationMarker(env, location, policy);
+      const marker = await writeInitializationMarker(env, location, {
+        provider: error.provider,
+        busy: error.busy,
+      }, policy);
       lastInitializationFailureAt.set(
         initializationKey(location),
         Date.parse(marker.lastAttemptAt),
@@ -835,6 +854,7 @@ async function _refreshForecastCache(
         event: 'forecast_initializing',
         locationId: location.id,
         provider: error.provider,
+        providerBusy: error.busy,
         retryAfterSeconds: marker.retryAfterSeconds,
       }));
     }
@@ -1061,6 +1081,15 @@ async function loadHealthPayload(env: Env): Promise<HealthPayload> {
               policy,
             );
         const data = current ?? previous?.data ?? null;
+        const marker = data
+          ? null
+          : await readInitializationMarker(env, location, policy);
+        const markerAttemptMs = Date.parse(marker?.lastAttemptAt ?? '');
+        const initialization = marker
+          && Number.isFinite(markerAttemptMs)
+          && markerAttemptMs + marker.retryAfterSeconds * 1000 > Date.now()
+          ? marker
+          : null;
         return {
           id: location.id,
           areaName: location.areaName,
@@ -1069,6 +1098,7 @@ async function loadHealthPayload(env: Env): Promise<HealthPayload> {
           availabilitySource: current ? 'generation' : previous?.source ?? 'none',
           fetchedAt: data?.sources.fetchedAt,
           cacheHealth: data?.sources.cacheHealth,
+          ...(initialization ? { initialization } : {}),
         };
       }),
     );

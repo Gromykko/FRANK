@@ -28,12 +28,19 @@ function makeEnv(seed: Record<string, unknown> = {}) {
   };
 }
 
-const LOCATION = { id: 'test', areaName: 'Test Fjord', coordinate: { longitude: 9.9, latitude: 55.8 } };
+const LOCATION = {
+  id: 'test',
+  forecastConfigRevision: 1,
+  areaName: 'Test Fjord',
+  coordinate: { longitude: 9.9, latitude: 55.8 },
+};
 const WATER_INSTANCE = { collection: 'dkss_idw', id: '2026-07-11T120000Z' };
 const identityMap = (features: unknown) => features as Array<{ timeMs: number }>;
 const CURRENT_INGREDIENT_KEY = marineIngredientKey(LOCATION, 'water');
 const retainedEnvelope = (id: string, series: unknown[]) => ({
   schemaVersion: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
+  locationId: LOCATION.id,
+  forecastConfigRevision: LOCATION.forecastConfigRevision,
   collection: 'dkss_idw',
   id,
   series,
@@ -68,6 +75,8 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     // Retained for the next outage, tagged with the run it came from.
     expect(JSON.parse(env.store.get(CURRENT_INGREDIENT_KEY)!)).toMatchObject({
       schemaVersion: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
+      locationId: LOCATION.id,
+      forecastConfigRevision: LOCATION.forecastConfigRevision,
       collection: 'dkss_idw',
       id: '2026-07-11T120000Z',
     });
@@ -85,6 +94,47 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     expect(fetched).toBe(false);
     expect(result.fallback).toBe(false);
     expect(result.series).toEqual(retained);
+  });
+
+  it('never reuses a retained ingredient stamped for another config revision', async () => {
+    const retained = [{
+      time: '2026-07-11T12:00:00Z',
+      timeMs: Date.parse('2026-07-11T12:00:00Z'),
+      tideLevel: 999,
+    }];
+    const fresh = [{
+      time: '2026-07-11T12:00:00Z',
+      timeMs: Date.parse('2026-07-11T12:00:00Z'),
+      tideLevel: 0.4,
+    }];
+    const mismatchedEnvelope = {
+      ...retainedEnvelope('2026-07-11T120000Z', retained),
+      forecastConfigRevision: LOCATION.forecastConfigRevision + 1,
+    };
+    const env = makeEnv({ [CURRENT_INGREDIENT_KEY]: mismatchedEnvelope });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ features: fresh }),
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const result = await fetchMarineSeriesWithFallback(
+      env,
+      LOCATION,
+      'water',
+      WATER_INSTANCE,
+      ['x'],
+      identityMap,
+    );
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(result.series).toEqual(fresh);
+    expect(JSON.parse(env.store.get(CURRENT_INGREDIENT_KEY)!)).toMatchObject({
+      locationId: LOCATION.id,
+      forecastConfigRevision: LOCATION.forecastConfigRevision,
+      series: fresh,
+    });
   });
 
   it('never re-blesses a normalized ingredient written by an older cache schema', async () => {

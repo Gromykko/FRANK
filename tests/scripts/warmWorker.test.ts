@@ -3,10 +3,14 @@ import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   compatibleForecastVersionFloor,
+  formatWarmGateSummary,
   loadReleaseContract,
   parseReleasePolicy,
   warmWorker,
@@ -291,10 +295,45 @@ afterEach(async () => {
 });
 
 describe('Worker deployment warm-up', () => {
+  it('formats an explicit city-by-city readiness summary', () => {
+    const summary = formatWarmGateSummary({
+      title: 'Candidate readiness',
+      status: 'failed',
+      locations: [
+        { id: 'horsens', areaName: 'Horsens Fjord' },
+        { id: 'vejle', areaName: 'Vejle Fjord' },
+      ],
+      targetReadyLocationIds: ['horsens'],
+      activeLocationId: 'vejle',
+      errorMessage: 'forecast vejle failed',
+    });
+
+    expect(summary).toContain('Exact ready: 1/2');
+    expect(summary).toContain('Missing exact readiness: vejle');
+    expect(summary).toContain('Horsens Fjord (`horsens`): exact target ready');
+    expect(summary).toContain('Vejle Fjord (`vejle`): failed during check');
+  });
+
   it('blocks a breaking API until continuous old-representation materialization exists', () => {
     expect(() => parseReleasePolicy(breakingApiContract())).toThrow(
-      'Breaking API release is blocked for prior schema v1',
+      'Breaking API v2 is blocked',
     );
+  });
+
+  it('cannot bypass the breaking-API lock by omitting the previous descriptor', () => {
+    expect(() => parseReleasePolicy(`
+      export const SUPPORTED_FORECAST_API_SCHEMA_VERSIONS = [2] as const;
+      export const CURRENT_RELEASE = Object.freeze({
+        apiSchemaVersion: 2,
+        modelRevision: 8,
+        assembledCacheSchema: 2,
+        marineCacheSchema: 2,
+        dataGenerationId: 'api2-model8',
+        payloadVersion: 8,
+      });
+      export const AUDITED_PREVIOUS_FORECAST_GENERATIONS = Object.freeze([]);
+      export const LEGACY_FORECAST_PAYLOAD_VERSION = 8;
+    `)).toThrow('Breaking API v2 is blocked');
   });
 
   it('allows audited previous generations that retain the current API schema', () => {
@@ -308,8 +347,38 @@ describe('Worker deployment warm-up', () => {
     expect(policy.auditedPriorApiReleases).toEqual([]);
   });
 
+  it('refuses to accumulate more than one previous forecast generation', () => {
+    expect(() => parseReleasePolicy(`
+      export const SUPPORTED_FORECAST_API_SCHEMA_VERSIONS = [1] as const;
+      export const CURRENT_RELEASE = Object.freeze({
+        apiSchemaVersion: 1,
+        modelRevision: 9,
+        assembledCacheSchema: 1,
+        marineCacheSchema: 1,
+        dataGenerationId: 'api1-model9',
+        payloadVersion: 9,
+      });
+      const V8 = Object.freeze({ ...CURRENT_RELEASE, modelRevision: 8, dataGenerationId: 'api1-model8', payloadVersion: 8 });
+      const V7 = Object.freeze({ ...CURRENT_RELEASE, modelRevision: 7, dataGenerationId: 'api1-model7', payloadVersion: 7 });
+      export const AUDITED_PREVIOUS_FORECAST_GENERATIONS = Object.freeze([V8, V7]);
+      export const LEGACY_FORECAST_PAYLOAD_VERSION = 9;
+    `)).toThrow('only the current and one previous forecast generation');
+  });
+
   it('fails contract parsing when supported API routes drift from audited descriptors', () => {
-    expect(() => parseReleasePolicy(breakingApiContract('[2]'))).toThrow(
+    expect(() => parseReleasePolicy(`
+      export const SUPPORTED_FORECAST_API_SCHEMA_VERSIONS = [1, 2] as const;
+      export const CURRENT_RELEASE = Object.freeze({
+        apiSchemaVersion: 1,
+        modelRevision: 7,
+        assembledCacheSchema: 1,
+        marineCacheSchema: 1,
+        dataGenerationId: 'api1-model7',
+        payloadVersion: 7,
+      });
+      export const AUDITED_PREVIOUS_FORECAST_GENERATIONS = Object.freeze([]);
+      export const LEGACY_FORECAST_PAYLOAD_VERSION = 7;
+    `)).toThrow(
       'Supported API schema versions must exactly match',
     );
   });
@@ -1484,10 +1553,14 @@ describe('Worker deployment warm-up', () => {
       response.end('{"hourly":[{}],"sources":{"payloadVersion":999,"location":{"id":"wrong"}},"private":"do-not-log"}');
     });
 
+    const temporaryDirectory = await mkdtemp(path.join(tmpdir(), 'frank-warm-summary-'));
+    const summaryFile = path.join(temporaryDirectory, 'summary.md');
     const child = spawn(process.execPath, [
       SCRIPT_PATH,
       '--base-url', baseUrl,
       '--expected-worker-version-id', EXPECTED_WORKER_VERSION_ID,
+      '--summary-file', summaryFile,
+      '--summary-title', 'Candidate shadow readiness',
       '--attempts', '1',
       '--timeout-ms', '500',
       '--retry-delay-ms', '1',
@@ -1502,5 +1575,14 @@ describe('Worker deployment warm-up', () => {
     expect(exitCode).toBe(1);
     expect(stderr).toContain('[warm] failed: forecast horsens failed: HTTP 200 contract mismatch.');
     expect(stderr).not.toContain('do-not-log');
+    const summary = await readFile(summaryFile, 'utf8');
+    expect(summary).toContain('Gate: failed');
+    expect(summary).toContain('Exact ready: 0/4');
+    expect(summary).toContain('Horsens Fjord (`horsens`): failed during check');
+    expect(summary).toContain('Vejle Fjord (`vejle`): not reached');
+    expect(summary).toContain('Kolding Fjord (`kolding`): not reached');
+    expect(summary).toContain('Aarhus Bugt (`aarhus`): not reached');
+    expect(summary).not.toContain('do-not-log');
+    await rm(temporaryDirectory, { recursive: true, force: true });
   });
 });

@@ -13,7 +13,7 @@ import { isRecord } from './validation';
 // both the public API and the forecast model. Each is named in the key for the
 // object it governs so format changes cannot reinterpret older bytes.
 export const MET_RAW_CACHE_SCHEMA_VERSION = 1;
-export const INITIALIZATION_STATE_SCHEMA_VERSION = 1;
+export const INITIALIZATION_STATE_SCHEMA_VERSION = 2;
 
 type StorageReleaseIdentity = Pick<
   ForecastReleaseMetadata,
@@ -44,32 +44,42 @@ export function generationKeyPrefix(release: StorageReleaseIdentity): string {
 
 const GENERATION_KEY_PREFIX = generationKeyPrefix(CURRENT_FORECAST_RELEASE);
 
+type CacheLocationIdentity = Pick<ForecastLocation, 'id' | 'forecastConfigRevision'>;
+
+function locationKeySuffix(location: CacheLocationIdentity): string {
+  if (!Number.isSafeInteger(location.forecastConfigRevision)
+    || location.forecastConfigRevision < 1) {
+    throw new Error(`Invalid forecast config revision for location ${location.id}.`);
+  }
+  return `location:${location.id}:config:v${location.forecastConfigRevision}`;
+}
+
 export const RELEASE_HEADER = FORECAST_RELEASE_HEADERS;
 
-export function assembledForecastKey(location: Pick<ForecastLocation, 'id'>): string {
+export function assembledForecastKey(location: CacheLocationIdentity): string {
   return assembledForecastKeyForRelease(CURRENT_FORECAST_RELEASE, location);
 }
 
 export function assembledForecastKeyForRelease(
   release: StorageReleaseIdentity,
-  location: Pick<ForecastLocation, 'id'>,
+  location: CacheLocationIdentity,
 ): string {
-  return `${generationKeyPrefix(release)}:forecast:assembled:location:${location.id}`;
+  return `${generationKeyPrefix(release)}:forecast:assembled:${locationKeySuffix(location)}`;
 }
 
-export function metRawKey(location: Pick<ForecastLocation, 'id'>): string {
-  return `${GENERATION_KEY_PREFIX}:ingredient:met-raw:v${MET_RAW_CACHE_SCHEMA_VERSION}:location:${location.id}`;
+export function metRawKey(location: CacheLocationIdentity): string {
+  return `${GENERATION_KEY_PREFIX}:ingredient:met-raw:v${MET_RAW_CACHE_SCHEMA_VERSION}:${locationKeySuffix(location)}`;
 }
 
 export function marineIngredientKey(
-  location: Pick<ForecastLocation, 'id'>,
+  location: CacheLocationIdentity,
   kind: MarineKind,
 ): string {
-  return `${GENERATION_KEY_PREFIX}:ingredient:marine:${kind}:location:${location.id}`;
+  return `${GENERATION_KEY_PREFIX}:ingredient:marine:${kind}:${locationKeySuffix(location)}`;
 }
 
-export function initializationStateKey(location: Pick<ForecastLocation, 'id'>): string {
-  return `${GENERATION_KEY_PREFIX}:state:initialization:v${INITIALIZATION_STATE_SCHEMA_VERSION}:location:${location.id}`;
+export function initializationStateKey(location: CacheLocationIdentity): string {
+  return `${GENERATION_KEY_PREFIX}:state:initialization:v${INITIALIZATION_STATE_SCHEMA_VERSION}:${locationKeySuffix(location)}`;
 }
 
 export interface VersionedForecastRoute {

@@ -1,8 +1,22 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AVAILABLE_LOCATIONS, CURRENT_LOCATION, setLocation } from '../../src/config/locations';
+import locations from '../../src/config/locations.json';
+import type { ForecastLocation } from '../../src/config/locationTypes';
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+describe('forecast location identity', () => {
+  it('gives every location a positive integer config revision and permits revision 1', () => {
+    const configuredLocations = locations as ForecastLocation[];
+
+    expect(configuredLocations).not.toHaveLength(0);
+    expect(configuredLocations.some(({ forecastConfigRevision }) =>
+      forecastConfigRevision === 1)).toBe(true);
+    expect(configuredLocations.every(({ forecastConfigRevision }) =>
+      Number.isSafeInteger(forecastConfigRevision) && forecastConfigRevision >= 1)).toBe(true);
+  });
 });
 
 describe('setLocation', () => {

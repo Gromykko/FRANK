@@ -13,7 +13,7 @@ import {
   versionedForecastRoute,
 } from '../../worker/generation';
 
-const LOCATION = { id: 'horsens' };
+const LOCATION = { id: 'horsens', forecastConfigRevision: 1 };
 
 describe('release generation identity and storage isolation', () => {
   it('keeps the independent release identities explicit', () => {
@@ -25,7 +25,7 @@ describe('release generation identity and storage isolation', () => {
       dataGenerationId: 'api1-model7',
       payloadVersion: 7,
       metRawCacheSchemaVersion: 1,
-      initializationStateSchemaVersion: 1,
+      initializationStateSchemaVersion: 2,
     });
   });
 
@@ -66,6 +66,33 @@ describe('release generation identity and storage isolation', () => {
     expect(keys[0]).toContain('generation:forgotten%3Aid%2Fwith%20space:');
   });
 
+  it('isolates every location-scoped KV object when forecast-bearing config changes', () => {
+    const revisedLocation = { ...LOCATION, forecastConfigRevision: 2 };
+    const keysFor = (location: typeof LOCATION) => [
+      assembledForecastKey(location),
+      metRawKey(location),
+      marineIngredientKey(location, 'water'),
+      marineIngredientKey(location, 'waves'),
+      initializationStateKey(location),
+    ];
+
+    const revisionOneKeys = keysFor(LOCATION);
+    const revisionTwoKeys = keysFor(revisedLocation);
+
+    expect(revisionOneKeys.every((key) => key.endsWith(':location:horsens:config:v1')))
+      .toBe(true);
+    expect(revisionTwoKeys.every((key) => key.endsWith(':location:horsens:config:v2')))
+      .toBe(true);
+    expect(new Set([...revisionOneKeys, ...revisionTwoKeys]).size).toBe(10);
+  });
+
+  it('accepts revision 1 for a new location and rejects invalid config revisions', () => {
+    expect(assembledForecastKey({ id: 'new-fjord', forecastConfigRevision: 1 }))
+      .toContain(':location:new-fjord:config:v1');
+    expect(() => assembledForecastKey({ id: 'horsens', forecastConfigRevision: 0 }))
+      .toThrow(/invalid forecast config revision/i);
+  });
+
   it('can locate an explicitly audited N-1 generation with its own cache schema', () => {
     const previous = {
       ...CURRENT_RELEASE,
@@ -75,7 +102,7 @@ describe('release generation identity and storage isolation', () => {
     };
 
     expect(assembledForecastKeyForRelease(previous, LOCATION)).toBe(
-      'frank:forecast-release:api:v1:model:v6:generation:api1-model6:payload:v7:assembled-cache:v4:marine-cache:v1:forecast:assembled:location:horsens',
+      'frank:forecast-release:api:v1:model:v6:generation:api1-model6:payload:v7:assembled-cache:v4:marine-cache:v1:forecast:assembled:location:horsens:config:v1',
     );
   });
 
