@@ -83,7 +83,8 @@ test('language and location choices survive their reload paths', async ({ page }
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
 });
 
-test('the complete dashboard stays inside every supported viewport', async ({ page }) => {
+test('the complete dashboard stays inside every supported viewport', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === 'service-worker-chromium');
   await mockForecastWorker(page);
   await page.goto('./');
   await expect(page.locator('.app-footer')).toBeVisible();
@@ -109,26 +110,21 @@ test('the complete dashboard stays inside every supported viewport', async ({ pa
 });
 
 test('an installed production shell reloads with the saved forecast offline', async ({ page, context }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop-chromium');
+  test.skip(testInfo.project.name !== 'service-worker-chromium');
   const mock = await mockForecastWorker(page);
 
   await page.goto('./');
   await expect(page.locator('.app-footer')).toBeVisible();
   await page.evaluate(async () => { await navigator.serviceWorker.ready; });
 
-  // The service worker intentionally does not claim an already-open old tab.
-  // One online navigation moves this tab under its control before simulating a
-  // shoreline restart without connectivity.
-  await page.reload();
-  await expect(page.locator('.app-footer')).toBeVisible();
-  await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
   await expect.poll(() => page.evaluate(() => (
     Object.keys(localStorage).some((key) => key.startsWith('frank_weather_data_v2_'))
   ))).toBe(true);
 
-  // Remove the deterministic network route as well as disconnecting Chromium.
-  // A successful reload can now only come from the installed app shell plus the
-  // browser's saved forecast; no mocked or live HTTP response remains possible.
+  // The first load is not controlled, so its forecast request is intercepted.
+  // Remove that route and go offline BEFORE the navigation that first becomes
+  // controlled. Playwright cannot intercept traffic once a service worker owns
+  // it; this order proves no controlled online request can escape to production.
   await mock.stop();
 
   await context.setOffline(true);

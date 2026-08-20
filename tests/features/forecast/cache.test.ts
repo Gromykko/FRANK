@@ -371,6 +371,85 @@ describe('browser forecast cache recovery', () => {
     expect(persisted).toEqual({ data: olderWorker, from: 'local' });
   });
 
+  it('never lets an older Worker build regress the durable offline cache', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const newerLocal = weatherData([hour(new Date(NOW + 3 * 60 * 60 * 1000).toISOString())]);
+    newerLocal.sources.fetchedAt = new Date(NOW - 30 * 60 * 1000).toISOString();
+    newerLocal.sources.cacheHealth = {
+      status: 'current',
+      lastAttemptAt: newerLocal.sources.fetchedAt,
+    };
+    saveCachedWeatherData(newerLocal, CURRENT_LOCATION);
+
+    const olderWorker = weatherData([hour(new Date(NOW + 2 * 60 * 60 * 1000).toISOString())]);
+    olderWorker.sources.fetchedAt = new Date(NOW - 2 * 60 * 60 * 1000).toISOString();
+    olderWorker.sources.cacheHealth = {
+      status: 'stale',
+      lastAttemptAt: new Date(NOW).toISOString(),
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => structuredClone(olderWorker),
+    }));
+
+    const loaded = await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
+    expect(loaded).toEqual({ data: olderWorker, from: 'worker' });
+    expect(JSON.parse(localStorage.getItem(CACHE_KEY)!).sources.fetchedAt).toBe(newerLocal.sources.fetchedAt);
+
+    const offline = await loadCachedWeatherData(CURRENT_LOCATION, { localOnly: true });
+    expect(offline.data?.sources.fetchedAt).toBe(newerLocal.sources.fetchedAt);
+  });
+
+  it('replaces a corrupt durable value with the next validated forecast', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    localStorage.setItem(CACHE_KEY, '{not-json');
+    const valid = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
+
+    saveCachedWeatherData(valid, CURRENT_LOCATION);
+
+    expect(JSON.parse(localStorage.getItem(CACHE_KEY)!)).toEqual(valid);
+  });
+
+  it('migrates an unversioned legacy copy when the same build arrives with a contract stamp', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const versioned = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
+    const legacy = structuredClone(versioned);
+    delete legacy.sources.payloadVersion;
+    localStorage.setItem(CACHE_KEY, JSON.stringify(legacy));
+
+    saveCachedWeatherData(versioned, CURRENT_LOCATION);
+
+    expect(JSON.parse(localStorage.getItem(CACHE_KEY)!).sources.payloadVersion).toBe(versioned.sources.payloadVersion);
+  });
+
+  it('aligns browser timeouts with cached and true cold-start Worker paths', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    const worker = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
+    worker.sources.fetchedAt = new Date(NOW).toISOString();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => structuredClone(worker),
+    }));
+
+    await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
+    expect(timeout).toHaveBeenLastCalledWith(30_000);
+
+    const local = structuredClone(worker);
+    local.sources.fetchedAt = new Date(NOW + 60_000).toISOString();
+    local.sources.cacheHealth = { status: 'current', lastAttemptAt: local.sources.fetchedAt };
+    saveCachedWeatherData(local, CURRENT_LOCATION);
+
+    await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
+    expect(timeout).toHaveBeenLastCalledWith(12_000);
+
+    await loadCachedWeatherData(CURRENT_LOCATION, {
+      preferWorker: true,
+      allowColdWorkerBuild: true,
+    });
+    expect(timeout).toHaveBeenLastCalledWith(30_000);
+  });
+
   it('does not let a newer incompatible Worker overwrite the compatible last-good cache', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(NOW);
     const lastGood = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);

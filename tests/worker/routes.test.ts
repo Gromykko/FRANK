@@ -337,7 +337,33 @@ describe('Worker route HTTP contract', () => {
     await Promise.all(waits);
   });
 
-  it.each(['/forecast/horsens', '/forecast/horsens?refresh=1'])('does not re-read a known null forecast cache on %s', async (path) => {
+  it('serves an existing deployment warm-up cache without launching background work', async () => {
+    const { env, ctx, waits } = makeRuntime();
+    const providerFetch = vi.spyOn(globalThis, 'fetch');
+    const response = await worker.fetch(request('/forecast/horsens?warm=1'), env, ctx);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.sources.payloadVersion).toBe(FORECAST_PAYLOAD_VERSION);
+    expect(body.sources.location?.id).toBeUndefined();
+    expect(waits).toHaveLength(0);
+    expect(providerFetch).not.toHaveBeenCalled();
+  });
+
+  it('marks a due normal cache hit when a background check was actually scheduled', async () => {
+    const payload = cachedForecast();
+    payload.sources.cacheHealth.lastAttemptAt = new Date(Date.now() - 11 * 60_000).toISOString();
+    const { env, ctx, waits } = makeRuntime(payload);
+    const response = await worker.fetch(request('/forecast/kolding'), env, ctx);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('X-FRANK-Background-Check')).toBe('scheduled');
+    expect(response.headers.get('Access-Control-Expose-Headers')).toContain('X-FRANK-Background-Check');
+    expect(waits).toHaveLength(1);
+    await Promise.all(waits);
+  });
+
+  it.each(['/forecast/horsens', '/forecast/horsens?refresh=1', '/forecast/horsens?warm=1'])('does not re-read a known null forecast cache on %s', async (path) => {
     const runId = new Date(Date.now() - 60 * 60_000).toISOString();
     const forecastTime = new Date(Date.now() + 60 * 60_000).toISOString();
     const runtime = makeRuntime(cachedForecast(), marineIngredients('horsens', runId, forecastTime));
@@ -381,6 +407,7 @@ describe('Worker route HTTP contract', () => {
     expect(response.status).toBe(200);
     expect(getKeys.filter((key) => key.startsWith('forecast:'))).toHaveLength(1);
     expect(runtime.puts.some(({ key }) => key.startsWith('forecast:'))).toBe(true);
+    expect(runtime.waits).toHaveLength(1);
   });
 
   it('settles manual waitUntil work within the 25-second ceiling', async () => {

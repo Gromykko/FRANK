@@ -128,6 +128,17 @@ describe('Worker runtime integration contract', () => {
     expect(providerFetch).not.toHaveBeenCalled();
   });
 
+  it('serves deployment cache-readiness mode from real KV without provider work', async () => {
+    const providerFetch = rejectLiveNetwork();
+    const response = await dispatch('/forecast/horsens?warm=1');
+
+    expect(response.status).toBe(200);
+    const body = await response.json<ForecastData>();
+    expect(body.sources.location?.id).toBe(HORSENS.id);
+    expect(body.sources.payloadVersion).toBe(FORECAST_PAYLOAD_VERSION);
+    expect(providerFetch).not.toHaveBeenCalled();
+  });
+
   it('preserves the read-only HTTP contract for HEAD, OPTIONS, and unknown paths', async () => {
     const providerFetch = rejectLiveNetwork();
 

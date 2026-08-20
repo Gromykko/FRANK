@@ -48,7 +48,7 @@ describe('Worker deployment warm-up', () => {
     const requests: string[] = [];
     const baseUrl = await listen((request, response) => {
       requests.push(request.url ?? '');
-      const match = request.url?.match(/^\/forecast\/([a-z0-9-]+)\?refresh=1$/);
+      const match = request.url?.match(/^\/forecast\/([a-z0-9-]+)\?warm=1$/);
       if (match) return json(response, 200, forecast(match[1], contract.expectedVersion));
       if (request.url === '/health') return json(response, 200, { ok: true });
       return json(response, 404, { error: 'not found' });
@@ -65,7 +65,7 @@ describe('Worker deployment warm-up', () => {
     });
 
     expect(requests).toEqual([
-      ...contract.locationIds.map((id) => `/forecast/${id}?refresh=1`),
+      ...contract.locationIds.map((id) => `/forecast/${id}?warm=1`),
       '/health',
     ]);
   });
@@ -96,9 +96,49 @@ describe('Worker deployment warm-up', () => {
     });
 
     expect(requests).toEqual([
-      '/forecast/horsens?refresh=1',
-      '/forecast/horsens?refresh=1',
-      '/forecast/vejle?refresh=1',
+      '/forecast/horsens?warm=1',
+      '/forecast/horsens?warm=1',
+      '/forecast/vejle?warm=1',
+      '/health',
+    ]);
+  });
+
+  it('waits for each cold warm-up response before starting the next location or health', async () => {
+    const requests: string[] = [];
+    let activeBuilds = 0;
+    let maxActiveBuilds = 0;
+    const baseUrl = await listen((request, response) => {
+      requests.push(request.url ?? '');
+      const match = request.url?.match(/^\/forecast\/([a-z0-9-]+)\?warm=1$/);
+      if (match) {
+        activeBuilds += 1;
+        maxActiveBuilds = Math.max(maxActiveBuilds, activeBuilds);
+        setTimeout(() => {
+          activeBuilds -= 1;
+          json(response, 200, forecast(match[1]));
+        }, 10);
+        return;
+      }
+      if (request.url === '/health') {
+        return json(response, activeBuilds === 0 ? 200 : 503, { ok: activeBuilds === 0 });
+      }
+      return json(response, 404, { error: 'not found' });
+    });
+
+    await warmWorker({
+      baseUrl,
+      locationIds: ['horsens', 'vejle'],
+      expectedVersion: 7,
+      attempts: 1,
+      timeoutMs: 500,
+      retryDelayMs: 1,
+      logger: silentLogger,
+    });
+
+    expect(maxActiveBuilds).toBe(1);
+    expect(requests).toEqual([
+      '/forecast/horsens?warm=1',
+      '/forecast/vejle?warm=1',
       '/health',
     ]);
   });

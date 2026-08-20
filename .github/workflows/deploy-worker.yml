@@ -2,12 +2,6 @@ name: Deploy forecast Worker
 
 on:
   workflow_dispatch:
-    inputs:
-      worker_base_url:
-        description: Public base URL of the Worker being deployed
-        required: true
-        type: string
-        default: https://frank-forecast.alswatchs.workers.dev
 
 permissions:
   contents: read
@@ -25,6 +19,10 @@ jobs:
     timeout-minutes: 15
     environment:
       name: worker-production
+    env:
+      # The release gate must always test the production service this workflow
+      # deploys; a dispatch-time URL could accidentally green an unrelated host.
+      FRANK_WORKER_BASE_URL: https://frank-forecast.alswatchs.workers.dev
 
     steps:
       - name: Checkout
@@ -39,8 +37,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Test deployment gate
-        run: npm run test -- tests/scripts/warmWorker.test.ts
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
 
       - name: Check generated Worker types
         run: npm run worker:types:check
@@ -65,7 +69,18 @@ jobs:
             exit 1
           fi
 
+      - name: Capture active production version
+        id: previous
+        shell: bash
+        run: |
+          version_id="$(npm run --silent worker:active-version)"
+          echo "version_id=$version_id" >> "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Deploy Worker
+        id: deploy
         run: npm run worker:deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -73,7 +88,10 @@ jobs:
 
       - name: Warm forecasts and require health
         run: npm run worker:warm -- --base-url "$FRANK_WORKER_BASE_URL"
+
+      - name: Roll back a release that fails its production gate
+        if: failure() && steps.deploy.outcome == 'success'
+        run: npm run worker:rollback -- "${{ steps.previous.outputs.version_id }}" --yes --message "Automatic rollback after failed FRANK release gate $GITHUB_SHA"
         env:
-          # The input is public configuration, never a credential. Keeping it
-          # in env prevents workflow-dispatch text from becoming shell syntax.
-          FRANK_WORKER_BASE_URL: ${{ inputs.worker_base_url }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

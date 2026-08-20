@@ -188,16 +188,17 @@ export async function warmWorker({
     throw new WarmupError('At least one location is required.');
   }
 
-  // Keep these requests sequential. A successful response may still leave a
-  // short waitUntil check running, and launching every fjord at once would turn
-  // a deployment gate into an avoidable burst against DMI and MET.
+  // Keep these requests sequential. `warm=1` returns an existing compatible
+  // cache without background work, but blocks until a missing cache has been
+  // built. That makes the final health check a real readiness gate and prevents
+  // a new environment from bursting all fjords against DMI and MET at once.
   for (const locationId of locationIds) {
     if (typeof locationId !== 'string' || !/^[a-z0-9-]+$/.test(locationId)) {
       throw new WarmupError('A location id is invalid.');
     }
 
     const url = new URL(`forecast/${encodeURIComponent(locationId)}`, base);
-    url.searchParams.set('refresh', '1');
+    url.searchParams.set('warm', '1');
     await requireStage({
       label: `forecast ${locationId}`,
       url,

@@ -22,7 +22,10 @@ export default defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
-    serviceWorkers: 'allow',
+    // Route interception is deterministic only without a controlling service
+    // worker. The dedicated offline project below is the sole exception and
+    // goes offline before its first controlled navigation.
+    serviceWorkers: 'block',
   },
   projects: [
     {
@@ -47,6 +50,14 @@ export default defineConfig({
         deviceScaleFactor: 2,
         hasTouch: true,
         isMobile: true,
+      },
+    },
+    {
+      name: 'service-worker-chromium',
+      use: {
+        browserName: 'chromium',
+        viewport: { width: 1440, height: 900 },
+        serviceWorkers: 'allow',
       },
     },
   ],

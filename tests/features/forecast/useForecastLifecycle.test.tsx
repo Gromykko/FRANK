@@ -11,7 +11,10 @@ vi.mock('../../../src/features/forecast/fetchForecast', () => ({
   fetchWeatherData: vi.fn(),
 }));
 
-import { useForecast } from '../../../src/features/forecast/useForecast';
+import {
+  COLD_MISS_PICKUP_DELAY_MS,
+  useForecast,
+} from '../../../src/features/forecast/useForecast';
 
 let host: HTMLDivElement;
 let root: Root;
@@ -81,6 +84,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -130,5 +134,132 @@ describe('useForecast startup lifecycle', () => {
     expect(String(fetchMock.mock.calls[0][0])).not.toContain('refresh=1');
     expect(latest?.checkState).toBe('succeeded');
     expect(latest?.weatherData?.sources.fetchedAt).toBe(worker.sources.fetchedAt);
+  });
+
+  it('picks up a completed background check announced by the normal startup response', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime('2026-08-20T10:15:00.000Z');
+    const initial = forecast();
+    const completed = forecast();
+    completed.sources.fetchedAt = new Date(Date.now() + 60_000).toISOString();
+    completed.sources.cacheHealth = {
+      status: 'current',
+      lastAttemptAt: completed.sources.fetchedAt,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        headers: { get: (name: string) => name === 'X-FRANK-Background-Check' ? 'scheduled' : null },
+        json: async () => structuredClone(initial),
+      })
+      .mockResolvedValue({
+        ok: true,
+        headers: { get: () => null },
+        json: async () => structuredClone(completed),
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await act(async () => {
+      root.render(<Harness />);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(latest?.weatherData?.sources.fetchedAt).toBe(completed.sources.fetchedAt);
+    expect(latest?.checkState).toBe('succeeded');
+  });
+
+  it('clears a failed manual state when a later Worker pickup succeeds', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime('2026-08-20T10:15:00.000Z');
+    const local = forecast();
+    saveCachedWeatherData(local, CURRENT_LOCATION);
+    const recovered = forecast();
+    recovered.sources.fetchedAt = new Date(Date.now() + 60_000).toISOString();
+    recovered.sources.cacheHealth = {
+      status: 'current',
+      lastAttemptAt: recovered.sources.fetchedAt,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        headers: { get: () => null },
+        json: async () => structuredClone(local),
+      })
+      .mockResolvedValueOnce({ ok: false, headers: { get: () => null } })
+      .mockResolvedValue({
+        ok: true,
+        headers: { get: () => null },
+        json: async () => structuredClone(recovered),
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await act(async () => {
+      root.render(<Harness />);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    await act(async () => {
+      const refresh = latest!.refreshForecast(false, true, true);
+      await vi.advanceTimersByTimeAsync(600);
+      await refresh;
+    });
+    expect(latest?.checkState).toBe('failed');
+    expect(latest?.error).toContain('Could not reach');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(latest?.weatherData?.sources.fetchedAt).toBe(recovered.sources.fetchedAt);
+    expect(latest?.checkState).toBe('succeeded');
+    expect(latest?.error).toBeNull();
+  });
+
+  it('recovers once after a local-backed startup misses a Worker cold build', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime('2026-08-20T10:15:00.000Z');
+    const local = forecast();
+    saveCachedWeatherData(local, CURRENT_LOCATION);
+    const recovered = forecast();
+    recovered.sources.fetchedAt = new Date(Date.now() + 60_000).toISOString();
+    recovered.sources.cacheHealth = {
+      status: 'current',
+      lastAttemptAt: recovered.sources.fetchedAt,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, headers: { get: () => null } })
+      .mockResolvedValue({
+        ok: true,
+        headers: { get: () => null },
+        json: async () => structuredClone(recovered),
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await act(async () => {
+      root.render(<Harness />);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(latest?.checkState).toBe('failed');
+    expect(latest?.weatherData?.sources.fetchedAt).toBe(local.sources.fetchedAt);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(COLD_MISS_PICKUP_DELAY_MS - 1);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(latest?.weatherData?.sources.fetchedAt).toBe(recovered.sources.fetchedAt);
+    expect(latest?.checkState).toBe('succeeded');
+    expect(latest?.error).toBeNull();
   });
 });

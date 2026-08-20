@@ -642,10 +642,37 @@ async function handleForecastRequest(
 
   const url = new URL(request.url);
   const force = url.searchParams.get('refresh') === '1' || url.searchParams.get('refresh') === 'true';
+  const deploymentWarm = url.searchParams.get('warm') === '1' || url.searchParams.get('warm') === 'true';
   const forceRebuildRequested = url.searchParams.get('rebuild') === '1' || url.searchParams.get('rebuild') === 'true';
 
   if (forceRebuildRequested) {
     return jsonResponse({ error: 'Manual rebuild is not available from the public forecast endpoint.' }, 403);
+  }
+
+  if (deploymentWarm) {
+    // The post-deploy gate needs a cache-readiness contract, not another
+    // asynchronous provider check. An existing compatible payload is returned
+    // without waitUntil work; a missing/invalid payload is built synchronously.
+    // This makes sequential warm requests genuinely sequential and guarantees
+    // the final /health request cannot overtake a cold build. The mode is safe
+    // to expose publicly because it grants no rebuild capability beyond the
+    // normal cold-start route.
+    const cached = await readCachedForecast(env, location, responseKvReadPolicy());
+    if (cached) return jsonResponse(cached);
+
+    const refresh = refreshForecastCache(env, location, {
+      force: true,
+      reason: 'deployment-warm',
+      minIntervalMs: 0,
+      executionPolicy: userExecutionPolicy(),
+      eventMemo,
+      cached,
+    });
+    // The caller also awaits this promise, but waitUntil keeps the cold fill
+    // alive if the HTTP client disconnects at its own deadline.
+    ctx.waitUntil(refresh);
+    const data = await refresh;
+    return jsonResponse(data);
   }
 
   if (force) {
@@ -679,7 +706,7 @@ async function handleForecastRequest(
         },
       });
     }
-    const data = await refreshForecastCache(env, location, {
+    const refresh = refreshForecastCache(env, location, {
       force: true,
       reason: 'manual',
       minIntervalMs: MANUAL_CHECK_MIN_INTERVAL_MS,
@@ -687,11 +714,14 @@ async function handleForecastRequest(
       eventMemo,
       cached,
     });
+    ctx.waitUntil(refresh);
+    const data = await refresh;
     return jsonResponse(data);
   }
 
   const cached = await readCachedForecast(env, location, responseKvReadPolicy());
   if (cached) {
+    let backgroundCheckScheduled = false;
     if (shouldCheckInBackground(location, cached, USER_BACKGROUND_CHECK_MIN_INTERVAL_MS)) {
       ctx.waitUntil(refreshForecastCache(env, location, {
         reason: 'user-background',
@@ -700,11 +730,14 @@ async function handleForecastRequest(
         eventMemo,
         cached,
       }));
+      backgroundCheckScheduled = true;
     }
-    return jsonResponse(cached);
+    return jsonResponse(cached, 200, backgroundCheckScheduled
+      ? { 'X-FRANK-Background-Check': 'scheduled' }
+      : {});
   }
 
-  const data = await refreshForecastCache(env, location, {
+  const refresh = refreshForecastCache(env, location, {
     force: true,
     reason: 'cold-start',
     minIntervalMs: 0,
@@ -712,6 +745,8 @@ async function handleForecastRequest(
     eventMemo,
     cached,
   });
+  ctx.waitUntil(refresh);
+  const data = await refresh;
   return jsonResponse(data);
 }
 

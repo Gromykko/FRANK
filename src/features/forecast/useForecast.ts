@@ -3,6 +3,9 @@ import { CURRENT_LOCATION } from '../../config/locations';
 import type { WeatherData } from './types';
 import { CAN_FETCH_FRESH_FORECAST, fetchWeatherData } from './fetchForecast';
 import { loadCachedWeatherData } from './cache';
+import { shouldApplyForecastUpdate } from './forecastOrdering';
+
+export { shouldApplyForecastUpdate } from './forecastOrdering';
 
 const AUTO_REFRESH_MS = 10 * 60 * 1000;
 const AUTO_REFRESH_THROTTLE_MS = 60 * 1000;
@@ -14,49 +17,13 @@ const MIN_MANUAL_SPINNER_MS = 600;
 // common fast path, once after ordinary upstream latency, and once after the
 // Worker's bounded 24s execution budget. No unbounded polling loop.
 export const POST_REFRESH_PICKUP_DELAYS_MS = [2_000, 8_000, 30_000] as const;
+// A local-backed startup gives the Worker 12s. The server may then finish a 2s
+// KV read plus a 24s cold build. One retry at ~30s leaves network/write margin;
+// that retry itself gets the full cold-build timeout in case the disconnected
+// request was cancelled instead of completing.
+export const COLD_MISS_PICKUP_DELAY_MS = 18_000;
 
 export type ForecastCheckState = 'not-started' | 'checking' | 'succeeded' | 'failed';
-
-const cacheHealthSignature = (data: WeatherData): string => {
-  const health = data.sources.cacheHealth;
-  if (!health) return '';
-  return JSON.stringify({
-    status: health.status,
-    lastAttemptAt: health.lastAttemptAt,
-    message: health.message ?? null,
-    weatherExpires: health.weatherExpires ?? null,
-    weatherLastModified: health.weatherLastModified ?? null,
-    checkedBy: health.checkedBy ?? null,
-    needsRebuild: health.needsRebuild ?? null,
-    providerBusy: health.providerBusy ?? null,
-    busyProvider: health.busyProvider ?? null,
-    degradedSources: [...(health.degradedSources ?? [])].sort(),
-  });
-};
-
-// Pure ordering contract for refresh/pickup races. A new build always wins; an
-// old build never does. For the same build, only completed cache-health progress
-// is relevant. This is what lets a no-rebuild/failure/gated check clear pending
-// without allowing a late pending response to replace stable UI state.
-export function shouldApplyForecastUpdate(current: WeatherData | null, incoming: WeatherData): boolean {
-  if (!current) return true;
-
-  const currentFetchedMs = Date.parse(current.sources.fetchedAt);
-  const incomingFetchedMs = Date.parse(incoming.sources.fetchedAt);
-  if (incomingFetchedMs > currentFetchedMs) return true;
-  if (incomingFetchedMs < currentFetchedMs) return false;
-
-  const currentHealth = current.sources.cacheHealth;
-  const incomingHealth = incoming.sources.cacheHealth;
-  if (incomingHealth?.status === 'pending' && currentHealth?.status !== 'pending') return false;
-  if (!incomingHealth && currentHealth) return false;
-  if (cacheHealthSignature(current) === cacheHealthSignature(incoming)) return false;
-  if (currentHealth?.status === 'pending' && incomingHealth?.status !== 'pending') return true;
-
-  const currentAttemptMs = Date.parse(currentHealth?.lastAttemptAt ?? current.sources.fetchedAt);
-  const incomingAttemptMs = Date.parse(incomingHealth?.lastAttemptAt ?? incoming.sources.fetchedAt);
-  return incomingAttemptMs >= currentAttemptMs;
-}
 
 // Which row is happening RIGHT NOW: the one whose span CONTAINS the clock, not
 // the one whose start is nearest it. Nearest-start rounds up from :30 onward, so
@@ -210,7 +177,12 @@ export function useForecast(daylightOnly: boolean) {
     setSelectedHourIndex((idx) => (idx < nowIndex ? nowIndex : idx));
   }, [nowIndex]);
 
-  const refreshForecast = useCallback(async (showBlockingLoader: boolean, force = false, forceRemoteRefresh = false) => {
+  const refreshForecast = useCallback(async (
+    showBlockingLoader: boolean,
+    force = false,
+    forceRemoteRefresh = false,
+    recoverStartupWorkerMiss = false,
+  ) => {
     const startedAt = Date.now();
     if (!showBlockingLoader && !force && startedAt - lastRefreshAttemptRef.current < AUTO_REFRESH_THROTTLE_MS) {
       return;
@@ -260,18 +232,30 @@ export function useForecast(daylightOnly: boolean) {
         settledError = 'Could not reach the forecast service — showing the last saved forecast.';
       }
 
-      if (forceRemoteRefresh && !CAN_FETCH_FRESH_FORECAST) {
+      const recoverColdMiss = recoverStartupWorkerMiss && loaded.from === 'local';
+      if (!CAN_FETCH_FRESH_FORECAST && (forceRemoteRefresh || loaded.backgroundCheckScheduled || recoverColdMiss)) {
 
-        // The worker answers a forced refresh from cache instantly and rebuilds
-        // in the background. Pending is response-only, so the completed status
-        // is picked up silently starting around 2s, with one final bounded read
-        // after the Worker's 24s execution budget.
+        // Forced refreshes and due startup checks both complete in waitUntil.
+        // The Worker explicitly marks the latter in a response header, so
+        // ordinary cache hits create no polling traffic. Pick up the completed
+        // snapshot near the fast path and once after the 24s execution bound.
+        const pickupSequence = checkSequence;
         pickupTimersRef.current.forEach((id) => window.clearTimeout(id));
-        pickupTimersRef.current = POST_REFRESH_PICKUP_DELAYS_MS.map((delayMs) =>
+        const pickupDelays: readonly number[] = recoverColdMiss
+          ? [COLD_MISS_PICKUP_DELAY_MS]
+          : POST_REFRESH_PICKUP_DELAYS_MS;
+        pickupTimersRef.current = pickupDelays.map((delayMs) =>
           window.setTimeout(async () => {
             try {
-              const fresh = (await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true })).data;
-              if (fresh) applyWeatherData(fresh, daylightOnlyRef.current);
+              const pickup = await loadCachedWeatherData(CURRENT_LOCATION, {
+                preferWorker: true,
+                allowColdWorkerBuild: recoverColdMiss,
+              });
+              if (pickup.data) applyWeatherData(pickup.data, daylightOnlyRef.current);
+              if (pickup.from === 'worker' && checkSequenceRef.current === pickupSequence) {
+                setCheckState('succeeded');
+                setError(null);
+              }
             } catch {
               // The 10-minute auto-refresh remains the retry path.
             }
@@ -312,7 +296,7 @@ export function useForecast(daylightOnly: boolean) {
         // normal endpoint already schedules a due background check;
         // `?refresh=1` is reserved for an explicit user tap and its transient
         // pending state.
-        await refreshForecast(false, false, false);
+        await refreshForecast(false, false, false, true);
       } else {
         // localOnly above performs no I/O, so this is the one normal Worker
         // request on a true cold start.

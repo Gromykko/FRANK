@@ -40,6 +40,7 @@ The Worker imports the client's own `normalize.ts`, `sun.ts`, and `weatherCodes.
 npm install          # Node >= 22, npm >= 10
 npm run dev          # Vite dev server, direct provider fetching via proxies
 npm run test         # Vitest
+npm run test:e2e:install # One-time local Chromium installation
 npm run test:e2e     # Production-build browser checks at desktop and phone widths
 npm run lint         # oxlint
 npm run build        # tsc -b && vite build
@@ -53,7 +54,7 @@ npm run worker:warm -- --base-url https://frank-forecast.example.workers.dev
 
 `.github/workflows/deploy.yml` lints, tests, builds, and deploys to GitHub Pages on every push to `main`. Don't regenerate `package-lock.json` on Windows — CI needs it built on Linux so platform-specific optional subtrees resolve.
 
-The normal Pages workflow deliberately does **not** receive Cloudflare credentials. Both release workflows verify that generated binding types are current, type-check the Worker independently from the browser app, and execute the route/KV contract inside Cloudflare's local Workers runtime before bundling. Worker releases use the separate **Deploy forecast Worker** workflow, which is manual, runs only from `main`, and is attached to the protected `worker-production` GitHub environment. Configure that environment with `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`; required reviewers are recommended. The workflow uses the repository's pinned Wrangler, deploys, then runs `worker:warm`: every configured location is requested sequentially, its location id and payload version are checked, and `/health` must finish successfully. A failure exits nonzero and fails the deployment gate without printing response bodies.
+The normal Pages workflow deliberately does **not** receive Cloudflare credentials. Both release workflows verify that generated binding types are current, type-check the Worker independently from the browser app, and execute the route/KV contract inside Cloudflare's local Workers runtime before bundling. Worker releases use the separate **Deploy forecast Worker** workflow, which is manual, runs only from `main`, and is attached to the protected `worker-production` GitHub environment. Configure that environment with `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`; required reviewers are recommended. The job audits dependencies and runs the full lint/test suite before using the repository's pinned Wrangler. Before deployment it records the exact version currently serving 100% of production traffic. After deployment, `worker:warm` checks the pinned production origin: every configured location is requested sequentially in cache-readiness mode, its location id and payload version are checked, and `/health` must finish successfully. Existing compatible caches do not launch background work; a missing cache must finish building before the next location starts. A failed production gate makes the workflow fail and rolls back to that recorded active version—not merely the preceding upload. The protected upgrade workflow therefore requires an existing single-version deployment; provision a brand-new Worker separately and require its warm/health gate before publishing Pages.
 
 Release order matters because Pages and the Worker are separate deployments:
 

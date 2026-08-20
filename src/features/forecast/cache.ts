@@ -3,10 +3,15 @@ import type { ForecastLocation } from '../../config/locations';
 import type { WeatherData } from './types';
 import { reviveReadings } from './normalize';
 import { isValidForecastPayload } from './validatePayload';
+import { shouldApplyForecastUpdate } from './forecastOrdering';
 
 const DEFAULT_FORECAST_WORKER_BASE = 'https://frank-forecast.alswatchs.workers.dev';
 const WEATHER_CACHE_KEY_PREFIX = 'frank_weather_data_v2';
-const WORKER_FETCH_TIMEOUT_MS = 12 * 1000;
+const CACHED_WORKER_FETCH_TIMEOUT_MS = 12 * 1000;
+// A route may spend up to 2s on its response KV read before starting a
+// synchronous build under the Worker's separate 24s budget. Keep another 4s
+// for both network legs and serialization rather than racing that 26s ceiling.
+const COLD_WORKER_FETCH_TIMEOUT_MS = 30 * 1000;
 
 const FORECAST_WORKER_BASE = (import.meta.env.VITE_FORECAST_WORKER_BASE ?? DEFAULT_FORECAST_WORKER_BASE).replace(/\/$/, '');
 
@@ -40,6 +45,22 @@ export function saveCachedWeatherData(data: WeatherData, location: ForecastLocat
   if (data.sources.cacheHealth?.status === 'pending') return;
 
   try {
+    const existingRaw = localStorage.getItem(getWeatherCacheKey(location));
+    if (existingRaw) {
+      try {
+        const existing = reviveReadings(JSON.parse(existingRaw));
+        if (
+          isValidForecastPayload(existing, location, { allowLegacyMissingVersion: true })
+          && !shouldApplyForecastUpdate(existing, data)
+        ) {
+          return;
+        }
+      } catch {
+        // A corrupt local value has no ordering claim. Replace it with the
+        // validated incoming payload so one bad write cannot disable offline
+        // recovery forever.
+      }
+    }
     localStorage.setItem(getWeatherCacheKey(location), JSON.stringify(data));
   } catch {
     // Caching also provides the offline fallback, but storage can be blocked;
@@ -83,8 +104,17 @@ function readLocalCachedWeatherData(location: ForecastLocation): WeatherData | n
   return null;
 }
 
-async function readWorkerCachedWeatherData(location: ForecastLocation, forceRefresh = false): Promise<WeatherData | null> {
-  if (!FORECAST_WORKER_BASE) return null;
+interface WorkerCacheRead {
+  data: WeatherData | null;
+  backgroundCheckScheduled: boolean;
+}
+
+async function readWorkerCachedWeatherData(
+  location: ForecastLocation,
+  forceRefresh = false,
+  timeoutMs = CACHED_WORKER_FETCH_TIMEOUT_MS,
+): Promise<WorkerCacheRead> {
+  if (!FORECAST_WORKER_BASE) return { data: null, backgroundCheckScheduled: false };
 
   try {
     const query = new URLSearchParams({
@@ -101,10 +131,11 @@ async function readWorkerCachedWeatherData(location: ForecastLocation, forceRefr
       // stay open indefinitely without ever answering. Without a deadline the
       // preferWorker path never falls through to the saved forecast and the
       // app just spins — the one moment a cached answer matters most.
-      signal: AbortSignal.timeout(WORKER_FETCH_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
-    if (!response.ok) return null;
+    if (!response.ok) return { data: null, backgroundCheckScheduled: false };
+    const backgroundCheckScheduled = response.headers?.get('X-FRANK-Background-Check') === 'scheduled';
 
     const parsed = reviveReadings(await response.json());
     // USABILITY, not freshness: does this payload still cover the hours the app
@@ -131,16 +162,19 @@ async function readWorkerCachedWeatherData(location: ForecastLocation, forceRefr
         // health overlay is pending: that extended a cold-start stale flash
         // until the first pickup. Pending remains memory-only either way.
         const local = readLocalCachedWeatherData(location);
-        if (!local) return parsed;
+        if (!local) return { data: parsed, backgroundCheckScheduled };
         const localFetchedMs = Date.parse(local.sources.fetchedAt);
         const workerFetchedMs = Date.parse(parsed.sources.fetchedAt);
-        return workerFetchedMs > localFetchedMs ? parsed : local;
+        return {
+          data: workerFetchedMs > localFetchedMs ? parsed : local,
+          backgroundCheckScheduled,
+        };
       }
       saveCachedWeatherData(parsed, location);
-      return parsed;
+      return { data: parsed, backgroundCheckScheduled };
     }
   } catch {
-    return null;
+    return { data: null, backgroundCheckScheduled: false };
   } finally {
     // In the `finally`, not before the fetch. Setting it up front collapsed the
     // documented "in flight" state (undefined) into "attempted and not reached"
@@ -150,13 +184,14 @@ async function readWorkerCachedWeatherData(location: ForecastLocation, forceRefr
     workerAttempted = true;
   }
 
-  return null;
+  return { data: null, backgroundCheckScheduled: false };
 }
 
 export interface LoadCacheOptions {
   localOnly?: boolean;
   preferWorker?: boolean;
   forceWorkerRefresh?: boolean;
+  allowColdWorkerBuild?: boolean;
 }
 
 // Where the payload came from, and therefore whether the worker was reachable.
@@ -174,6 +209,7 @@ export type CacheSource = 'worker' | 'local' | null;
 export interface LoadCacheResult {
   data: WeatherData | null;
   from: CacheSource;
+  backgroundCheckScheduled?: boolean;
 }
 
 // Contact record for this browser session. Three states, and the difference
@@ -202,20 +238,42 @@ export async function loadCachedWeatherData(
   }
 
   if (options.preferWorker) {
-    const workerData = await readWorkerCachedWeatherData(location, options.forceWorkerRefresh);
-    if (workerData) {
+    // A saved forecast gives the user an immediate fallback, so retain the
+    // shorter fjord-edge network deadline. With no local copy, allow the
+    // Worker's one bounded cold build to complete instead of timing out in the
+    // middle and leaving a first-time user on an avoidable error screen.
+    const local = readLocalCachedWeatherData(location);
+    const workerResult = await readWorkerCachedWeatherData(
+      location,
+      options.forceWorkerRefresh,
+      local && !options.allowColdWorkerBuild
+        ? CACHED_WORKER_FETCH_TIMEOUT_MS
+        : COLD_WORKER_FETCH_TIMEOUT_MS,
+    );
+    if (workerResult.data) {
       lastWorkerContactMs = Date.now();
-      return { data: workerData, from: 'worker' };
+      return {
+        data: workerResult.data,
+        from: 'worker',
+        ...(workerResult.backgroundCheckScheduled ? { backgroundCheckScheduled: true } : {}),
+      };
     }
 
-    const local = readLocalCachedWeatherData(location);
     return { data: local, from: local ? 'local' : null };
   }
 
   const local = readLocalCachedWeatherData(location);
   if (local) return { data: local, from: 'local' };
 
-  const workerData = await readWorkerCachedWeatherData(location, options.forceWorkerRefresh);
-  if (workerData) lastWorkerContactMs = Date.now();
-  return { data: workerData, from: workerData ? 'worker' : null };
+  const workerResult = await readWorkerCachedWeatherData(
+    location,
+    options.forceWorkerRefresh,
+    COLD_WORKER_FETCH_TIMEOUT_MS,
+  );
+  if (workerResult.data) lastWorkerContactMs = Date.now();
+  return {
+    data: workerResult.data,
+    from: workerResult.data ? 'worker' : null,
+    ...(workerResult.backgroundCheckScheduled ? { backgroundCheckScheduled: true } : {}),
+  };
 }
