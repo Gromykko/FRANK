@@ -23,16 +23,6 @@ export interface ForecastLocation {
   // This drives only a fail-open soft filter; it can quiet a warning that
   // demonstrably excludes the town, never add a local claim.
   kommuneAliases?: string[];
-  // Dormant curated local heads-ups retained for a possible future surface.
-  // Exact changing rules belong at the linked authority rather than here.
-  localRules?: {
-    id: string;
-    title: string;
-    body: string;
-    link?: { label: string; url: string };
-  }[];
-  // True until a local paddler has calibrated the sector geometry and caps.
-  provisional?: boolean;
   // Area-specific wind geometry and thresholds. A location may have any
   // number of onshore, offshore, or cross-shore sectors.
   windSectors: WindSector[];

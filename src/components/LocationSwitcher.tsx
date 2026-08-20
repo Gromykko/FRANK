@@ -137,10 +137,8 @@ export default function LocationSwitcher({
                 >
                   <span className="location-switcher-check">{isCurrent && <Check size={13} />}</span>
                   {loc.areaName}
-                  {isCurrent && currentStateLabel ? (
+                  {isCurrent && currentStateLabel && (
                     <span className="location-switcher-pill is-initializing">{currentStateLabel}</span>
-                  ) : loc.provisional && (
-                    <span className="location-switcher-pill" title={t('Provisional — limits not yet locally calibrated')}>{t('provisional')}</span>
                   )}
                 </button>
               </li>

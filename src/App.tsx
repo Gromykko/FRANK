@@ -310,12 +310,6 @@ export default function App() {
       <main className="container app-main">
         {/* Official DMI warning for the region — advisory, links out to DMI */}
         <WarningStripe warnings={weatherData.warnings} />
-        {CURRENT_LOCATION.provisional && (
-          <div className="forecast-warning provisional-note">
-            <AlertTriangle size={15} />
-            <span>{t('{0} is a provisional location — its wind sectors and caps are placeholders, not locally calibrated. Verify with a local paddler before trusting the verdict.', CURRENT_LOCATION.name)}</span>
-          </div>
-        )}
         {error && (
           <div className="forecast-warning" role="alert">
             <AlertTriangle size={15} />

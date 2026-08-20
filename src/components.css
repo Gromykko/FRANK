@@ -3067,7 +3067,7 @@ button.legend-toggle.is-on {
   color: var(--primary);
 }
 
-/* Marks a location whose safety config isn't locally calibrated yet. */
+/* Compact readiness label for the currently selected location. */
 .location-switcher-pill {
   margin-left: auto;
   padding: 1px 6px;
@@ -3082,16 +3082,6 @@ button.legend-toggle.is-on {
 .location-switcher-pill.is-initializing {
   background: var(--primary-bg);
   color: var(--primary);
-}
-
-/* Provisional-location notice: it's persistent, so it reads as a calm neutral
-   info chip rather than the amber alarm used for real, transient warnings —
-   otherwise a permanent amber box trains users to ignore the amber box. */
-.provisional-note {
-  border-color: var(--panel-border);
-  background: color-mix(in srgb, var(--text-muted) 8%, transparent);
-  color: var(--text-muted);
-  font-weight: 500;
 }
 
 /* Narrow phones: shrink the CRT, buttons and labels so the middle column

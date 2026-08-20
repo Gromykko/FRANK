@@ -40,8 +40,6 @@ export const da: Record<string, string> = {
   'Switch to dark theme': 'Skift til mørkt tema',
   'Switch to light theme': 'Skift til lyst tema',
   'built {0}': 'bygget {0}',
-  '{0} is a provisional location — its wind sectors and caps are placeholders, not locally calibrated. Verify with a local paddler before trusting the verdict.':
-    '{0} er et foreløbigt sted — dets vindsektorer og lofter er pladsholdere, ikke lokalt kalibreret. Bekræft med en lokal roer, før du stoler på vurderingen.',
   'The forecast is briefly out of date while FRANK updates behind the scenes. Please check back in a few minutes.':
     'Prognosen er kortvarigt forældet, mens FRANK opdaterer i baggrunden. Kig tilbage om et par minutter.',
   "{0} has been busy for a while, so the forecast hasn't updated since {1}. FRANK keeps retrying automatically — you are seeing the last good forecast.":
@@ -483,9 +481,6 @@ export const da: Record<string, string> = {
   // ── LocationSwitcher ──────────────────────────────────────────────────────
   'Choose location': 'Vælg sted',
   'Or choose another location:': 'Eller vælg et andet sted:',
-  'provisional': 'foreløbig',
-  'Provisional — limits not yet locally calibrated': 'Foreløbig — grænserne er endnu ikke lokalt kalibreret',
-
   // ── TripProfilePanel ──────────────────────────────────────────────────────
   'Trip Profile': 'Turprofil',
   'About the modes': 'Om profilerne',

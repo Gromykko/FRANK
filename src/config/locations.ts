@@ -27,7 +27,7 @@ export const CURRENT_LOCATION = getForecastLocation(
 );
 
 // The short list the location switcher offers.
-export const AVAILABLE_LOCATIONS = FORECAST_LOCATIONS.map(({ id, name, areaName, provisional }) => ({ id, name, areaName, provisional: provisional ?? false }));
+export const AVAILABLE_LOCATIONS = FORECAST_LOCATIONS.map(({ id, name, areaName }) => ({ id, name, areaName }));
 
 // The active location is a module-load constant threaded through settings keys,
 // cache keys, and preset defaults, so switching cleanly means persisting the

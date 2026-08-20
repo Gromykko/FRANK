@@ -16,42 +16,6 @@
       "water": ["dkss_idw", "dkss_nsbs"],
       "waves": ["wam_nsb", "wam_dw"]
     },
-    "localRules": [
-      {
-        "id": "vorsoe",
-        "title": "Vorsø bird sanctuary",
-        "body": "The island and the water around it are a protected reserve with a seasonal no-go zone and a keep-your-distance rule along the coast. The dates and the exact distance change, so check what's current before you go.",
-        "link": { "label": "Fredningen — Vorsø", "url": "https://www.fredninger.dk/fredning/soevind-aakaer-og-vorsoe/" }
-      },
-      {
-        "id": "crossings",
-        "title": "Where the club allows crossings",
-        "body": "The club limits where you may cross the fjord, and some passages (like the Sundet sluice) are off-limits. Confirm the current crossing rules with the club before heading across.",
-        "link": { "label": "Horsens Kajakklub", "url": "https://www.horsens-kajakklub.dk/" }
-      },
-      {
-        "id": "winter",
-        "title": "Winter paddling limits",
-        "body": "In the cold season the club limits how far from shore you may paddle, and rules out going where there's ice between you and the shore. Check the current winter rules with your club.",
-        "link": { "label": "Horsens Kajakklub", "url": "https://www.horsens-kajakklub.dk/" }
-      },
-      {
-        "id": "noerrestrand",
-        "title": "Nørrestrand nesting closure",
-        "body": "Nørrestrand is a protected wildlife reserve with a seasonal closure during the bird nesting period. Check the current dates before you go.",
-        "link": { "label": "Fredningen — Nørrestrand", "url": "https://www.fredninger.dk/fredning/noerrestrand/" }
-      },
-      {
-        "id": "shipping",
-        "title": "Commercial shipping lane",
-        "body": "The main channel runs down the middle of the fjord. Large cargo ships heading to Horsens Harbour and the local ferries have right of way — cross it quickly and at a right angle."
-      },
-      {
-        "id": "daylight",
-        "title": "Sunrise to sunset",
-        "body": "Paddling is generally allowed only between sunrise and sunset unless you carry navigation lights. FRANK's Daylight setting reflects this."
-      }
-    ],
     "_note": "Caps aligned 2026-07-14 to the Vejle/BBKK club-grounded scheme (the only club-published numbers on this coast): onshore 5.0/8.0 for the long east fetch, offshore capped LOWER at 4.5/7.0 for fralandsvind drift risk. Horsens Fjord shares Vejle's geometry (opens east, town at the west head), and the previous values (onshore 4.5/7.0, offshore 5.5/8.0) capped offshore LOOSER than onshore - contradicting the validated fralandsvind principle.",
     "windSectors": [
       {
@@ -94,13 +58,6 @@
       "water": ["dkss_idw", "dkss_nsbs"],
       "waves": ["wam_nsb", "wam_dw"]
     },
-    "localRules": [
-      {
-        "id": "daylight",
-        "title": "Sunrise to sunset",
-        "body": "Paddling is generally allowed only between sunrise and sunset unless you carry navigation lights. FRANK's Daylight setting reflects this."
-      }
-    ],
     "windSectors": [
       {
         "id": "onshore",
@@ -172,7 +129,7 @@
     "areaName": "Aarhus Bugt",
     "subtitle": "Aarhus",
     "timezone": "Europe/Copenhagen",
-    "_note": "Added 2026-07-14. Coordinate is an inner Aarhus Bugt DKSS node just off the city (probed live: dkss_idw water-temperature 18.4C + real deviation, wam_nsb wave height 0.15m - both wet). Geometry: city on the WEST shore, bay opens east/southeast to Kattegat, so E=onshore (long Kattegat fetch), W=offshore (fralandsvind). Open-bay fetch is longer than the fjords', so the same caps may be too loose here - worth a check by an Aarhus-local paddler. (No `provisional` flag: that mechanism exists but is deliberately unused, so the note no longer implies one is pending.)",
+    "_note": "Added 2026-07-14. Coordinate is an inner Aarhus Bugt DKSS node just off the city (probed live: dkss_idw water-temperature 18.4C + real deviation, wam_nsb wave height 0.15m - both wet). Geometry: city on the WEST shore, bay opens east/southeast to Kattegat, so E=onshore (long Kattegat fetch), W=offshore (fralandsvind). Open-bay fetch is longer than the fjords'. The 5.0/8.0 onshore and 4.5/7.0 offshore values are FRANK's current model rather than Aarhus club-published limits and should be revisited when an authoritative local source is available.",
     "coordinate": {
       "latitude": 56.129,
       "longitude": 10.257
