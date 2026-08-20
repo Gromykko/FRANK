@@ -15,6 +15,7 @@
     "worker:deploy": "wrangler deploy",
     "worker:dry-run": "wrangler deploy --dry-run",
     "worker:dev": "wrangler dev",
+    "worker:warm": "node scripts/warm-worker.mjs",
     "worker:tail": "wrangler tail frank-forecast",
     "test": "vitest run"
   },

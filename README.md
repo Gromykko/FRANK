@@ -43,11 +43,21 @@ npm run test         # Vitest
 npm run lint         # oxlint
 npm run build        # tsc -b && vite build
 npm run worker:deploy
+npm run worker:warm -- --base-url https://frank-forecast.example.workers.dev
 ```
 
 `.github/workflows/deploy.yml` lints, tests, builds, and deploys to GitHub Pages on every push to `main`. Don't regenerate `package-lock.json` on Windows — CI needs it built on Linux so platform-specific optional subtrees resolve.
 
-The Worker is **not** deployed by CI — `npm run worker:deploy` is a manual step. Whenever a change touches `worker/index.js` or the shared forecast-core it imports (`normalize.ts`, `sun.ts`, `weatherCodes.ts`), deploy the Worker too, and bump `PAYLOAD_VERSION` (`worker/index.js`) alongside `FORECAST_PAYLOAD_VERSION` (`src/features/forecast/types.ts`). They must stay equal: the stamp is what forces the Worker to rebuild instead of re-blessing a cache its own new code did not produce, and leaving it unchanged across a logic change is exactly how a stale Worker goes unnoticed.
+The normal Pages workflow deliberately does **not** receive Cloudflare credentials. Worker releases use the separate **Deploy forecast Worker** workflow, which is manual, runs only from `main`, and is attached to the protected `worker-production` GitHub environment. Configure that environment with `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`; required reviewers are recommended. The workflow uses the repository's pinned Wrangler, deploys, then runs `worker:warm`: every configured location is requested sequentially, its location id and payload version are checked, and `/health` must finish successfully. A failure exits nonzero and fails the deployment gate without printing response bodies.
+
+Release order matters because Pages and the Worker are separate deployments:
+
+- **Existing installation / compatibility upgrade:** first ship a frontend that can read the old and new payload contract and wait for Pages to finish. Then dispatch **Deploy forecast Worker** from `main`; its final warm/health step is the release gate.
+- **Brand-new environment:** deploy the Worker first, run the sequential warm/health gate against its public URL, and only then publish Pages configured for that URL.
+
+For a local/manual equivalent, run `npm run worker:deploy` followed by `npm run worker:warm -- --base-url <public-worker-url>`. Never reverse the compatibility-upgrade order merely to make both deployments appear simultaneous: an older Worker can continue serving the compatible frontend while a newer incompatible Worker can strand the old frontend.
+
+Whenever a change touches `worker/index.js` or the shared forecast-core it imports (`normalize.ts`, `sun.ts`, `weatherCodes.ts`), deploy the Worker too, and bump `PAYLOAD_VERSION` (`worker/index.js`) alongside `FORECAST_PAYLOAD_VERSION` (`src/features/forecast/types.ts`). They must stay equal: the stamp is what forces the Worker to rebuild instead of re-blessing a cache its own new code did not produce, and leaving it unchanged across a logic change is exactly how a stale Worker goes unnoticed.
 
 Watch the KV **write** budget when changing the refresh paths. The free tier allows 1000 writes/day, and the cron is 144 runs × 4 locations — so anything that writes on every tick spends the whole allowance before a single user arrives. Running out is a silent failure: the write throws inside `ctx.waitUntil`, and the forecast quietly stops updating while still being served as current.
 

@@ -1,0 +1,70 @@
+name: Deploy forecast Worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      worker_base_url:
+        description: Public base URL of the Worker being deployed
+        required: true
+        type: string
+        default: https://frank-forecast.alswatchs.workers.dev
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frank-worker-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Manual dispatch is deliberate: ordinary pushes, pull requests, and forks
+    # can validate the bundle but can never receive production credentials.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: worker-production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test deployment gate
+        run: npm run test -- tests/scripts/warmWorker.test.ts
+
+      - name: Validate Worker bundle
+        run: npm run worker:dry-run
+
+      - name: Check deployment credentials
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [[ -z "$CLOUDFLARE_API_TOKEN" || -z "$CLOUDFLARE_ACCOUNT_ID" ]]; then
+            echo "::error::Cloudflare deployment credentials are not configured for worker-production."
+            exit 1
+          fi
+
+      - name: Deploy Worker
+        run: npm run worker:deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Warm forecasts and require health
+        run: npm run worker:warm -- --base-url "$FRANK_WORKER_BASE_URL"
+        env:
+          # The input is public configuration, never a credential. Keeping it
+          # in env prevents workflow-dispatch text from becoming shell syntax.
+          FRANK_WORKER_BASE_URL: ${{ inputs.worker_base_url }}
