@@ -1784,8 +1784,11 @@ describe('Worker deployment warm-up', () => {
       attempts: 1,
       timeoutMs: 500,
       retryDelayMs: 1,
-      healthPropagationTimeoutMs: 25,
-      healthPropagationRetryDelayMs: 5,
+      // Leave enough wall-clock room for a second local HTTP round trip even
+      // when Vitest is running every file concurrently on a loaded CI runner.
+      // The production window is independently bounded by warmRelease defaults.
+      healthPropagationTimeoutMs: 500,
+      healthPropagationRetryDelayMs: 10,
       logger: silentLogger,
     })).rejects.toThrow('cache propagation window: exact target generation not visible yet');
     expect(healthChecks).toBeGreaterThan(1);

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   cronExecutionPolicy,
   fetchLatestInstanceForCollections,
+  readMarineBusyCircuit,
   tickOrder,
 } from '../../worker/index';
 
@@ -66,7 +67,12 @@ describe('fetchLatestInstanceForCollections memo', () => {
   it('memoises a refusal too, so a 429 is not re-earned per location', async () => {
     globalThis.fetch = (async (url: string) => {
       calls.push(String(url));
-      return { ok: false, status: 429, text: async () => 'Server is busy' };
+      return {
+        ok: false,
+        status: 429,
+        headers: new Headers({ 'Retry-After': '1200' }),
+        text: async () => 'Server is busy',
+      };
     }) as unknown as typeof fetch;
 
     await expect(fetchLatestInstanceForCollections(WATER, undefined, eventMemo)).rejects.toThrow();
@@ -77,6 +83,35 @@ describe('fetchLatestInstanceForCollections memo', () => {
     // collection was tried: rate limiting is host-wide, so cascading to the
     // fallback would just multiply load on the same busy server.
     expect(calls).toHaveLength(1);
+    expect(await readMarineBusyCircuit(eventMemo)).toEqual({
+      status: 'open',
+      provider: 'marine',
+      busy: true,
+      retryAfterSeconds: 1200,
+    });
+
+    // The refusal is provider-wide, not tied to the collection memo that first
+    // saw it. A different DMI collection is stopped before another fetch.
+    await expect(fetchLatestInstanceForCollections(
+      ['wam_nsb', 'wam_dw'],
+      undefined,
+      eventMemo,
+    )).rejects.toThrow(/deferred further calls/i);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('fails hard on malformed internal circuit state without provider I/O', async () => {
+    stubOk(['2026-08-08T120000Z']);
+    eventMemo.set('provider-circuit:marine-busy', Promise.resolve({
+      status: 'open',
+      provider: 'marine',
+      busy: true,
+      retryAfterSeconds: 'not-a-number',
+    }));
+
+    await expect(fetchLatestInstanceForCollections(WATER, undefined, eventMemo))
+      .rejects.toThrow(/circuit state is invalid/i);
+    expect(calls).toHaveLength(0);
   });
 
   it('never shares an I/O promise across two event memos', async () => {

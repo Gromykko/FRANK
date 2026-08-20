@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import ts from 'typescript';
 import { loadReleaseContract } from './warm-worker.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -12,26 +13,60 @@ export const FORECAST_MODEL_BASELINE_FILE = path.join(
   'forecast-model-baseline.json',
 );
 
-// Conservative by design. These files can change the bytes, provenance, or
-// fallback policy of a prepared forecast. UI, service-worker, health-page, and
-// HTTP presentation changes are deliberately outside this list.
+export const FORECAST_SEMANTIC_BOUNDARY_ID = 'worker-generation-owned-v1';
+
+// Whole-file fingerprints only: there are no symbol whitelists or per-change
+// exceptions. Mixed orchestration stays protected until every byte-affecting
+// decision has moved behind the generation-owned module. Only provider
+// transport retry/circuit mechanics and execution budgets are separate and
+// therefore classify as Worker-nonsemantic; cache-health provenance remains
+// protected because its run ids and expiry stamps feed later source selection.
 export const FORECAST_SEMANTIC_INPUT_FILES = Object.freeze([
   'src/features/forecast/normalize.ts',
   'src/features/forecast/parseWarnings.ts',
   'src/features/forecast/providerUrls.ts',
+  'src/features/forecast/releaseContract.ts',
   'src/features/forecast/sun.ts',
   'src/features/forecast/types.ts',
   'src/features/forecast/validatePayload.ts',
   'src/features/forecast/weatherCodes.ts',
+  'worker/cacheHealth.ts',
+  'worker/forecastModel.ts',
+  'worker/generation.ts',
   'worker/domain.ts',
-  'worker/execution.ts',
   'worker/index.ts',
   'worker/providerAvailability.ts',
   'worker/providers.ts',
   'worker/validation.ts',
 ]);
 
-const BASELINE_SCHEMA_VERSION = 1;
+export const FORECAST_OPERATIONAL_INPUT_FILES = Object.freeze([
+  'worker/execution.ts',
+  'worker/providerTransport.ts',
+]);
+
+const BASELINE_SCHEMA_VERSION = 2;
+
+const REQUIRED_BOUNDARY_IMPORTS = Object.freeze({
+  'worker/index.ts': ['./cacheHealth', './providers'],
+  'worker/providerAvailability.ts': ['./forecastModel'],
+  'worker/providers.ts': ['./forecastModel', './providerTransport'],
+});
+
+const MODEL_OWNED_DECLARATIONS = Object.freeze([
+  'FORECAST_PROVIDER_PARAMETERS',
+  'FORECAST_SOURCE_POLICY',
+  'assembleForecastFromSources',
+  'canUseMetFallback',
+  'currentMarineIngredient',
+  'degradedSourcesAfterProbe',
+  'deriveMarineSeedsFromPayload',
+  'heldMarineFallback',
+  'isMarineRunWithinFallbackAge',
+  'isTransientProviderFailure',
+  'latestInstanceFromResponse',
+  'marineProbeDecision',
+]);
 
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
@@ -50,6 +85,162 @@ function sha256(value) {
 
 function normalizedSource(source) {
   return source.replace(/^\uFEFF/, '').replaceAll('\r\n', '\n');
+}
+
+function sourceFile(source, fileName) {
+  const parsed = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.ESNext,
+    true,
+    fileName.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  if (parsed.parseDiagnostics?.length > 0) {
+    throw new Error(`${fileName} contains invalid TypeScript syntax.`);
+  }
+  return parsed;
+}
+
+function moduleImports(source, fileName) {
+  const imports = [];
+  const visit = (node) => {
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      const clause = node.importClause;
+      const namedBindings = clause?.namedBindings;
+      const runtimeNamedImport = namedBindings && ts.isNamedImports(namedBindings)
+        ? namedBindings.elements.some((element) => !element.isTypeOnly)
+        : Boolean(namedBindings);
+      const runtime = !clause
+        || (!clause.isTypeOnly && (Boolean(clause.name) || runtimeNamedImport));
+      imports.push({ specifier: node.moduleSpecifier.text, runtime });
+      return;
+    }
+    if (ts.isExportDeclaration(node)
+      && node.moduleSpecifier
+      && ts.isStringLiteral(node.moduleSpecifier)) {
+      imports.push({ specifier: node.moduleSpecifier.text, runtime: !node.isTypeOnly });
+      return;
+    }
+    if (ts.isCallExpression(node)
+      && node.arguments.length > 0
+      && ts.isStringLiteral(node.arguments[0])
+      && (node.expression.kind === ts.SyntaxKind.ImportKeyword
+        || (ts.isIdentifier(node.expression) && node.expression.text === 'require'))) {
+      imports.push({ specifier: node.arguments[0].text, runtime: true });
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile(source, fileName));
+  return imports;
+}
+
+function topLevelDeclarations(source, fileName) {
+  const declarations = new Set();
+  for (const statement of sourceFile(source, fileName).statements) {
+    if ((ts.isFunctionDeclaration(statement)
+      || ts.isClassDeclaration(statement)
+      || ts.isInterfaceDeclaration(statement)
+      || ts.isTypeAliasDeclaration(statement))
+      && statement.name) {
+      declarations.add(statement.name.text);
+    }
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name)) declarations.add(declaration.name.text);
+      }
+    }
+  }
+  return declarations;
+}
+
+function resolvedImport(importer, specifier) {
+  if (!specifier.startsWith('.')) return null;
+  const value = path.posix.normalize(path.posix.join(path.posix.dirname(importer), specifier));
+  if (value === '..' || value.startsWith('../')) {
+    throw new Error(`Forecast semantic import escapes the repository: ${importer} -> ${specifier}.`);
+  }
+  return path.posix.extname(value) ? value : `${value}.ts`;
+}
+
+export async function assertForecastSemanticBoundary({
+  repositoryRoot = REPOSITORY_ROOT,
+  readFileImpl = readFile,
+} = {}) {
+  const modelFile = 'worker/forecastModel.ts';
+  const files = [...new Set([
+    modelFile,
+    ...FORECAST_SEMANTIC_INPUT_FILES,
+    ...FORECAST_OPERATIONAL_INPUT_FILES,
+    ...Object.keys(REQUIRED_BOUNDARY_IMPORTS),
+  ])];
+  const sources = new Map(await Promise.all(files.map(async (fileName) => [
+    fileName,
+    normalizedSource(await readFileImpl(path.join(repositoryRoot, fileName), 'utf8')),
+  ])));
+
+  const protectedFiles = new Set(FORECAST_SEMANTIC_INPUT_FILES);
+  const operationalFiles = new Set(FORECAST_OPERATIONAL_INPUT_FILES);
+  for (const operationalFile of operationalFiles) {
+    if (protectedFiles.has(operationalFile)) {
+      throw new Error(`${operationalFile} cannot be both semantic and operational.`);
+    }
+  }
+
+  for (const imported of moduleImports(sources.get(modelFile), modelFile)) {
+    if (!imported.runtime) continue;
+    const resolved = resolvedImport(modelFile, imported.specifier);
+    if (!resolved) {
+      throw new Error(`Forecast model cannot import runtime package ${imported.specifier}.`);
+    }
+    if (operationalFiles.has(resolved)) {
+      throw new Error(`Forecast model cannot import operational module ${resolved}.`);
+    }
+    if (!protectedFiles.has(resolved)
+      && resolved !== 'src/features/forecast/releaseContract.ts') {
+      throw new Error(`Forecast model runtime dependency is not protected: ${resolved}.`);
+    }
+  }
+
+  const operationalSource = FORECAST_OPERATIONAL_INPUT_FILES
+    .map((fileName) => sources.get(fileName))
+    .join('\n');
+  if (/\bFRANK_FORECAST_CACHE\b|\bfetch\s*\(/.test(sources.get(modelFile))) {
+    throw new Error('Forecast model boundary must remain free of network and KV I/O.');
+  }
+  if (!/\bfetch(?:WithTimeout)?\s*\(/.test(operationalSource)) {
+    throw new Error('Forecast transport boundary no longer owns provider I/O.');
+  }
+
+  for (const [fileName, requiredSpecifiers] of Object.entries(REQUIRED_BOUNDARY_IMPORTS)) {
+    const actual = new Set(moduleImports(sources.get(fileName), fileName)
+      .map(({ specifier }) => specifier));
+    for (const specifier of requiredSpecifiers) {
+      if (!actual.has(specifier)) {
+        throw new Error(`${fileName} must import ${specifier} through the semantic boundary.`);
+      }
+    }
+  }
+
+  for (const fileName of [
+    'worker/cacheHealth.ts',
+    'worker/index.ts',
+    'worker/providerAvailability.ts',
+    'worker/providerTransport.ts',
+    'worker/providers.ts',
+  ]) {
+    const declarations = topLevelDeclarations(sources.get(fileName), fileName);
+    const duplicates = MODEL_OWNED_DECLARATIONS.filter((name) => declarations.has(name));
+    if (duplicates.length > 0) {
+      throw new Error(`${fileName} duplicates generation-owned policy: ${duplicates.join(', ')}.`);
+    }
+  }
+
+  return {
+    id: FORECAST_SEMANTIC_BOUNDARY_ID,
+    semanticFiles: [...FORECAST_SEMANTIC_INPUT_FILES],
+    operationalFiles: [...FORECAST_OPERATIONAL_INPUT_FILES],
+  };
 }
 
 function releaseIdentity(release) {
@@ -93,6 +284,7 @@ function validBaseline(value) {
   return value !== null
     && typeof value === 'object'
     && value.schemaVersion === BASELINE_SCHEMA_VERSION
+    && value.semanticBoundary === FORECAST_SEMANTIC_BOUNDARY_ID
     && validRelease(value.release)
     && value.semanticInputs !== null
     && typeof value.semanticInputs === 'object'
@@ -127,6 +319,8 @@ export async function buildForecastModelSnapshot({
   if (!validRelease(release)) throw new Error('Current forecast release metadata is invalid.');
   if (!Array.isArray(locations)) throw new Error('Forecast locations are invalid.');
 
+  await assertForecastSemanticBoundary({ repositoryRoot, readFileImpl });
+
   const semanticInputs = {};
   for (const relativePath of FORECAST_SEMANTIC_INPUT_FILES) {
     const source = await readFileImpl(path.join(repositoryRoot, relativePath), 'utf8');
@@ -152,6 +346,7 @@ export async function buildForecastModelSnapshot({
 
   return {
     schemaVersion: BASELINE_SCHEMA_VERSION,
+    semanticBoundary: FORECAST_SEMANTIC_BOUNDARY_ID,
     release: releaseIdentity(release),
     semanticInputs,
     locations: locationEntries,

@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   fetchMarineSeriesWithFallback,
   deriveMarineSeedsFromPayload,
-  classifyBuildFailure,
   degradedSourcesAfterProbe,
   isMarineRunWithinFallbackAge,
   marineProbeDecision,
+  readMarineBusyCircuit,
   shouldCheckInBackground,
 } from '../../worker/index';
 import { MARINE_INGREDIENT_CACHE_SCHEMA_VERSION } from '../../src/features/forecast/releaseContract';
@@ -94,6 +94,60 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     expect(fetched).toBe(false);
     expect(result.fallback).toBe(false);
     expect(result.series).toEqual(retained);
+  });
+
+  it('stops a sibling retry when a concurrent marine call opens the busy circuit', async () => {
+    const env = makeEnv();
+    const eventMemo = new Map<string, Promise<unknown>>();
+    const calls: string[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      return url.includes('/collections/dkss_')
+        ? new Response('Server is busy', { status: 429 })
+        : new Response('Temporary upstream failure', { status: 503 });
+    }) as typeof fetch;
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const resultsPromise = Promise.allSettled([
+      fetchMarineSeriesWithFallback(
+        env,
+        LOCATION,
+        'water',
+        WATER_INSTANCE,
+        ['x'],
+        identityMap,
+        undefined,
+        undefined,
+        { maxAttempts: 3 },
+        eventMemo,
+      ),
+      fetchMarineSeriesWithFallback(
+        env,
+        LOCATION,
+        'waves',
+        { collection: 'wam_nsb', id: WATER_INSTANCE.id },
+        ['x'],
+        identityMap,
+        undefined,
+        undefined,
+        { maxAttempts: 3 },
+        eventMemo,
+      ),
+    ]);
+
+    await vi.runAllTimersAsync();
+    const results = await resultsPromise;
+    expect(results.every(({ status }) => status === 'rejected')).toBe(true);
+    // Water and waves were already in flight together. The 503 sibling never
+    // earns attempt two after water's 429 opens the event-local circuit.
+    expect(calls).toHaveLength(2);
+    expect(await readMarineBusyCircuit(eventMemo)).toMatchObject({
+      status: 'open',
+      provider: 'marine',
+      busy: true,
+    });
   });
 
   it('never reuses a retained ingredient stamped for another config revision', async () => {
@@ -436,26 +490,6 @@ describe('marineProbeDecision (DMI publication schedule)', () => {
         now,
       ).shouldProbe).toBe(true);
     }
-  });
-});
-
-describe('classifyBuildFailure', () => {
-  it('flags a DMI 429 as a busy marine provider', () => {
-    expect(classifyBuildFailure('Failed to build forecast: DMI dkss_idw failed: 429 Server is busy'))
-      .toEqual({ busy: true, busyProvider: 'marine' });
-  });
-
-  it('flags a MET 429 as a busy weather provider', () => {
-    expect(classifyBuildFailure('MET Norway weather failed: 429 Too Many Requests'))
-      .toEqual({ busy: true, busyProvider: 'weather' });
-  });
-
-  it('reports both when weather and marine are named', () => {
-    expect(classifyBuildFailure('DMI wam failed: 429, MET locationforecast failed: 429').busyProvider).toBe('services');
-  });
-
-  it('is not busy for a non-429 error', () => {
-    expect(classifyBuildFailure('DMI dkss_idw failed: 500 Internal Server Error').busy).toBe(false);
   });
 });
 

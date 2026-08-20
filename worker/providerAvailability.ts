@@ -1,4 +1,5 @@
 import type { BusyProvider } from './domain';
+import { isTransientProviderFailure } from './forecastModel';
 import { errorStatus } from './validation';
 
 // Only errors deliberately classified at an upstream boundary may produce the
@@ -9,17 +10,22 @@ export class ProviderUnavailableError extends Error {
   readonly code = 'PROVIDER_UNAVAILABLE' as const;
   readonly provider: BusyProvider;
   readonly busy: boolean;
+  readonly retryAfterSeconds?: number;
 
   constructor(
     provider: BusyProvider,
     message: string,
     cause?: unknown,
     busy = false,
+    retryAfterSeconds?: number,
   ) {
     super(message, cause === undefined ? undefined : { cause });
     this.name = 'ProviderUnavailableError';
     this.provider = provider;
     this.busy = busy;
+    if (retryAfterSeconds !== undefined) {
+      this.retryAfterSeconds = retryAfterSeconds;
+    }
   }
 }
 
@@ -34,18 +40,26 @@ export function isProviderUnavailableError(
 // contract or implementation regression and must keep the release gate red.
 function isTransientUpstreamError(error: unknown): boolean {
   const status = errorStatus(error);
-  if (status !== undefined) return status === 429 || status >= 500;
-  if (error instanceof TypeError) return true;
-  return error instanceof Error
-    && ['AbortError', 'NetworkError', 'TimeoutError'].includes(error.name);
+  return isTransientProviderFailure({
+    status,
+    networkTypeError: status === undefined && error instanceof TypeError,
+    errorName: error instanceof Error ? error.name : undefined,
+  });
 }
 
 export function transientProviderError(
   error: unknown,
   provider: BusyProvider,
   message: string,
+  retryAfterSeconds?: number,
 ): ProviderUnavailableError | null {
   return isTransientUpstreamError(error)
-    ? new ProviderUnavailableError(provider, message, error, errorStatus(error) === 429)
+    ? new ProviderUnavailableError(
+        provider,
+        message,
+        error,
+        errorStatus(error) === 429,
+        retryAfterSeconds,
+      )
     : null;
 }

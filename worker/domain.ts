@@ -70,10 +70,17 @@ export interface RefreshOptions {
   cached?: ForecastData | null;
 }
 
-// The two namespaces are disjoint (`instance-probe:` and `refresh:`). Values
-// are checked/cast at those narrow lookup sites instead of weakening all
-// Worker code with an untyped map.
+// Event-local provider work uses disjoint namespaces (`instance-probe:`,
+// `provider-circuit:`, and `refresh:`). Values are validated at those narrow
+// lookup sites instead of weakening all Worker code with an untyped map.
 export type EventMemo = Map<string, Promise<unknown>>;
+
+export interface MarineBusyCircuit {
+  status: 'open';
+  provider: 'marine';
+  busy: true;
+  retryAfterSeconds: number;
+}
 
 export interface MetRawCache {
   locationId: string;
@@ -117,6 +124,7 @@ export interface MetResult {
 export interface ForecastBuildResult {
   degradedSources: string[];
   degradedBusy: boolean;
+  degradedBusyProvider?: BusyProvider;
   marineInstances: MarineInstances;
   forecast: ForecastData;
   weatherExpires: string;

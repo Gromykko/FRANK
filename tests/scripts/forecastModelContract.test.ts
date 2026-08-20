@@ -1,7 +1,14 @@
 // @vitest-environment node
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
+import locationData from '../../src/config/locations.json';
+import { CURRENT_RELEASE } from '../../src/features/forecast/releaseContract';
 import {
+  FORECAST_SEMANTIC_BOUNDARY_ID,
   FORECAST_SEMANTIC_INPUT_FILES,
+  FORECAST_OPERATIONAL_INPUT_FILES,
+  assertForecastSemanticBoundary,
+  assertForecastModelBaseline,
   assertRecordableForecastModelTransition,
   describeForecastModelDiff,
 } from '../../scripts/forecast-model-contract.mjs';
@@ -37,7 +44,8 @@ function snapshot({
   locations = [{ id: 'horsens', forecastConfigRevision: 1, inputHash: hash('b') }],
 } = {}) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    semanticBoundary: FORECAST_SEMANTIC_BOUNDARY_ID,
     release: { ...release },
     semanticInputs: inputs,
     locations: locations.map((location) => ({ ...location })),
@@ -45,6 +53,51 @@ function snapshot({
 }
 
 describe('forecast model release guard', () => {
+  it('enforces the generation-owned/operational module boundary', async () => {
+    await expect(assertForecastSemanticBoundary()).resolves.toMatchObject({
+      id: FORECAST_SEMANTIC_BOUNDARY_ID,
+      operationalFiles: FORECAST_OPERATIONAL_INPUT_FILES,
+    });
+  });
+
+  it('fails closed if model code imports transport or transport duplicates model policy', async () => {
+    const mutatingReader = (mutate: (fileName: string, source: string) => string) =>
+      async (fileName: string) => mutate(fileName.replaceAll('\\', '/'), await readFile(fileName, 'utf8'));
+
+    await expect(assertForecastSemanticBoundary({
+      readFileImpl: mutatingReader((fileName, source) => fileName.endsWith('/worker/forecastModel.ts')
+        ? `${source}\nimport './providerTransport';\n`
+        : source),
+    })).rejects.toThrow('cannot import operational module');
+
+    await expect(assertForecastSemanticBoundary({
+      readFileImpl: mutatingReader((fileName, source) => fileName.endsWith('/worker/providerTransport.ts')
+        ? `${source}\nconst FORECAST_SOURCE_POLICY = {};\n`
+        : source),
+    })).rejects.toThrow('duplicates generation-owned policy');
+  });
+
+  it('allows transport-only changes but rejects protected source wiring at model7', async () => {
+    const mutatingReader = (target: string) => async (fileName: string) => {
+      const source = await readFile(fileName, 'utf8');
+      return fileName.replaceAll('\\', '/').endsWith(target)
+        ? `${source}\n// release-boundary mutation\n`
+        : source;
+    };
+    await expect(assertForecastModelBaseline({
+      release: CURRENT_RELEASE,
+      locations: locationData,
+      readFileImpl: mutatingReader('/worker/providerTransport.ts'),
+    })).resolves.toMatchObject({
+      semanticBoundary: FORECAST_SEMANTIC_BOUNDARY_ID,
+    });
+    await expect(assertForecastModelBaseline({
+      release: CURRENT_RELEASE,
+      locations: locationData,
+      readFileImpl: mutatingReader('/worker/providers.ts'),
+    })).rejects.toThrow('Forecast model baseline is out of date (worker/providers.ts)');
+  });
+
   it('accepts an unchanged recorded model', () => {
     const baseline = snapshot();
     expect(assertRecordableForecastModelTransition({

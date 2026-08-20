@@ -36,8 +36,6 @@ import {
 import type { ExecutionPolicy, ExecutionPolicyInput } from './execution';
 import type {
   BusyProvider,
-  CacheHealthOptions,
-  CacheHealthStatus,
   EventMemo,
   ForecastData,
   ForecastInitializationMarker,
@@ -49,23 +47,27 @@ import type {
   WorkerCacheHealth,
 } from './domain';
 import {
+  recoveredDeferredMarineCheck,
+  withCacheHealth,
+  withDeferredMarineCheck,
+} from './cacheHealth';
+import {
   isProviderUnavailableError,
 } from './providerAvailability';
 import {
   buildForecastCache,
-  classifyBuildFailure,
   degradedSourcesAfterProbe,
   deriveMarineSeedsFromPayload,
   fetchLatestInstanceForCollections,
   fetchLatestMarineInstances,
   fetchMarineSeriesWithFallback,
-  isBusyError,
   isMarineRunWithinFallbackAge,
   marineProbeDecision,
   marineInstancesEqual,
   marineInstancesWithinFallbackAge,
+  readMarineBusyCircuit,
 } from './providers';
-import { errorMessage, isRecord } from './validation';
+import { isRecord } from './validation';
 import {
   RELEASE_IDENTITY,
   AUDITED_PREVIOUS_GENERATIONS,
@@ -82,14 +84,13 @@ import {
 // Preserve the small public test/API surface while provider implementation is
 // owned by its cohesive module.
 export {
-  classifyBuildFailure,
   degradedSourcesAfterProbe,
   deriveMarineSeedsFromPayload,
   fetchLatestInstanceForCollections,
   fetchMarineSeriesWithFallback,
-  isBusyError,
   isMarineRunWithinFallbackAge,
   marineProbeDecision,
+  readMarineBusyCircuit,
 };
 export { cronExecutionPolicy };
 // Re-exported so tests/worker/math.test.ts keeps importing them from the worker.
@@ -248,56 +249,6 @@ function parseForecastCache(
 function hasCurrentForecastWindow(data: Pick<ForecastData, 'hourly'>): boolean {
   const oneHourAgo = Date.now() - 60 * 60 * 1000;
   return data.hourly.some((hour) => new Date(hour.time).getTime() >= oneHourAgo);
-}
-
-function buildCacheHealth(
-  status: CacheHealthStatus,
-  data: ForecastData | null | undefined,
-  options: CacheHealthOptions = {},
-): WorkerCacheHealth {
-  const now = new Date();
-  const previousHealth = data?.sources?.cacheHealth;
-  const marineInstances = options.marineInstances ?? previousHealth?.marineInstances;
-  const weatherExpires = options.weatherExpires ?? previousHealth?.weatherExpires;
-  const weatherLastModified = options.weatherLastModified ?? previousHealth?.weatherLastModified;
-  // Cache health is returned by the public forecast and /health endpoints.
-  // Persist only deliberately-authored public copy; raw provider errors belong
-  // in logs and can contain unstable or internal response details.
-  const message = options.message;
-
-  return {
-    status,
-    // A gated "recently checked" stamp must NOT advance lastAttemptAt: the
-    // cron/candidate gates compare against it, and repeated gated checks would
-    // otherwise starve real provider work
-    // forever.
-    lastAttemptAt: options.preserveAttemptAt && previousHealth?.lastAttemptAt
-      ? previousHealth.lastAttemptAt
-      : now.toISOString(),
-    ...(marineInstances ? { marineInstances } : {}),
-    ...(weatherExpires ? { weatherExpires } : {}),
-    ...(weatherLastModified ? { weatherLastModified } : {}),
-    ...(message ? { message } : {}),
-    ...(options.needsRebuild ? { needsRebuild: true } : {}),
-    ...(options.checkedBy ? { checkedBy: options.checkedBy } : {}),
-    ...(options.providerBusy ? { providerBusy: true } : {}),
-    ...(options.busyProvider ? { busyProvider: options.busyProvider } : {}),
-    ...(options.degradedSources?.length ? { degradedSources: options.degradedSources } : {}),
-  };
-}
-
-function withCacheHealth(
-  data: ForecastData,
-  status: CacheHealthStatus,
-  options: CacheHealthOptions = {},
-): ForecastData {
-  return {
-    ...data,
-    sources: {
-      ...data.sources,
-      cacheHealth: buildCacheHealth(status, data, options),
-    },
-  };
 }
 
 async function readCachedForecast(
@@ -661,6 +612,30 @@ async function _refreshForecastCache(
     if (canSkipProbe) {
       latestMarine = knownMarine;
     } else {
+      // A DMI 429 is provider-wide, not specific to the fjord that happened to
+      // receive it. Once a due location opens the event-local circuit, another
+      // due location must not make more DMI calls in the same cron batch. Keep
+      // its last completed snapshot and say that this check was deferred. A
+      // schedule-valid location never reaches this branch and stays green.
+      const marineBusyCircuit = await readMarineBusyCircuit(options.eventMemo);
+      if (marineBusyCircuit && cached) {
+        const deferredCache = withDeferredMarineCheck(cached, {
+          marineInstances: knownMarine,
+          checkedBy: options.reason ?? 'check',
+          degradedSources: degradedSourcesAfterProbe(
+            cachedHealth?.degradedSources,
+            true,
+          ),
+        });
+        if (shouldPersistFailureState(cachedHealth, deferredCache.sources.cacheHealth)) {
+          try {
+            await writeCachedForecast(env, location, deferredCache, policy);
+          } catch (writeError) {
+            console.error(`Could not persist deferred marine check for ${location.id}:`, writeError);
+          }
+        }
+        return deferredCache;
+      }
       try {
         latestMarine = await fetchLatestMarineInstances(location, policy, options.eventMemo);
       } catch (probeError) {
@@ -675,9 +650,10 @@ async function _refreshForecastCache(
         }));
         latestMarine = knownMarine;
         marineProbeFailed = true;
-        marineProbeBusy = isProviderUnavailableError(probeError)
-          ? probeError.busy
-          : classifyBuildFailure(errorMessage(probeError)).busy;
+        // Only the nominal provider boundary may call an outage "busy". A
+        // schema, code, deadline, or storage error containing those words must
+        // stay on the generic failure path rather than receive calm 429 copy.
+        marineProbeBusy = isProviderUnavailableError(probeError) && probeError.busy;
       }
     }
 
@@ -730,6 +706,7 @@ async function _refreshForecastCache(
     if (cacheAlreadyCurrent) {
       // MET data is still within its Expires window and marine ids are
       // unchanged: keep the forecast, just record that we checked.
+      const recoveredDeferred = recoveredDeferredMarineCheck(cachedHealth);
       const checkedCache = withCacheHealth(cached, 'current', {
         marineInstances: latestMarine,
         // During the 20-minute post-due retry window no provider was checked.
@@ -737,13 +714,20 @@ async function _refreshForecastCache(
         // every ten-minute cron would slide that window forward indefinitely.
         preserveAttemptAt: probeDecision.reason === 'retry-backoff',
         checkedBy: options.reason ?? 'check',
-        // No provider was contacted and the hourly rows are unchanged, so any
-        // degradation the last real build recorded still describes this
-        // payload — a no-op check must not silently re-bless fallback data.
-        degradedSources: cachedHealth?.degradedSources,
-        providerBusy: cachedHealth?.providerBusy,
-        busyProvider: cachedHealth?.busyProvider,
-        message: cachedHealth?.message,
+        // Ordinary fallback metadata still describes unchanged payload bytes.
+        // A circuit deferral is different: this successful catalogue check is
+        // the work that was skipped, and the held run is confirmed current, so
+        // its temporary amber marker must not stick indefinitely.
+        degradedSources: recoveredDeferred
+          ? undefined
+          : cachedHealth?.degradedSources,
+        providerBusy: recoveredDeferred
+          ? undefined
+          : cachedHealth?.providerBusy,
+        busyProvider: recoveredDeferred
+          ? undefined
+          : cachedHealth?.busyProvider,
+        message: recoveredDeferred ? undefined : cachedHealth?.message,
       });
       // The response always carries this check's timestamp; only PERSISTING it
       // is throttled. Nothing about the forecast itself has changed, so a
@@ -764,6 +748,7 @@ async function _refreshForecastCache(
       deriveMarineSeedsFromPayload(cached),
       cached?.warnings,
       policy,
+      options.eventMemo,
     );
     // The build can succeed on last-good ingredients while a provider is
     // down; the payload is then still the freshest combination obtainable,
@@ -783,7 +768,11 @@ async function _refreshForecastCache(
       // it was because their provider was busy.
       ...(degradedSources.length ? { degradedSources } : {}),
       ...((built.degradedBusy || marineProbeFailed) ? { providerBusy: true } : {}),
-      ...(marineProbeFailed ? { busyProvider: 'marine' } : {}),
+      ...(marineProbeFailed
+        ? { busyProvider: 'marine' as const }
+        : built.degradedBusyProvider
+          ? { busyProvider: built.degradedBusyProvider }
+          : {}),
       ...(fallbackNotes.length
         ? { message: `Provider partly unavailable; using last good data for: ${fallbackNotes.join(', ')}.` }
         : {}),
@@ -819,14 +808,14 @@ async function _refreshForecastCache(
       }));
       const previousMarine = cached.sources?.cacheHealth?.marineInstances;
       const newMarineNeedsRebuild = Boolean(latestMarine && !marineInstancesEqual(previousMarine, latestMarine));
-      const { busy, busyProvider } = isProviderUnavailableError(error)
-        ? { busy: error.busy, busyProvider: error.provider }
-        : classifyBuildFailure(errorMessage(error));
+      const providerFailure = isProviderUnavailableError(error) ? error : null;
+      const busy = providerFailure?.busy ?? false;
+      const busyProvider = providerFailure?.provider;
       const failedCache = withCacheHealth(cached, 'stale', {
         marineInstances: latestMarine ?? previousMarine,
         needsRebuild: options.forceRebuild || newMarineNeedsRebuild,
         checkedBy: options.reason ?? 'failed-check',
-        ...(busy ? { providerBusy: true, busyProvider } : {}),
+        ...(busy && busyProvider ? { providerBusy: true, busyProvider } : {}),
         message: 'Forecast refresh failed; keeping the last completed forecast.',
       });
 

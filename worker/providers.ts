@@ -6,35 +6,17 @@ import {
 import type { ForecastLocation } from '../src/config/locationTypes';
 import type { SeriesPoint, WeatherWarning } from '../src/features/forecast/types';
 import {
-  CURRENT_RELEASE,
-  LEGACY_FORECAST_PAYLOAD_VERSION,
   MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
 } from '../src/features/forecast/releaseContract';
 import {
-  aggregateBlockMarine,
-  assembleBlockRow,
-  assembleHourlyRow,
-  mapMetBlocks,
-  mapMetTimeseries,
   mapWaterFeatures,
   mapWaveFeatures,
-  nearestPoint,
 } from '../src/features/forecast/normalize';
-import type { MetForecastResponse } from '../src/features/forecast/normalize';
-import { buildSunSchedule } from '../src/features/forecast/sun';
-import {
-  DKSS_PARAMETERS,
-  WAM_PARAMETERS,
-  buildDmiInstancesUrl,
-  buildDmiUrl as buildSharedDmiUrl,
-  buildMetUrl as buildSharedMetUrl,
-} from '../src/features/forecast/providerUrls';
 import {
   assertBeforeDeadline,
   assertBeforeProviderDeadline,
   awaitWithinDeadline,
   deadlineError,
-  delayWithinDeadline,
   executionPolicy,
   fetchWithTimeout,
   rethrowIfDeadlineReached,
@@ -48,379 +30,86 @@ import type {
   MarineInstance,
   MarineInstances,
   MarineKind,
-  MarineRunRef,
-  MarineSeedPayload,
   MarineSeeds,
   MarineSeriesResult,
   MetRawCache,
   MetResult,
 } from './domain';
 import {
+  FORECAST_PROVIDER_PARAMETERS,
+  FORECAST_SOURCE_POLICY,
+  PAYLOAD_VERSION,
+  assembleForecastFromSources,
+  canUseMetFallback,
+  currentMarineIngredient,
+  degradedSourcesAfterProbe,
+  deriveMarineSeedsFromPayload,
+  dmiForecastUrl,
+  dmiInstancesUrl,
+  featureCollectionFromJson,
+  heldMarineFallback,
+  isMarineIngredientEnvelope,
+  isMarineRunWithinFallbackAge,
+  isMetForecastResponse,
+  isMetRawCache,
+  latestInstanceFromResponse,
+  mapMetPayload,
+  marineFallbackRejection,
+  marineInstancesEqual,
+  marineInstancesWithinFallbackAge,
+  marineProbeDecision,
+  metForecastUrl,
+  retainedActiveWarnings,
+  shouldTryNextDmiCollection,
+} from './forecastModel';
+import {
   errorStatus,
   errorWithStatus,
-  isRecord,
 } from './validation';
 import {
   ProviderUnavailableError,
   isProviderUnavailableError,
   transientProviderError,
 } from './providerAvailability';
+import {
+  MARINE_BUSY_DEFAULT_RETRY_SECONDS,
+  fetchJsonWithRetries,
+  logUpstream,
+  readMarineBusyCircuit,
+} from './providerTransport';
 import { marineIngredientKey, metRawKey } from './generation';
-
-const DMI_BASE = 'https://opendataapi.dmi.dk/v1/forecastedr';
-const MET_BASE = 'https://api.met.no/weatherapi/locationforecast/2.0/complete';
-const MET_USER_AGENT = 'FRANK-kayak-forecast/1.0 (https://github.com/Gromykko/FRANK)';
-const MET_DEFAULT_TTL_MS = 30 * 60 * 1000;
-const MET_FALLBACK_MAX_AGE_MS = 6 * 60 * 60 * 1000;
-const MARINE_FALLBACK_MAX_AGE_MS = 12 * 60 * 60 * 1000;
-const RETRY_BASE_DELAY_MS = 1_500;
 const WARNING_EXECUTION_BUDGET_MS = 5_000;
 
-// Public alias retained for cache-key/readability call sites. Browser and
-// Worker now import one source of truth, so a partial hand-bump is impossible.
-export const PAYLOAD_VERSION = LEGACY_FORECAST_PAYLOAD_VERSION;
-
-const DMI_RUN_CYCLE_MS = 6 * 60 * 60 * 1000;
-const DMI_DKSS_COMPLETE_DELAY_MS = (3 * 60 + 20) * 60 * 1000;
-const DMI_WAM_NSB_COMPLETE_DELAY_MS = (2 * 60 + 45) * 60 * 1000;
-const DMI_OTHER_WAM_COMPLETE_DELAY_MS = 3 * 60 * 60 * 1000;
-const DMI_PUBLICATION_CUSHION_MS = 10 * 60 * 1000;
-const DMI_DUE_PROBE_BACKOFF_MS = 20 * 60 * 1000;
-
-function isMetForecastResponse(value: unknown): value is MetForecastResponse {
-  if (!isRecord(value) || !isRecord(value.properties)) return false;
-  const timeseries = value.properties.timeseries;
-  return Array.isArray(timeseries) && timeseries.every((entry) => isRecord(entry));
-}
-
-function isMetRawCache(
-  value: unknown,
-  location: Pick<ForecastLocation, 'id' | 'forecastConfigRevision'>,
-): value is MetRawCache {
-  return isRecord(value)
-    && value.locationId === location.id
-    && value.forecastConfigRevision === location.forecastConfigRevision
-    && typeof value.lastModified === 'string'
-    && isMetForecastResponse(value.body);
-}
-
-function isMarineIngredientEnvelope(
-  value: unknown,
-  location: Pick<ForecastLocation, 'id' | 'forecastConfigRevision'>,
-): value is MarineIngredientEnvelope {
-  return isRecord(value)
-    && typeof value.schemaVersion === 'number'
-    && value.locationId === location.id
-    && value.forecastConfigRevision === location.forecastConfigRevision
-    && typeof value.collection === 'string'
-    && typeof value.id === 'string'
-    && Array.isArray(value.series);
-}
-
-function featureCollectionFromJson<TFeature>(value: unknown): { features: TFeature[] } {
-  if (!isRecord(value) || !Array.isArray(value.features)) {
-    throw new Error('DMI response did not contain a feature collection.');
-  }
-  // The caller supplies the source-specific normalizer. At this boundary we
-  // validate the transport envelope; the normalizer validates/filters fields.
-  return { features: value.features as TFeature[] };
-}
-
-// Thin wrappers binding the shared builders to this worker's base URLs.
-function buildDmiUrl(
-  collection: string,
-  parameters: string[],
-  location: Pick<ForecastLocation, 'coordinate'>,
-  instanceId?: string,
-): string {
-  return buildSharedDmiUrl(DMI_BASE, collection, parameters, location.coordinate, instanceId);
-}
-
-function buildInstancesUrl(collection: string): string {
-  return buildDmiInstancesUrl(DMI_BASE, collection);
-}
-
-function buildMetUrl(location: Pick<ForecastLocation, 'coordinate'>): string {
-  return buildSharedMetUrl(MET_BASE, location.coordinate);
-}
-
-function retryDelay(attempt: number): number {
-  return RETRY_BASE_DELAY_MS * 2 ** attempt + Math.floor(Math.random() * 500);
-}
-
-// One structured line per upstream call: which source, how long, what happened.
-// Without this, "is DMI slow or is our timeout wrong?" could only be answered by
-// hand-timing curl from a laptop — which is how the 22-23s latency above was
-// found. Visible in `npm run worker:tail` and Workers Logs.
-function logUpstream(source: string, startedAt: number, outcome: string, extra = ''): void {
-  const ms = Date.now() - startedAt;
-  console.log(`upstream ${source} ${outcome} ${ms}ms${extra ? ' ' + extra : ''}`);
-}
-
-async function fetchJsonWithRetries(
-  url: string,
-  label: string,
-  policy: ExecutionPolicy = executionPolicy(),
-  provider: BusyProvider = 'services',
-): Promise<unknown> {
-  let lastError: Error | undefined;
-
-  for (let attempt = 0; attempt < policy.maxAttempts; attempt++) {
-    assertBeforeProviderDeadline(policy, `${label} attempt ${attempt + 1}`);
-    const startedAt = Date.now();
-    let response: Response;
-    try {
-      response = await fetchWithTimeout(url, {
-        headers: {
-          Accept: 'application/geo+json, application/json',
-        },
-      }, policy);
-    } catch (error) {
-      const normalized = error instanceof Error ? error : new Error(String(error));
-      // This catch surrounds only the network exchange. That narrow boundary
-      // is what makes a fetch TypeError transient without ever softening a
-      // mapper/parser/programming TypeError into FORECAST_INITIALIZING.
-      lastError = transientProviderError(
-        normalized,
-        provider,
-        `${label} is temporarily unavailable.`,
-      ) ?? normalized;
-      logUpstream(label, startedAt, normalized.name === 'TimeoutError' ? 'timeout' : 'error',
-        String(normalized.message ?? '').slice(0, 120));
-      if (attempt < policy.maxAttempts - 1) {
-        await delayWithinDeadline(retryDelay(attempt), policy, `${label} retry`);
-      }
-      continue;
-    }
-
-    try {
-      if (response.ok) {
-        const json = await response.json();
-        logUpstream(label, startedAt, 'ok');
-        return json;
-      }
-
-      logUpstream(label, startedAt, `http-${response.status}`);
-      const statusError = errorWithStatus(
-        `${label} failed with HTTP ${response.status}`,
-        response.status,
-      );
-      lastError = transientProviderError(
-        statusError,
-        provider,
-        `${label} is temporarily unavailable.`,
-      ) ?? statusError;
-      let providerMessage = '';
-      try {
-        providerMessage = (await response.text()).slice(0, 180);
-      } catch {
-        // Diagnostics are best-effort. The already-received HTTP status, not
-        // whether its error body can be consumed, owns the classification.
-      }
-      // Provider response bodies are useful diagnostics, but they are not a
-      // stable part of FRANK's public cache-health contract. Keep the detail in
-      // owner-only Worker logs and expose only our structured status below.
-      if (providerMessage) {
-        console.warn({
-          event: 'upstream_http_error',
-          source: label,
-          status: response.status,
-          providerMessage,
-        });
-      }
-      // Any 4xx (incl. 429 "Server is busy") is terminal: retrying with
-      // backoff is how a single refresh became an 18-request, 30-second
-      // storm, and the 10-minute cron already IS the retry schedule. Use
-      // break, not throw - a throw here is caught by this same try/catch
-      // and would fall through to the delay-and-retry anyway.
-      if (response.status < 500) break;
-    } catch (error) {
-      // A reached 2xx response that cannot be parsed is a hard provider
-      // contract failure. It may retry within this call, but it can never be
-      // relabeled as a transient initialization outcome.
-      lastError = error instanceof Error ? error : new Error(String(error));
-      logUpstream(label, startedAt, 'invalid-response', String(lastError.message ?? '').slice(0, 120));
-    }
-
-    if (attempt < policy.maxAttempts - 1) {
-      await delayWithinDeadline(retryDelay(attempt), policy, `${label} retry`);
-    }
-  }
-
-  if (!lastError) throw new Error(`${label} failed`);
-  throw lastError;
-}
-
-function parseDmiInstanceMs(id: unknown): number {
-  if (typeof id !== 'string') return Number.NaN;
-  const compact = id.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
-  if (compact) {
-    return new Date(`${compact[1]}T${compact[2]}:${compact[3]}:${compact[4]}Z`).getTime();
-  }
-  return new Date(id).getTime();
-}
-
-// A retained marine ingredient may bridge one missed six-hour publication, but
-// not an open-ended outage. At exactly two cycles (12h) it is still allowed;
-// anything older, future-dated, missing, or unparseable cannot be used to build
-// and freshly timestamp another forecast.
-export function isMarineRunWithinFallbackAge(
-  instance: MarineRunRef | null | undefined,
-  nowMs = Date.now(),
-): boolean {
-  const runMs = parseDmiInstanceMs(instance?.id);
-  if (!Number.isFinite(runMs)) return false;
-  const ageMs = nowMs - runMs;
-  return ageMs >= 0 && ageMs <= MARINE_FALLBACK_MAX_AGE_MS;
-}
-
-export function marineInstancesWithinFallbackAge(
-  instances: Partial<MarineInstances> | null | undefined,
-  nowMs = Date.now(),
-): boolean {
-  return isMarineRunWithinFallbackAge(instances?.water, nowMs)
-    && isMarineRunWithinFallbackAge(instances?.waves, nowMs);
-}
+// Compatibility aliases preserve the public Worker test/API surface while the
+// implementation lives at the generation-owned semantic boundary.
+export {
+  PAYLOAD_VERSION,
+  degradedSourcesAfterProbe,
+  deriveMarineSeedsFromPayload,
+  isMarineRunWithinFallbackAge,
+  marineInstancesEqual,
+  marineInstancesWithinFallbackAge,
+  marineProbeDecision,
+  readMarineBusyCircuit,
+};
 
 function assertMarineRunWithinFallbackAge(
-  instance: MarineRunRef | null | undefined,
+  instance: MarineInstance | null | undefined,
   label = instance?.collection ?? 'marine',
 ): void {
-  const runMs = parseDmiInstanceMs(instance?.id);
-  if (!Number.isFinite(runMs)) {
+  const rejection = marineFallbackRejection(instance);
+  if (rejection === 'invalid') {
     throw new Error(`DMI ${label} run id is invalid for the 12-hour marine safety limit.`);
   }
-  const ageMs = Date.now() - runMs;
-  if (ageMs < 0) {
+  if (rejection === 'future') {
     throw new Error(`DMI ${label} run is future-dated and fails the 12-hour marine safety limit.`);
   }
-  if (ageMs > MARINE_FALLBACK_MAX_AGE_MS) {
+  if (rejection === 'expired') {
     throw new ProviderUnavailableError(
       'marine',
       `DMI ${label} has not published a run within the 12-hour marine safety limit.`,
     );
   }
-}
-
-export interface MarineProbeDecision {
-  shouldProbe: boolean;
-  nextProbeAtMs: number;
-  reason: 'invalid' | 'expired' | 'publication-window' | 'retry-backoff' | 'due';
-}
-
-function dmiCompleteDelayMs(collection: unknown): number {
-  if (typeof collection !== 'string') return Number.NaN;
-  const normalized = collection.toLowerCase();
-  if (normalized.startsWith('dkss_')) return DMI_DKSS_COMPLETE_DELAY_MS;
-  if (normalized === 'wam_nsb') return DMI_WAM_NSB_COMPLETE_DELAY_MS;
-  if (normalized.startsWith('wam_')) return DMI_OTHER_WAM_COMPLETE_DELAY_MS;
-  return Number.NaN;
-}
-
-// DMI publishes WAM and DKSS four times daily (00/06/12/18Z). Its official
-// availability table says a complete run normally arrives after 2h45 for
-// WAM_NSB, 3h for the other WAM collections, and 3h20 for DKSS:
-// https://www.dmi.dk/friedata/dokumentation/data/forecast-data-availability
-//
-// Schedule the catalogue request for the NEXT run's expected completion, plus
-// ten minutes for normal publication/network skew. When both ingredients hold
-// the same run, the slower collection owns that time; when one lags, only the
-// older ingredient's next run matters. Missing, malformed, future-dated, or
-// over-policy provenance is never allowed to suppress a probe.
-export function marineProbeDecision(
-  marineInstances: {
-    water?: MarineRunRef;
-    waves?: MarineRunRef;
-  } | null | undefined,
-  lastAttemptAt?: string,
-  nowMs = Date.now(),
-): MarineProbeDecision {
-  const waterRunMs = parseDmiInstanceMs(marineInstances?.water?.id);
-  const wavesRunMs = parseDmiInstanceMs(marineInstances?.waves?.id);
-  const waterDelayMs = dmiCompleteDelayMs(marineInstances?.water?.collection);
-  const wavesDelayMs = dmiCompleteDelayMs(marineInstances?.waves?.collection);
-
-  if (![waterRunMs, wavesRunMs, waterDelayMs, wavesDelayMs].every(Number.isFinite)
-    || waterRunMs > nowMs
-    || wavesRunMs > nowMs) {
-    return { shouldProbe: true, nextProbeAtMs: nowMs, reason: 'invalid' };
-  }
-
-  if (nowMs - waterRunMs > MARINE_FALLBACK_MAX_AGE_MS
-    || nowMs - wavesRunMs > MARINE_FALLBACK_MAX_AGE_MS) {
-    return { shouldProbe: true, nextProbeAtMs: nowMs, reason: 'expired' };
-  }
-
-  let expectedAtMs: number;
-  if (waterRunMs === wavesRunMs) {
-    expectedAtMs = waterRunMs
-      + DMI_RUN_CYCLE_MS
-      + Math.max(waterDelayMs, wavesDelayMs)
-      + DMI_PUBLICATION_CUSHION_MS;
-  } else if (waterRunMs < wavesRunMs) {
-    expectedAtMs = waterRunMs
-      + DMI_RUN_CYCLE_MS
-      + waterDelayMs
-      + DMI_PUBLICATION_CUSHION_MS;
-  } else {
-    expectedAtMs = wavesRunMs
-      + DMI_RUN_CYCLE_MS
-      + wavesDelayMs
-      + DMI_PUBLICATION_CUSHION_MS;
-  }
-
-  if (nowMs < expectedAtMs) {
-    return {
-      shouldProbe: false,
-      nextProbeAtMs: expectedAtMs,
-      reason: 'publication-window',
-    };
-  }
-
-  // Once the expected publication window has opened, a successful catalogue
-  // check can legitimately return the same run for a few minutes. The stored
-  // check stamp proves we already tried after the due time, so wait at least
-  // 20 minutes before asking again. A pre-window or future/corrupt stamp cannot
-  // defer the first due probe.
-  const lastAttemptMs = Date.parse(lastAttemptAt ?? '');
-  if (Number.isFinite(lastAttemptMs)
-    && lastAttemptMs >= expectedAtMs
-    && lastAttemptMs <= nowMs) {
-    const retryAtMs = lastAttemptMs + DMI_DUE_PROBE_BACKOFF_MS;
-    if (nowMs < retryAtMs) {
-      return {
-        shouldProbe: false,
-        nextProbeAtMs: retryAtMs,
-        reason: 'retry-backoff',
-      };
-    }
-  }
-
-  return { shouldProbe: true, nextProbeAtMs: expectedAtMs, reason: 'due' };
-}
-
-function latestInstanceFromResponse(data: unknown): Pick<MarineInstance, 'id'> | undefined {
-  if (!isRecord(data) || !Array.isArray(data.instances)) {
-    throw new Error('DMI instance response did not contain an instances array.');
-  }
-  const instances = data.instances;
-  if (instances.length === 0) return undefined;
-  let best: Pick<MarineInstance, 'id'> | undefined;
-  let bestMs = -Infinity;
-
-  for (const instance of instances) {
-    const id = isRecord(instance) ? instance.id : undefined;
-    const timeMs = parseDmiInstanceMs(id);
-    if (typeof id === 'string' && Number.isFinite(timeMs) && timeMs > bestMs) {
-      best = { id };
-      bestMs = timeMs;
-    }
-  }
-
-  if (!best) {
-    throw new Error('DMI instance response contained no valid instance ids.');
-  }
-  return best;
 }
 
 // Which model run is newest is a property of DMI, not of a fjord, and every
@@ -454,7 +143,7 @@ export function fetchLatestInstanceForCollections(
   // asking", and re-probing once per location is exactly the hammering that
   // earned it. The first caller always awaits, so the stored rejection is never
   // an unhandled one.
-  const promise = probeLatestInstanceForCollections(collections, policy);
+  const promise = probeLatestInstanceForCollections(collections, policy, eventMemo);
   eventMemo?.set(key, promise);
   return promise;
 }
@@ -462,6 +151,7 @@ export function fetchLatestInstanceForCollections(
 async function probeLatestInstanceForCollections(
   collections: string[],
   policy: ExecutionPolicy,
+  eventMemo?: EventMemo,
 ): Promise<MarineInstance> {
   let lastError: Error | undefined;
 
@@ -469,10 +159,11 @@ async function probeLatestInstanceForCollections(
     assertBeforeProviderDeadline(policy, `DMI ${collection} collection fallback`);
     try {
       const data = await fetchJsonWithRetries(
-        buildInstancesUrl(collection),
+        dmiInstancesUrl(collection),
         `DMI ${collection} instances`,
         policy,
         'marine',
+        eventMemo,
       );
       const latest = latestInstanceFromResponse(data);
       if (latest) {
@@ -491,7 +182,7 @@ async function probeLatestInstanceForCollections(
       // response with no instances. Timeouts/5xx are host failures: asking the
       // same host under another collection name only spends the cleanup budget
       // and used to drive the event all the way to its hard deadline.
-      if (errorStatus(lastError) !== 404) throw lastError;
+      if (!shouldTryNextDmiCollection(errorStatus(lastError))) throw lastError;
     }
   }
 
@@ -518,11 +209,18 @@ export async function fetchLatestMarineInstances(
       .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
       .map((result) => result.reason);
     if (errors.length > 0 && errors.every(isProviderUnavailableError)) {
+      const advertisedRetries = errors
+        .map((error) => error.retryAfterSeconds)
+        .filter((seconds): seconds is number =>
+          typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0);
       throw new ProviderUnavailableError(
         'marine',
         'DMI marine model instances are temporarily unavailable.',
         errors[0],
         errors.some((error) => error.busy),
+        advertisedRetries.length > 0
+          ? Math.max(...advertisedRetries)
+          : MARINE_BUSY_DEFAULT_RETRY_SECONDS,
       );
     }
     throw new Error(`Failed to fetch DMI marine instances: ${errors.join(', ')}`);
@@ -531,50 +229,22 @@ export async function fetchLatestMarineInstances(
   return { water, waves };
 }
 
-export function marineInstancesEqual(
-  left: Partial<MarineInstances> | null | undefined,
-  right: Partial<MarineInstances> | null | undefined,
-): boolean {
-  return Boolean(
-    left &&
-      right &&
-      left.water?.collection === right.water?.collection &&
-      left.water?.id === right.water?.id &&
-      left.waves?.collection === right.waves?.collection &&
-      left.waves?.id === right.waves?.id
-  );
-}
-
 async function fetchDmiGeoJson<TFeature>(
   collection: string,
   parameters: string[],
   location: Pick<ForecastLocation, 'coordinate'>,
   instanceId: string,
   policy: ExecutionPolicy,
+  eventMemo?: EventMemo,
 ): Promise<{ features: TFeature[] }> {
   const json = await fetchJsonWithRetries(
-    buildDmiUrl(collection, parameters, location, instanceId),
+    dmiForecastUrl(collection, parameters, location, instanceId),
     `DMI ${collection}`,
     policy,
     'marine',
+    eventMemo,
   );
   return featureCollectionFromJson<TFeature>(json);
-}
-
-function mapMetPayload(
-  data: MetForecastResponse,
-  lastModified: string | null | undefined,
-  expiresMs: number,
-): Omit<MetResult, 'fallback' | 'degraded' | 'busy'> {
-  return {
-    weatherSeries: mapMetTimeseries(data),
-    blocks: mapMetBlocks(data),
-    // Honour MET's own Expires header; fall back to a short TTL if absent.
-    weatherExpires: Number.isFinite(expiresMs)
-      ? new Date(expiresMs).toISOString()
-      : new Date(Date.now() + MET_DEFAULT_TTL_MS).toISOString(),
-    weatherLastModified: lastModified ?? undefined,
-  };
 }
 
 async function fetchMetWeather(
@@ -599,7 +269,7 @@ async function fetchMetWeather(
 
   const headers: Record<string, string> = {
     Accept: 'application/json',
-    'User-Agent': MET_USER_AGENT,
+    'User-Agent': FORECAST_SOURCE_POLICY.metUserAgent,
   };
   // MET TOS: repeat requests must carry If-Modified-Since with exactly the
   // Last-Modified value previously received.
@@ -611,7 +281,7 @@ async function fetchMetWeather(
     const metStartedAt = Date.now();
     let response: Response;
     try {
-      response = await fetchWithTimeout(buildMetUrl(location), { headers }, policy);
+      response = await fetchWithTimeout(metForecastUrl(location), { headers }, policy);
     } catch (error) {
       throw transientProviderError(
         error,
@@ -698,11 +368,7 @@ async function fetchMetWeather(
     // stop serving a held body is the moment its banner would have fired. It
     // must stay well above MET's ~30-min publish cadence, or an ordinary single
     // failed fetch would start rejecting a body that is genuinely current.
-    const storedBodyAgeMs = Date.now() - Date.parse(stored?.lastModified ?? '');
-    if (stored?.body
-      && Number.isFinite(storedBodyAgeMs)
-      && storedBodyAgeMs >= 0
-      && storedBodyAgeMs < MET_FALLBACK_MAX_AGE_MS) {
+    if (canUseMetFallback(stored)) {
       // MET always returns data when reachable, so a MET fallback is always a
       // real transport failure - degraded, not merely "not published yet".
       return {
@@ -737,6 +403,7 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
   seedSeries?: SeriesPoint[],
   seedInstance?: MarineInstance,
   policyInput?: ExecutionPolicyInput,
+  eventMemo?: EventMemo,
 ): Promise<MarineSeriesResult> {
   const policy = executionPolicy(policyInput);
   assertBeforeDeadline(policy, `${kind} marine cache read for ${location.id}`);
@@ -759,11 +426,7 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
   // Same run we already hold data for: reuse it, no network call. DMI runs
   // change only every ~6h, so an hourly weather rebuild must not re-pull
   // identical marine data (measured: gaps between runs are exactly 6.00h).
-  const currentStored = stored?.schemaVersion === MARINE_INGREDIENT_CACHE_SCHEMA_VERSION
-    && Array.isArray(stored.series) && stored.series.length > 0
-    && isMarineRunWithinFallbackAge(stored)
-    ? stored
-    : null;
+  const currentStored = currentMarineIngredient(stored);
 
   if (currentStored
     && currentStored.collection === instance.collection
@@ -775,34 +438,24 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
   // from the cached payload). `extra` distinguishes WHY we fell back.
   const fallbackToHeld = (
     extra: Pick<MarineSeriesResult, 'degraded' | 'busy' | 'notReady'>,
-  ): MarineSeriesResult | null => {
-    // Re-evaluate against the current clock. A request can begin exactly at
-    // the 12h boundary and cross it while waiting for the provider; a decision
-    // made before that wait must not authorize a newly-stamped old fallback.
-    if (currentStored && isMarineRunWithinFallbackAge(currentStored)) {
-      return {
-        series: currentStored.series,
-        instance: { collection: currentStored.collection, id: currentStored.id },
-        fallback: true,
-        ...extra,
-      };
-    }
-    if (Array.isArray(seedSeries) && seedSeries.length > 0
-      && isMarineRunWithinFallbackAge(seedInstance)) {
-      // `seedInstance`, NOT `instance`: the seed came from the cached payload,
-      // i.e. the PREVIOUS run. Reporting the run we just failed to fetch wrote
-      // a false provenance into cacheHealth.marineInstances, and both
-      // marineInstancesEqual (which then thinks the cache is current) and the
-      // schedule-aware catalogue gate (which then defers the next probe) read
-      // it back as fact. Fall back to `instance` only if we have nothing.
-      return { series: seedSeries, instance: seedInstance ?? instance, fallback: true, ...extra };
-    }
-    return null;
-  };
+  ): MarineSeriesResult | null => heldMarineFallback(
+    currentStored,
+    seedSeries,
+    seedInstance,
+    instance,
+    extra,
+  );
 
   let data: { features: TFeature[] };
   try {
-    data = await fetchDmiGeoJson(instance.collection, parameters, location, instance.id, policy);
+    data = await fetchDmiGeoJson(
+      instance.collection,
+      parameters,
+      location,
+      instance.id,
+      policy,
+      eventMemo,
+    );
   } catch (error) {
     rethrowIfDeadlineReached(error, policy, `${kind} retained fallback for ${location.id}`);
     if (!isProviderUnavailableError(error)) throw error;
@@ -851,37 +504,6 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
     'marine',
     `DMI ${instance.collection} has not published ${kind} forecast points for ${location.areaName} yet.`,
   );
-}
-
-// Reconstruct per-source marine series from a cached payload's hourly rows
-// (block rows are aggregates, so only true hourly rows are usable).
-export function deriveMarineSeedsFromPayload(
-  cached: MarineSeedPayload | null | undefined,
-): MarineSeeds | null {
-  const hourly = cached?.hourly;
-  if (!Array.isArray(hourly)) return null;
-  const rows = hourly.filter((row) => row && !row.blockSpanHours && row.time);
-  if (rows.length === 0) return null;
-  return {
-    water: rows.map((row) => ({
-      time: row.time,
-      timeMs: Date.parse(row.time),
-      tempWater: row.tempWater,
-      tideLevel: row.tideLevel,
-      currentSpeed: row.currentSpeed,
-      currentDirection: row.currentDirection,
-    })),
-    waves: rows.map((row) => ({
-      time: row.time,
-      timeMs: Date.parse(row.time),
-      waveHeight: row.waveHeight,
-      waveDirection: row.waveDirection,
-      wavePeriod: row.wavePeriod,
-    })),
-    // Which model runs these seeds actually came from, so a seed fallback can
-    // report its real provenance instead of the run it failed to fetch.
-    instances: cached?.sources?.cacheHealth?.marineInstances,
-  };
 }
 
 // Official DMI warnings for the location's region, via the MeteoAlarm Denmark
@@ -939,7 +561,7 @@ async function fetchWarnings(
     if ((policy.hardDeadlineAt ?? policy.deadlineAt) - Date.now() <= 0) {
       throw deadlineError(`warning fallback for ${location.id}`);
     }
-    return (seedWarnings ?? []).filter((w) => Number.isFinite(Date.parse(w?.expires)) && Date.parse(w.expires) > now);
+    return retainedActiveWarnings(seedWarnings, now);
   }
 }
 
@@ -950,14 +572,15 @@ export async function buildForecastCache(
   marineSeeds: MarineSeeds | null,
   warningSeed: WeatherWarning[] | undefined,
   policy: ExecutionPolicy,
+  eventMemo?: EventMemo,
 ): Promise<ForecastBuildResult> {
   assertBeforeDeadline(policy, `forecast build for ${location.id}`);
   const seedInstances = marineSeeds?.instances;
   const warningPolicy = advisoryWarningPolicy(policy);
   const results = await Promise.allSettled([
     fetchMetWeather(env, location, policy),
-    fetchMarineSeriesWithFallback(env, location, 'water', marineInstances.water, DKSS_PARAMETERS, mapWaterFeatures, marineSeeds?.water, seedInstances?.water, policy),
-    fetchMarineSeriesWithFallback(env, location, 'waves', marineInstances.waves, WAM_PARAMETERS, mapWaveFeatures, marineSeeds?.waves, seedInstances?.waves, policy),
+    fetchMarineSeriesWithFallback(env, location, 'water', marineInstances.water, FORECAST_PROVIDER_PARAMETERS.water, mapWaterFeatures, marineSeeds?.water, seedInstances?.water, policy, eventMemo),
+    fetchMarineSeriesWithFallback(env, location, 'waves', marineInstances.waves, FORECAST_PROVIDER_PARAMETERS.waves, mapWaveFeatures, marineSeeds?.waves, seedInstances?.waves, policy, eventMemo),
     fetchWarnings(location, warningSeed, warningPolicy),
   ]);
   assertBeforeDeadline(policy, `forecast assembly for ${location.id}`);
@@ -976,11 +599,16 @@ export async function buildForecastCache(
       const provider: BusyProvider = providers.size === 1
         ? errors[0].provider
         : 'services';
+      const advertisedRetries = errors
+        .map((error) => error.retryAfterSeconds)
+        .filter((seconds): seconds is number =>
+          typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0);
       throw new ProviderUnavailableError(
         provider,
         'Required forecast providers are temporarily unavailable.',
         errors[0],
         errors.some((error) => error.busy),
+        advertisedRetries.length > 0 ? Math.max(...advertisedRetries) : undefined,
       );
     }
     throw new Error(`Failed to build forecast: ${errors.join(', ')}`);
@@ -997,130 +625,12 @@ export async function buildForecastCache(
   assertMarineRunWithinFallbackAge(water.instance, water.instance?.collection ?? 'water');
   assertMarineRunWithinFallbackAge(wave.instance, wave.instance?.collection ?? 'waves');
 
-  const weatherSeries = met.weatherSeries;
-  const waterSeries = water.series;
-  const waveSeries = wave.series;
-  // Which model runs the payload is really built from (a fallback ingredient
-  // keeps its own older run id), and which sources are riding on last-good
-  // data because their provider was unavailable.
-  const effectiveInstances = { water: water.instance, waves: wave.instance };
-  // Only a fallback caused by a real error is "degraded" (amber). A fallback
-  // because a newly-listed run isn't published yet is NOT degradation - the
-  // held run is still the latest available, so it stays green.
-  const degradedSources = [
-    ...(met.fallback && met.degraded ? ['weather'] : []),
-    ...(water.fallback && water.degraded ? ['water'] : []),
-    ...(wave.fallback && wave.degraded ? ['waves'] : []),
-  ];
-  // Whether the degradation is because a provider was busy (429) vs some
-  // other error - lets the client say "... · service busy".
-  const degradedBusy = [met, water, wave].some((s) => s.fallback && s.degraded && s.busy);
-
-  if (weatherSeries.length === 0) {
+  if (met.weatherSeries.length === 0) {
     throw new ProviderUnavailableError(
       'weather',
       `MET Norway has not published weather forecast points for ${location.areaName} yet.`,
     );
   }
 
-  // Longer-range blocks continue the matrix past MET's hourly range using
-  // next_6_hours, with DMI marine aggregated per block. Stop where marine ends.
-  const hourlyEndMs = weatherSeries[weatherSeries.length - 1].timeMs;
-  const blockData = [];
-  for (const block of met.blocks) {
-    if (block.timeMs <= hourlyEndMs) continue;
-    const marine = aggregateBlockMarine(waveSeries, waterSeries, block.timeMs, block.timeMs + block.spanHours * 3_600_000);
-    if (!marine) break;
-    blockData.push({ block, marine });
-  }
-
-  // MET has no sunrise/sunset or is_day, so day/night is derived
-  // astronomically from the coordinate over every hour and block we keep.
-  const allTimes = [...weatherSeries.map((w) => w.time), ...blockData.map((b) => b.block.time)];
-  const sun = buildSunSchedule(allTimes, location);
-
-  // One continuous forecast: keep every weather hour for which we also have
-  // marine data, then append the longer-range blocks.
-  const hourly = weatherSeries
-    .map((weather) => {
-      const water = nearestPoint(waterSeries, weather.timeMs);
-      const wave = nearestPoint(waveSeries, weather.timeMs);
-      if (!water || !wave) return null;
-      return assembleHourlyRow(weather, water, wave, sun.isDayByTime.get(weather.time) ?? true);
-    })
-    .filter((row): row is NonNullable<typeof row> => row !== null)
-    .concat(blockData.map(({ block, marine }) => assembleBlockRow(block, marine, sun.isDayByTime.get(block.time) ?? true)));
-
-  if (hourly.length === 0) {
-    throw new Error(`No overlapping weather + marine hours for ${location.areaName}.`);
-  }
-
-  return {
-    degradedSources,
-    degradedBusy,
-    marineInstances: effectiveInstances,
-    forecast: {
-      hourly,
-      sunrise: sun.sunrise,
-      sunset: sun.sunset,
-      warnings,
-      sources: {
-        payloadVersion: PAYLOAD_VERSION,
-        release: { ...CURRENT_RELEASE },
-        weather: 'MET Norway Locationforecast',
-        waves: `DMI ${effectiveInstances.waves.collection}`,
-        water: `DMI ${effectiveInstances.water.collection}`,
-        coordinate: {
-          latitude: location.coordinate.latitude,
-          longitude: location.coordinate.longitude,
-        },
-        location: {
-          id: location.id,
-          forecastConfigRevision: location.forecastConfigRevision,
-          name: location.name,
-          areaName: location.areaName,
-        },
-        fetchedAt: new Date().toISOString(),
-      },
-    },
-    weatherExpires: met.weatherExpires,
-    weatherLastModified: met.weatherLastModified,
-  };
-}
-
-// A "busy" upstream (429/rate-limited) is a "try later", distinct from a real
-// error - the UI words it calmly and the retry logic treats it as terminal.
-export function isBusyError(message: unknown): boolean {
-  return /\b429\b|too many requests|server is busy|rate.?limit/i.test(String(message ?? ''));
-}
-
-// Classify a build failure so the client can word it calmly: whether the
-// provider is merely busy vs a real error, and which provider it was.
-export function classifyBuildFailure(message: unknown): {
-  busy: boolean;
-  busyProvider: BusyProvider;
-} {
-  const text = String(message ?? '');
-  const busy = isBusyError(text);
-  const hasWeather = /\bMET\b|locationforecast/i.test(text);
-  const hasMarine = /\bDMI\b|dkss|wam/i.test(text);
-  const busyProvider = hasWeather && hasMarine ? 'services'
-    : hasMarine ? 'marine'
-    : hasWeather ? 'weather'
-    : 'services';
-  return { busy, busyProvider };
-}
-
-// A failed marine run-catalog probe means we could not verify that the held
-// water/wave run is still the newest one. The values remain usable, but they are
-// now explicitly last-good ingredients and must not render as a green, fully
-// checked forecast.
-export function degradedSourcesAfterProbe(
-  degradedSources: string[] = [],
-  marineProbeFailed = false,
-): string[] {
-  return [...new Set([
-    ...degradedSources,
-    ...(marineProbeFailed ? ['water', 'waves'] : []),
-  ])];
+  return assembleForecastFromSources(location, { met, water, wave, warnings });
 }
