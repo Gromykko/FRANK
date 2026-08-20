@@ -158,10 +158,16 @@ describe('Worker route HTTP contract', () => {
 
   async function expectBrowserBackgroundDeadline(path: string, lastCheckAgeMs: number) {
     vi.useFakeTimers();
-    vi.setSystemTime('2026-08-20T12:00:00Z');
+    // Keep this beyond clocks retained by earlier route tests in the shared
+    // Worker isolate, so the test exercises the deadline rather than a valid
+    // in-memory rate-limit short circuit.
+    vi.setSystemTime('2030-08-20T12:00:00Z');
     const payload = cachedForecast();
     payload.sources.cacheHealth.lastAttemptAt = new Date(Date.now() - lastCheckAgeMs).toISOString();
     payload.sources.cacheHealth.weatherExpires = new Date(Date.now() + 30 * 60_000).toISOString();
+    const currentRun = new Date(Date.now() - 60 * 60_000).toISOString();
+    payload.sources.cacheHealth.marineInstances.water.id = currentRun;
+    payload.sources.cacheHealth.marineInstances.waves.id = currentRun;
     const { env, ctx, waits } = makeRuntime(payload);
     // The forecast is already current, so the background check reaches its KV
     // stamp write. Simulate a binding call that never resolves: the absolute
@@ -348,6 +354,169 @@ describe('Worker route HTTP contract', () => {
     expect(body.sources.location?.id).toBeUndefined();
     expect(waits).toHaveLength(0);
     expect(providerFetch).not.toHaveBeenCalled();
+  });
+
+  it('returns a versioned initializing contract and rate-limits repeated cold and warm requests', async () => {
+    const runtime = makeRuntime(null as never);
+    const providerFetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () => new Response('Server is busy: owner-only provider detail', { status: 429 }),
+    );
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const first = await worker.fetch(request('/forecast/aarhus'), runtime.env, runtime.ctx);
+    const firstBody = await first.json();
+
+    expect(first.status).toBe(503);
+    expect(first.headers.get('Retry-After')).toBe('600');
+    expect(first.headers.get('Access-Control-Expose-Headers')).toContain('Retry-After');
+    expect(firstBody).toEqual({
+      schemaVersion: 1,
+      status: 'initializing',
+      code: 'FORECAST_INITIALIZING',
+      message: 'Forecast for this location is being prepared. Please try again shortly.',
+      retryAfterSeconds: 600,
+      location: { id: 'aarhus', name: 'Aarhus', areaName: 'Aarhus Bugt' },
+    });
+    expect(JSON.stringify(firstBody)).not.toContain('owner-only provider detail');
+    expect(runtime.puts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: 'forecast-initialization:aarhus:v1' }),
+    ]));
+    expect(runtime.waits).toHaveLength(1);
+    await Promise.all(runtime.waits);
+
+    const providerCalls = providerFetch.mock.calls.length;
+    const repeatedWarm = await worker.fetch(
+      request('/forecast/aarhus?warm=1'),
+      runtime.env,
+      runtime.ctx,
+    );
+    expect(repeatedWarm.status).toBe(503);
+    expect((await repeatedWarm.json()).code).toBe('FORECAST_INITIALIZING');
+    expect(providerFetch).toHaveBeenCalledTimes(providerCalls);
+    expect(runtime.waits).toHaveLength(1);
+  });
+
+  it('honors a persisted initializing cooldown from warm mode without provider work', async () => {
+    const runtime = makeRuntime(null as never, {
+      'forecast-initialization:kolding:v1': {
+        schemaVersion: 1,
+        status: 'initializing',
+        locationId: 'kolding',
+        lastAttemptAt: new Date().toISOString(),
+        retryAfterSeconds: 600,
+      },
+    });
+    const providerFetch = vi.spyOn(globalThis, 'fetch');
+
+    const response = await worker.fetch(
+      request('/forecast/kolding?warm=1'),
+      runtime.env,
+      runtime.ctx,
+    );
+
+    expect(response.status).toBe(503);
+    expect((await response.json()).code).toBe('FORECAST_INITIALIZING');
+    expect(providerFetch).not.toHaveBeenCalled();
+    expect(runtime.waits).toHaveLength(0);
+  });
+
+  it('lets a completed forecast win over a leftover initialization marker', async () => {
+    const runtime = makeRuntime(cachedForecast(), {
+      'forecast-initialization:vejle:v1': {
+        schemaVersion: 1,
+        status: 'initializing',
+        locationId: 'vejle',
+        lastAttemptAt: new Date().toISOString(),
+        retryAfterSeconds: 600,
+      },
+    });
+    const providerFetch = vi.spyOn(globalThis, 'fetch');
+
+    const response = await worker.fetch(
+      request('/forecast/vejle?warm=1'),
+      runtime.env,
+      runtime.ctx,
+    );
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).sources.payloadVersion).toBe(FORECAST_PAYLOAD_VERSION);
+    expect(providerFetch).not.toHaveBeenCalled();
+  });
+
+  it('fails hard on a malformed initialization marker without contacting providers', async () => {
+    const runtime = makeRuntime(null as never, {
+      'forecast-initialization:horsens:v1': {
+        schemaVersion: 999,
+        status: 'initializing',
+        locationId: 'horsens',
+      },
+    });
+    const providerFetch = vi.spyOn(globalThis, 'fetch');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const response = await worker.fetch(
+      request('/forecast/horsens'),
+      runtime.env,
+      runtime.ctx,
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body).toEqual({
+      error: 'Forecast service failed',
+      message: 'An internal error occurred while fetching or processing forecast data.',
+    });
+    expect(providerFetch).not.toHaveBeenCalled();
+  });
+
+  it('fails hard when the initialization marker storage read fails', async () => {
+    const runtime = makeRuntime(null as never);
+    const originalGet = runtime.env.FRANK_FORECAST_CACHE.get;
+    runtime.env.FRANK_FORECAST_CACHE.get = async (key: string, type?: string) => {
+      if (key.startsWith('forecast-initialization:')) {
+        throw new Error('KV initialization marker read failed');
+      }
+      return originalGet(key, type);
+    };
+    const providerFetch = vi.spyOn(globalThis, 'fetch');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const response = await worker.fetch(
+      request('/forecast/horsens'),
+      runtime.env,
+      runtime.ctx,
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: 'Forecast service failed',
+      message: 'An internal error occurred while fetching or processing forecast data.',
+    });
+    expect(providerFetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps malformed provider contracts on the hard failure path', async () => {
+    const runtime = makeRuntime(null as never);
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => (
+      new Response(JSON.stringify({ unexpected: [] }), { status: 200 })
+    ));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const response = await worker.fetch(
+      request('/forecast/vejle?warm=1'),
+      runtime.env,
+      runtime.ctx,
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body).toEqual({
+      error: 'Forecast service failed',
+      message: 'An internal error occurred while fetching or processing forecast data.',
+    });
+    expect(body).not.toHaveProperty('code');
+    expect(runtime.puts.some(({ key }) => key.startsWith('forecast-initialization:'))).toBe(false);
+    await Promise.all(runtime.waits);
   });
 
   it('marks a due normal cache hit when a background check was actually scheduled', async () => {

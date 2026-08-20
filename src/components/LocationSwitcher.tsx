@@ -10,8 +10,15 @@ import { useLang } from '../i18n';
 // its own settings and cache, so nothing is lost). The picker implements the
 // ARIA menu keyboard contract: focus moves into the menu on open, arrows/Home/
 // End walk the items, Escape closes and returns focus to the trigger.
-export default function LocationSwitcher({ label }: { label: string }) {
+export default function LocationSwitcher({
+  label,
+  currentState,
+}: {
+  label: string;
+  currentState?: 'initializing';
+}) {
   const { t } = useLang();
+  const currentStateLabel = currentState === 'initializing' ? t('preparing') : null;
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -76,6 +83,7 @@ export default function LocationSwitcher({ label }: { label: string }) {
       <span className="frank-location">
         <MapPin size={12} />
         {label}
+        {currentStateLabel && <span className="location-switcher-state">{currentStateLabel}</span>}
       </span>
     );
   }
@@ -92,6 +100,7 @@ export default function LocationSwitcher({ label }: { label: string }) {
       >
         <MapPin size={12} />
         {label}
+        {currentStateLabel && <span className="location-switcher-state">{currentStateLabel}</span>}
         <ChevronDown size={12} className="location-switcher-chevron" aria-hidden="true" />
       </button>
 
@@ -128,7 +137,9 @@ export default function LocationSwitcher({ label }: { label: string }) {
                 >
                   <span className="location-switcher-check">{isCurrent && <Check size={13} />}</span>
                   {loc.areaName}
-                  {loc.provisional && (
+                  {isCurrent && currentStateLabel ? (
+                    <span className="location-switcher-pill is-initializing">{currentStateLabel}</span>
+                  ) : loc.provisional && (
                     <span className="location-switcher-pill" title={t('Provisional — limits not yet locally calibrated')}>{t('provisional')}</span>
                   )}
                 </button>

@@ -191,6 +191,56 @@ describe('forecast payload trust boundary', () => {
 });
 
 describe('browser forecast cache recovery', () => {
+  it('surfaces a valid first-build response when this location has no saved forecast', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      schemaVersion: 1,
+      status: 'initializing',
+      code: 'FORECAST_INITIALIZING',
+      message: 'Forecast is being initialized.',
+      retryAfterSeconds: 600,
+      location: {
+        id: CURRENT_LOCATION.id,
+        name: CURRENT_LOCATION.name,
+        areaName: CURRENT_LOCATION.areaName,
+      },
+    }), { status: 503, headers: { 'Retry-After': '600' } })));
+
+    const loaded = await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
+
+    expect(loaded.data).toBeNull();
+    expect(loaded.from).toBeNull();
+    expect(loaded.initialization).toMatchObject({
+      schemaVersion: 1,
+      status: 'initializing',
+      code: 'FORECAST_INITIALIZING',
+      retryAfterSeconds: 600,
+      location: { id: CURRENT_LOCATION.id },
+    });
+  });
+
+  it('keeps a usable saved forecast instead of replacing it with a first-build screen', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const saved = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
+    saveCachedWeatherData(saved, CURRENT_LOCATION);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      schemaVersion: 1,
+      status: 'initializing',
+      code: 'FORECAST_INITIALIZING',
+      message: 'Forecast is being initialized.',
+      retryAfterSeconds: 600,
+      location: {
+        id: CURRENT_LOCATION.id,
+        name: CURRENT_LOCATION.name,
+        areaName: CURRENT_LOCATION.areaName,
+      },
+    }), { status: 503, headers: { 'Retry-After': '600' } })));
+
+    const loaded = await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
+
+    expect(loaded).toEqual({ data: saved, from: 'local' });
+  });
+
   it('never persists a transient pending response over the durable last-good copy', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(NOW);
     const stable = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
@@ -338,7 +388,7 @@ describe('browser forecast cache recovery', () => {
 
     const loaded = await loadCachedWeatherData(CURRENT_LOCATION);
 
-    expect(loaded).toEqual({ data: null, from: null });
+    expect(loaded).toEqual({ data: null, from: null, failureKind: 'response' });
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
@@ -433,7 +483,7 @@ describe('browser forecast cache recovery', () => {
     }));
 
     await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
-    expect(timeout).toHaveBeenLastCalledWith(30_000);
+    expect(timeout).toHaveBeenLastCalledWith(32_000);
 
     const local = structuredClone(worker);
     local.sources.fetchedAt = new Date(NOW + 60_000).toISOString();
@@ -447,7 +497,7 @@ describe('browser forecast cache recovery', () => {
       preferWorker: true,
       allowColdWorkerBuild: true,
     });
-    expect(timeout).toHaveBeenLastCalledWith(30_000);
+    expect(timeout).toHaveBeenLastCalledWith(32_000);
   });
 
   it('does not let a newer incompatible Worker overwrite the compatible last-good cache', async () => {

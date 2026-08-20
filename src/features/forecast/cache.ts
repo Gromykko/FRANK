@@ -4,14 +4,17 @@ import type { WeatherData } from './types';
 import { reviveReadings } from './normalize';
 import { isValidForecastPayload } from './validatePayload';
 import { shouldApplyForecastUpdate } from './forecastOrdering';
+import { parseForecastInitialization } from './initialization';
+import type { ForecastInitialization } from './initialization';
 
 const DEFAULT_FORECAST_WORKER_BASE = 'https://frank-forecast.alswatchs.workers.dev';
 const WEATHER_CACHE_KEY_PREFIX = 'frank_weather_data_v2';
 const CACHED_WORKER_FETCH_TIMEOUT_MS = 12 * 1000;
-// A route may spend up to 2s on its response KV read before starting a
-// synchronous build under the Worker's separate 24s budget. Keep another 4s
-// for both network legs and serialization rather than racing that 26s ceiling.
-const COLD_WORKER_FETCH_TIMEOUT_MS = 30 * 1000;
+// A true cold route may spend 2s on the forecast KV read and another 2s on its
+// initialization marker before starting a synchronous build under the
+// Worker's separate 24s budget. Keep 4s for both network legs and serialization
+// rather than racing that 28s server ceiling.
+const COLD_WORKER_FETCH_TIMEOUT_MS = 32 * 1000;
 
 const FORECAST_WORKER_BASE = (import.meta.env.VITE_FORECAST_WORKER_BASE ?? DEFAULT_FORECAST_WORKER_BASE).replace(/\/$/, '');
 
@@ -107,6 +110,8 @@ function readLocalCachedWeatherData(location: ForecastLocation): WeatherData | n
 interface WorkerCacheRead {
   data: WeatherData | null;
   backgroundCheckScheduled: boolean;
+  initialization: ForecastInitialization | null;
+  failureKind: 'network' | 'response' | null;
 }
 
 async function readWorkerCachedWeatherData(
@@ -114,8 +119,11 @@ async function readWorkerCachedWeatherData(
   forceRefresh = false,
   timeoutMs = CACHED_WORKER_FETCH_TIMEOUT_MS,
 ): Promise<WorkerCacheRead> {
-  if (!FORECAST_WORKER_BASE) return { data: null, backgroundCheckScheduled: false };
+  if (!FORECAST_WORKER_BASE) {
+    return { data: null, backgroundCheckScheduled: false, initialization: null, failureKind: 'response' };
+  }
 
+  let receivedResponse = false;
   try {
     const query = new URLSearchParams({
       cacheBust: String(Date.now()),
@@ -133,8 +141,17 @@ async function readWorkerCachedWeatherData(
       // app just spins — the one moment a cached answer matters most.
       signal: AbortSignal.timeout(timeoutMs),
     });
+    receivedResponse = true;
 
-    if (!response.ok) return { data: null, backgroundCheckScheduled: false };
+    if (!response.ok) {
+      const initialization = await parseForecastInitialization(response, location);
+      return {
+        data: null,
+        backgroundCheckScheduled: false,
+        initialization,
+        failureKind: initialization ? null : 'response',
+      };
+    }
     const backgroundCheckScheduled = response.headers?.get('X-FRANK-Background-Check') === 'scheduled';
 
     const parsed = reviveReadings(await response.json());
@@ -162,19 +179,28 @@ async function readWorkerCachedWeatherData(
         // health overlay is pending: that extended a cold-start stale flash
         // until the first pickup. Pending remains memory-only either way.
         const local = readLocalCachedWeatherData(location);
-        if (!local) return { data: parsed, backgroundCheckScheduled };
+        if (!local) {
+          return { data: parsed, backgroundCheckScheduled, initialization: null, failureKind: null };
+        }
         const localFetchedMs = Date.parse(local.sources.fetchedAt);
         const workerFetchedMs = Date.parse(parsed.sources.fetchedAt);
         return {
           data: workerFetchedMs > localFetchedMs ? parsed : local,
           backgroundCheckScheduled,
+          initialization: null,
+          failureKind: null,
         };
       }
       saveCachedWeatherData(parsed, location);
-      return { data: parsed, backgroundCheckScheduled };
+      return { data: parsed, backgroundCheckScheduled, initialization: null, failureKind: null };
     }
   } catch {
-    return { data: null, backgroundCheckScheduled: false };
+    return {
+      data: null,
+      backgroundCheckScheduled: false,
+      initialization: null,
+      failureKind: receivedResponse ? 'response' : 'network',
+    };
   } finally {
     // In the `finally`, not before the fetch. Setting it up front collapsed the
     // documented "in flight" state (undefined) into "attempted and not reached"
@@ -184,7 +210,7 @@ async function readWorkerCachedWeatherData(
     workerAttempted = true;
   }
 
-  return { data: null, backgroundCheckScheduled: false };
+  return { data: null, backgroundCheckScheduled: false, initialization: null, failureKind: 'response' };
 }
 
 export interface LoadCacheOptions {
@@ -210,6 +236,8 @@ export interface LoadCacheResult {
   data: WeatherData | null;
   from: CacheSource;
   backgroundCheckScheduled?: boolean;
+  initialization?: ForecastInitialization;
+  failureKind?: 'network' | 'response';
 }
 
 // Contact record for this browser session. Three states, and the difference
@@ -259,7 +287,21 @@ export async function loadCachedWeatherData(
       };
     }
 
-    return { data: local, from: local ? 'local' : null };
+    if (workerResult.initialization) {
+      lastWorkerContactMs = Date.now();
+      // A still-usable local snapshot remains the right UI when one exists.
+      // Initialization is a first-build state, not a reason to hide last-good
+      // data or change established degraded-cache behaviour.
+      if (!local) {
+        return { data: null, from: null, initialization: workerResult.initialization };
+      }
+    }
+
+    return {
+      data: local,
+      from: local ? 'local' : null,
+      ...(!local && workerResult.failureKind ? { failureKind: workerResult.failureKind } : {}),
+    };
   }
 
   const local = readLocalCachedWeatherData(location);
@@ -271,9 +313,12 @@ export async function loadCachedWeatherData(
     COLD_WORKER_FETCH_TIMEOUT_MS,
   );
   if (workerResult.data) lastWorkerContactMs = Date.now();
+  if (workerResult.initialization) lastWorkerContactMs = Date.now();
   return {
     data: workerResult.data,
     from: workerResult.data ? 'worker' : null,
     ...(workerResult.backgroundCheckScheduled ? { backgroundCheckScheduled: true } : {}),
+    ...(workerResult.initialization ? { initialization: workerResult.initialization } : {}),
+    ...(workerResult.failureKind ? { failureKind: workerResult.failureKind } : {}),
   };
 }

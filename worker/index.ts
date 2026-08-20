@@ -30,12 +30,17 @@ import type {
   CacheHealthStatus,
   EventMemo,
   ForecastData,
+  ForecastInitializationMarker,
+  ForecastInitializingPayload,
   HealthLocationEntry,
   HealthPayload,
   MarineInstances,
   RefreshOptions,
   WorkerCacheHealth,
 } from './domain';
+import {
+  isProviderUnavailableError,
+} from './providerAvailability';
 import {
   DMI_PROBE_QUIET_MS,
   PAYLOAD_VERSION,
@@ -103,6 +108,13 @@ const USER_BACKGROUND_EXECUTION_BUDGET_MS = 24_000;
 // final KV write still have a deterministic chance to finish.
 const USER_COMPLETION_RESERVE_MS = 4_000;
 
+const INITIALIZATION_SCHEMA_VERSION = 1;
+const INITIALIZATION_RETRY_SECONDS = 10 * 60;
+// KV requires expirationTtl >= 60 seconds. A little extra lifetime lets a
+// caller calculate the remaining retry delay even if it arrives near the
+// boundary; the marker itself stops gating at retryAfterSeconds.
+const INITIALIZATION_MARKER_TTL_SECONDS = INITIALIZATION_RETRY_SECONDS + 60;
+
 const MANUAL_CHECK_MIN_INTERVAL_MS = 60 * 1000;
 // When the cache is stale, a manual refresh is the user explicitly asking for
 // a retry — allow it much sooner than the normal manual gate. 20s still keeps
@@ -144,6 +156,10 @@ const MANUAL_STAMP_MIN_WRITE_INTERVAL_MS = 10 * 60 * 1000;
 
 function cacheKey(location: Pick<ForecastLocation, 'id'>): string {
   return `forecast:${location.id}:weather-data:v1`;
+}
+
+function initializationKey(location: Pick<ForecastLocation, 'id'>): string {
+  return `forecast-initialization:${location.id}:v${INITIALIZATION_SCHEMA_VERSION}`;
 }
 
 // Strict lookup — the caller 404s unknown ids; a silent first-location
@@ -275,6 +291,118 @@ async function writeCachedForecast(
   );
 }
 
+function isInitializationMarker(
+  value: unknown,
+  location: Pick<ForecastLocation, 'id'>,
+): value is ForecastInitializationMarker {
+  if (!isRecord(value) || typeof value.lastAttemptAt !== 'string') return false;
+  const lastAttemptMs = Date.parse(value.lastAttemptAt);
+  return Number.isFinite(lastAttemptMs)
+    && lastAttemptMs <= Date.now()
+    && value.schemaVersion === INITIALIZATION_SCHEMA_VERSION
+    && value.status === 'initializing'
+    && value.locationId === location.id
+    && value.retryAfterSeconds === INITIALIZATION_RETRY_SECONDS;
+}
+
+async function readInitializationMarker(
+  env: Env,
+  location: Pick<ForecastLocation, 'id'>,
+  policyInput?: ExecutionPolicyInput,
+): Promise<ForecastInitializationMarker | null> {
+  const policy = executionPolicy(policyInput);
+  const raw = await awaitWithinDeadline(
+    () => env.FRANK_FORECAST_CACHE.get(initializationKey(location)),
+    policy,
+    `forecast initialization marker read for ${location.id}`,
+  );
+  if (!raw) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`Forecast initialization marker is invalid for ${location.id}.`, {
+      cause: error,
+    });
+  }
+  if (!isInitializationMarker(parsed, location)) {
+    throw new Error(`Forecast initialization marker contract is invalid for ${location.id}.`);
+  }
+  return parsed;
+}
+
+async function writeInitializationMarker(
+  env: Env,
+  location: Pick<ForecastLocation, 'id'>,
+  policyInput?: ExecutionPolicyInput,
+): Promise<ForecastInitializationMarker> {
+  const policy = executionPolicy(policyInput);
+  const marker: ForecastInitializationMarker = {
+    schemaVersion: INITIALIZATION_SCHEMA_VERSION,
+    status: 'initializing',
+    locationId: location.id,
+    lastAttemptAt: new Date().toISOString(),
+    retryAfterSeconds: INITIALIZATION_RETRY_SECONDS,
+  };
+  await awaitWithinDeadline(
+    () => env.FRANK_FORECAST_CACHE.put(
+      initializationKey(location),
+      JSON.stringify(marker),
+      { expirationTtl: INITIALIZATION_MARKER_TTL_SECONDS },
+    ),
+    policy,
+    `forecast initialization marker write for ${location.id}`,
+  );
+  return marker;
+}
+
+// A scalar retry clock complements the persisted marker for same-isolate
+// reads while KV propagates. It stores no request object or in-flight I/O.
+const lastInitializationFailureAt = new Map<string, number>();
+
+function initializationRetrySeconds(
+  location: Pick<ForecastLocation, 'id'>,
+  marker?: ForecastInitializationMarker | null,
+  nowMs = Date.now(),
+): number {
+  const persistedMs = Date.parse(marker?.lastAttemptAt ?? '');
+  const memoryMs = lastInitializationFailureAt.get(initializationKey(location)) ?? Number.NaN;
+  const usable = (value: number): number => Number.isFinite(value) && value <= nowMs
+    ? value
+    : Number.NEGATIVE_INFINITY;
+  const latestAttemptMs = Math.max(
+    usable(persistedMs),
+    usable(memoryMs),
+  );
+  if (!Number.isFinite(latestAttemptMs)) return 0;
+  const remainingMs = INITIALIZATION_RETRY_SECONDS * 1000 - Math.max(0, nowMs - latestAttemptMs);
+  return remainingMs > 0 ? Math.ceil(remainingMs / 1000) : 0;
+}
+
+function forecastInitializingResponse(
+  location: ForecastLocation,
+  retryAfterSeconds = INITIALIZATION_RETRY_SECONDS,
+): Response {
+  const boundedRetrySeconds = Math.max(1, Math.min(
+    INITIALIZATION_RETRY_SECONDS,
+    Math.ceil(retryAfterSeconds),
+  ));
+  const payload: ForecastInitializingPayload = {
+    schemaVersion: INITIALIZATION_SCHEMA_VERSION,
+    status: 'initializing',
+    code: 'FORECAST_INITIALIZING',
+    message: 'Forecast for this location is being prepared. Please try again shortly.',
+    retryAfterSeconds: boundedRetrySeconds,
+    location: {
+      id: location.id,
+      name: location.name,
+      areaName: location.areaName,
+    },
+  };
+  return jsonResponse(payload, 503, { 'Retry-After': String(boundedRetrySeconds) });
+}
+
 // Whether a failed check is worth a KV write. Exported only so the decision has
 // a test: it is a pure comparison of the old cacheHealth against the new one.
 //
@@ -317,12 +445,16 @@ export function shouldCheckInBackground(
   minIntervalMs: number,
   memoryMsOverride?: number,
 ): boolean {
+  const nowMs = Date.now();
   const stampMs = new Date(data?.sources?.cacheHealth?.lastAttemptAt ?? 0).getTime();
   const memoryMs = memoryMsOverride ?? lastCheckAt.get(cacheKey(location)) ?? 0;
   // Whichever check was more recent decides — a fresh in-memory check must not
   // be overridden by an older persisted stamp, and vice versa.
-  const lastMs = Math.max(Number.isFinite(stampMs) ? stampMs : 0, memoryMs);
-  return lastMs === 0 || Date.now() - lastMs > minIntervalMs;
+  // A clock correction or corrupt future stamp must not suppress checks until
+  // wall time catches up. Only timestamps at or before this request are facts.
+  const usable = (value: number): number => Number.isFinite(value) && value <= nowMs ? value : 0;
+  const lastMs = Math.max(usable(stampMs), usable(memoryMs));
+  return lastMs === 0 || nowMs - lastMs > minIntervalMs;
 }
 
 async function _refreshForecastCache(
@@ -427,7 +559,9 @@ async function _refreshForecastCache(
         }));
         latestMarine = knownMarine;
         marineProbeFailed = true;
-        marineProbeBusy = classifyBuildFailure(errorMessage(probeError)).busy;
+        marineProbeBusy = isProviderUnavailableError(probeError)
+          ? probeError.busy
+          : classifyBuildFailure(errorMessage(probeError)).busy;
       }
     }
 
@@ -567,7 +701,9 @@ async function _refreshForecastCache(
       }));
       const previousMarine = cached.sources?.cacheHealth?.marineInstances;
       const newMarineNeedsRebuild = Boolean(latestMarine && !marineInstancesEqual(previousMarine, latestMarine));
-      const { busy, busyProvider } = classifyBuildFailure(errorMessage(error));
+      const { busy, busyProvider } = isProviderUnavailableError(error)
+        ? { busy: error.busy, busyProvider: error.provider }
+        : classifyBuildFailure(errorMessage(error));
       const failedCache = withCacheHealth(cached, 'stale', {
         marineInstances: latestMarine ?? previousMarine,
         needsRebuild: options.forceRebuild || newMarineNeedsRebuild,
@@ -592,6 +728,23 @@ async function _refreshForecastCache(
       // Returned regardless of whether it was persisted: the response always
       // carries this attempt's real state.
       return failedCache;
+    }
+
+    if (isProviderUnavailableError(error)) {
+      // Persist only an explicitly classified transient outcome. Writing an
+      // "attempt started" marker before provider validation would let a code
+      // or schema failure masquerade as initialization to later callers.
+      const marker = await writeInitializationMarker(env, location, policy);
+      lastInitializationFailureAt.set(
+        initializationKey(location),
+        Date.parse(marker.lastAttemptAt),
+      );
+      console.warn(JSON.stringify({
+        event: 'forecast_initializing',
+        locationId: location.id,
+        provider: error.provider,
+        retryAfterSeconds: marker.retryAfterSeconds,
+      }));
     }
 
     throw error;
@@ -628,6 +781,62 @@ function userExecutionPolicy(): ExecutionPolicy {
   });
 }
 
+async function activeInitializationRetrySeconds(
+  env: Env,
+  location: ForecastLocation,
+): Promise<number> {
+  const memoryRetry = initializationRetrySeconds(location);
+  if (memoryRetry > 0) return memoryRetry;
+  const marker = await readInitializationMarker(env, location, responseKvReadPolicy());
+  return initializationRetrySeconds(location, marker);
+}
+
+function keepColdRefreshAlive(
+  ctx: ExecutionContext,
+  refresh: Promise<ForecastData>,
+  location: ForecastLocation,
+  reason: string,
+): void {
+  ctx.waitUntil(refresh.then(
+    () => undefined,
+    (error) => {
+      // A recognized transient is already logged as forecast_initializing
+      // after its retry marker is durably stored. Everything else needs an
+      // owner-visible structured failure without leaking into the response.
+      if (!isProviderUnavailableError(error)) {
+        console.error(JSON.stringify({
+          event: 'cold_forecast_failed',
+          locationId: location.id,
+          reason,
+          error: error instanceof Error
+            ? { name: error.name, message: error.message }
+            : { message: String(error) },
+        }));
+      }
+    },
+  ));
+}
+
+async function coldForecastResponse(
+  ctx: ExecutionContext,
+  refresh: Promise<ForecastData>,
+  location: ForecastLocation,
+  reason: string,
+): Promise<Response> {
+  keepColdRefreshAlive(ctx, refresh, location, reason);
+  try {
+    return jsonResponse(await refresh);
+  } catch (error) {
+    if (isProviderUnavailableError(error)) {
+      return forecastInitializingResponse(
+        location,
+        initializationRetrySeconds(location),
+      );
+    }
+    throw error;
+  }
+}
+
 async function handleForecastRequest(
   request: Request,
   env: Env,
@@ -652,13 +861,18 @@ async function handleForecastRequest(
   if (deploymentWarm) {
     // The post-deploy gate needs a cache-readiness contract, not another
     // asynchronous provider check. An existing compatible payload is returned
-    // without waitUntil work; a missing/invalid payload is built synchronously.
+    // without waitUntil work; a missing/invalid payload is built synchronously
+    // unless an explicitly classified transient is still inside its cooldown.
     // This makes sequential warm requests genuinely sequential and guarantees
     // the final /health request cannot overtake a cold build. The mode is safe
-    // to expose publicly because it grants no rebuild capability beyond the
-    // normal cold-start route.
+    // The public warm mode honors that same cooldown; otherwise `?warm=1`
+    // would be an unauthenticated bypass that could hammer a busy provider.
     const cached = await readCachedForecast(env, location, responseKvReadPolicy());
     if (cached) return jsonResponse(cached);
+    const retryAfterSeconds = await activeInitializationRetrySeconds(env, location);
+    if (retryAfterSeconds > 0) {
+      return forecastInitializingResponse(location, retryAfterSeconds);
+    }
 
     const refresh = refreshForecastCache(env, location, {
       force: true,
@@ -670,9 +884,7 @@ async function handleForecastRequest(
     });
     // The caller also awaits this promise, but waitUntil keeps the cold fill
     // alive if the HTTP client disconnects at its own deadline.
-    ctx.waitUntil(refresh);
-    const data = await refresh;
-    return jsonResponse(data);
+    return coldForecastResponse(ctx, refresh, location, 'deployment-warm');
   }
 
   if (force) {
@@ -706,6 +918,10 @@ async function handleForecastRequest(
         },
       });
     }
+    const retryAfterSeconds = await activeInitializationRetrySeconds(env, location);
+    if (retryAfterSeconds > 0) {
+      return forecastInitializingResponse(location, retryAfterSeconds);
+    }
     const refresh = refreshForecastCache(env, location, {
       force: true,
       reason: 'manual',
@@ -714,9 +930,7 @@ async function handleForecastRequest(
       eventMemo,
       cached,
     });
-    ctx.waitUntil(refresh);
-    const data = await refresh;
-    return jsonResponse(data);
+    return coldForecastResponse(ctx, refresh, location, 'manual');
   }
 
   const cached = await readCachedForecast(env, location, responseKvReadPolicy());
@@ -737,6 +951,11 @@ async function handleForecastRequest(
       : {});
   }
 
+  const retryAfterSeconds = await activeInitializationRetrySeconds(env, location);
+  if (retryAfterSeconds > 0) {
+    return forecastInitializingResponse(location, retryAfterSeconds);
+  }
+
   const refresh = refreshForecastCache(env, location, {
     force: true,
     reason: 'cold-start',
@@ -745,9 +964,7 @@ async function handleForecastRequest(
     eventMemo,
     cached,
   });
-  ctx.waitUntil(refresh);
-  const data = await refresh;
-  return jsonResponse(data);
+  return coldForecastResponse(ctx, refresh, location, 'cold-start');
 }
 
 async function loadHealthPayload(env: Env): Promise<HealthPayload> {

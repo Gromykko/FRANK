@@ -22,7 +22,7 @@ export function corsHeaders(): Record<string, string> {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': ALLOW_READ_METHODS,
     'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Expose-Headers': 'X-FRANK-Background-Check',
+    'Access-Control-Expose-Headers': 'Retry-After, X-FRANK-Background-Check',
     'Access-Control-Max-Age': '86400',
   };
 }

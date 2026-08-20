@@ -163,7 +163,31 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     stubFetchBusy();
     await expect(
       fetchMarineSeriesWithFallback(makeEnv(), LOCATION, 'water', WATER_INSTANCE, ['x'], identityMap)
-    ).rejects.toThrow(/429|busy/i);
+    ).rejects.toMatchObject({
+      name: 'ProviderUnavailableError',
+      provider: 'marine',
+      busy: true,
+    });
+  });
+
+  it('never relabels a mapper TypeError as transient provider availability', async () => {
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      features: [{ time: '2026-07-11T13:00:00Z' }],
+    }), { status: 200 })) as typeof fetch;
+
+    await expect(fetchMarineSeriesWithFallback(
+      makeEnv(),
+      LOCATION,
+      'water',
+      WATER_INSTANCE,
+      ['x'],
+      () => {
+        throw new TypeError('mapper implementation failed');
+      },
+    )).rejects.toMatchObject({
+      name: 'TypeError',
+      message: 'mapper implementation failed',
+    });
   });
 
   it('does not use retained or seeded marine runs older than two publication cycles', async () => {
@@ -181,7 +205,11 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
       identityMap,
       oldSeries,
       { collection: 'dkss_idw', id: oldId },
-    )).rejects.toThrow(/429|busy/i);
+    )).rejects.toMatchObject({
+      name: 'ProviderUnavailableError',
+      provider: 'marine',
+      busy: true,
+    });
   });
 
   it('refuses an old or unparseable requested run before cache or network work begins', async () => {
@@ -198,7 +226,11 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
       { collection: 'dkss_idw', id: '2026-07-10T180000Z' },
       ['x'],
       identityMap,
-    )).rejects.toThrow(/12-hour marine safety limit/i);
+    )).rejects.toMatchObject({
+      name: 'ProviderUnavailableError',
+      provider: 'marine',
+      busy: false,
+    });
     await expect(fetchMarineSeriesWithFallback(
       makeEnv(),
       LOCATION,

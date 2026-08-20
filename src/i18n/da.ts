@@ -82,6 +82,21 @@ export const da: Record<string, string> = {
     'Kunne ikke nå prognosetjenesten — viser den senest gemte prognose.',
   'Could not refresh forecast data. Showing the latest cached forecast if available.':
     'Kunne ikke opdatere prognosen. Viser den senest gemte prognose, hvis den findes.',
+  'The latest preparation check did not finish. FRANK will keep trying automatically.':
+    'Det seneste klargøringstjek blev ikke færdigt. FRANK bliver ved med at prøve automatisk.',
+
+  // ── ForecastInitializingScreen ────────────────────────────────────────────
+  'First forecast': 'Første prognose',
+  'Preparing the forecast for {0}': 'Klargør prognosen for {0}',
+  'FRANK is building the first complete forecast for {0}. Until it is ready, no safety verdict or launch windows are shown.':
+    'FRANK bygger den første komplette prognose for {0}. Indtil den er klar, vises ingen sikkerhedsvurdering eller rovinduer.',
+  'FRANK checks again automatically. The next check is in about {0} min.':
+    'FRANK tjekker igen automatisk. Næste tjek er om cirka {0} min.',
+  "You're offline. FRANK will continue as soon as this device is back online.":
+    'Du er offline. FRANK fortsætter, så snart enheden er online igen.',
+  'Check now': 'Tjek nu',
+  'Choose another location:': 'Vælg et andet sted:',
+  'preparing': 'klargøres',
 
   // ── StatusBar ──────────────────────────────────────────────────────────────
   '{0}. {1}. FRANK says: {2}.': '{0}. {1}. FRANK siger: {2}.',

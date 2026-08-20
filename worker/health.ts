@@ -16,6 +16,9 @@ export function buildHealthPayload(
   storageUnavailable: boolean,
   now = Date.now(),
 ): HealthPayload {
+  const missing = entries
+    .filter((entry) => !entry.hasCache)
+    .map((entry) => entry.id);
   const age = (iso: string | undefined): number => {
     const ms = Date.parse(iso ?? '');
     return Number.isFinite(ms) ? now - ms : Number.POSITIVE_INFINITY;
@@ -60,6 +63,8 @@ export function buildHealthPayload(
             ...(notRebuilding.length ? [`not rebuilding: ${notRebuilding.join(', ')}`] : []),
           ].join(' | '),
     stalled,
+    missing,
+    storageAvailable: !storageUnavailable,
     locations: entries,
     ages,
     // Internal presentation flag. /health strips it; /status needs it to avoid
@@ -111,11 +116,12 @@ export function statusResponse(health: HealthPayload): Response {
     const runs = cacheHealth.marineInstances
       ? `${escapeHtml(cacheHealth.marineInstances.water?.id ?? '—')}<br><span class="dim">${escapeHtml(cacheHealth.marineInstances.waves?.id ?? '—')}</span>`
       : '—';
+    const missing = !location.hasCache;
     return `<tr>
       <td><strong>${escapeHtml(location.areaName)}</strong><br><span class="dim">${escapeHtml(location.id)}</span></td>
-      <td class="${level(age.checkAgeMs, HEALTH_MAX_CHECK_AGE_MS)}"><strong>${escapeHtml(formatAge(age.checkAgeMs))}</strong><br><span class="dim">${escapeHtml(cacheHealth.checkedBy ?? '—')}</span></td>
-      <td class="${level(age.ageMs, HEALTH_MAX_DATA_AGE_MS)}"><strong>${escapeHtml(formatAge(age.ageMs))}</strong></td>
-      <td>${escapeHtml(health.storageUnavailable ? 'STORAGE UNAVAILABLE' : cacheHealth.status ?? (location.hasCache ? 'unknown' : 'NO CACHE'))}${cacheHealth.providerBusy ? '<br><span class="warn">provider busy</span>' : ''}</td>
+      <td class="${missing ? 'bad' : level(age.checkAgeMs, HEALTH_MAX_CHECK_AGE_MS)}"><strong>${escapeHtml(formatAge(age.checkAgeMs))}</strong><br><span class="dim">${escapeHtml(cacheHealth.checkedBy ?? '—')}</span></td>
+      <td class="${missing ? 'bad' : level(age.ageMs, HEALTH_MAX_DATA_AGE_MS)}"><strong>${escapeHtml(formatAge(age.ageMs))}</strong></td>
+      <td>${escapeHtml(health.storageUnavailable ? 'STORAGE UNAVAILABLE' : missing ? 'NO FORECAST' : cacheHealth.status ?? 'unknown')}${cacheHealth.providerBusy ? '<br><span class="warn">provider busy</span>' : ''}</td>
       <td>${degraded ? `<span class="warn">${escapeHtml(degraded)}</span>` : '<span class="dim">none</span>'}</td>
       <td class="dim mono">${runs}</td>
     </tr>`;

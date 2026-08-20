@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  boundedInitializationRetryMs,
+  INITIALIZATION_RETRY_MAX_MS,
+  INITIALIZATION_RETRY_MIN_MS,
   POST_REFRESH_PICKUP_DELAYS_MS,
   shouldApplyForecastUpdate,
 } from '../../../src/features/forecast/useForecast';
@@ -61,5 +64,11 @@ describe('forecast refresh ordering', () => {
     expect(POST_REFRESH_PICKUP_DELAYS_MS[0]).toBe(2_000);
     expect(POST_REFRESH_PICKUP_DELAYS_MS).toEqual([2_000, 8_000, 30_000]);
     expect(POST_REFRESH_PICKUP_DELAYS_MS.at(-1)).toBeLessThanOrEqual(30_000);
+  });
+
+  it('keeps initialization retries inside the non-hammering cadence', () => {
+    expect(boundedInitializationRetryMs(1)).toBe(INITIALIZATION_RETRY_MIN_MS);
+    expect(boundedInitializationRetryMs(600)).toBe(600_000);
+    expect(boundedInitializationRetryMs(60 * 60)).toBe(INITIALIZATION_RETRY_MAX_MS);
   });
 });

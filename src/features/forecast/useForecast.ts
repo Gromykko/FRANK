@@ -4,11 +4,15 @@ import type { WeatherData } from './types';
 import { CAN_FETCH_FRESH_FORECAST, fetchWeatherData } from './fetchForecast';
 import { loadCachedWeatherData } from './cache';
 import { shouldApplyForecastUpdate } from './forecastOrdering';
+import type { ForecastInitialization } from './initialization';
 
 export { shouldApplyForecastUpdate } from './forecastOrdering';
 
 const AUTO_REFRESH_MS = 10 * 60 * 1000;
 const AUTO_REFRESH_THROTTLE_MS = 60 * 1000;
+export const INITIALIZATION_RETRY_MIN_MS = AUTO_REFRESH_THROTTLE_MS;
+export const INITIALIZATION_RETRY_MAX_MS = 10 * 60 * 1000;
+const INITIALIZATION_MANUAL_RETRY_THROTTLE_MS = 5 * 1000;
 // A manual refresh that resolves instantly (worker gate, fast cache hit)
 // still shows the spinner briefly — a button that does nothing visible
 // reads as broken.
@@ -17,13 +21,24 @@ const MIN_MANUAL_SPINNER_MS = 600;
 // common fast path, once after ordinary upstream latency, and once after the
 // Worker's bounded 24s execution budget. No unbounded polling loop.
 export const POST_REFRESH_PICKUP_DELAYS_MS = [2_000, 8_000, 30_000] as const;
-// A local-backed startup gives the Worker 12s. The server may then finish a 2s
-// KV read plus a 24s cold build. One retry at ~30s leaves network/write margin;
+// A local-backed startup gives the Worker 12s. The server may then finish two
+// bounded 2s KV reads plus a 24s cold build. One retry at ~32s leaves margin;
 // that retry itself gets the full cold-build timeout in case the disconnected
 // request was cancelled instead of completing.
-export const COLD_MISS_PICKUP_DELAY_MS = 18_000;
+export const COLD_MISS_PICKUP_DELAY_MS = 20_000;
 
-export type ForecastCheckState = 'not-started' | 'checking' | 'succeeded' | 'failed';
+export type ForecastCheckState = 'not-started' | 'checking' | 'initializing' | 'succeeded' | 'failed';
+
+export interface ForecastInitializationState extends ForecastInitialization {
+  nextRetryAtMs: number;
+}
+
+export function boundedInitializationRetryMs(retryAfterSeconds: number): number {
+  return Math.min(
+    INITIALIZATION_RETRY_MAX_MS,
+    Math.max(INITIALIZATION_RETRY_MIN_MS, retryAfterSeconds * 1_000),
+  );
+}
 
 // Which row is happening RIGHT NOW: the one whose span CONTAINS the clock, not
 // the one whose start is nearest it. Nearest-start rounds up from :30 onward, so
@@ -61,6 +76,7 @@ export function useForecast(daylightOnly: boolean) {
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [checkState, setCheckState] = useState<ForecastCheckState>('not-started');
   const [error, setError] = useState<string | null>(null);
+  const [initialization, setInitialization] = useState<ForecastInitializationState | null>(null);
   const [selectedHourIndex, setSelectedHourIndex] = useState<number>(0);
   // 60s heartbeat: re-renders the consumer each minute so relative-age labels
   // ("Checked · 14:32", "2 hours old") stay current, and so `nowIndex` below
@@ -72,10 +88,16 @@ export function useForecast(daylightOnly: boolean) {
   // Only the newest overlapping request may settle the visible lifecycle.
   // Otherwise a slow older failure can overwrite a newer successful check.
   const checkSequenceRef = useRef(0);
+  const initializationRef = useRef<ForecastInitializationState | null>(null);
+  const initializationRetryTimerRef = useRef<number | null>(null);
+  const lastInitializationManualRetryRef = useRef(0);
   // Silent post-refresh cache pickups (the worker rebuilds in the background)
   const pickupTimersRef = useRef<number[]>([]);
   useEffect(() => () => {
     pickupTimersRef.current.forEach((id) => window.clearTimeout(id));
+    if (initializationRetryTimerRef.current !== null) {
+      window.clearTimeout(initializationRetryTimerRef.current);
+    }
   }, []);
   const hasWeatherDataRef = useRef(false);
   // Exact payload last applied. Besides build ordering, this lets same-build
@@ -155,6 +177,30 @@ export function useForecast(daylightOnly: boolean) {
     selectedTimeRef.current = data.hourly[initialSelected]?.time ?? null;
   }, []);
 
+  const rememberInitialization = useCallback((details: ForecastInitialization) => {
+    const next: ForecastInitializationState = {
+      ...details,
+      nextRetryAtMs: Date.now() + boundedInitializationRetryMs(details.retryAfterSeconds),
+    };
+    initializationRef.current = next;
+    setInitialization(next);
+  }, []);
+
+  const rescheduleInitialization = useCallback(() => {
+    const current = initializationRef.current;
+    if (!current) return;
+    rememberInitialization(current);
+  }, [rememberInitialization]);
+
+  const clearInitialization = useCallback(() => {
+    initializationRef.current = null;
+    setInitialization(null);
+    if (initializationRetryTimerRef.current !== null) {
+      window.clearTimeout(initializationRetryTimerRef.current);
+      initializationRetryTimerRef.current = null;
+    }
+  }, []);
+
   // Derived from the clock, not stored at apply-time. As state it only moved
   // when new data arrived, so with the worker unreachable "now" froze at the
   // hour the app was opened: the timeline's now-marker sat hours in the past
@@ -184,13 +230,29 @@ export function useForecast(daylightOnly: boolean) {
     recoverStartupWorkerMiss = false,
   ) => {
     const startedAt = Date.now();
+    const currentInitialization = initializationRef.current;
+    if (!force && currentInitialization && startedAt < currentInitialization.nextRetryAtMs) {
+      return;
+    }
+    if (force && currentInitialization) {
+      if (startedAt - lastInitializationManualRetryRef.current < INITIALIZATION_MANUAL_RETRY_THROTTLE_MS) {
+        return;
+      }
+      lastInitializationManualRetryRef.current = startedAt;
+    }
     if (!showBlockingLoader && !force && startedAt - lastRefreshAttemptRef.current < AUTO_REFRESH_THROTTLE_MS) {
       return;
     }
 
-    // No client-side gate on forced taps: the worker answers instantly from
-    // cache, stamps the attempt, and applies its own 20s/60s upstream gates.
-    // A second throttle here only made "Last try" ignore the user's click.
+    if (initializationRetryTimerRef.current !== null) {
+      window.clearTimeout(initializationRetryTimerRef.current);
+      initializationRetryTimerRef.current = null;
+    }
+
+    // Normal dashboard refresh taps remain client-ungated: the Worker answers
+    // from cache and owns the upstream gate. First-build taps are the exception
+    // above: a short 5s client guard prevents an eager user from hammering an
+    // endpoint that has explicitly asked them to wait.
     lastRefreshAttemptRef.current = startedAt;
     const checkSequence = ++checkSequenceRef.current;
     let settledState: Exclude<ForecastCheckState, 'not-started' | 'checking'> = 'failed';
@@ -211,9 +273,36 @@ export function useForecast(daylightOnly: boolean) {
       const data = loaded.data;
 
       if (!data) {
+        if (loaded.initialization) {
+          if (checkSequence !== checkSequenceRef.current) return;
+          rememberInitialization(loaded.initialization);
+          settledState = 'initializing';
+          return;
+        }
+
+        if (
+          initializationRef.current
+          && loaded.failureKind === 'network'
+          && checkSequence === checkSequenceRef.current
+        ) {
+          // The Worker never answered: retain the already-confirmed first-build
+          // explanation and schedule one more bounded check. A real HTTP
+          // response with the wrong contract is handled as a hard failure
+          // below; it must not be disguised as ordinary initialization.
+          rescheduleInitialization();
+          settledState = 'initializing';
+          settledError = 'The latest preparation check did not finish. FRANK will keep trying automatically.';
+          return;
+        }
+
+        if (initializationRef.current && checkSequence === checkSequenceRef.current) {
+          clearInitialization();
+        }
         throw new Error('No forecast data is available yet.');
       }
 
+      if (checkSequence !== checkSequenceRef.current) return;
+      clearInitialization();
       applyWeatherData(data, daylightOnlyRef.current);
       settledState = CAN_FETCH_FRESH_FORECAST || loaded.from === 'worker'
         ? 'succeeded'
@@ -279,7 +368,29 @@ export function useForecast(daylightOnly: boolean) {
         setRefreshing(false);
       }
     }
-  }, [applyWeatherData]);
+  }, [applyWeatherData, clearInitialization, rememberInitialization, rescheduleInitialization]);
+
+  useEffect(() => {
+    if (!initialization) return;
+
+    const delayMs = Math.max(0, initialization.nextRetryAtMs - Date.now());
+    initializationRetryTimerRef.current = window.setTimeout(() => {
+      initializationRetryTimerRef.current = null;
+      // Going offline is an event, not a provider failure. Leave the due time
+      // in the past so the online/focus listener below can retry immediately
+      // when connectivity returns instead of making the user wait another full
+      // provider interval.
+      if (navigator.onLine === false) return;
+      void refreshForecast(false);
+    }, delayMs);
+
+    return () => {
+      if (initializationRetryTimerRef.current !== null) {
+        window.clearTimeout(initializationRetryTimerRef.current);
+        initializationRetryTimerRef.current = null;
+      }
+    };
+  }, [initialization, refreshForecast]);
 
   useEffect(() => {
     let cancelled = false;
@@ -341,10 +452,12 @@ export function useForecast(daylightOnly: boolean) {
     };
 
     window.addEventListener('focus', refreshWhenVisible);
+    window.addEventListener('online', refreshWhenVisible);
     document.addEventListener('visibilitychange', refreshWhenVisible);
 
     return () => {
       window.removeEventListener('focus', refreshWhenVisible);
+      window.removeEventListener('online', refreshWhenVisible);
       document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
   }, [refreshForecast]);
@@ -355,6 +468,7 @@ export function useForecast(daylightOnly: boolean) {
     refreshing,
     checkState,
     error,
+    initialization,
     selectedHourIndex,
     setSelectedHourIndex,
     nowIndex,

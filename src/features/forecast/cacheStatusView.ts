@@ -151,7 +151,7 @@ const CACHE_REFRESH_WARNING_AGE_MS = 6 * 60 * 60 * 1000;
 // 20 minutes is simply two auto-refresh intervals.
 const WORKER_CONTACT_STALE_MS = 20 * 60 * 1000;
 
-export type CacheCheckState = 'not-started' | 'checking' | 'succeeded' | 'failed';
+export type CacheCheckState = 'not-started' | 'checking' | 'initializing' | 'succeeded' | 'failed';
 
 function formatRelativeAge(ms: number, translate: Translate): string {
   if (!Number.isFinite(ms) || ms < 0) return '';

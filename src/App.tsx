@@ -24,6 +24,7 @@ import TripProfilePanel from './components/TripProfilePanel';
 import WarningStripe from './components/WarningStripe';
 import ErrorBoundary from './components/ErrorBoundary';
 import ForecastErrorScreen from './components/ForecastErrorScreen';
+import ForecastInitializingScreen from './components/ForecastInitializingScreen';
 import { getFrankPhrase } from './features/safety/frankPhrases';
 import { getSafetyDisplay, hasActiveSafetyChecks } from './features/safety/safetyDisplay';
 import { useSettings } from './hooks/useSettings';
@@ -52,6 +53,7 @@ export default function App() {
     refreshing,
     checkState,
     error,
+    initialization,
     selectedHourIndex,
     setSelectedHourIndex,
     nowIndex,
@@ -136,6 +138,18 @@ export default function App() {
   const handleTripModeChange = (mode: SafetySettings['tripMode']) => {
     setTripMode(mode);
   };
+
+  if (initialization && !weatherData) {
+    return (
+      <ForecastInitializingScreen
+        initialization={initialization}
+        refreshing={refreshing}
+        online={online}
+        attemptMessage={error}
+        onRetry={() => refreshForecast(false, true)}
+      />
+    );
+  }
 
   if (loading) {
     return (

@@ -36,6 +36,67 @@ function forecast(locationId: string, version = 7) {
   };
 }
 
+function initializing(locationId: string, retryAfterSeconds = 600) {
+  const names: Record<string, [string, string]> = {
+    horsens: ['Horsens', 'Horsens Fjord'],
+    vejle: ['Vejle', 'Vejle Fjord'],
+  };
+  const [name, areaName] = names[locationId] ?? [locationId, locationId];
+  return {
+    schemaVersion: 1,
+    status: 'initializing',
+    code: 'FORECAST_INITIALIZING',
+    message: 'Forecast for this location is being prepared. Please try again shortly.',
+    retryAfterSeconds,
+    location: { id: locationId, name, areaName },
+  };
+}
+
+function health(
+  locationIds: string[],
+  {
+    missing = [],
+    staleData = [],
+    notChecking = [],
+    storageAvailable = true,
+  }: {
+    missing?: string[];
+    staleData?: string[];
+    notChecking?: string[];
+    storageAvailable?: boolean;
+  } = {},
+) {
+  const checkedAtMs = Date.now();
+  const checkedAt = new Date(checkedAtMs).toISOString();
+  const stalled = [...new Set([...missing, ...staleData, ...notChecking])];
+  const ok = storageAvailable && stalled.length === 0;
+  return {
+    ok,
+    service: 'frank-forecast',
+    checkedAt,
+    checkStaleAfterMin: 60,
+    dataStaleAfterMin: 180,
+    missing,
+    stalled,
+    storageAvailable,
+    locations: locationIds.map((id) => missing.includes(id)
+      ? { id, areaName: id, hasCache: false }
+      : {
+          id,
+          areaName: id,
+          hasCache: true,
+          fetchedAt: new Date(
+            checkedAtMs - (staleData.includes(id) ? 4 * 60 * 60_000 : 60_000),
+          ).toISOString(),
+          cacheHealth: {
+            lastAttemptAt: new Date(
+              checkedAtMs - (notChecking.includes(id) ? 2 * 60 * 60_000 : 60_000),
+            ).toISOString(),
+          },
+        }),
+  };
+}
+
 afterEach(async () => {
   const servers = openServers.splice(0);
   for (const server of servers) server.closeAllConnections?.();
@@ -50,7 +111,7 @@ describe('Worker deployment warm-up', () => {
       requests.push(request.url ?? '');
       const match = request.url?.match(/^\/forecast\/([a-z0-9-]+)\?warm=1$/);
       if (match) return json(response, 200, forecast(match[1], contract.expectedVersion));
-      if (request.url === '/health') return json(response, 200, { ok: true });
+      if (request.url === '/health') return json(response, 200, health(contract.locationIds));
       return json(response, 404, { error: 'not found' });
     });
 
@@ -77,11 +138,14 @@ describe('Worker deployment warm-up', () => {
       requests.push(request.url ?? '');
       if (request.url?.startsWith('/forecast/horsens')) {
         attempts += 1;
-        if (attempts === 1) return json(response, 503, { error: 'temporary' });
+        if (attempts === 1) {
+          request.socket.destroy();
+          return;
+        }
         return json(response, 200, forecast('horsens'));
       }
       if (request.url?.startsWith('/forecast/vejle')) return json(response, 200, forecast('vejle'));
-      if (request.url === '/health') return json(response, 200, { ok: true });
+      if (request.url === '/health') return json(response, 200, health(['horsens', 'vejle']));
       return json(response, 404, { error: 'not found' });
     });
 
@@ -120,7 +184,11 @@ describe('Worker deployment warm-up', () => {
         return;
       }
       if (request.url === '/health') {
-        return json(response, activeBuilds === 0 ? 200 : 503, { ok: activeBuilds === 0 });
+        return json(
+          response,
+          activeBuilds === 0 ? 200 : 503,
+          health(['horsens', 'vejle']),
+        );
       }
       return json(response, 404, { error: 'not found' });
     });
@@ -141,6 +209,182 @@ describe('Worker deployment warm-up', () => {
       '/forecast/vejle?warm=1',
       '/health',
     ]);
+  });
+
+  it('accepts a versioned initializing response once, continues sequentially, and reports amber', async () => {
+    const requests: string[] = [];
+    const warnings: string[] = [];
+    const baseUrl = await listen((request, response) => {
+      requests.push(request.url ?? '');
+      if (request.url === '/forecast/horsens?warm=1') {
+        response.setHeader('Retry-After', '600');
+        return json(response, 503, initializing('horsens'));
+      }
+      if (request.url === '/forecast/vejle?warm=1') {
+        return json(response, 200, forecast('vejle'));
+      }
+      if (request.url === '/health') {
+        return json(response, 503, health(['horsens', 'vejle'], { missing: ['horsens'] }));
+      }
+      return json(response, 404, { error: 'not found' });
+    });
+
+    const result = await warmWorker({
+      baseUrl,
+      locationIds: ['horsens', 'vejle'],
+      expectedVersion: 7,
+      attempts: 3,
+      timeoutMs: 500,
+      retryDelayMs: 1,
+      logger: { info: () => {}, warn: (message: string) => warnings.push(message) },
+    });
+
+    expect(requests).toEqual([
+      '/forecast/horsens?warm=1',
+      '/forecast/vejle?warm=1',
+      '/health',
+    ]);
+    expect(result).toEqual({
+      initializingLocationIds: ['horsens'],
+      transientLocationIds: ['horsens'],
+      staleDataLocationIds: [],
+    });
+    expect(warnings.some((message) => message.includes('AMBER'))).toBe(true);
+  });
+
+  it('waits for a just-warmed ready cache to propagate into health', async () => {
+    const requests: string[] = [];
+    let healthChecks = 0;
+    const baseUrl = await listen((request, response) => {
+      requests.push(request.url ?? '');
+      const match = request.url?.match(/^\/forecast\/([a-z0-9-]+)\?warm=1$/);
+      if (match) return json(response, 200, forecast(match[1]));
+      if (request.url === '/health') {
+        healthChecks += 1;
+        const body = healthChecks === 1
+          ? health(['horsens', 'vejle'], { missing: ['horsens'] })
+          : health(['horsens', 'vejle']);
+        return json(response, body.ok ? 200 : 503, body);
+      }
+      return json(response, 404, { error: 'not found' });
+    });
+
+    await warmWorker({
+      baseUrl,
+      locationIds: ['horsens', 'vejle'],
+      expectedVersion: 7,
+      attempts: 1,
+      timeoutMs: 500,
+      retryDelayMs: 1,
+      healthPropagationTimeoutMs: 100,
+      healthPropagationRetryDelayMs: 1,
+      logger: silentLogger,
+    });
+
+    expect(healthChecks).toBe(2);
+    expect(requests.slice(-2)).toEqual(['/health', '/health']);
+  });
+
+  it('accepts operationally red stale health without pretending it is green', async () => {
+    const warnings: string[] = [];
+    const baseUrl = await listen((request, response) => {
+      const match = request.url?.match(/^\/forecast\/([a-z0-9-]+)\?warm=1$/);
+      if (match) return json(response, 200, forecast(match[1]));
+      if (request.url === '/health') {
+        return json(response, 503, health(['horsens', 'vejle'], { staleData: ['vejle'] }));
+      }
+      return json(response, 404, { error: 'not found' });
+    });
+
+    const result = await warmWorker({
+      baseUrl,
+      locationIds: ['horsens', 'vejle'],
+      expectedVersion: 7,
+      attempts: 1,
+      timeoutMs: 500,
+      retryDelayMs: 1,
+      logger: { info: () => {}, warn: (message: string) => warnings.push(message) },
+    });
+
+    expect(result.staleDataLocationIds).toEqual(['vejle']);
+    expect(warnings.some((message) => message.includes('data is stale but checks are current: vejle'))).toBe(true);
+  });
+
+  it('fails when a ready location is no longer checking upstream', async () => {
+    let healthChecks = 0;
+    const baseUrl = await listen((request, response) => {
+      if (request.url?.startsWith('/forecast/horsens')) {
+        return json(response, 200, forecast('horsens'));
+      }
+      if (request.url === '/health') {
+        healthChecks += 1;
+        return json(response, 503, health(['horsens'], { notChecking: ['horsens'] }));
+      }
+      return json(response, 404, { error: 'not found' });
+    });
+
+    await expect(warmWorker({
+      baseUrl,
+      locationIds: ['horsens'],
+      expectedVersion: 7,
+      attempts: 3,
+      timeoutMs: 500,
+      retryDelayMs: 1,
+      logger: silentLogger,
+    })).rejects.toThrow('ready location is not checking upstream: horsens');
+    expect(healthChecks).toBe(1);
+  });
+
+  it('fails immediately when health reports storage unavailable', async () => {
+    let healthChecks = 0;
+    const baseUrl = await listen((request, response) => {
+      if (request.url?.startsWith('/forecast/horsens')) {
+        return json(response, 200, forecast('horsens'));
+      }
+      if (request.url === '/health') {
+        healthChecks += 1;
+        return json(response, 503, health(['horsens'], {
+          missing: ['horsens'],
+          storageAvailable: false,
+        }));
+      }
+      return json(response, 404, { error: 'not found' });
+    });
+
+    await expect(warmWorker({
+      baseUrl,
+      locationIds: ['horsens'],
+      expectedVersion: 7,
+      attempts: 3,
+      timeoutMs: 500,
+      retryDelayMs: 1,
+      logger: silentLogger,
+    })).rejects.toThrow('forecast storage unavailable');
+    expect(healthChecks).toBe(1);
+  });
+
+  it('fails when a ready cache remains missing after the propagation window', async () => {
+    const baseUrl = await listen((request, response) => {
+      if (request.url?.startsWith('/forecast/horsens')) {
+        return json(response, 200, forecast('horsens'));
+      }
+      if (request.url === '/health') {
+        return json(response, 503, health(['horsens'], { missing: ['horsens'] }));
+      }
+      return json(response, 404, { error: 'not found' });
+    });
+
+    await expect(warmWorker({
+      baseUrl,
+      locationIds: ['horsens'],
+      expectedVersion: 7,
+      attempts: 1,
+      timeoutMs: 500,
+      retryDelayMs: 1,
+      healthPropagationTimeoutMs: 100,
+      healthPropagationRetryDelayMs: 10,
+      logger: silentLogger,
+    })).rejects.toThrow('cache propagation window');
   });
 
   it('times out a stalled request and fails the gate', async () => {
@@ -180,7 +424,7 @@ describe('Worker deployment warm-up', () => {
 
     const [exitCode] = await once(child, 'exit');
     expect(exitCode).toBe(1);
-    expect(stderr).toContain('[warm] failed: forecast horsens failed after 1 attempt.');
+    expect(stderr).toContain('[warm] failed: forecast horsens failed: HTTP 200 contract mismatch.');
     expect(stderr).not.toContain('do-not-log');
   });
 });

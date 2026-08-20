@@ -52,11 +52,15 @@ import type {
   MetResult,
 } from './domain';
 import {
-  errorMessage,
   errorStatus,
   errorWithStatus,
   isRecord,
 } from './validation';
+import {
+  ProviderUnavailableError,
+  isProviderUnavailableError,
+  transientProviderError,
+} from './providerAvailability';
 
 const DMI_BASE = 'https://opendataapi.dmi.dk/v1/forecastedr';
 const MET_BASE = 'https://api.met.no/weatherapi/locationforecast/2.0/complete';
@@ -77,12 +81,9 @@ export const PAYLOAD_VERSION = FORECAST_PAYLOAD_VERSION;
 export const DMI_PROBE_QUIET_MS = 5 * 60 * 60 * 1000;
 
 function isMetForecastResponse(value: unknown): value is MetForecastResponse {
-  if (!isRecord(value)) return false;
-  if (value.properties === undefined) return true;
-  if (!isRecord(value.properties)) return false;
+  if (!isRecord(value) || !isRecord(value.properties)) return false;
   const timeseries = value.properties.timeseries;
-  return timeseries === undefined
-    || (Array.isArray(timeseries) && timeseries.every((entry) => isRecord(entry)));
+  return Array.isArray(timeseries) && timeseries.every((entry) => isRecord(entry));
 }
 
 function isMetRawCache(value: unknown): value is MetRawCache {
@@ -143,19 +144,39 @@ async function fetchJsonWithRetries(
   url: string,
   label: string,
   policy: ExecutionPolicy = executionPolicy(),
+  provider: BusyProvider = 'services',
 ): Promise<unknown> {
   let lastError: Error | undefined;
 
   for (let attempt = 0; attempt < policy.maxAttempts; attempt++) {
     assertBeforeProviderDeadline(policy, `${label} attempt ${attempt + 1}`);
     const startedAt = Date.now();
+    let response: Response;
     try {
-      const response = await fetchWithTimeout(url, {
+      response = await fetchWithTimeout(url, {
         headers: {
           Accept: 'application/geo+json, application/json',
         },
       }, policy);
+    } catch (error) {
+      const normalized = error instanceof Error ? error : new Error(String(error));
+      // This catch surrounds only the network exchange. That narrow boundary
+      // is what makes a fetch TypeError transient without ever softening a
+      // mapper/parser/programming TypeError into FORECAST_INITIALIZING.
+      lastError = transientProviderError(
+        normalized,
+        provider,
+        `${label} is temporarily unavailable.`,
+      ) ?? normalized;
+      logUpstream(label, startedAt, normalized.name === 'TimeoutError' ? 'timeout' : 'error',
+        String(normalized.message ?? '').slice(0, 120));
+      if (attempt < policy.maxAttempts - 1) {
+        await delayWithinDeadline(retryDelay(attempt), policy, `${label} retry`);
+      }
+      continue;
+    }
 
+    try {
       if (response.ok) {
         const json = await response.json();
         logUpstream(label, startedAt, 'ok');
@@ -163,7 +184,22 @@ async function fetchJsonWithRetries(
       }
 
       logUpstream(label, startedAt, `http-${response.status}`);
-      const providerMessage = (await response.text()).slice(0, 180);
+      const statusError = errorWithStatus(
+        `${label} failed with HTTP ${response.status}`,
+        response.status,
+      );
+      lastError = transientProviderError(
+        statusError,
+        provider,
+        `${label} is temporarily unavailable.`,
+      ) ?? statusError;
+      let providerMessage = '';
+      try {
+        providerMessage = (await response.text()).slice(0, 180);
+      } catch {
+        // Diagnostics are best-effort. The already-received HTTP status, not
+        // whether its error body can be consumed, owns the classification.
+      }
       // Provider response bodies are useful diagnostics, but they are not a
       // stable part of FRANK's public cache-health contract. Keep the detail in
       // owner-only Worker logs and expose only our structured status below.
@@ -175,7 +211,6 @@ async function fetchJsonWithRetries(
           providerMessage,
         });
       }
-      lastError = errorWithStatus(`${label} failed with HTTP ${response.status}`, response.status);
       // Any 4xx (incl. 429 "Server is busy") is terminal: retrying with
       // backoff is how a single refresh became an 18-request, 30-second
       // storm, and the 10-minute cron already IS the retry schedule. Use
@@ -183,12 +218,11 @@ async function fetchJsonWithRetries(
       // and would fall through to the delay-and-retry anyway.
       if (response.status < 500) break;
     } catch (error) {
+      // A reached 2xx response that cannot be parsed is a hard provider
+      // contract failure. It may retry within this call, but it can never be
+      // relabeled as a transient initialization outcome.
       lastError = error instanceof Error ? error : new Error(String(error));
-      // A timeout arrives here as a TimeoutError DOMException, so name it
-      // explicitly — "slow upstream" and "upstream refused" need different
-      // responses from a human and used to look identical in the logs.
-      logUpstream(label, startedAt, lastError.name === 'TimeoutError' ? 'timeout' : 'error',
-        String(lastError.message ?? '').slice(0, 120));
+      logUpstream(label, startedAt, 'invalid-response', String(lastError.message ?? '').slice(0, 120));
     }
 
     if (attempt < policy.maxAttempts - 1) {
@@ -196,7 +230,8 @@ async function fetchJsonWithRetries(
     }
   }
 
-  throw lastError ?? new Error(`${label} failed`);
+  if (!lastError) throw new Error(`${label} failed`);
+  throw lastError;
 }
 
 function parseDmiInstanceMs(id: unknown): number {
@@ -234,8 +269,19 @@ function assertMarineRunWithinFallbackAge(
   instance: MarineRunRef | null | undefined,
   label = instance?.collection ?? 'marine',
 ): void {
-  if (!isMarineRunWithinFallbackAge(instance)) {
-    throw new Error(`DMI ${label} run is older than the 12-hour marine safety limit.`);
+  const runMs = parseDmiInstanceMs(instance?.id);
+  if (!Number.isFinite(runMs)) {
+    throw new Error(`DMI ${label} run id is invalid for the 12-hour marine safety limit.`);
+  }
+  const ageMs = Date.now() - runMs;
+  if (ageMs < 0) {
+    throw new Error(`DMI ${label} run is future-dated and fails the 12-hour marine safety limit.`);
+  }
+  if (ageMs > MARINE_FALLBACK_MAX_AGE_MS) {
+    throw new ProviderUnavailableError(
+      'marine',
+      `DMI ${label} has not published a run within the 12-hour marine safety limit.`,
+    );
   }
 }
 
@@ -256,7 +302,11 @@ export function marineRunAgeMs(
 }
 
 function latestInstanceFromResponse(data: unknown): Pick<MarineInstance, 'id'> | undefined {
-  const instances = isRecord(data) && Array.isArray(data.instances) ? data.instances : [];
+  if (!isRecord(data) || !Array.isArray(data.instances)) {
+    throw new Error('DMI instance response did not contain an instances array.');
+  }
+  const instances = data.instances;
+  if (instances.length === 0) return undefined;
   let best: Pick<MarineInstance, 'id'> | undefined;
   let bestMs = -Infinity;
 
@@ -269,6 +319,9 @@ function latestInstanceFromResponse(data: unknown): Pick<MarineInstance, 'id'> |
     }
   }
 
+  if (!best) {
+    throw new Error('DMI instance response contained no valid instance ids.');
+  }
   return best;
 }
 
@@ -317,7 +370,12 @@ async function probeLatestInstanceForCollections(
   for (const collection of collections) {
     assertBeforeProviderDeadline(policy, `DMI ${collection} collection fallback`);
     try {
-      const data = await fetchJsonWithRetries(buildInstancesUrl(collection), `DMI ${collection} instances`, policy);
+      const data = await fetchJsonWithRetries(
+        buildInstancesUrl(collection),
+        `DMI ${collection} instances`,
+        policy,
+        'marine',
+      );
       const latest = latestInstanceFromResponse(data);
       if (latest) {
         return {
@@ -325,7 +383,10 @@ async function probeLatestInstanceForCollections(
           id: latest.id,
         };
       }
-      lastError = new Error(`DMI ${collection} returned no usable instances`);
+      lastError = new ProviderUnavailableError(
+        'marine',
+        `DMI ${collection} has not published a usable instance yet.`,
+      );
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
       // Collection fallbacks are for a missing collection (404) or a usable
@@ -357,7 +418,15 @@ export async function fetchLatestMarineInstances(
   if (!water || !waves) {
     const errors = results
       .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-      .map((result) => errorMessage(result.reason));
+      .map((result) => result.reason);
+    if (errors.length > 0 && errors.every(isProviderUnavailableError)) {
+      throw new ProviderUnavailableError(
+        'marine',
+        'DMI marine model instances are temporarily unavailable.',
+        errors[0],
+        errors.some((error) => error.busy),
+      );
+    }
     throw new Error(`Failed to fetch DMI marine instances: ${errors.join(', ')}`);
   }
 
@@ -388,7 +457,8 @@ async function fetchDmiGeoJson<TFeature>(
   const json = await fetchJsonWithRetries(
     buildDmiUrl(collection, parameters, location, instanceId),
     `DMI ${collection}`,
-    policy
+    policy,
+    'marine',
   );
   return featureCollectionFromJson<TFeature>(json);
 }
@@ -441,7 +511,16 @@ async function fetchMetWeather(
 
   try {
     const metStartedAt = Date.now();
-    const response = await fetchWithTimeout(buildMetUrl(location), { headers }, policy);
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(buildMetUrl(location), { headers }, policy);
+    } catch (error) {
+      throw transientProviderError(
+        error,
+        'weather',
+        `MET Norway weather is temporarily unavailable for ${location.id}.`,
+      ) ?? error;
+    }
     logUpstream(`met:${location.id}`, metStartedAt, response.status === 304 ? 'not-modified' : `http-${response.status}`);
 
     if (response.status === 304 && stored?.body) {
@@ -453,14 +532,28 @@ async function fetchMetWeather(
     }
 
     if (!response.ok) {
-      const providerMessage = (await response.text()).slice(0, 180);
+      const statusError = errorWithStatus(
+        `MET Norway weather failed with HTTP ${response.status}`,
+        response.status,
+      );
+      const classifiedError = transientProviderError(
+        statusError,
+        'weather',
+        `MET Norway weather is temporarily unavailable for ${location.id}.`,
+      ) ?? statusError;
+      let providerMessage = '';
+      try {
+        providerMessage = (await response.text()).slice(0, 180);
+      } catch {
+        // Keep classification bound to the reached HTTP status.
+      }
       console.warn({
         event: 'upstream_http_error',
         source: `met:${location.id}`,
         status: response.status,
         ...(providerMessage ? { providerMessage } : {}),
       });
-      throw errorWithStatus(`MET Norway weather failed with HTTP ${response.status}`, response.status);
+      throw classifiedError;
     }
 
     const data: unknown = await response.json();
@@ -487,6 +580,7 @@ async function fetchMetWeather(
     return { ...mapMetPayload(data, lastModified, expiresMs), fallback: false };
   } catch (error) {
     rethrowIfDeadlineReached(error, policy, `MET fallback for ${location.id}`);
+    if (!isProviderUnavailableError(error)) throw error;
     // MET unreachable but we hold its last response: build with that rather
     // than freezing the whole payload. The NaN expires maps to a short TTL,
     // so the next check retries MET soon.
@@ -512,7 +606,7 @@ async function fetchMetWeather(
         ...mapMetPayload(stored.body, stored.lastModified, Number.NaN),
         fallback: true,
         degraded: true,
-        busy: isBusyError(errorMessage(error)),
+        busy: error.busy,
       };
     }
     throw error;
@@ -607,9 +701,13 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
     data = await fetchDmiGeoJson(instance.collection, parameters, location, instance.id, policy);
   } catch (error) {
     rethrowIfDeadlineReached(error, policy, `${kind} retained fallback for ${location.id}`);
+    if (!isProviderUnavailableError(error)) throw error;
     // Transport error (429/5xx/network): we genuinely could not refresh this
     // source. Show the held run and flag it degraded (amber).
-    const held = fallbackToHeld({ degraded: true, busy: isBusyError(errorMessage(error)) });
+    const held = fallbackToHeld({
+      degraded: true,
+      busy: error.busy,
+    });
     if (held) return held;
     throw error;
   }
@@ -643,7 +741,10 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
   // data, so this is NOT degradation - fall back silently and stay green.
   const held = fallbackToHeld({ notReady: true });
   if (held) return held;
-  throw new Error(`DMI ${instance.collection} returned no ${kind} forecast points for ${location.areaName}.`);
+  throw new ProviderUnavailableError(
+    'marine',
+    `DMI ${instance.collection} has not published ${kind} forecast points for ${location.areaName} yet.`,
+  );
 }
 
 // Reconstruct per-source marine series from a cached payload's hourly rows
@@ -763,7 +864,19 @@ export async function buildForecastCache(
     || waveResult.status === 'rejected') {
     const errors = [metResult, waterResult, waveResult]
       .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-      .map((result) => errorMessage(result.reason));
+      .map((result) => result.reason);
+    if (errors.length > 0 && errors.every(isProviderUnavailableError)) {
+      const providers = new Set(errors.map((error) => error.provider));
+      const provider: BusyProvider = providers.size === 1
+        ? errors[0].provider
+        : 'services';
+      throw new ProviderUnavailableError(
+        provider,
+        'Required forecast providers are temporarily unavailable.',
+        errors[0],
+        errors.some((error) => error.busy),
+      );
+    }
     throw new Error(`Failed to build forecast: ${errors.join(', ')}`);
   }
 
@@ -798,7 +911,10 @@ export async function buildForecastCache(
   const degradedBusy = [met, water, wave].some((s) => s.fallback && s.degraded && s.busy);
 
   if (weatherSeries.length === 0) {
-    throw new Error(`MET Norway returned no weather forecast points for ${location.areaName}.`);
+    throw new ProviderUnavailableError(
+      'weather',
+      `MET Norway has not published weather forecast points for ${location.areaName} yet.`,
+    );
   }
 
   // Longer-range blocks continue the matrix past MET's hourly range using

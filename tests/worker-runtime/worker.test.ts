@@ -6,7 +6,11 @@ import {
   waitOnExecutionContext,
 } from 'cloudflare:test';
 import worker from '../../worker/index';
-import type { ForecastData, HealthPayload } from '../../worker/domain';
+import type {
+  ForecastData,
+  ForecastInitializingPayload,
+  HealthPayload,
+} from '../../worker/domain';
 import locationData from '../../src/config/locations.json';
 import type { ForecastLocation } from '../../src/config/locationTypes';
 import { FORECAST_PAYLOAD_VERSION } from '../../src/features/forecast/types';
@@ -139,6 +143,43 @@ describe('Worker runtime integration contract', () => {
     expect(providerFetch).not.toHaveBeenCalled();
   });
 
+  it('persists and honors a real-KV initialization cooldown after a typed 429', async () => {
+    await env.FRANK_FORECAST_CACHE.delete(FORECAST_KEY);
+    const providerFetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () => new Response('Server is busy: private provider detail', { status: 429 }),
+    );
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const first = await dispatch('/forecast/horsens');
+    expect(first.status).toBe(503);
+    expect(first.headers.get('retry-after')).toBe('600');
+    const body = await first.json<ForecastInitializingPayload>();
+    expect(body).toMatchObject({
+      schemaVersion: 1,
+      status: 'initializing',
+      code: 'FORECAST_INITIALIZING',
+      retryAfterSeconds: 600,
+      location: { id: HORSENS.id },
+    });
+    expect(JSON.stringify(body)).not.toContain('private provider detail');
+
+    const marker = await env.FRANK_FORECAST_CACHE.get(
+      'forecast-initialization:horsens:v1',
+      'json',
+    );
+    expect(marker).toMatchObject({
+      schemaVersion: 1,
+      status: 'initializing',
+      locationId: HORSENS.id,
+      retryAfterSeconds: 600,
+    });
+
+    const callsAfterFirst = providerFetch.mock.calls.length;
+    const repeatedWarm = await dispatch('/forecast/horsens?warm=1');
+    expect(repeatedWarm.status).toBe(503);
+    expect(providerFetch).toHaveBeenCalledTimes(callsAfterFirst);
+  });
+
   it('preserves the read-only HTTP contract for HEAD, OPTIONS, and unknown paths', async () => {
     const providerFetch = rejectLiveNetwork();
 
@@ -168,6 +209,7 @@ describe('Worker runtime integration contract', () => {
     expect(body).toMatchObject({
       ok: false,
       service: 'frank-forecast',
+      storageAvailable: true,
     });
     expect(body).not.toHaveProperty('ages');
     expect(body).not.toHaveProperty('storageUnavailable');
@@ -176,6 +218,7 @@ describe('Worker runtime integration contract', () => {
       cacheHealth: { status: 'current' },
     });
     expect(body.locations.some((location) => !location.hasCache)).toBe(true);
+    expect(body.missing).toEqual(expect.arrayContaining(['vejle', 'kolding', 'aarhus']));
     expect(providerFetch).not.toHaveBeenCalled();
   });
 });

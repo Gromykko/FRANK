@@ -134,6 +134,27 @@ export interface HealthLocationEntry {
   cacheHealth?: WorkerCacheHealth;
 }
 
+export interface ForecastInitializationMarker {
+  schemaVersion: 1;
+  status: 'initializing';
+  locationId: string;
+  lastAttemptAt: string;
+  retryAfterSeconds: number;
+}
+
+export interface ForecastInitializingPayload {
+  schemaVersion: 1;
+  status: 'initializing';
+  code: 'FORECAST_INITIALIZING';
+  message: string;
+  retryAfterSeconds: number;
+  location: {
+    id: string;
+    name: string;
+    areaName: string;
+  };
+}
+
 export interface HealthAge {
   id: string;
   ageMs: number;
@@ -150,6 +171,8 @@ export interface HealthPayload {
   dataStaleAfterMin: number;
   reason: string | null;
   stalled: string[];
+  missing: string[];
+  storageAvailable: boolean;
   locations: HealthLocationEntry[];
   ages: HealthAge[];
   storageUnavailable: boolean;

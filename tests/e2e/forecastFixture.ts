@@ -81,6 +81,47 @@ export interface ForecastMock {
   stop: () => Promise<void>;
 }
 
+export async function mockInitializingForecastWorker(page: Page): Promise<ForecastMock> {
+  const requests: URL[] = [];
+  const handler = async (route: Route) => {
+    const url = new URL(route.request().url());
+    const locationId = url.pathname.split('/').filter(Boolean).at(-1) ?? '';
+    const location = locationById.get(locationId);
+    if (!location) throw new Error(`Unknown fixture location: ${locationId}`);
+    requests.push(url);
+    await route.fulfill({
+      status: 503,
+      contentType: 'application/json; charset=utf-8',
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Expose-Headers': 'Retry-After',
+        'Cache-Control': 'no-store',
+        'Retry-After': '600',
+        'X-Content-Type-Options': 'nosniff',
+      },
+      body: JSON.stringify({
+        schemaVersion: 1,
+        status: 'initializing',
+        code: 'FORECAST_INITIALIZING',
+        message: 'Forecast is being initialized.',
+        retryAfterSeconds: 600,
+        location: {
+          id: location.id,
+          name: location.name,
+          areaName: location.areaName,
+        },
+      }),
+    });
+  };
+
+  const routePattern = '**/forecast/**';
+  await page.route(routePattern, handler);
+  return {
+    requests,
+    stop: () => page.unroute(routePattern, handler),
+  };
+}
+
 export async function mockForecastWorker(page: Page): Promise<ForecastMock> {
   const requests: URL[] = [];
   const handler = async (route: Route) => {

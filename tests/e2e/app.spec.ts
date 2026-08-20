@@ -1,5 +1,5 @@
 import { expect, test } from 'playwright/test';
-import { FIXTURE_NOW_ISO, mockForecastWorker } from './forecastFixture';
+import { FIXTURE_NOW_ISO, mockForecastWorker, mockInitializingForecastWorker } from './forecastFixture';
 
 test.beforeEach(async ({ page }) => {
   // Each Playwright test already receives a fresh isolated context. Freezing
@@ -107,6 +107,43 @@ test('the complete dashboard stays inside every supported viewport', async ({ pa
       - document.documentElement.clientWidth
   ));
   expect(overflowPx).toBeLessThanOrEqual(1);
+});
+
+test('a first-build location has a complete, neutral recovery screen', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === 'service-worker-chromium');
+  const mock = await mockInitializingForecastWorker(page);
+
+  await page.goto('./');
+
+  await expect(page.getByRole('heading', { name: 'Klargør prognosen for Horsens Fjord' })).toBeVisible();
+  await expect(page.getByRole('status')).toContainText('ingen sikkerhedsvurdering eller rovinduer');
+  await expect(page.locator('.frank-device')).toHaveCount(0);
+  await expect(page.locator('.timeline-slider-panel')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Horsens Fjord.*klargøres/ })).toBeVisible();
+
+  const retry = page.getByRole('button', { name: 'Tjek nu' });
+  const requestsBeforeRetry = mock.requests.length;
+  await retry.click();
+  await expect.poll(() => mock.requests.length).toBe(requestsBeforeRetry + 1);
+
+  await page.getByRole('button', { name: /Horsens Fjord.*klargøres/ }).click();
+  await expect(page.getByRole('menuitem')).toHaveCount(4);
+  await expect(page.getByRole('menuitem', { name: /Horsens Fjord.*klargøres/ }))
+    .toHaveAttribute('aria-current', 'true');
+
+  const overflowPx = await page.evaluate(() => (
+    Math.max(document.body.scrollWidth, document.documentElement.scrollWidth)
+      - document.documentElement.clientWidth
+  ));
+  expect(overflowPx).toBeLessThanOrEqual(1);
+
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
+    page.getByRole('menuitem', { name: 'Vejle Fjord' }).click(),
+  ]);
+  await expect(page.getByRole('heading', { name: 'Klargør prognosen for Vejle Fjord' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Vejle Fjord.*klargøres/ })).toBeVisible();
+  await expect.poll(() => mock.requests.some((url) => url.pathname.endsWith('/forecast/vejle'))).toBe(true);
 });
 
 test('an installed production shell reloads with the saved forecast offline', async ({ page, context }, testInfo) => {
