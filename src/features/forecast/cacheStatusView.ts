@@ -25,6 +25,10 @@ export interface CacheStatusInput {
   // The device has no connection right now (navigator.onLine === false).
   offline?: boolean;
   savedAtLabel?: string; // formatTime(fetchedAt) — the saved forecast's time
+  savedAgeLabel?: string;
+  // The app has been inactive long enough that it should verify again, but no
+  // completed request has failed. This must never be worded as a failure.
+  needsVerification?: boolean;
 }
 
 // Turns the worker's cacheHealth into the header's label/detail/tone. Pure and
@@ -32,7 +36,15 @@ export interface CacheStatusInput {
 // read calmly, never as a red "Refresh failed", and never lead with an
 // alarming "hours old"). Kept out of App.tsx, which can't be driven into these
 // states in a test (the build embeds a static forecast cache).
-export function getCacheStatusView({ refreshing, cacheHealth, checkedAtLabel, offline, savedAtLabel }: CacheStatusInput, translate: Translate = interpolate): CacheStatusView {
+export function getCacheStatusView({
+  refreshing,
+  cacheHealth,
+  checkedAtLabel,
+  offline,
+  savedAtLabel,
+  savedAgeLabel,
+  needsVerification,
+}: CacheStatusInput, translate: Translate = interpolate): CacheStatusView {
   const status = cacheHealth?.status;
   const isStale = status === 'stale' || status === 'fallback';
   // Offline takes precedence: a green "Checked" would be dishonest with no
@@ -79,17 +91,21 @@ export function getCacheStatusView({ refreshing, cacheHealth, checkedAtLabel, of
   const hasDegraded = degradedLabel !== '';
   const partiallyDegraded = !isStale && !refreshing && !isPending && hasDegraded;
 
-  // A refresh in flight is neutral - not a problem, not a settled result;
-  // the answer follows in a moment. Otherwise amber for any degraded/stale
-  // data, green when all current.
+  // Checking is not a failure, but genuinely old data does not become less old
+  // because a request started. Keep that compact line amber and explicit while
+  // withholding the large settled-failure banner.
   const tone: CacheStatusView['tone'] = refreshing
-    ? 'neutral'
+    ? (isStale ? 'watch' : 'neutral')
+    : needsVerification
+      ? (isStale ? 'watch' : 'neutral')
     : (isStale || hasDegraded || isPending) ? 'watch' : 'fresh';
 
   // The forecast time rides on the "Checked" label so a timestamp is always
   // visible; other states keep it in the detail line.
   const label = refreshing
     ? translate('Refreshing…')
+    : needsVerification
+      ? (savedAtLabel ? translate('Saved forecast · {0}', savedAtLabel) : translate('Saved forecast'))
     : isPending
       ? translate('Checking…')
       : isStale
@@ -97,7 +113,13 @@ export function getCacheStatusView({ refreshing, cacheHealth, checkedAtLabel, of
         : translate('Checked · {0}', checkedAtLabel);
 
   const detail = refreshing
-    ? ''
+    ? (isStale && savedAgeLabel
+      ? translate('Showing saved forecast · {0} old', savedAgeLabel)
+      : '')
+    : needsVerification
+      ? (isStale && savedAgeLabel
+        ? translate('Showing saved forecast · {0} old', savedAgeLabel)
+        : translate('Needs a new check'))
     : isPending
       ? ''
       : isStale
@@ -128,6 +150,8 @@ const CACHE_REFRESH_WARNING_AGE_MS = 6 * 60 * 60 * 1000;
 // exact, it is ours, and changing the worker's write policy cannot break it.
 // 20 minutes is simply two auto-refresh intervals.
 const WORKER_CONTACT_STALE_MS = 20 * 60 * 1000;
+
+export type CacheCheckState = 'not-started' | 'checking' | 'succeeded' | 'failed';
 
 function formatRelativeAge(ms: number, translate: Translate): string {
   if (!Number.isFinite(ms) || ms < 0) return '';
@@ -166,8 +190,11 @@ export function deriveCacheStatus(args: {
   // has this session. Supplied by the fetch layer rather than read out of the
   // payload — see WORKER_CONTACT_STALE_MS.
   workerContactedAtMs?: number | null;
+  // React-owned lifecycle of the latest request. Unlike contact age, this can
+  // distinguish "the app was asleep" from "a request completed and failed".
+  checkState?: CacheCheckState;
 }, translate: Translate = interpolate): DerivedCacheStatus {
-  const { sources, refreshing, online, nowMs, workerContactedAtMs } = args;
+  const { sources, refreshing, online, nowMs, workerContactedAtMs, checkState } = args;
 
   const fetchedAtMs = new Date(sources.fetchedAt).getTime();
   const checkedAt = sources.cacheHealth?.lastAttemptAt ?? sources.fetchedAt;
@@ -188,11 +215,14 @@ export function deriveCacheStatus(args: {
   // which case don't override anything.
   // undefined: no attempt has finished yet, so there is nothing to judge.
   // null: an attempt finished and the worker was not reached.
-  const notActuallyChecked = workerContactedAtMs === undefined
-    ? false
-    : workerContactedAtMs === null
-      ? true
-      : nowMs - workerContactedAtMs > WORKER_CONTACT_STALE_MS;
+  const hasExplicitCheckState = checkState !== undefined;
+  const completedFailure = hasExplicitCheckState
+    ? checkState === 'failed'
+    : workerContactedAtMs === null;
+  const contactNeedsVerification = typeof workerContactedAtMs === 'number'
+    && nowMs - workerContactedAtMs > WORKER_CONTACT_STALE_MS;
+  const needsVerification = !completedFailure
+    && (checkState === 'not-started' || contactNeedsVerification);
   // Old data is old, whatever the payload claims about itself. `fetchedAt` is
   // precise (it only moves on a real rebuild), so unlike the check stamp it can
   // be trusted arithmetically.
@@ -206,7 +236,7 @@ export function deriveCacheStatus(args: {
   const cacheAgeMs = Number.isFinite(fetchedAtMs) ? nowMs - fetchedAtMs : Infinity;
   const dataStale = cacheAgeMs > CACHE_REFRESH_WARNING_AGE_MS;
 
-  const cacheHealth = notActuallyChecked || dataStale
+  const cacheHealth = completedFailure || dataStale
     ? { ...sources.cacheHealth, status: 'stale' as const, lastAttemptAt: checkedAt }
     : sources.cacheHealth;
 
@@ -214,7 +244,15 @@ export function deriveCacheStatus(args: {
   const isPending = status === 'pending';
   const isStale = status === 'stale' || status === 'fallback';
 
-  const showRefreshWarning = dataStale;
+  const attemptSettled = !needsVerification && (
+    !hasExplicitCheckState
+    || checkState === 'succeeded'
+    || checkState === 'failed'
+  );
+  // While an online check is running, the compact amber status still says the
+  // saved forecast is old. Reserve the large failure-style banner for a
+  // settled result. Offline is known immediately and remains immediate.
+  const showRefreshWarning = dataStale && (!online || (!refreshing && attemptSettled));
   // A payload stamped with an older version was built by outdated worker
   // logic — surface it instead of silently rendering mismatched data.
   const workerOutdated = (sources.payloadVersion ?? 0) < FORECAST_PAYLOAD_VERSION;
@@ -225,12 +263,20 @@ export function deriveCacheStatus(args: {
     checkedAtLabel: formatTime(checkedAt),
     offline: !online,
     savedAtLabel: formatTime(sources.fetchedAt),
+    savedAgeLabel: formatRelativeAge(cacheAgeMs, translate),
+    needsVerification,
   }, translate);
   const { providerBusy, busyServiceName, partiallyDegraded, degradedLabel } = view;
 
   const fetchedAtFull = formatDateTime(sources.fetchedAt);
   const expandedDetail = !online
     ? translate("You're offline, so FRANK is showing your last saved forecast from {0}. It will refresh on its own once you're back online.", fetchedAtFull)
+    : refreshing
+      ? (isStale
+        ? translate('FRANK is updating now; meanwhile it is showing the saved forecast from {0}, which is {1} old.', fetchedAtFull, formatRelativeAge(cacheAgeMs, translate))
+        : translate('Checking for a newer forecast'))
+    : needsVerification
+      ? translate('The saved forecast from {0} needs a new check.', fetchedAtFull)
     : isStale
       ? (providerBusy
         ? translate('{0} is busy right now, so the forecast could not be refreshed. FRANK is retrying automatically; you are seeing the last good forecast from {1}.', busyServiceName, fetchedAtFull)
@@ -239,7 +285,7 @@ export function deriveCacheStatus(args: {
         ? (providerBusy
           ? translate('Forecast from {0}; {1} is from an earlier update while its service was busy. FRANK is retrying automatically.', fetchedAtFull, degradedLabel)
           : translate('Forecast from {0}; {1} is from an earlier update (could not refresh just now). FRANK is retrying automatically.', fetchedAtFull, degradedLabel))
-        : refreshing || isPending
+        : isPending
           ? translate('Checking for a newer forecast')
           : checkDiffersFromData
             ? translate('Forecast from {0}; cache checked {1}', fetchedAtFull, formatTime(checkedAt))

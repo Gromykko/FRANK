@@ -15,6 +15,8 @@ const MIN_MANUAL_SPINNER_MS = 600;
 // Worker's bounded 24s execution budget. No unbounded polling loop.
 export const POST_REFRESH_PICKUP_DELAYS_MS = [2_000, 8_000, 30_000] as const;
 
+export type ForecastCheckState = 'not-started' | 'checking' | 'succeeded' | 'failed';
+
 const cacheHealthSignature = (data: WeatherData): string => {
   const health = data.sources.cacheHealth;
   if (!health) return '';
@@ -90,6 +92,7 @@ export function useForecast(daylightOnly: boolean) {
   const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [checkState, setCheckState] = useState<ForecastCheckState>('not-started');
   const [error, setError] = useState<string | null>(null);
   const [selectedHourIndex, setSelectedHourIndex] = useState<number>(0);
   // 60s heartbeat: re-renders the consumer each minute so relative-age labels
@@ -99,6 +102,9 @@ export function useForecast(daylightOnly: boolean) {
 
   const daylightOnlyRef = useRef(daylightOnly);
   const lastRefreshAttemptRef = useRef(0);
+  // Only the newest overlapping request may settle the visible lifecycle.
+  // Otherwise a slow older failure can overwrite a newer successful check.
+  const checkSequenceRef = useRef(0);
   // Silent post-refresh cache pickups (the worker rebuilds in the background)
   const pickupTimersRef = useRef<number[]>([]);
   useEffect(() => () => {
@@ -143,6 +149,7 @@ export function useForecast(daylightOnly: boolean) {
     const previousData = latestWeatherDataRef.current;
     if (!shouldApplyForecastUpdate(previousData, data)) return;
     latestWeatherDataRef.current = data;
+    hasWeatherDataRef.current = true;
 
     setWeatherData(data);
 
@@ -213,12 +220,16 @@ export function useForecast(daylightOnly: boolean) {
     // cache, stamps the attempt, and applies its own 20s/60s upstream gates.
     // A second throttle here only made "Last try" ignore the user's click.
     lastRefreshAttemptRef.current = startedAt;
+    const checkSequence = ++checkSequenceRef.current;
+    let settledState: Exclude<ForecastCheckState, 'not-started' | 'checking'> = 'failed';
+    let settledError: string | null = null;
 
     if (showBlockingLoader) {
       setLoading(true);
     } else {
       setRefreshing(true);
     }
+    setCheckState('checking');
     setError(null);
 
     try {
@@ -232,6 +243,9 @@ export function useForecast(daylightOnly: boolean) {
       }
 
       applyWeatherData(data, daylightOnlyRef.current);
+      settledState = CAN_FETCH_FRESH_FORECAST || loaded.from === 'worker'
+        ? 'succeeded'
+        : 'failed';
 
       // A remote refresh that quietly fell back to the browser's saved copy
       // (worker unreachable) still "succeeds" above, so say so.
@@ -243,7 +257,7 @@ export function useForecast(daylightOnly: boolean) {
       // service" seconds after reaching it perfectly well. Never re-derive a
       // fact from someone else's throttled bookkeeping when the caller has it.
       if (forceRemoteRefresh && !CAN_FETCH_FRESH_FORECAST && loaded.from === 'local') {
-        setError('Could not reach the forecast service — showing the last saved forecast.');
+        settledError = 'Could not reach the forecast service — showing the last saved forecast.';
       }
 
       if (forceRemoteRefresh && !CAN_FETCH_FRESH_FORECAST) {
@@ -265,7 +279,7 @@ export function useForecast(daylightOnly: boolean) {
       }
     } catch {
       if (showBlockingLoader || !hasWeatherDataRef.current) {
-        setError((currentError) => currentError ?? 'Could not refresh forecast data. Showing the latest cached forecast if available.');
+        settledError = 'Could not refresh forecast data. Showing the latest cached forecast if available.';
       }
     } finally {
       if (!showBlockingLoader && force) {
@@ -274,8 +288,12 @@ export function useForecast(daylightOnly: boolean) {
           await new Promise((resolve) => window.setTimeout(resolve, MIN_MANUAL_SPINNER_MS - elapsed));
         }
       }
-      setLoading(false);
-      setRefreshing(false);
+      if (checkSequence === checkSequenceRef.current) {
+        setCheckState(settledState);
+        setError(settledError);
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [applyWeatherData]);
 
@@ -283,17 +301,22 @@ export function useForecast(daylightOnly: boolean) {
     let cancelled = false;
 
     async function bootForecast() {
-      const cached = (await loadCachedWeatherData()).data;
+      setCheckState('checking');
+      const cached = (await loadCachedWeatherData(CURRENT_LOCATION, { localOnly: true })).data;
       if (cancelled) return;
-
-      const forceRemoteRefresh = true;
 
       if (cached) {
         applyWeatherData(cached, daylightOnlyRef.current);
         setLoading(false);
-        await refreshForecast(false, true, forceRemoteRefresh);
+        // Startup asks once for the Worker's durable, completed snapshot. The
+        // normal endpoint already schedules a due background check;
+        // `?refresh=1` is reserved for an explicit user tap and its transient
+        // pending state.
+        await refreshForecast(false, false, false);
       } else {
-        await refreshForecast(true, true, forceRemoteRefresh);
+        // localOnly above performs no I/O, so this is the one normal Worker
+        // request on a true cold start.
+        await refreshForecast(true, false, false);
       }
     }
 
@@ -302,6 +325,7 @@ export function useForecast(daylightOnly: boolean) {
     // an endless spinner with no way out. Surface the retryable error screen.
     bootForecast().catch(() => {
       if (cancelled) return;
+      setCheckState('failed');
       setError('Could not refresh forecast data. Showing the latest cached forecast if available.');
       setLoading(false);
     });
@@ -345,6 +369,7 @@ export function useForecast(daylightOnly: boolean) {
     weatherData,
     loading,
     refreshing,
+    checkState,
     error,
     selectedHourIndex,
     setSelectedHourIndex,

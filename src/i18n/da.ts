@@ -125,6 +125,10 @@ export const da: Record<string, string> = {
   'weather service': 'vejrtjenesten',
   'marine service': 'havtjenesten',
   'Refreshing…': 'Opdaterer…',
+  'Saved forecast · {0}': 'Gemt prognose · {0}',
+  'Saved forecast': 'Gemt prognose',
+  'Showing saved forecast · {0} old': 'Viser gemt prognose · {0} gammel',
+  'Needs a new check': 'Skal tjekkes igen',
   'Checking…': 'Tjekker…',
   '{0} busy': '{0} er optaget',
   'Couldn’t refresh': 'Kunne ikke opdatere',
@@ -138,6 +142,10 @@ export const da: Record<string, string> = {
   '{0} d': '{0} d',
   "You're offline, so FRANK is showing your last saved forecast from {0}. It will refresh on its own once you're back online.":
     'Du er offline, så FRANK viser din senest gemte prognose fra {0}. Den opdateres af sig selv, når du er online igen.',
+  'FRANK is updating now; meanwhile it is showing the saved forecast from {0}, which is {1} old.':
+    'FRANK opdaterer nu; imens vises den gemte prognose fra {0}, som er {1} gammel.',
+  'The saved forecast from {0} needs a new check.':
+    'Den gemte prognose fra {0} skal tjekkes igen.',
   '{0} is busy right now, so the forecast could not be refreshed. FRANK is retrying automatically; you are seeing the last good forecast from {1}.':
     '{0} er optaget lige nu, så prognosen kunne ikke opdateres. FRANK prøver igen automatisk; du ser den seneste gode prognose fra {1}.',
   'The forecast could not be refreshed on the last try ({0}); FRANK is retrying automatically. You are seeing the last good forecast from {1}.':

@@ -127,7 +127,14 @@ async function readWorkerCachedWeatherData(location: ForecastLocation, forceRefr
         // pending overlay. Keep the browser's completed snapshot on screen
         // during the 600ms button spinner; silent pickups below will apply the
         // completed health even when the forecast build itself does not change.
-        return readLocalCachedWeatherData(location) ?? parsed;
+        // But never throw away a NEWER Worker forecast merely because its
+        // health overlay is pending: that extended a cold-start stale flash
+        // until the first pickup. Pending remains memory-only either way.
+        const local = readLocalCachedWeatherData(location);
+        if (!local) return parsed;
+        const localFetchedMs = Date.parse(local.sources.fetchedAt);
+        const workerFetchedMs = Date.parse(parsed.sources.fetchedAt);
+        return workerFetchedMs > localFetchedMs ? parsed : local;
       }
       saveCachedWeatherData(parsed, location);
       return parsed;
@@ -147,6 +154,7 @@ async function readWorkerCachedWeatherData(location: ForecastLocation, forceRefr
 }
 
 export interface LoadCacheOptions {
+  localOnly?: boolean;
   preferWorker?: boolean;
   forceWorkerRefresh?: boolean;
 }
@@ -188,6 +196,11 @@ export async function loadCachedWeatherData(
   location = CURRENT_LOCATION,
   options: LoadCacheOptions = {}
 ): Promise<LoadCacheResult> {
+  if (options.localOnly) {
+    const local = readLocalCachedWeatherData(location);
+    return { data: local, from: local ? 'local' : null };
+  }
+
   if (options.preferWorker) {
     const workerData = await readWorkerCachedWeatherData(location, options.forceWorkerRefresh);
     if (workerData) {

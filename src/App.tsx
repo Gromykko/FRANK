@@ -50,6 +50,7 @@ export default function App() {
     weatherData,
     loading,
     refreshing,
+    checkState,
     error,
     selectedHourIndex,
     setSelectedHourIndex,
@@ -248,6 +249,7 @@ export default function App() {
     nowMs: Date.now(),
     // Our own record of reaching the worker, not the worker's throttled stamp.
     workerContactedAtMs: getWorkerContactMs(),
+    checkState,
   }, t);
   const { providerBusy, busyServiceName } = statusView;
   const cacheStatusClass = statusView.tone;

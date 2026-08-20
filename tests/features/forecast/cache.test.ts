@@ -234,6 +234,37 @@ describe('browser forecast cache recovery', () => {
     expect(JSON.parse(localStorage.getItem(CACHE_KEY)!).sources.cacheHealth.status).toBe('current');
   });
 
+  it('uses a newer pending Worker forecast in memory instead of substituting an older local snapshot', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const local = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
+    saveCachedWeatherData(local, CURRENT_LOCATION);
+
+    const pendingWorker = weatherData([hour(new Date(NOW + 2 * 60 * 60 * 1000).toISOString())]);
+    pendingWorker.sources.fetchedAt = new Date(NOW - 60 * 60 * 1000).toISOString();
+    pendingWorker.sources.cacheHealth = {
+      status: 'pending',
+      lastAttemptAt: pendingWorker.sources.fetchedAt,
+      checkedBy: 'manual',
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => structuredClone(pendingWorker),
+    }));
+
+    const loaded = await loadCachedWeatherData(CURRENT_LOCATION, {
+      preferWorker: true,
+      forceWorkerRefresh: true,
+    });
+
+    expect(loaded.from).toBe('worker');
+    expect(loaded.data?.sources.fetchedAt).toBe(pendingWorker.sources.fetchedAt);
+    expect(loaded.data?.sources.cacheHealth?.status).toBe('pending');
+    // Pending is response-only: the durable fallback remains the old completed
+    // snapshot even though the newer forecast can be shown in memory now.
+    expect(JSON.parse(localStorage.getItem(CACHE_KEY)!).sources.fetchedAt).toBe(local.sources.fetchedAt);
+    expect(JSON.parse(localStorage.getItem(CACHE_KEY)!).sources.cacheHealth.status).toBe('current');
+  });
+
   it('returns pending only in memory when no durable copy exists', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(NOW);
     const pending = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);

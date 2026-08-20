@@ -97,6 +97,22 @@ describe('getCacheStatusView', () => {
     const v = view({ status: 'current', degradedSources: ['water', 'waves'], providerBusy: true, lastAttemptAt: '' }, true);
     expect(v).toMatchObject({ label: 'Refreshing…', detail: '', tone: 'neutral' });
   });
+
+  it('keeps an old saved forecast honestly amber while it is being checked', () => {
+    const v = getCacheStatusView({
+      refreshing: true,
+      cacheHealth: { status: 'stale', lastAttemptAt: '' } as Health,
+      checkedAtLabel: '20:07',
+      savedAtLabel: '12:10',
+      savedAgeLabel: '8 h',
+    });
+    expect(v).toMatchObject({
+      label: 'Refreshing…',
+      detail: 'Showing saved forecast · 8 h old',
+      tone: 'watch',
+    });
+    expect(v.label).not.toMatch(/Couldn’t/);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -131,7 +147,9 @@ describe('deriveCacheStatus freshness', () => {
 
   it('reached it long ago: NOT green, whatever the payload claims about itself', () => {
     // The saved copy still carries the last good payload's status:'current'.
-    expect(derive(NOW - 3 * 60 * 60_000).view.tone).not.toBe('fresh');
+    const result = derive(NOW - 3 * 60 * 60_000);
+    expect(result.view.tone).not.toBe('fresh');
+    expect(result.view.label).not.toMatch(/Couldn’t refresh/);
   });
 
   it('attempted and never reached it: NOT green', () => {
@@ -173,5 +191,101 @@ describe('deriveCacheStatus freshness', () => {
     expect(v.view.tone).not.toBe('fresh');
     expect(v.showRefreshWarning).toBe(true);
     expect(v.forecastAgeLabel).toBe('8 h');
+  });
+
+  it('old local data being checked stays compact and does not raise the settled-failure banner', () => {
+    const result = deriveCacheStatus({
+      sources: {
+        fetchedAt: at(8 * 60 * 60_000),
+        cacheHealth: { status: 'current', lastAttemptAt: at(8 * 60 * 60_000) },
+      } as never,
+      refreshing: true,
+      online: true,
+      nowMs: NOW,
+      workerContactedAtMs: undefined,
+      checkState: 'checking',
+    });
+
+    expect(result.view).toMatchObject({
+      label: 'Refreshing…',
+      detail: 'Showing saved forecast · 8 h old',
+      tone: 'watch',
+    });
+    expect(result.showRefreshWarning).toBe(false);
+    expect(result.expandedDetail).toContain('updating now');
+    expect(result.expandedDetail).not.toContain('could not be refreshed');
+  });
+
+  it('raises the warning only after the check completes as a failure', () => {
+    const result = deriveCacheStatus({
+      sources: {
+        fetchedAt: at(8 * 60 * 60_000),
+        cacheHealth: { status: 'current', lastAttemptAt: at(8 * 60 * 60_000) },
+      } as never,
+      refreshing: false,
+      online: true,
+      nowMs: NOW,
+      workerContactedAtMs: null,
+      checkState: 'failed',
+    });
+
+    expect(result.view.label).toBe('Couldn’t refresh');
+    expect(result.showRefreshWarning).toBe(true);
+  });
+
+  it('a fast successful check goes directly to Checked', () => {
+    const result = deriveCacheStatus({
+      sources: {
+        fetchedAt: at(5 * 60_000),
+        cacheHealth: { status: 'current', lastAttemptAt: at(60_000) },
+      } as never,
+      refreshing: false,
+      online: true,
+      nowMs: NOW,
+      workerContactedAtMs: NOW - 1_000,
+      checkState: 'succeeded',
+    });
+
+    expect(result.view).toMatchObject({ label: 'Checked · 16:49', tone: 'fresh' });
+    expect(result.showRefreshWarning).toBe(false);
+  });
+
+  it('aged contact means needs verification, not a completed failure', () => {
+    const result = deriveCacheStatus({
+      sources: {
+        fetchedAt: at(5 * 60_000),
+        cacheHealth: { status: 'current', lastAttemptAt: at(5 * 60_000) },
+      } as never,
+      refreshing: false,
+      online: true,
+      nowMs: NOW,
+      workerContactedAtMs: NOW - 3 * 60 * 60_000,
+      checkState: 'succeeded',
+    });
+
+    expect(result.view).toMatchObject({
+      label: 'Saved forecast · 16:45',
+      detail: 'Needs a new check',
+      tone: 'neutral',
+    });
+    expect(result.view.label).not.toMatch(/Couldn’t/);
+    expect(result.showRefreshWarning).toBe(false);
+  });
+
+  it('keeps an old offline forecast warning immediate even if a check was starting', () => {
+    const result = deriveCacheStatus({
+      sources: {
+        fetchedAt: at(8 * 60 * 60_000),
+        cacheHealth: { status: 'current', lastAttemptAt: at(8 * 60 * 60_000) },
+      } as never,
+      refreshing: true,
+      online: false,
+      nowMs: NOW,
+      workerContactedAtMs: null,
+      checkState: 'checking',
+    });
+
+    expect(result.view).toMatchObject({ label: 'Offline', tone: 'watch' });
+    expect(result.showRefreshWarning).toBe(true);
   });
 });
