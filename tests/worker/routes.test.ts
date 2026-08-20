@@ -197,6 +197,29 @@ describe('Worker route HTTP contract', () => {
     expect(body).toContain('EXACT GENERATION READY');
   });
 
+  it('renders a self-contained FRANK status instrument with responsive location cards', async () => {
+    const runtime = makeRuntime();
+    const response = await worker.fetch(request('/status'), runtime.env, runtime.ctx);
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Content-Security-Policy')).toContain("default-src 'none'");
+    expect(body).toContain('class="frank-face"');
+    expect(body).toContain('class="sky"');
+    expect(body).toContain('--font-ui:Inter');
+    expect(body).toContain('--font-pixel:"VT323"');
+    expect(body).toContain('class="status-panel"');
+    expect(body).toContain('<thead>');
+    expect(body).toContain('<tbody>');
+    expect(body).toContain('@media (max-width:720px)');
+    expect(body).toContain('@media (max-width:350px)');
+    expect(body.match(/data-label="Location"/g) ?? []).toHaveLength(LOCATIONS.length);
+    expect(body.match(/data-label="Status"/g) ?? []).toHaveLength(LOCATIONS.length);
+    expect(body).not.toContain('<script');
+    expect(body).not.toContain('@import');
+    expect(body).not.toContain('url(');
+  });
+
   it('shows degraded sources and the busy provider in the human status table', async () => {
     const horsens = cachedForecast();
     horsens.sources.cacheHealth = {

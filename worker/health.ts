@@ -172,22 +172,22 @@ export function statusResponse(health: HealthPayload): Response {
           ? 'AWAITING DATA'
           : cacheHealth.status ?? 'unknown';
     return `<tr>
-      <td><strong>${escapeHtml(location.areaName)}</strong><br><span class="dim">${escapeHtml(location.id)}</span></td>
-      <td class="${initialization ? 'warn' : missing ? 'bad' : level(age.checkAgeMs, HEALTH_MAX_CHECK_AGE_MS)}"><strong>${escapeHtml(formatAge(age.checkAgeMs))}</strong><br><span class="dim">${escapeHtml(checkDetail)}</span></td>
-      <td class="${missing ? 'bad' : level(age.ageMs, HEALTH_MAX_DATA_AGE_MS)}"><strong>${escapeHtml(missing ? 'no forecast' : formatAge(age.ageMs))}</strong></td>
-      <td>${escapeHtml(status)}
+      <td class="location-cell" data-label="Location"><strong>${escapeHtml(location.areaName)}</strong><br><span class="dim">${escapeHtml(location.id)}</span></td>
+      <td data-label="Last check" class="${initialization ? 'warn' : missing ? 'bad' : level(age.checkAgeMs, HEALTH_MAX_CHECK_AGE_MS)}"><strong>${escapeHtml(formatAge(age.checkAgeMs))}</strong><br><span class="dim">${escapeHtml(checkDetail)}</span></td>
+      <td data-label="Data age" class="${missing ? 'bad' : level(age.ageMs, HEALTH_MAX_DATA_AGE_MS)}"><strong>${escapeHtml(missing ? 'no forecast' : formatAge(age.ageMs))}</strong></td>
+      <td data-label="Status">${escapeHtml(status)}
         <br><span class="${location.exactGenerationReady ? 'good' : 'warn'}">${escapeHtml(generationState)}</span>
         ${providerState ? `<br><span class="warn">${escapeHtml(providerState)}</span>` : ''}</td>
-      <td>${degraded ? `<span class="warn">${escapeHtml(degraded)}</span>` : '<span class="dim">none</span>'}</td>
-      <td class="dim mono">${runs}</td>
+      <td data-label="Degraded">${degraded ? `<span class="warn">${escapeHtml(degraded)}</span>` : '<span class="dim">none</span>'}</td>
+      <td data-label="Water / wave run" class="dim mono">${runs}</td>
     </tr>`;
   }).join('');
 
   const banner = health.ok && health.release.allLocationsReady
-    ? '<div class="banner good">WORKER LIVE · ALL LOCATIONS CURRENT</div>'
+    ? '<div class="banner good" role="status"><span class="signal" aria-hidden="true"></span><strong>WORKER LIVE · ALL LOCATIONS CURRENT</strong></div>'
     : health.ok
-      ? `<div class="banner warn">WORKER LIVE · TARGET GENERATION ${escapeHtml(health.release.ready.length)}/${escapeHtml(health.locations.length)} READY</div>`
-    : `<div class="banner bad">ATTENTION — ${escapeHtml(health.reason ?? health.stalled.join(', '))}</div>`;
+      ? `<div class="banner warn" role="status"><span class="signal" aria-hidden="true"></span><strong>WORKER LIVE · TARGET GENERATION ${escapeHtml(health.release.ready.length)}/${escapeHtml(health.locations.length)} READY</strong></div>`
+    : `<div class="banner bad" role="status"><span class="signal" aria-hidden="true"></span><strong>ATTENTION — ${escapeHtml(health.reason ?? health.stalled.join(', '))}</strong></div>`;
 
   return htmlResponse(`<!doctype html>
 <html lang="en"><head>
@@ -196,34 +196,145 @@ export function statusResponse(health: HealthPayload): Response {
 <meta http-equiv="refresh" content="30">
 <title>FRANK worker status</title>
 <style>
-  :root { color-scheme: dark }
-  body { margin:0 auto; padding:20px; max-width:940px; background:#0c1117; color:#e8ecf1;
-         font:14px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace }
-  h1 { font-size:13px; letter-spacing:.18em; text-transform:uppercase; color:#7a8ba0; margin:0 0 16px }
-  .banner { padding:14px 16px; border-radius:8px; font-size:18px; letter-spacing:.06em;
-            margin-bottom:18px; border:1px solid }
-  .banner.good { background:#0f2a1f; border-color:#34d399; color:#34d399 }
-  .banner.warn { background:#2a2410; border-color:#fbbf24; color:#fbbf24 }
-  .banner.bad  { background:#2a1010; border-color:#f87171; color:#f87171 }
-  table { border-collapse:collapse; width:100%; max-width:900px }
-  th { text-align:left; font-size:10px; letter-spacing:.12em; text-transform:uppercase;
-       color:#7a8ba0; border-bottom:1px solid rgba(255,255,255,.18); padding:6px 10px 6px 0; font-weight:600 }
-  td { padding:10px 10px 10px 0; border-bottom:1px solid rgba(255,255,255,.06); vertical-align:top }
-  .good { color:#34d399 } .warn { color:#fbbf24 } .bad { color:#f87171 }
-  .dim { color:#7a8ba0 } .mono { font-size:12px }
-  .hdr-sub { font-weight:400; text-transform:none; letter-spacing:0; opacity:.7 }
-  footer p { margin:0 0 12px }
-  code { color:#e8ecf1; background:rgba(255,255,255,.07); padding:1px 4px; border-radius:3px }
-  footer { margin-top:20px; color:#7a8ba0; font-size:12px; max-width:900px }
-  a { color:#4b9eff }
+  :root {
+    color-scheme: light;
+    --sky-top:#dceefa; --sky-mid:#edf7fd; --sky-floor:#f5f7fa;
+    --panel:rgba(249,252,255,.92); --panel-edge:rgba(51,91,124,.16);
+    --text:#1a2332; --muted:#566577; --primary:#1d6fd1;
+    --good:#047857; --good-bg:#ecfdf5; --good-edge:#86efac;
+    --warn:#a15c00; --warn-bg:#fff7e6; --warn-edge:#f5c56b;
+    --bad:#b42318; --bad-bg:#fff1f0; --bad-edge:#f3aaa5;
+    --font-ui:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    --font-pixel:"VT323","Courier New",ui-monospace,monospace;
+  }
+  * { box-sizing:border-box }
+  html { min-height:100%; background:var(--sky-floor) }
+  body { min-height:100vh; margin:0; padding:clamp(16px,3vw,34px); color:var(--text);
+         background:linear-gradient(180deg,var(--sky-top) 0,var(--sky-mid) 44rem,var(--sky-floor) 78rem);
+         font:14px/1.55 var(--font-ui); overflow-x:hidden }
+  .sky { position:fixed; inset:0; z-index:0; overflow:hidden; pointer-events:none }
+  .sky-cloud { position:absolute; width:132px; height:auto; opacity:.58 }
+  .sky-cloud path:first-child { fill:rgba(104,151,188,.13) }
+  .sky-cloud path:last-child { fill:rgba(255,255,255,.82) }
+  .sky-cloud.one { top:8vh; left:3vw }
+  .sky-cloud.two { top:38vh; right:3vw; width:96px; opacity:.46 }
+  .sky-cloud.three { top:78vh; left:7vw; width:154px; opacity:.38 }
+  .status-shell { position:relative; z-index:1; width:min(100%,1040px); margin:0 auto }
+  .brand { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:14px;
+           margin-bottom:16px; padding:10px 2px }
+  .frank-face { width:52px; height:52px; display:grid; place-items:center; border:1px solid #273142;
+                border-radius:50%; background:#080d13; box-shadow:0 2px 5px rgba(29,65,94,.16) }
+  .face-grid { position:relative; width:30px; height:24px }
+  .face-grid::before { content:""; position:absolute; top:3px; left:3px; width:6px; height:6px;
+                       background:#11b981; box-shadow:18px 0 #11b981 }
+  .face-grid::after { content:""; position:absolute; left:5px; bottom:2px; width:20px; height:7px;
+                      border-bottom:3px solid #11b981; border-radius:0 0 12px 12px }
+  .brand-name { margin:0 0 1px; color:var(--primary); font-size:11px; font-weight:800;
+                letter-spacing:.24em; text-transform:uppercase }
+  h1 { margin:0; font-size:clamp(20px,2.6vw,28px); line-height:1.15; letter-spacing:-.025em }
+  .brand-subtitle { margin:3px 0 0; color:var(--muted); font-size:12px }
+  .refresh-stamp { min-width:100px; padding:7px 10px; border:1px solid var(--panel-edge); border-radius:6px;
+                   background:rgba(249,252,255,.65); color:var(--muted); text-align:right; font-size:10px;
+                   letter-spacing:.09em; text-transform:uppercase }
+  .refresh-stamp strong { display:block; color:var(--text); font-size:13px; letter-spacing:.02em }
+  .banner { --tone:var(--primary); --tone-bg:#eef6ff; --tone-edge:#a8c9ee;
+            min-height:60px; margin-bottom:14px; padding:12px 16px; display:flex; align-items:center; gap:11px;
+            border:1px solid var(--tone-edge); border-radius:8px; background:var(--tone-bg);
+            box-shadow:0 1px 3px rgba(46,78,107,.07); color:var(--tone) }
+  .banner.good { --tone:var(--good); --tone-bg:var(--good-bg); --tone-edge:var(--good-edge) }
+  .banner.warn { --tone:var(--warn); --tone-bg:var(--warn-bg); --tone-edge:var(--warn-edge) }
+  .banner.bad { --tone:var(--bad); --tone-bg:var(--bad-bg); --tone-edge:var(--bad-edge) }
+  .banner strong { font:400 clamp(20px,2.7vw,27px)/1.05 var(--font-pixel); letter-spacing:.055em }
+  .signal { flex:0 0 auto; width:10px; height:10px; border-radius:2px; background:var(--tone);
+            box-shadow:0 0 0 4px color-mix(in srgb,var(--tone) 13%,transparent) }
+  .status-panel,.notes { border:1px solid var(--panel-edge); border-radius:8px; background:var(--panel);
+                         box-shadow:0 2px 9px rgba(46,78,107,.07); backdrop-filter:blur(8px) }
+  .status-panel { padding:clamp(12px,2vw,20px) }
+  .panel-head { display:flex; align-items:end; justify-content:space-between; gap:12px; margin:0 0 12px }
+  h2 { margin:0; font-size:12px; letter-spacing:.16em; text-transform:uppercase }
+  .panel-head p { margin:0; color:var(--muted); font-size:11px }
+  .table-wrap { width:100%; overflow-x:auto }
+  table { width:100%; border-collapse:collapse; table-layout:fixed }
+  th { padding:8px 10px; border-bottom:1px solid rgba(51,91,124,.2); color:var(--muted);
+       text-align:left; vertical-align:bottom; font-size:10px; font-weight:750; letter-spacing:.1em; text-transform:uppercase }
+  th:first-child,td:first-child { padding-left:4px; width:16% }
+  th:nth-child(2) { width:22% } th:nth-child(3) { width:10% } th:nth-child(4) { width:25% }
+  th:nth-child(5) { width:10% } th:nth-child(6) { width:17% }
+  td { padding:12px 10px; border-bottom:1px solid rgba(51,91,124,.11); vertical-align:top;
+       overflow-wrap:anywhere }
+  tbody tr:last-child td { border-bottom:0 }
+  .location-cell strong { font-size:14px }
+  .good { color:var(--good) } .warn { color:var(--warn) } .bad { color:var(--bad) }
+  .dim { color:var(--muted) } .mono { font:12px/1.5 var(--font-pixel); letter-spacing:.025em }
+  .hdr-sub { font-weight:500; text-transform:none; letter-spacing:0; opacity:.78 }
+  .notes { margin-top:14px; padding:clamp(16px,2.5vw,24px); color:var(--muted); font-size:12px }
+  .notes h2 { margin-bottom:12px; color:var(--text) }
+  .notes p { margin:0 0 12px; max-width:90ch }
+  .notes p:last-child { margin-bottom:0 }
+  code { padding:2px 5px; border:1px solid rgba(51,91,124,.14); border-radius:4px;
+         background:rgba(29,111,209,.07); color:var(--text); font:12px var(--font-pixel) }
+  a { color:var(--primary); font-weight:700; text-underline-offset:2px }
+  @media (max-width:720px) {
+    body { padding:14px 12px 24px }
+    .sky-cloud.two,.sky-cloud.three { display:none }
+    .brand { grid-template-columns:auto minmax(0,1fr); gap:11px }
+    .refresh-stamp { grid-column:1 / -1; width:100%; display:flex; justify-content:space-between;
+                     align-items:center; text-align:left }
+    .refresh-stamp strong { display:inline }
+    .banner { align-items:flex-start; padding:12px 14px }
+    .table-wrap { overflow:visible }
+    table,tbody,tr,td { display:block; width:100% }
+    table { table-layout:auto }
+    thead { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden;
+            clip:rect(0,0,0,0); white-space:nowrap; border:0 }
+    tbody { display:grid; gap:10px }
+    tbody tr { display:grid; grid-template-columns:1fr 1fr; overflow:hidden;
+               border:1px solid rgba(51,91,124,.15); border-radius:7px; background:rgba(255,255,255,.38) }
+    td,th:first-child,td:first-child { width:auto }
+    td { min-width:0; padding:10px 11px; border:0; border-top:1px solid rgba(51,91,124,.09) }
+    td:nth-child(even) { border-left:1px solid rgba(51,91,124,.09) }
+    td::before { content:attr(data-label); display:block; margin-bottom:3px; color:var(--muted);
+                 font-size:9px; font-weight:800; letter-spacing:.1em; text-transform:uppercase }
+    td.location-cell { grid-column:1 / -1; padding:11px; border-top:0; border-left:0;
+                       background:rgba(29,111,209,.045) }
+    .location-cell::before { display:none }
+    .location-cell strong { font-size:15px }
+    .panel-head { align-items:flex-start; flex-direction:column; gap:2px }
+  }
+  @media (max-width:350px) {
+    .frank-face { width:46px; height:46px }
+    .banner strong { font-size:19px }
+    tbody tr { grid-template-columns:1fr }
+    td:nth-child(even) { border-left:0 }
+    .notes { padding:16px 14px }
+  }
+  @media (prefers-reduced-transparency:reduce) {
+    .status-panel,.notes { background:#f9fcff; backdrop-filter:none }
+  }
 </style></head><body>
-<h1>FRANK · forecast worker</h1>
-${banner}
-<table>
-  <tr><th>Location</th><th>Last check<br><span class="hdr-sub">own cycle per location</span></th><th>Data age<br><span class="hdr-sub">last rebuild</span></th><th>Status<br><span class="hdr-sub">data generation</span></th><th>Degraded</th><th>Water / wave run</th></tr>
-  ${rows}
-</table>
-<footer>
+<div class="sky" aria-hidden="true">
+  <svg class="sky-cloud one" viewBox="0 0 34 14"><path d="M2 11h5V9h4V6h3V4h5v2h4v2h6v3h3v2H2z"/><path d="M2 9h5V7h4V4h3V2h5v2h4v2h6v3h3v2H2z"/></svg>
+  <svg class="sky-cloud two" viewBox="0 0 29 13"><path d="M1 10h4V8h3V5h4V3h4v2h3v2h5v3h3v2H1z"/><path d="M1 8h4V6h3V3h4V1h4v2h3v2h5v3h3v2H1z"/></svg>
+  <svg class="sky-cloud three" viewBox="0 0 39 15"><path d="M2 12h6V9h5V7h3V4h5V2h5v3h3v2h5v2h3v3z"/><path d="M2 10h6V7h5V5h3V2h5V0h5v3h3v2h5v2h3v3z"/></svg>
+</div>
+<main class="status-shell">
+  <header class="brand">
+    <div class="frank-face" aria-hidden="true"><span class="face-grid"></span></div>
+    <div><p class="brand-name">F · R · A · N · K</p><h1>Forecast worker</h1><p class="brand-subtitle">Prepared forecast system status</p></div>
+    <div class="refresh-stamp"><span>Auto refresh</span><strong>30 seconds</strong></div>
+  </header>
+  ${banner}
+  <section class="status-panel" aria-labelledby="locations-title">
+    <div class="panel-head"><h2 id="locations-title">Locations</h2><p>Independent forecast cycles</p></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Location</th><th>Last check<br><span class="hdr-sub">own cycle per location</span></th><th>Data age<br><span class="hdr-sub">last rebuild</span></th><th>Status<br><span class="hdr-sub">data generation</span></th><th>Degraded</th><th>Water / wave run</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </section>
+<footer class="notes">
+  <h2>How to read this panel</h2>
   <p>Last check counts from the most recent time the worker asked MET and DMI whether
   anything had changed. The schedule runs every 10 minutes, but the timestamp is only
   written to storage once it is 15 minutes old, because each write comes out of a daily
@@ -255,6 +366,7 @@ ${banner}
   alarm lives at <a href="/health">/health</a>, which returns 503 and a
   <code>reason</code> when either clock trips.</p>
 </footer>
+</main>
 </body></html>
 `);
 }
