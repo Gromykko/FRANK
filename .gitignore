@@ -40,6 +40,9 @@ FUTURE_IDEAS.txt
 
 # Playwright MCP session output
 .playwright-mcp/
+playwright-report/
+test-results/
+blob-report/
 
 # Stray screenshots at repo root
 /*.png

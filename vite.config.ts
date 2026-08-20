@@ -1,7 +1,7 @@
 /// <reference types="vitest" />
 import { execSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import type { Plugin } from 'vite'
 
@@ -132,5 +132,8 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./tests/setup.ts'],
+    // Playwright owns real-browser production tests, while the Worker runtime
+    // suite has its own pool/config. Preserve Vitest's built-in excludes too.
+    exclude: [...configDefaults.exclude, 'tests/e2e/**', 'tests/worker-runtime/**'],
   },
 })

@@ -12,6 +12,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
+    "test:e2e": "npm run build && playwright test",
     "worker:deploy": "wrangler deploy",
     "worker:dry-run": "wrangler deploy --dry-run",
     "worker:dev": "wrangler dev",
