@@ -86,8 +86,34 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
+      - name: Capture deployed production version
+        id: deployed
+        shell: bash
+        run: |
+          previous_id="${{ steps.previous.outputs.version_id }}"
+          version_id=""
+          for attempt in 1 2 3 4 5; do
+            candidate="$(npm run --silent worker:active-version)"
+            if [[ "$candidate" != "$previous_id" ]]; then
+              version_id="$candidate"
+              break
+            fi
+            if [[ "$attempt" -lt 5 ]]; then
+              echo "Cloudflare still reports the pre-deploy version; retrying control-plane lookup ($attempt/5)."
+              sleep $((attempt * 2))
+            fi
+          done
+          if [[ -z "$version_id" ]]; then
+            echo "::error::Cloudflare still reports the pre-deploy Worker version as active after bounded retries."
+            exit 1
+          fi
+          echo "version_id=$version_id" >> "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Warm forecasts and verify release safety
-        run: npm run worker:warm -- --base-url "$FRANK_WORKER_BASE_URL"
+        run: npm run worker:warm -- --base-url "$FRANK_WORKER_BASE_URL" --expected-worker-version-id "${{ steps.deployed.outputs.version_id }}"
 
       - name: Roll back a release that fails its production gate
         if: failure() && steps.deploy.outcome == 'success'

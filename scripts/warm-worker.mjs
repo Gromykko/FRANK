@@ -16,6 +16,8 @@ const DEFAULT_RETRY_DELAY_MS = 2_000;
 const DEFAULT_HEALTH_PROPAGATION_TIMEOUT_MS = 90_000;
 const DEFAULT_HEALTH_RETRY_DELAY_MS = 5_000;
 const MAX_RESPONSE_BODY_CHARS = 64 * 1024;
+const WORKER_VERSION_HEADER = 'x-frank-worker-version';
+const WORKER_VERSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 class WarmupError extends Error {
   constructor(message) {
@@ -44,6 +46,13 @@ function positiveInteger(value, label) {
     throw new WarmupError(`${label} must be a positive integer.`);
   }
   return parsed;
+}
+
+function workerVersionId(value, label) {
+  if (typeof value !== 'string' || !WORKER_VERSION_ID.test(value)) {
+    throw new WarmupError(`${label} must be a valid Cloudflare Worker version ID.`);
+  }
+  return value.toLowerCase();
 }
 
 function normalizeBaseUrl(value) {
@@ -148,24 +157,26 @@ async function requestJson(url, timeoutMs, fetchImpl) {
       redirect: 'error',
       signal: controller.signal,
     });
+    const workerVersionId = response.headers.get(WORKER_VERSION_HEADER)?.toLowerCase() ?? null;
 
     const contentLength = Number(response.headers.get('content-length'));
     if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BODY_CHARS) {
-      return { received: true, status: response.status, reason: 'response too large' };
+      return { received: true, status: response.status, workerVersionId, reason: 'response too large' };
     }
     try {
       const body = await response.text();
       if (body.length > MAX_RESPONSE_BODY_CHARS) {
-        return { received: true, status: response.status, reason: 'response too large' };
+        return { received: true, status: response.status, workerVersionId, reason: 'response too large' };
       }
       return {
         received: true,
         status: response.status,
+        workerVersionId,
         payload: JSON.parse(body),
         retryAfter: response.headers.get('retry-after'),
       };
     } catch {
-      return { received: true, status: response.status, reason: 'invalid JSON' };
+      return { received: true, status: response.status, workerVersionId, reason: 'invalid JSON' };
     }
   } catch (error) {
     return {
@@ -186,6 +197,7 @@ async function requireForecastStage({
   url,
   locationId,
   expectedVersion,
+  expectedWorkerVersionId,
   attempts,
   timeoutMs,
   retryDelayMs,
@@ -195,6 +207,22 @@ async function requireForecastStage({
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     logger.info(`[warm] ${label}: attempt ${attempt}/${attempts}`);
     const result = await requestJson(url, timeoutMs, fetchImpl);
+
+    // `wrangler deploy` updates the control plane before every edge necessarily
+    // serves the new code. Payload shape cannot identify a same-schema release,
+    // and an old Worker can also return a valid initialization response. Check
+    // the runtime's immutable Cloudflare version ID before trusting any body.
+    if (result.received && result.workerVersionId !== expectedWorkerVersionId) {
+      if (attempt < attempts) {
+        const received = result.workerVersionId ?? 'no version identity';
+        logger.warn(`[warm] ${label}: expected Worker ${expectedWorkerVersionId}, received ${received}; retrying`);
+        await delay(retryDelayMs * attempt);
+        continue;
+      }
+      throw new WarmupError(
+        `${label} failed: expected Worker version ${expectedWorkerVersionId} did not become active after ${attempts} attempts.`,
+      );
+    }
 
     if (result.received
       && result.status === 200
@@ -234,8 +262,14 @@ function sameStringSet(left, right) {
     && sortedLeft.every((value, index) => value === sortedRight[index]);
 }
 
-function assessHealth(result, locationIds, transientIds) {
+function assessHealth(result, locationIds, transientIds, expectedWorkerVersionId) {
   if (!result.received) return { kind: 'transport', reason: result.reason };
+  if (result.workerVersionId !== expectedWorkerVersionId) {
+    return {
+      kind: 'identity',
+      reason: `expected Worker ${expectedWorkerVersionId}, received ${result.workerVersionId ?? 'no version identity'}`,
+    };
+  }
   const payload = result.payload;
   if (!payload
     || payload.service !== 'frank-forecast'
@@ -334,6 +368,7 @@ async function requireHealthStage({
   url,
   locationIds,
   transientIds,
+  expectedWorkerVersionId,
   attempts,
   timeoutMs,
   retryDelayMs,
@@ -345,15 +380,16 @@ async function requireHealthStage({
   const deadlineAt = Date.now() + propagationTimeoutMs;
   let transportAttempts = 0;
   let propagationReason;
+  let propagationKind = 'cache';
 
   while (true) {
     if (propagationReason && Date.now() >= deadlineAt) {
-      throw new WarmupError(`health failed after cache propagation window: ${propagationReason}.`);
+      throw new WarmupError(`health failed after ${propagationKind} propagation window: ${propagationReason}.`);
     }
     logger.info('[warm] health: checking');
     const remainingMs = Math.max(1, deadlineAt - Date.now());
     const result = await requestJson(url, Math.min(timeoutMs, remainingMs), fetchImpl);
-    const assessment = assessHealth(result, locationIds, transientIds);
+    const assessment = assessHealth(result, locationIds, transientIds, expectedWorkerVersionId);
 
     if (assessment.kind === 'passed') {
       logger.info('[warm] health: passed');
@@ -367,9 +403,19 @@ async function requireHealthStage({
     if (assessment.kind === 'hard') {
       throw new WarmupError(`health failed: ${assessment.reason}.`);
     }
+    if (assessment.kind === 'identity') {
+      if (Date.now() >= deadlineAt) {
+        throw new WarmupError(`health failed after Worker version propagation window: ${assessment.reason}.`);
+      }
+      propagationReason = assessment.reason;
+      propagationKind = 'Worker version';
+      logger.warn(`[warm] health: ${assessment.reason}; waiting for Worker version propagation`);
+      await delay(Math.min(propagationRetryDelayMs, Math.max(1, deadlineAt - Date.now())));
+      continue;
+    }
     if (assessment.kind === 'transport') {
       if (propagationReason) {
-        logger.warn(`[warm] health: ${assessment.reason}; waiting for KV propagation`);
+        logger.warn(`[warm] health: ${assessment.reason}; waiting for ${propagationKind} propagation`);
         await delay(Math.min(propagationRetryDelayMs, Math.max(1, deadlineAt - Date.now())));
         continue;
       }
@@ -386,6 +432,7 @@ async function requireHealthStage({
       throw new WarmupError(`health failed after cache propagation window: ${assessment.reason}.`);
     }
     propagationReason = assessment.reason;
+    propagationKind = 'cache';
     logger.warn(`[warm] health: ${assessment.reason}; waiting for KV propagation`);
     await delay(Math.min(propagationRetryDelayMs, Math.max(1, deadlineAt - Date.now())));
   }
@@ -395,6 +442,7 @@ export async function warmWorker({
   baseUrl,
   locationIds,
   expectedVersion,
+  expectedWorkerVersionId,
   attempts = DEFAULT_ATTEMPTS,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   retryDelayMs = DEFAULT_RETRY_DELAY_MS,
@@ -416,6 +464,7 @@ export async function warmWorker({
     'Health propagation retry delay',
   );
   const version = positiveInteger(expectedVersion, 'Expected payload version');
+  const expectedWorkerId = workerVersionId(expectedWorkerVersionId, 'Expected Worker version ID');
 
   if (!Array.isArray(locationIds) || locationIds.length === 0) {
     throw new WarmupError('At least one location is required.');
@@ -438,6 +487,7 @@ export async function warmWorker({
       url,
       locationId,
       expectedVersion: version,
+      expectedWorkerVersionId: expectedWorkerId,
       attempts: boundedAttempts,
       timeoutMs: boundedTimeoutMs,
       retryDelayMs: boundedRetryDelayMs,
@@ -451,6 +501,7 @@ export async function warmWorker({
     url: new URL('health', base),
     locationIds,
     transientIds,
+    expectedWorkerVersionId: expectedWorkerId,
     attempts: boundedAttempts,
     timeoutMs: boundedTimeoutMs,
     retryDelayMs: boundedRetryDelayMs,
@@ -479,6 +530,7 @@ function parseArguments(argv) {
   const known = new Set([
     '--base-url',
     '--expected-version',
+    '--expected-worker-version-id',
     '--attempts',
     '--timeout-ms',
     '--retry-delay-ms',
@@ -500,6 +552,7 @@ function parseArguments(argv) {
   return {
     baseUrl: values['--base-url'],
     expectedVersion: values['--expected-version'],
+    expectedWorkerVersionId: values['--expected-worker-version-id'],
     attempts: values['--attempts'],
     timeoutMs: values['--timeout-ms'],
     retryDelayMs: values['--retry-delay-ms'],
@@ -511,6 +564,8 @@ function printHelp() {
 
 Options:
   --expected-version <n>  Override the checked-in payload version
+  --expected-worker-version-id <uuid>
+                          Exact Cloudflare version that must answer every stage
   --attempts <n>          Transport attempts per request (default: ${DEFAULT_ATTEMPTS})
   --timeout-ms <n>        Per-request timeout (default: ${DEFAULT_TIMEOUT_MS})
   --retry-delay-ms <n>    Initial retry delay (default: ${DEFAULT_RETRY_DELAY_MS})`);
@@ -527,11 +582,14 @@ export async function runCli(argv = process.argv.slice(2), environment = process
   const expectedVersion = options.expectedVersion === undefined
     ? contract.expectedVersion
     : positiveInteger(options.expectedVersion, 'Expected payload version');
+  const expectedWorkerVersionId = options.expectedWorkerVersionId
+    ?? environment.FRANK_EXPECTED_WORKER_VERSION_ID;
 
   await warmWorker({
     baseUrl: options.baseUrl ?? environment.FRANK_WORKER_BASE_URL,
     locationIds: contract.locationIds,
     expectedVersion,
+    expectedWorkerVersionId,
     ...(options.attempts === undefined ? {} : { attempts: options.attempts }),
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     ...(options.retryDelayMs === undefined ? {} : { retryDelayMs: options.retryDelayMs }),

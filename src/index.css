@@ -683,7 +683,7 @@ h1, h2, h3, h4, h5, h6 {
 
 .footer-details summary {
   width: fit-content;
-  min-height: 32px;
+  min-height: 44px;
   margin: 0 auto;
   padding: 4px 8px;
   display: flex;
@@ -706,6 +706,63 @@ h1, h2, h3, h4, h5, h6 {
 
 .footer-technical {
   margin-top: 6px;
+}
+
+.privacy-details {
+  width: min(100%, 760px);
+}
+
+.privacy-copy {
+  margin-top: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel-bg) 74%, transparent);
+  color: var(--text-muted);
+  font-size: var(--text-body);
+  text-align: left;
+  line-height: 1.6;
+}
+
+.privacy-copy p {
+  margin: 0 0 10px;
+}
+
+.privacy-copy a {
+  color: var(--primary);
+  font-weight: 650;
+}
+
+.privacy-delete {
+  min-height: 44px;
+  padding: 9px 12px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-xs);
+  background: var(--control-bg);
+  color: var(--text-main);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.privacy-delete:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: var(--primary-bg);
+}
+
+.privacy-delete:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.privacy-delete:disabled {
+  cursor: default;
+  opacity: 0.74;
+}
+
+.privacy-delete-note {
+  min-height: 1.6em;
+  margin: 8px 0 0 !important;
 }
 
 /* Loader Styles */
@@ -956,8 +1013,10 @@ h1, h2, h3, h4, h5, h6 {
    location payload is ready. */
 .initialization-page {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 12px;
   min-height: min(720px, 100dvh);
   padding-top: max(32px, env(safe-area-inset-top));
   padding-bottom: max(32px, env(safe-area-inset-bottom));

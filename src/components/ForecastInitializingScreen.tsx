@@ -3,6 +3,7 @@ import { CURRENT_LOCATION } from '../config/locations';
 import type { ForecastInitializationState } from '../features/forecast/useForecast';
 import { useLang } from '../i18n';
 import LocationSwitcher from './LocationSwitcher';
+import PrivacyNotice from './PrivacyNotice';
 
 interface ForecastInitializingScreenProps {
   initialization: ForecastInitializationState;
@@ -73,6 +74,7 @@ export default function ForecastInitializingScreen({
           <LocationSwitcher label={CURRENT_LOCATION.areaName} currentState="initializing" />
         </div>
       </section>
+      <PrivacyNotice />
     </main>
   );
 }

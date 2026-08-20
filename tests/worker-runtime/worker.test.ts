@@ -22,7 +22,8 @@ function requireHorsensLocation(): ForecastLocation {
 }
 
 const HORSENS = requireHorsensLocation();
-const FORECAST_KEY = `forecast:${HORSENS.id}:weather-data:v1`;
+const FORECAST_KEY = `forecast:${HORSENS.id}:weather-data:v${FORECAST_PAYLOAD_VERSION}`;
+const LEGACY_FORECAST_KEY = `forecast:${HORSENS.id}:weather-data:v1`;
 type PublicHealthPayload = Omit<HealthPayload, 'ages' | 'storageUnavailable'>;
 
 function currentHorsensForecast(nowMs = Date.now()): ForecastData {
@@ -88,6 +89,14 @@ async function dispatch(path: string, method = 'GET'): Promise<Response> {
   return response;
 }
 
+function expectCurrentWorkerVersion(response: Response): void {
+  const versionId = response.headers.get('x-frank-worker-version');
+  expect(versionId).toBe(env.CF_VERSION_METADATA.id);
+  expect(versionId).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  );
+}
+
 function rejectLiveNetwork() {
   return vi.spyOn(globalThis, 'fetch').mockRejectedValue(
     new Error('Unexpected live provider request from Worker runtime test'),
@@ -119,6 +128,8 @@ describe('Worker runtime integration contract', () => {
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(response.headers.get('access-control-allow-origin')).toBe('*');
     expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(response.headers.get('access-control-expose-headers')).toContain('X-FRANK-Worker-Version');
+    expectCurrentWorkerVersion(response);
 
     const body = await response.json<ForecastData>();
     expect(body.sources.location).toEqual({
@@ -143,6 +154,33 @@ describe('Worker runtime integration contract', () => {
     expect(providerFetch).not.toHaveBeenCalled();
   });
 
+  it('writes the current assembled cache without altering the legacy v1 rollback cache', async () => {
+    expect(FORECAST_PAYLOAD_VERSION).toBeGreaterThan(1);
+    const providerFetch = rejectLiveNetwork();
+    const nowMs = Date.now();
+    const legacy = currentHorsensForecast(nowMs - 20 * 60_000);
+    legacy.sources.payloadVersion = 1;
+    legacy.sources.cacheHealth = {
+      ...legacy.sources.cacheHealth!,
+      message: 'legacy rollback sentinel',
+    };
+    const legacyRaw = JSON.stringify(legacy);
+    await env.FRANK_FORECAST_CACHE.put(LEGACY_FORECAST_KEY, legacyRaw);
+
+    const current = currentHorsensForecast(nowMs - 11 * 60_000);
+    await env.FRANK_FORECAST_CACHE.put(FORECAST_KEY, JSON.stringify(current));
+
+    const response = await dispatch('/forecast/horsens?refresh=1');
+    expect(response.status).toBe(200);
+    expect((await response.json<ForecastData>()).sources.cacheHealth?.status).toBe('pending');
+
+    const storedCurrent = await env.FRANK_FORECAST_CACHE.get<ForecastData>(FORECAST_KEY, 'json');
+    expect(Date.parse(storedCurrent?.sources.cacheHealth?.lastAttemptAt ?? ''))
+      .toBeGreaterThan(Date.parse(current.sources.cacheHealth?.lastAttemptAt ?? ''));
+    expect(await env.FRANK_FORECAST_CACHE.get(LEGACY_FORECAST_KEY)).toBe(legacyRaw);
+    expect(providerFetch).not.toHaveBeenCalled();
+  });
+
   it('persists and honors a real-KV initialization cooldown after a typed 429', async () => {
     await env.FRANK_FORECAST_CACHE.delete(FORECAST_KEY);
     const providerFetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
@@ -153,6 +191,7 @@ describe('Worker runtime integration contract', () => {
     const first = await dispatch('/forecast/horsens');
     expect(first.status).toBe(503);
     expect(first.headers.get('retry-after')).toBe('600');
+    expectCurrentWorkerVersion(first);
     const body = await first.json<ForecastInitializingPayload>();
     expect(body).toMatchObject({
       schemaVersion: 1,
@@ -187,16 +226,19 @@ describe('Worker runtime integration contract', () => {
     expect(head.status).toBe(200);
     expect(await head.text()).toBe('');
     expect(head.headers.get('content-type')).toBe('application/json; charset=utf-8');
+    expectCurrentWorkerVersion(head);
 
     const options = await dispatch('/forecast/horsens', 'OPTIONS');
     expect(options.status).toBe(204);
     expect(options.headers.get('allow')).toBe('GET, HEAD, OPTIONS');
     expect(options.headers.get('access-control-allow-methods')).toBe('GET, HEAD, OPTIONS');
+    expectCurrentWorkerVersion(options);
 
     const unknown = await dispatch('/does-not-exist');
     expect(unknown.status).toBe(404);
     expect(await unknown.json()).toEqual({ error: 'Not found' });
     expect(unknown.headers.get('access-control-allow-origin')).toBe('*');
+    expectCurrentWorkerVersion(unknown);
     expect(providerFetch).not.toHaveBeenCalled();
   });
 

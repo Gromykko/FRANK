@@ -2,6 +2,7 @@ import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { CURRENT_LOCATION } from '../config/locations';
 import { useLang } from '../i18n';
 import LocationSwitcher from './LocationSwitcher';
+import PrivacyNotice from './PrivacyNotice';
 
 interface ForecastErrorScreenProps {
   message: string;
@@ -32,6 +33,7 @@ export default function ForecastErrorScreen({ message, onRetry }: ForecastErrorS
         <span className="error-screen-location-copy">{t('Or choose another location:')}</span>
         <LocationSwitcher label={CURRENT_LOCATION.areaName} />
       </div>
+      <PrivacyNotice />
     </div>
   );
 }

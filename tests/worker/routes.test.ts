@@ -4,6 +4,7 @@ import { FORECAST_PAYLOAD_VERSION } from '../../src/features/forecast/types';
 
 const LAST_COMPLETED_CHECK = new Date(Date.now() - 5 * 60_000).toISOString();
 const CURRENT_RUN = new Date().toISOString();
+const WORKER_VERSION_ID = 'cba7bd5e-93f4-4df7-8b61-8f00d5b6f3a1';
 
 function cachedForecast() {
   return {
@@ -59,6 +60,11 @@ function makeRuntime(
   const waits: Promise<unknown>[] = [];
   const puts: Array<{ key: string; value: string }> = [];
   const env = {
+    CF_VERSION_METADATA: {
+      id: WORKER_VERSION_ID,
+      tag: 'unit-test',
+      timestamp: '2026-08-20T12:00:00.000Z',
+    },
     FRANK_FORECAST_CACHE: {
       get: async (key: string, type?: string) => {
         if (key.startsWith('forecast:')) {

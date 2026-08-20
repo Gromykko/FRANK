@@ -7,7 +7,8 @@ import type { HourlyData, WeatherData } from '../../../src/features/forecast/typ
 import { isValidForecastPayload } from '../../../src/features/forecast/validatePayload';
 
 const NOW = Date.parse('2026-08-12T12:00:00Z');
-const CACHE_KEY = `frank_weather_data_v2_${CURRENT_LOCATION.id}`;
+const LEGACY_CACHE_KEY = `frank_weather_data_v2_${CURRENT_LOCATION.id}`;
+const CACHE_KEY = `${LEGACY_CACHE_KEY}_v6`;
 
 function hour(time: string, blockSpanHours?: number): HourlyData {
   return {
@@ -333,11 +334,11 @@ describe('browser forecast cache recovery', () => {
     vi.spyOn(Date, 'now').mockReturnValue(NOW);
     const legacyPending = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
     legacyPending.sources.cacheHealth = { ...legacyPending.sources.cacheHealth!, status: 'pending' };
-    localStorage.setItem(CACHE_KEY, JSON.stringify(legacyPending));
+    localStorage.setItem(LEGACY_CACHE_KEY, JSON.stringify(legacyPending));
 
     const loaded = await loadCachedWeatherData(CURRENT_LOCATION);
     expect(loaded.data?.sources.cacheHealth?.status).toBe('stale');
-    expect(JSON.parse(localStorage.getItem(CACHE_KEY)!).sources.cacheHealth.status).toBe('stale');
+    expect(JSON.parse(localStorage.getItem(LEGACY_CACHE_KEY)!).sources.cacheHealth.status).toBe('stale');
   });
 
   it('loads a forecast built over six hours ago when it still has future hours', async () => {
@@ -398,7 +399,7 @@ describe('browser forecast cache recovery', () => {
     vi.stubGlobal('fetch', fetchMock);
     const legacy = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
     delete legacy.sources.payloadVersion;
-    localStorage.setItem(CACHE_KEY, JSON.stringify(legacy));
+    localStorage.setItem(LEGACY_CACHE_KEY, JSON.stringify(legacy));
 
     const loaded = await loadCachedWeatherData(CURRENT_LOCATION);
 
@@ -465,11 +466,78 @@ describe('browser forecast cache recovery', () => {
     const versioned = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
     const legacy = structuredClone(versioned);
     delete legacy.sources.payloadVersion;
-    localStorage.setItem(CACHE_KEY, JSON.stringify(legacy));
+    localStorage.setItem(LEGACY_CACHE_KEY, JSON.stringify(legacy));
 
     saveCachedWeatherData(versioned, CURRENT_LOCATION);
 
     expect(JSON.parse(localStorage.getItem(CACHE_KEY)!).sources.payloadVersion).toBe(versioned.sources.payloadVersion);
+    expect(JSON.parse(localStorage.getItem(LEGACY_CACHE_KEY)!).sources.payloadVersion).toBeUndefined();
+  });
+
+  it('keeps the legacy slot intact so an older open app survives a contract upgrade', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const oldClientCopy = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
+    localStorage.setItem(LEGACY_CACHE_KEY, JSON.stringify(oldClientCopy));
+
+    const currentClientCopy = structuredClone(oldClientCopy);
+    currentClientCopy.sources.payloadVersion = FORECAST_PAYLOAD_VERSION;
+    currentClientCopy.sources.fetchedAt = new Date(NOW).toISOString();
+    saveCachedWeatherData(currentClientCopy, CURRENT_LOCATION);
+
+    expect(JSON.parse(localStorage.getItem(LEGACY_CACHE_KEY)!)).toEqual(oldClientCopy);
+    expect(JSON.parse(localStorage.getItem(`${LEGACY_CACHE_KEY}_v${FORECAST_PAYLOAD_VERSION}`)!))
+      .toEqual(currentClientCopy);
+  });
+
+  it('chooses the newest usable copy across contract versions', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const older = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
+    saveCachedWeatherData(older, CURRENT_LOCATION);
+
+    const newer = structuredClone(older);
+    newer.sources.payloadVersion = FORECAST_PAYLOAD_VERSION;
+    newer.sources.fetchedAt = new Date(NOW).toISOString();
+    newer.sources.cacheHealth = { status: 'current', lastAttemptAt: newer.sources.fetchedAt };
+    saveCachedWeatherData(newer, CURRENT_LOCATION);
+
+    const loaded = await loadCachedWeatherData(CURRENT_LOCATION, { localOnly: true });
+    expect(loaded.data?.sources.payloadVersion).toBe(FORECAST_PAYLOAD_VERSION);
+    expect(loaded.data?.sources.fetchedAt).toBe(newer.sources.fetchedAt);
+  });
+
+  it('does not let one corrupt version mask another usable offline copy', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    localStorage.setItem(`${LEGACY_CACHE_KEY}_v${FORECAST_PAYLOAD_VERSION}`, '{not-json');
+    const valid = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
+    saveCachedWeatherData(valid, CURRENT_LOCATION);
+
+    const loaded = await loadCachedWeatherData(CURRENT_LOCATION, { localOnly: true });
+    expect(loaded.data?.sources.payloadVersion).toBe(6);
+  });
+
+  it('ignores a future-version browser slot and retains the compatible slot for offline recovery', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const compatible = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
+    compatible.sources.payloadVersion = FORECAST_PAYLOAD_VERSION;
+    compatible.sources.fetchedAt = new Date(NOW - 5 * 60 * 1000).toISOString();
+    compatible.sources.cacheHealth = { status: 'current', lastAttemptAt: compatible.sources.fetchedAt };
+    saveCachedWeatherData(compatible, CURRENT_LOCATION);
+
+    const future = structuredClone(compatible);
+    future.sources.payloadVersion = FORECAST_PAYLOAD_VERSION + 1;
+    future.sources.fetchedAt = new Date(NOW).toISOString();
+    future.sources.cacheHealth = { status: 'current', lastAttemptAt: future.sources.fetchedAt };
+    const compatibleKey = `${LEGACY_CACHE_KEY}_v${FORECAST_PAYLOAD_VERSION}`;
+    const futureKey = `${LEGACY_CACHE_KEY}_v${FORECAST_PAYLOAD_VERSION + 1}`;
+    const compatibleRaw = localStorage.getItem(compatibleKey);
+    const futureRaw = JSON.stringify(future);
+    localStorage.setItem(futureKey, futureRaw);
+
+    const loaded = await loadCachedWeatherData(CURRENT_LOCATION, { localOnly: true });
+
+    expect(loaded).toEqual({ data: compatible, from: 'local' });
+    expect(localStorage.getItem(compatibleKey)).toBe(compatibleRaw);
+    expect(localStorage.getItem(futureKey)).toBe(futureRaw);
   });
 
   it('aligns browser timeouts with cached and true cold-start Worker paths', async () => {

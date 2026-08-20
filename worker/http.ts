@@ -1,4 +1,5 @@
 export const ALLOW_READ_METHODS = 'GET, HEAD, OPTIONS';
+export const WORKER_VERSION_HEADER = 'X-FRANK-Worker-Version';
 
 export type WorkerRoute =
   | { kind: 'root' }
@@ -22,7 +23,7 @@ export function corsHeaders(): Record<string, string> {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': ALLOW_READ_METHODS,
     'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Expose-Headers': 'Retry-After, X-FRANK-Background-Check',
+    'Access-Control-Expose-Headers': `Retry-After, X-FRANK-Background-Check, ${WORKER_VERSION_HEADER}`,
     'Access-Control-Max-Age': '86400',
   };
 }
@@ -50,6 +51,15 @@ export function headResponse(response: Response): Response {
     statusText: response.statusText,
     headers: response.headers,
   });
+}
+
+export function withWorkerVersion(response: Response, versionId: string): Response {
+  // Every route, status, and error response identifies the immutable Worker
+  // version that produced it. The post-deploy gate compares this value with
+  // Cloudflare's active control-plane version, so an older edge response can
+  // never make a new release look healthy.
+  response.headers.set(WORKER_VERSION_HEADER, versionId);
+  return response;
 }
 
 export function optionsResponse(): Response {

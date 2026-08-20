@@ -25,6 +25,7 @@ import WarningStripe from './components/WarningStripe';
 import ErrorBoundary from './components/ErrorBoundary';
 import ForecastErrorScreen from './components/ForecastErrorScreen';
 import ForecastInitializingScreen from './components/ForecastInitializingScreen';
+import PrivacyNotice from './components/PrivacyNotice';
 import { getFrankPhrase } from './features/safety/frankPhrases';
 import { getSafetyDisplay, hasActiveSafetyChecks } from './features/safety/safetyDisplay';
 import { useSettings } from './hooks/useSettings';
@@ -455,6 +456,7 @@ export default function App() {
               <span className="footer-build">{appBuildLabel}</span>
             </p>
           </details>
+          <PrivacyNotice />
         </div>
       </footer>
     </>

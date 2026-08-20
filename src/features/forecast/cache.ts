@@ -18,8 +18,21 @@ const COLD_WORKER_FETCH_TIMEOUT_MS = 32 * 1000;
 
 const FORECAST_WORKER_BASE = (import.meta.env.VITE_FORECAST_WORKER_BASE ?? DEFAULT_FORECAST_WORKER_BASE).replace(/\/$/, '');
 
-function getWeatherCacheKey(location: ForecastLocation): string {
+function getLegacyWeatherCacheKey(location: ForecastLocation): string {
   return `${WEATHER_CACHE_KEY_PREFIX}_${location.id}`;
+}
+
+function getWeatherCacheKey(location: ForecastLocation, payloadVersion: number): string {
+  return `${getLegacyWeatherCacheKey(location)}_v${payloadVersion}`;
+}
+
+function getWeatherCacheKeys(location: ForecastLocation): string[] {
+  const legacyKey = getLegacyWeatherCacheKey(location);
+  const versionedKeyPattern = new RegExp(`^${legacyKey}_v\\d+$`);
+  return [
+    ...Object.keys(localStorage).filter((key) => versionedKeyPattern.test(key)),
+    legacyKey,
+  ];
 }
 
 function hasCurrentForecastWindow(data: WeatherData): boolean {
@@ -40,6 +53,9 @@ export function saveCachedWeatherData(data: WeatherData, location: ForecastLocat
   // location. The relaxed unversioned policy is only for already-saved legacy
   // data in readLocalCachedWeatherData below.
   if (!isValidForecastPayload(data, location)) return;
+  const payloadVersion = data.sources.payloadVersion;
+  if (typeof payloadVersion !== 'number' || !Number.isSafeInteger(payloadVersion)) return;
+  const cacheKey = getWeatherCacheKey(location, payloadVersion);
 
   // `pending` exists only on the immediate response to ?refresh=1 while the
   // Worker rebuilds in waitUntil. It is not durable forecast health. Persisting
@@ -48,7 +64,7 @@ export function saveCachedWeatherData(data: WeatherData, location: ForecastLocat
   if (data.sources.cacheHealth?.status === 'pending') return;
 
   try {
-    const existingRaw = localStorage.getItem(getWeatherCacheKey(location));
+    const existingRaw = localStorage.getItem(cacheKey);
     if (existingRaw) {
       try {
         const existing = reviveReadings(JSON.parse(existingRaw));
@@ -64,7 +80,10 @@ export function saveCachedWeatherData(data: WeatherData, location: ForecastLocat
         // recovery forever.
       }
     }
-    localStorage.setItem(getWeatherCacheKey(location), JSON.stringify(data));
+    // Do not write the pre-versioned legacy key. An older still-open app reads
+    // that slot and cannot validate a future payload contract. Keeping one
+    // slot per contract lets old/new tabs and rollback builds coexist safely.
+    localStorage.setItem(cacheKey, JSON.stringify(data));
   } catch {
     // Caching also provides the offline fallback, but storage can be blocked;
     // the live forecast remains usable for the current session.
@@ -72,39 +91,57 @@ export function saveCachedWeatherData(data: WeatherData, location: ForecastLocat
 }
 
 function readLocalCachedWeatherData(location: ForecastLocation): WeatherData | null {
+  let cacheKeys: string[];
   try {
-    const raw = localStorage.getItem(getWeatherCacheKey(location));
-    if (!raw) return null;
+    cacheKeys = getWeatherCacheKeys(location);
+  } catch {
+    return null;
+  }
 
-    const parsed = reviveReadings(JSON.parse(raw));
-    // Accept any structurally usable saved forecast that still covers now or
-    // the future. Its build age is presentation state, not a load gate:
-    // deriveCacheStatus marks data older than six hours as stale and App shows
-    // the caution banner. Rejecting it here instead strands an offline paddler
-    // on the no-forecast screen despite having actionable hours on the device.
-    if (isValidForecastPayload(parsed, location, { allowLegacyMissingVersion: true }) && hasCurrentForecastWindow(parsed)) {
+  let best: WeatherData | null = null;
+  for (const cacheKey of cacheKeys) {
+    try {
+      const raw = localStorage.getItem(cacheKey);
+      if (!raw) continue;
+
+      const parsed = reviveReadings(JSON.parse(raw));
+      // Accept any structurally usable saved forecast that still covers now or
+      // the future. Its build age is presentation state, not a load gate:
+      // deriveCacheStatus marks data older than six hours as stale and App shows
+      // the caution banner. Rejecting it here instead strands an offline paddler
+      // on the no-forecast screen despite having actionable hours on the device.
+      if (!isValidForecastPayload(parsed, location, { allowLegacyMissingVersion: true }) || !hasCurrentForecastWindow(parsed)) {
+        continue;
+      }
+
+      let candidate = parsed;
       if (parsed.sources.cacheHealth?.status === 'pending') {
         // Heal copies written by older clients before pending became
         // response-only. The overwritten completed status cannot be recovered,
         // so stale is the conservative stable state: usable data, amber honesty,
-        // and never a permanent in-flight claim.
-        const healed: WeatherData = {
+        // and never a permanent in-flight claim. Write back to the same key so
+        // an unversioned legacy copy is healed without recursing through save.
+        candidate = {
           ...parsed,
           sources: {
             ...parsed.sources,
             cacheHealth: { ...parsed.sources.cacheHealth, status: 'stale' },
           },
         };
-        saveCachedWeatherData(healed, location);
-        return healed;
+        try {
+          localStorage.setItem(cacheKey, JSON.stringify(candidate));
+        } catch {
+          // The healed in-memory copy is still safer for this session when a
+          // browser policy blocks the best-effort persistence repair.
+        }
       }
-      return parsed;
-    }
-  } catch {
-    return null;
-  }
 
-  return null;
+      if (!best || shouldApplyForecastUpdate(best, candidate)) best = candidate;
+    } catch {
+      // One corrupt copy/version must not mask another valid offline forecast.
+    }
+  }
+  return best;
 }
 
 interface WorkerCacheRead {
@@ -125,15 +162,14 @@ async function readWorkerCachedWeatherData(
 
   let receivedResponse = false;
   try {
-    const query = new URLSearchParams({
-      cacheBust: String(Date.now()),
-    });
+    const query = new URLSearchParams();
 
     if (forceRefresh) {
       query.set('refresh', '1');
     }
 
-    const response = await fetch(`${FORECAST_WORKER_BASE}/forecast/${location.id}?${query.toString()}`, {
+    const queryString = query.size > 0 ? `?${query.toString()}` : '';
+    const response = await fetch(`${FORECAST_WORKER_BASE}/forecast/${location.id}${queryString}`, {
       cache: 'no-store',
       // Kayakers open this on fjord-edge mobile signal, where a socket can
       // stay open indefinitely without ever answering. Without a deadline the

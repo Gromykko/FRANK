@@ -6,6 +6,7 @@ import {
   matchRoute,
   methodNotAllowedResponse,
   optionsResponse,
+  withWorkerVersion,
 } from './http';
 import {
   buildHealthPayload,
@@ -155,7 +156,10 @@ const CHECKED_STAMP_MIN_WRITE_INTERVAL_MS = 15 * 60 * 1000;
 const MANUAL_STAMP_MIN_WRITE_INTERVAL_MS = 10 * 60 * 1000;
 
 function cacheKey(location: Pick<ForecastLocation, 'id'>): string {
-  return `forecast:${location.id}:weather-data:v1`;
+  // Keep assembled payloads isolated by their public schema. A new release
+  // must never overwrite the last cache that the previous Worker understands:
+  // Cloudflare code rollback does not roll KV data back with it.
+  return `forecast:${location.id}:weather-data:v${PAYLOAD_VERSION}`;
 }
 
 function initializationKey(location: Pick<ForecastLocation, 'id'>): string {
@@ -1011,6 +1015,11 @@ async function handleStatusRequest(env: Env): Promise<Response> {
 
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const finalize = (response: Response): Response => withWorkerVersion(
+      request.method === 'HEAD' ? headResponse(response) : response,
+      env.CF_VERSION_METADATA.id,
+    );
+
     try {
       // Request-scoped only: never retain I/O promises in module state across
       // Cloudflare events.
@@ -1020,15 +1029,15 @@ const worker = {
 
       if (!route) {
         const response = jsonResponse({ error: 'Not found' }, 404);
-        return request.method === 'HEAD' ? headResponse(response) : response;
+        return finalize(response);
       }
 
       if (request.method === 'OPTIONS') {
-        return optionsResponse();
+        return finalize(optionsResponse());
       }
 
       if (request.method !== 'GET' && request.method !== 'HEAD') {
-        return methodNotAllowedResponse();
+        return finalize(methodNotAllowedResponse());
       }
 
       let response: Response;
@@ -1047,7 +1056,7 @@ const worker = {
         response = await handleForecastRequest(request, env, ctx, route.locationId, eventMemo);
       }
 
-      return request.method === 'HEAD' ? headResponse(response) : response;
+      return finalize(response);
     } catch (error) {
       // Reachable only because the handlers above are AWAITED. Returning their
       // promises un-awaited let a rejection escape this try entirely, so a
@@ -1057,7 +1066,7 @@ const worker = {
         error: 'Forecast service failed',
         message: 'An internal error occurred while fetching or processing forecast data.',
       }, 503);
-      return request.method === 'HEAD' ? headResponse(response) : response;
+      return finalize(response);
     }
   },
 

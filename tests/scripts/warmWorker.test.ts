@@ -10,6 +10,12 @@ import { loadReleaseContract, warmWorker } from '../../scripts/warm-worker.mjs';
 const SCRIPT_PATH = fileURLToPath(new URL('../../scripts/warm-worker.mjs', import.meta.url));
 const openServers: Server[] = [];
 const silentLogger = { info: () => {}, warn: () => {} };
+const EXPECTED_WORKER_VERSION_ID = 'cba7bd5e-93f4-4df7-8b61-8f00d5b6f3a1';
+const PREVIOUS_WORKER_VERSION_ID = 'b667d0b0-cb02-482d-b418-bfb56826ee0f';
+
+function warmRelease(options: Parameters<typeof warmWorker>[0]) {
+  return warmWorker({ expectedWorkerVersionId: EXPECTED_WORKER_VERSION_ID, ...options });
+}
 
 async function listen(handler: Parameters<typeof createServer>[0]) {
   const server = createServer(handler);
@@ -21,8 +27,16 @@ async function listen(handler: Parameters<typeof createServer>[0]) {
   return `http://127.0.0.1:${address.port}/`;
 }
 
-function json(response: Parameters<NonNullable<Parameters<typeof createServer>[0]>>[1], status: number, body: unknown) {
-  response.writeHead(status, { 'Content-Type': 'application/json' });
+function json(
+  response: Parameters<NonNullable<Parameters<typeof createServer>[0]>>[1],
+  status: number,
+  body: unknown,
+  workerVersionId: string | null = EXPECTED_WORKER_VERSION_ID,
+) {
+  response.writeHead(status, {
+    'Content-Type': 'application/json',
+    ...(workerVersionId ? { 'X-FRANK-Worker-Version': workerVersionId } : {}),
+  });
   response.end(JSON.stringify(body));
 }
 
@@ -104,6 +118,19 @@ afterEach(async () => {
 });
 
 describe('Worker deployment warm-up', () => {
+  it('fails closed before making requests when the expected Worker identity is invalid', async () => {
+    const fetchImpl = async () => new Response();
+
+    await expect(warmWorker({
+      baseUrl: 'https://frank.test/',
+      locationIds: ['horsens'],
+      expectedVersion: 7,
+      expectedWorkerVersionId: 'not-a-worker-version',
+      fetchImpl,
+      logger: silentLogger,
+    })).rejects.toThrow('Expected Worker version ID must be a valid Cloudflare Worker version ID');
+  });
+
   it('warms configured locations sequentially before checking health', async () => {
     const contract = await loadReleaseContract();
     const requests: string[] = [];
@@ -115,7 +142,7 @@ describe('Worker deployment warm-up', () => {
       return json(response, 404, { error: 'not found' });
     });
 
-    await warmWorker({
+    await warmRelease({
       baseUrl,
       locationIds: contract.locationIds,
       expectedVersion: contract.expectedVersion,
@@ -149,7 +176,7 @@ describe('Worker deployment warm-up', () => {
       return json(response, 404, { error: 'not found' });
     });
 
-    await warmWorker({
+    await warmRelease({
       baseUrl,
       locationIds: ['horsens', 'vejle'],
       expectedVersion: 7,
@@ -165,6 +192,67 @@ describe('Worker deployment warm-up', () => {
       '/forecast/vejle?warm=1',
       '/health',
     ]);
+  });
+
+  it('retries a same-schema forecast from the previous Worker during edge propagation', async () => {
+    const requests: string[] = [];
+    let horsensAttempts = 0;
+    const baseUrl = await listen((request, response) => {
+      requests.push(request.url ?? '');
+      if (request.url === '/forecast/horsens?warm=1') {
+        horsensAttempts += 1;
+        return json(
+          response,
+          200,
+          forecast('horsens'),
+          horsensAttempts === 1 ? PREVIOUS_WORKER_VERSION_ID : EXPECTED_WORKER_VERSION_ID,
+        );
+      }
+      if (request.url === '/forecast/vejle?warm=1') return json(response, 200, forecast('vejle'));
+      if (request.url === '/health') return json(response, 200, health(['horsens', 'vejle']));
+      return json(response, 404, { error: 'not found' });
+    });
+
+    await warmRelease({
+      baseUrl,
+      locationIds: ['horsens', 'vejle'],
+      expectedVersion: 7,
+      attempts: 2,
+      timeoutMs: 500,
+      retryDelayMs: 1,
+      logger: silentLogger,
+    });
+
+    expect(requests).toEqual([
+      '/forecast/horsens?warm=1',
+      '/forecast/horsens?warm=1',
+      '/forecast/vejle?warm=1',
+      '/health',
+    ]);
+  });
+
+  it('fails when an older Worker version remains active after bounded retries', async () => {
+    let attempts = 0;
+    const baseUrl = await listen((request, response) => {
+      if (request.url?.startsWith('/forecast/horsens')) {
+        attempts += 1;
+        return json(response, 200, forecast('horsens'), PREVIOUS_WORKER_VERSION_ID);
+      }
+      return json(response, 404, { error: 'not found' });
+    });
+
+    await expect(warmRelease({
+      baseUrl,
+      locationIds: ['horsens'],
+      expectedVersion: 7,
+      attempts: 2,
+      timeoutMs: 500,
+      retryDelayMs: 1,
+      logger: silentLogger,
+    })).rejects.toThrow(
+      `expected Worker version ${EXPECTED_WORKER_VERSION_ID} did not become active after 2 attempts`,
+    );
+    expect(attempts).toBe(2);
   });
 
   it('waits for each cold warm-up response before starting the next location or health', async () => {
@@ -193,7 +281,7 @@ describe('Worker deployment warm-up', () => {
       return json(response, 404, { error: 'not found' });
     });
 
-    await warmWorker({
+    await warmRelease({
       baseUrl,
       locationIds: ['horsens', 'vejle'],
       expectedVersion: 7,
@@ -211,14 +299,21 @@ describe('Worker deployment warm-up', () => {
     ]);
   });
 
-  it('accepts a versioned initializing response once, continues sequentially, and reports amber', async () => {
+  it('retries a missing identity even for initialization, then continues and reports amber', async () => {
     const requests: string[] = [];
     const warnings: string[] = [];
+    let horsensAttempts = 0;
     const baseUrl = await listen((request, response) => {
       requests.push(request.url ?? '');
       if (request.url === '/forecast/horsens?warm=1') {
+        horsensAttempts += 1;
         response.setHeader('Retry-After', '600');
-        return json(response, 503, initializing('horsens'));
+        return json(
+          response,
+          503,
+          initializing('horsens'),
+          horsensAttempts === 1 ? null : EXPECTED_WORKER_VERSION_ID,
+        );
       }
       if (request.url === '/forecast/vejle?warm=1') {
         return json(response, 200, forecast('vejle'));
@@ -229,7 +324,7 @@ describe('Worker deployment warm-up', () => {
       return json(response, 404, { error: 'not found' });
     });
 
-    const result = await warmWorker({
+    const result = await warmRelease({
       baseUrl,
       locationIds: ['horsens', 'vejle'],
       expectedVersion: 7,
@@ -240,6 +335,7 @@ describe('Worker deployment warm-up', () => {
     });
 
     expect(requests).toEqual([
+      '/forecast/horsens?warm=1',
       '/forecast/horsens?warm=1',
       '/forecast/vejle?warm=1',
       '/health',
@@ -269,7 +365,7 @@ describe('Worker deployment warm-up', () => {
       return json(response, 404, { error: 'not found' });
     });
 
-    await warmWorker({
+    await warmRelease({
       baseUrl,
       locationIds: ['horsens', 'vejle'],
       expectedVersion: 7,
@@ -285,6 +381,39 @@ describe('Worker deployment warm-up', () => {
     expect(requests.slice(-2)).toEqual(['/health', '/health']);
   });
 
+  it('waits for the expected Worker identity to reach the health route', async () => {
+    let healthChecks = 0;
+    const baseUrl = await listen((request, response) => {
+      if (request.url?.startsWith('/forecast/horsens')) {
+        return json(response, 200, forecast('horsens'));
+      }
+      if (request.url === '/health') {
+        healthChecks += 1;
+        return json(
+          response,
+          200,
+          health(['horsens']),
+          healthChecks === 1 ? PREVIOUS_WORKER_VERSION_ID : EXPECTED_WORKER_VERSION_ID,
+        );
+      }
+      return json(response, 404, { error: 'not found' });
+    });
+
+    await warmRelease({
+      baseUrl,
+      locationIds: ['horsens'],
+      expectedVersion: 7,
+      attempts: 1,
+      timeoutMs: 500,
+      retryDelayMs: 1,
+      healthPropagationTimeoutMs: 100,
+      healthPropagationRetryDelayMs: 1,
+      logger: silentLogger,
+    });
+
+    expect(healthChecks).toBe(2);
+  });
+
   it('accepts operationally red stale health without pretending it is green', async () => {
     const warnings: string[] = [];
     const baseUrl = await listen((request, response) => {
@@ -296,7 +425,7 @@ describe('Worker deployment warm-up', () => {
       return json(response, 404, { error: 'not found' });
     });
 
-    const result = await warmWorker({
+    const result = await warmRelease({
       baseUrl,
       locationIds: ['horsens', 'vejle'],
       expectedVersion: 7,
@@ -323,7 +452,7 @@ describe('Worker deployment warm-up', () => {
       return json(response, 404, { error: 'not found' });
     });
 
-    await expect(warmWorker({
+    await expect(warmRelease({
       baseUrl,
       locationIds: ['horsens'],
       expectedVersion: 7,
@@ -351,7 +480,7 @@ describe('Worker deployment warm-up', () => {
       return json(response, 404, { error: 'not found' });
     });
 
-    await expect(warmWorker({
+    await expect(warmRelease({
       baseUrl,
       locationIds: ['horsens'],
       expectedVersion: 7,
@@ -374,7 +503,7 @@ describe('Worker deployment warm-up', () => {
       return json(response, 404, { error: 'not found' });
     });
 
-    await expect(warmWorker({
+    await expect(warmRelease({
       baseUrl,
       locationIds: ['horsens'],
       expectedVersion: 7,
@@ -392,7 +521,7 @@ describe('Worker deployment warm-up', () => {
       // Deliberately leave the response open until AbortSignal closes it.
     });
 
-    await expect(warmWorker({
+    await expect(warmRelease({
       baseUrl,
       locationIds: ['horsens'],
       expectedVersion: 7,
@@ -405,13 +534,17 @@ describe('Worker deployment warm-up', () => {
 
   it('exits nonzero on a contract mismatch without printing the response body', async () => {
     const baseUrl = await listen((_request, response) => {
-      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.writeHead(200, {
+        'Content-Type': 'application/json',
+        'X-FRANK-Worker-Version': EXPECTED_WORKER_VERSION_ID,
+      });
       response.end('{"hourly":[{}],"sources":{"payloadVersion":999,"location":{"id":"wrong"}},"private":"do-not-log"}');
     });
 
     const child = spawn(process.execPath, [
       SCRIPT_PATH,
       '--base-url', baseUrl,
+      '--expected-worker-version-id', EXPECTED_WORKER_VERSION_ID,
       '--attempts', '1',
       '--timeout-ms', '500',
       '--retry-delay-ms', '1',
