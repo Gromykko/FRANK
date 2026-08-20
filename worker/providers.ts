@@ -5,7 +5,11 @@ import {
 } from '../src/features/forecast/parseWarnings';
 import type { ForecastLocation } from '../src/config/locationTypes';
 import type { SeriesPoint, WeatherWarning } from '../src/features/forecast/types';
-import { FORECAST_PAYLOAD_VERSION } from '../src/features/forecast/payloadVersion';
+import {
+  CURRENT_RELEASE,
+  LEGACY_FORECAST_PAYLOAD_VERSION,
+  MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
+} from '../src/features/forecast/releaseContract';
 import {
   aggregateBlockMarine,
   assembleBlockRow,
@@ -61,12 +65,12 @@ import {
   isProviderUnavailableError,
   transientProviderError,
 } from './providerAvailability';
+import { marineIngredientKey, metRawKey } from './generation';
 
 const DMI_BASE = 'https://opendataapi.dmi.dk/v1/forecastedr';
 const MET_BASE = 'https://api.met.no/weatherapi/locationforecast/2.0/complete';
 const MET_USER_AGENT = 'FRANK-kayak-forecast/1.0 (https://github.com/Gromykko/FRANK)';
 const MET_DEFAULT_TTL_MS = 30 * 60 * 1000;
-const MET_RAW_KEY_PREFIX = 'met-raw';
 const MET_FALLBACK_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const MARINE_FALLBACK_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const RETRY_BASE_DELAY_MS = 1_500;
@@ -74,7 +78,7 @@ const WARNING_EXECUTION_BUDGET_MS = 5_000;
 
 // Public alias retained for cache-key/readability call sites. Browser and
 // Worker now import one source of truth, so a partial hand-bump is impossible.
-export const PAYLOAD_VERSION = FORECAST_PAYLOAD_VERSION;
+export const PAYLOAD_VERSION = LEGACY_FORECAST_PAYLOAD_VERSION;
 
 // DMI publishes marine runs every six hours. Probing before five hours would
 // only spend provider quota; the one-hour margin covers skew/early publication.
@@ -485,7 +489,7 @@ async function fetchMetWeather(
   policy: ExecutionPolicy,
 ): Promise<MetResult> {
   assertBeforeDeadline(policy, `MET cache read for ${location.id}`);
-  const rawKey = `${MET_RAW_KEY_PREFIX}:${location.id}`;
+  const rawKey = metRawKey(location);
   let stored: MetRawCache | null = null;
   try {
     const retained = await awaitWithinDeadline(
@@ -617,12 +621,9 @@ async function fetchMetWeather(
 // freeze the other's fresh data ("split retention, single serving": each
 // ingredient falls back independently, the served payload stays one
 // combined object where every hour has both weather and marine data).
-// This cache contains NORMALIZED series, not raw provider responses. Its schema
-// therefore changes whenever forecast normalization changes. Keeping the
-// payload version in both the key and envelope prevents an old normalized run
-// from being reused and then stamped as a new-version assembled forecast.
-const MARINE_INGREDIENT_KEY_PREFIX = `frank-marine-ingredient:v${PAYLOAD_VERSION}`;
-
+// This cache contains NORMALIZED series, not raw provider responses. Its own
+// schema and the compiled data generation are present in both key and envelope;
+// neither is coupled to the browser payload version.
 export async function fetchMarineSeriesWithFallback<TFeature>(
   env: Env,
   location: Pick<ForecastLocation, 'id' | 'areaName' | 'coordinate'>,
@@ -637,7 +638,7 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
   const policy = executionPolicy(policyInput);
   assertBeforeDeadline(policy, `${kind} marine cache read for ${location.id}`);
   assertMarineRunWithinFallbackAge(instance, instance?.collection ?? kind);
-  const key = `${MARINE_INGREDIENT_KEY_PREFIX}:${kind}:${location.id}`;
+  const key = marineIngredientKey(location, kind);
 
   let stored: MarineIngredientEnvelope | null = null;
   try {
@@ -655,7 +656,7 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
   // Same run we already hold data for: reuse it, no network call. DMI runs
   // change only every ~6h, so an hourly weather rebuild must not re-pull
   // identical marine data (measured: gaps between runs are exactly 6.00h).
-  const currentStored = stored?.schemaVersion === PAYLOAD_VERSION
+  const currentStored = stored?.schemaVersion === MARINE_INGREDIENT_CACHE_SCHEMA_VERSION
     && Array.isArray(stored.series) && stored.series.length > 0
     && isMarineRunWithinFallbackAge(stored)
     ? stored
@@ -721,7 +722,7 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
     try {
       await awaitWithinDeadline(
         () => env.FRANK_FORECAST_CACHE.put(key, JSON.stringify({
-          schemaVersion: PAYLOAD_VERSION,
+          schemaVersion: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
           collection: instance.collection,
           id: instance.id,
           series,
@@ -960,6 +961,7 @@ export async function buildForecastCache(
       warnings,
       sources: {
         payloadVersion: PAYLOAD_VERSION,
+        release: { ...CURRENT_RELEASE },
         weather: 'MET Norway Locationforecast',
         waves: `DMI ${effectiveInstances.waves.collection}`,
         water: `DMI ${effectiveInstances.water.collection}`,

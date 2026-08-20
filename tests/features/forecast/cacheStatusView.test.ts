@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { getCacheStatusView, deriveCacheStatus } from '../../../src/features/forecast/cacheStatusView';
+import { FORECAST_PAYLOAD_VERSION } from '../../../src/features/forecast/types';
 import { da } from '../../../src/i18n/da';
 import { interpolate } from '../../../src/i18n/interpolate';
 
@@ -214,6 +215,36 @@ describe('deriveCacheStatus freshness', () => {
     expect(result.showRefreshWarning).toBe(false);
     expect(result.expandedDetail).toContain('updating now');
     expect(result.expandedDetail).not.toContain('could not be refreshed');
+  });
+
+  it('a reached Worker preparing an update is one calm saved-data state', () => {
+    const result = deriveCacheStatus({
+      sources: {
+        payloadVersion: FORECAST_PAYLOAD_VERSION - 1,
+        fetchedAt: at(20 * 60 * 60_000),
+        cacheHealth: {
+          status: 'stale',
+          lastAttemptAt: at(20 * 60 * 60_000),
+          needsRebuild: true,
+        },
+      } as never,
+      refreshing: false,
+      online: true,
+      nowMs: NOW,
+      workerContactedAtMs: NOW - 1_000,
+      checkState: 'initializing',
+    });
+
+    expect(result.view).toMatchObject({
+      label: 'Preparing update…',
+      detail: 'Showing saved forecast · 20 h old',
+      tone: 'watch',
+    });
+    expect(result.expandedDetail).toContain('reached the forecast service');
+    expect(result.expandedDetail).toContain('retry automatically');
+    expect(result.expandedDetail).not.toMatch(/could not|fail/i);
+    expect(result.showRefreshWarning).toBe(false);
+    expect(result.workerOutdated).toBe(false);
   });
 
   it('raises the warning only after the check completes as a failure', () => {

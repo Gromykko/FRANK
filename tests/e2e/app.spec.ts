@@ -29,11 +29,10 @@ test('critical controls work in the production bundle', async ({ page }, testInf
 
   const refreshButton = page.getByRole('button', { name: 'Refresh forecast' });
   await expect(refreshButton).toHaveAttribute('aria-disabled', 'false');
-  const refreshesBeforeClick = mock.requests.filter((url) => url.searchParams.get('refresh') === '1').length;
+  const refreshesBeforeClick = mock.requests.length;
   await refreshButton.click();
-  await expect.poll(
-    () => mock.requests.filter((url) => url.searchParams.get('refresh') === '1').length,
-  ).toBe(refreshesBeforeClick + 1);
+  await expect.poll(() => mock.requests.length).toBe(refreshesBeforeClick + 1);
+  expect(mock.requests.at(-1)?.searchParams.has('refresh')).toBe(false);
   await expect(refreshButton).toBeFocused();
 
   const calendarButton = page.getByRole('button', { name: 'Calendar' });

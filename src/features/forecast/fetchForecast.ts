@@ -23,6 +23,7 @@ import {
 import { saveCachedWeatherData } from './cache';
 import { enrichWarningCoverage, parseMeteoalarmFeed } from './parseWarnings';
 import type { WeatherWarning } from './types';
+import { CURRENT_RELEASE } from './releaseContract';
 
 // ── DEV-ONLY direct-fetch pipeline ─────────────────────────────────────────
 // This whole module fetches MET + DMI directly and normalizes them client-side.
@@ -252,6 +253,7 @@ export async function fetchWeatherData(location = CURRENT_LOCATION): Promise<Wea
       warnings,
       sources: {
         payloadVersion: FORECAST_PAYLOAD_VERSION,
+        release: { ...CURRENT_RELEASE },
         weather: 'MET Norway Locationforecast',
         waves: `DMI ${waveResult.collection}`,
         water: `DMI ${waterResult.collection}`,

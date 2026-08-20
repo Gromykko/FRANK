@@ -1,5 +1,8 @@
-import type { ForecastLocation } from '../../config/locations';
-import { FORECAST_PAYLOAD_VERSION } from './types';
+import type { ForecastLocation } from '../../config/locationTypes';
+import {
+  isSupportedForecastApiSchemaVersion,
+  isSupportedLegacyForecastPayloadVersion,
+} from './releaseContract';
 import type { WeatherData } from './types';
 
 type UnknownRecord = Record<string, unknown>;
@@ -9,6 +12,9 @@ export interface ForecastPayloadValidationOptions {
   // still be used offline if they satisfy every current structural invariant,
   // but an unversioned network response must never become a new trusted copy.
   allowLegacyMissingVersion?: boolean;
+  // The explicit /api/vN route must prove which stable contract answered. A
+  // legacy endpoint/local slot may omit the additive release envelope.
+  requireReleaseMetadata?: boolean;
 }
 
 const REQUIRED_READING_FIELDS = [
@@ -210,10 +216,23 @@ function hasValidCacheHealth(value: unknown): boolean {
 function hasCompatibleVersion(sources: UnknownRecord, allowLegacyMissingVersion: boolean): boolean {
   const version = sources.payloadVersion;
   if (version === undefined) return allowLegacyMissingVersion;
+  return isSupportedLegacyForecastPayloadVersion(version);
+}
 
-  return Number.isInteger(version) &&
-    (version as number) > 0 &&
-    (version as number) <= FORECAST_PAYLOAD_VERSION;
+function hasValidReleaseMetadata(value: unknown, required: boolean, payloadVersion: unknown): boolean {
+  if (value === undefined) return !required;
+  if (!isRecord(value)) return false;
+
+  return isSupportedForecastApiSchemaVersion(value.apiSchemaVersion)
+    && Number.isInteger(value.modelRevision)
+    && (value.modelRevision as number) > 0
+    && isNonEmptyString(value.dataGenerationId)
+    && Number.isInteger(value.assembledCacheSchema)
+    && (value.assembledCacheSchema as number) > 0
+    && Number.isInteger(value.marineCacheSchema)
+    && (value.marineCacheSchema as number) > 0
+    && isSupportedLegacyForecastPayloadVersion(value.payloadVersion)
+    && value.payloadVersion === payloadVersion;
 }
 
 /**
@@ -235,6 +254,11 @@ export function isValidForecastPayload(
   const sources = value.sources;
   if (!isRecord(sources)) return false;
   if (!hasCompatibleVersion(sources, options.allowLegacyMissingVersion === true)) return false;
+  if (!hasValidReleaseMetadata(
+    sources.release,
+    options.requireReleaseMetadata === true,
+    sources.payloadVersion,
+  )) return false;
   if (!isNonEmptyString(sources.weather) || !isNonEmptyString(sources.waves) || !isNonEmptyString(sources.water)) return false;
   if (timestampMs(sources.fetchedAt) === null || !hasValidCacheHealth(sources.cacheHealth)) return false;
 

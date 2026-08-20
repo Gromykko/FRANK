@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { migrateLegacySectors, healSectorCautions, parseStoredSettings } from '../../src/hooks/useSettings';
+import {
+  decodeStoredSettings,
+  healSectorCautions,
+  migrateLegacySectors,
+  parseStoredSettings,
+  serializeStoredSettings,
+  SETTINGS_STORAGE_METADATA_KEY,
+  SETTINGS_STORAGE_SCHEMA_VERSION,
+} from '../../src/hooks/useSettings';
 import { analyzeSafetyConditions } from '../../src/features/safety/analyzeSafetyConditions';
 import { DEFAULT_SETTINGS } from '../../src/features/safety/presets';
 import type { SafetySettings } from '../../src/features/safety/presets';
@@ -71,6 +79,88 @@ describe('parseStoredSettings', () => {
   it('heals an inverted general-wind band on load', () => {
     const parsed = parseStoredSettings(JSON.stringify(legacyBlob({ maxWindSpeedSafe: 8, maxWindSpeedCaution: 6 })));
     expect(parsed.maxWindSpeedCaution).toBeGreaterThanOrEqual(parsed.maxWindSpeedSafe + 0.5);
+  });
+});
+
+describe('versioned settings storage', () => {
+  it('migrates the original raw object without changing valid choices', () => {
+    const raw = {
+      ...DEFAULT_SETTINGS,
+      tripMode: 'custom' as const,
+      maxWindSpeedSafe: 4.2,
+      gustMargin: 1.8,
+      tidePreference: 'incoming' as const,
+      futureCompatibleField: { retain: true },
+    };
+
+    const decoded = decodeStoredSettings(JSON.stringify(raw));
+    expect(decoded.needsMigration).toBe(true);
+    expect(decoded.settings).toMatchObject({
+      tripMode: 'custom',
+      maxWindSpeedSafe: 4.2,
+      maxWindSpeedCaution: 6,
+      gustMargin: 1.8,
+      tidePreference: 'incoming',
+      futureCompatibleField: { retain: true },
+    });
+
+    const migratedJson = serializeStoredSettings(decoded.settings);
+    const migratedRecord = JSON.parse(migratedJson) as Record<string, unknown>;
+    expect(migratedRecord.maxWindSpeedSafe).toBe(4.2);
+    expect(migratedRecord.gustMargin).toBe(1.8);
+    expect(migratedRecord.tidePreference).toBe('incoming');
+    expect(migratedRecord.futureCompatibleField).toEqual({ retain: true });
+    expect(migratedRecord[SETTINGS_STORAGE_METADATA_KEY]).toEqual({
+      kind: 'frank-safety-settings',
+      schemaVersion: SETTINGS_STORAGE_SCHEMA_VERSION,
+      locationId: CURRENT_LOCATION.id,
+    });
+
+    const reread = decodeStoredSettings(migratedJson);
+    expect(reread.needsMigration).toBe(false);
+    expect(reread.settings).toEqual(decoded.settings);
+  });
+
+  it('keeps settings at the top level so a pre-schema app can still read them', () => {
+    const stored = JSON.parse(serializeStoredSettings({
+      ...DEFAULT_SETTINGS,
+      tripMode: 'custom',
+      maxWindSpeedSafe: 3.7,
+    })) as Record<string, unknown>;
+
+    expect(stored.tripMode).toBe('custom');
+    expect(stored.maxWindSpeedSafe).toBe(3.7);
+    expect(stored).not.toHaveProperty('settings');
+  });
+
+  it('rejects a future schema or a record belonging to another location', () => {
+    const stored = JSON.parse(serializeStoredSettings(DEFAULT_SETTINGS)) as Record<string, unknown>;
+    const metadata = stored[SETTINGS_STORAGE_METADATA_KEY] as Record<string, unknown>;
+
+    expect(() => decodeStoredSettings(JSON.stringify({
+      ...stored,
+      [SETTINGS_STORAGE_METADATA_KEY]: { ...metadata, schemaVersion: 2 },
+    }))).toThrow(/Unsupported or misplaced/);
+
+    expect(() => decodeStoredSettings(JSON.stringify({
+      ...stored,
+      [SETTINGS_STORAGE_METADATA_KEY]: { ...metadata, locationId: 'another-fjord' },
+    }))).toThrow(/Unsupported or misplaced/);
+  });
+
+  it('rejects non-object records without weakening per-field healing', () => {
+    expect(() => decodeStoredSettings('null')).toThrow(/JSON object/);
+    expect(() => decodeStoredSettings('[]')).toThrow(/JSON object/);
+
+    const decoded = decodeStoredSettings(JSON.stringify({
+      tripMode: 'custom',
+      maxWindSpeedSafe: 4.4,
+      minDuration: 'broken',
+      daylightOnly: false,
+    }));
+    expect(decoded.settings.maxWindSpeedSafe).toBe(4.4);
+    expect(decoded.settings.minDuration).toBe(DEFAULT_SETTINGS.minDuration);
+    expect(decoded.settings.daylightOnly).toBe(false);
   });
 });
 

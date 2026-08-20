@@ -18,6 +18,7 @@ function getGitCommit() {
 const APP_VERSION = packageJson.version ?? '0.0.0'
 const APP_COMMIT = getGitCommit()
 const APP_BUILD_TIME = new Date().toISOString()
+const APP_BASE = '/FRANK/'
 // This is intentionally unique for every production build, even when the
 // source commit and package version are unchanged (for example, a manual
 // redeploy). The client passes it in the service-worker script URL and the
@@ -48,6 +49,10 @@ function cspMeta() {
     "form-action 'none'",
     "object-src 'none'",
   ].join('; ')
+  const escapedBuildId = APP_BUILD_ID
+    .replaceAll('&', '&amp;')
+    .replaceAll('"', '&quot;')
+    .replaceAll('<', '&lt;')
 
   return {
     name: 'frank-csp-meta',
@@ -55,7 +60,7 @@ function cspMeta() {
     transformIndexHtml(html: string) {
       return html.replace(
         '<meta charset="UTF-8" />',
-        `<meta charset="UTF-8" />\n    <meta http-equiv="Content-Security-Policy" content="${policy}" />`
+        `<meta charset="UTF-8" />\n    <meta name="frank-build-id" content="${escapedBuildId}" />\n    <meta http-equiv="Content-Security-Policy" content="${policy}" />`
       )
     },
   }
@@ -65,19 +70,48 @@ function cspMeta() {
 // content-hashed output names at authoring time. Emit a small build manifest
 // containing every generated asset (including lazy chunks) and let the worker
 // install that exact, self-consistent set transactionally.
-function serviceWorkerPrecacheManifest(): Plugin {
+function serviceWorkerReleaseArtifacts(): Plugin {
   return {
-    name: 'frank-service-worker-precache-manifest',
+    name: 'frank-service-worker-release-artifacts',
     apply: 'build' as const,
     generateBundle(_options, bundle) {
       const assets = Object.keys(bundle)
         .filter((fileName) => fileName.startsWith('assets/'))
         .sort()
 
+      const releaseQuery = encodeURIComponent(APP_BUILD_ID)
+      const releaseUrl = (path: string) => `${path}?frank-build=${releaseQuery}`
+
       this.emitFile({
         type: 'asset',
         fileName: 'frank-precache.json',
-        source: `${JSON.stringify({ buildId: APP_BUILD_ID, assets }, null, 2)}\n`,
+        source: `${JSON.stringify({ schemaVersion: 1, buildId: APP_BUILD_ID, assets }, null, 2)}\n`,
+      })
+
+      // GitHub Pages cannot give sw.js a short, controllable Cache-Control
+      // header. A release descriptor plus build-bound URLs lets an already
+      // active app discover the next deployment without first accepting its
+      // HTML, while a candidate worker can prove every file belongs to the
+      // same build before it becomes eligible for activation.
+      this.emitFile({
+        type: 'asset',
+        fileName: 'frank-release.json',
+        source: `${JSON.stringify({
+          schemaVersion: 1,
+          buildId: APP_BUILD_ID,
+          builtAt: APP_BUILD_TIME,
+          baseUrl: APP_BASE,
+          serviceWorkerUrl: `${APP_BASE}sw.js?build=${releaseQuery}`,
+          shellUrl: releaseUrl(`${APP_BASE}index.html`),
+          precacheManifestUrl: releaseUrl(`${APP_BASE}frank-precache.json`),
+          staticShellUrls: [
+            `${APP_BASE}manifest.json`,
+            `${APP_BASE}favicon.svg`,
+            `${APP_BASE}icon-192.png`,
+            `${APP_BASE}icon-512.png`,
+            `${APP_BASE}apple-touch-icon.png`,
+          ].map(releaseUrl),
+        }, null, 2)}\n`,
       })
     },
   }
@@ -85,8 +119,8 @@ function serviceWorkerPrecacheManifest(): Plugin {
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), cspMeta(), serviceWorkerPrecacheManifest()],
-  base: '/FRANK/',
+  plugins: [react(), cspMeta(), serviceWorkerReleaseArtifacts()],
+  base: APP_BASE,
   define: {
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(APP_VERSION),
     'import.meta.env.VITE_APP_COMMIT': JSON.stringify(APP_COMMIT),

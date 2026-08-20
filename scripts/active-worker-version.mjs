@@ -10,11 +10,13 @@ export function requireActiveWorkerVersion(value) {
   const versions = value && typeof value === 'object' && Array.isArray(value.versions)
     ? value.versions
     : [];
-  const active = versions.filter((version) => Number(version?.percentage) === 100);
-  const versionId = active.length === 1 ? active[0]?.version_id : null;
+  const onlyVersion = versions.length === 1 ? versions[0] : null;
+  const versionId = Number(onlyVersion?.percentage) === 100
+    ? onlyVersion?.version_id
+    : null;
 
   if (typeof versionId !== 'string' || !VERSION_ID.test(versionId)) {
-    throw new Error('Expected exactly one valid Worker version serving 100% of production traffic.');
+    throw new Error('Expected an exact single-version Worker deployment serving 100% of production traffic.');
   }
   return versionId;
 }

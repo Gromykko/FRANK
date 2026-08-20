@@ -3,6 +3,7 @@ import type {
   HealthPayload,
   WorkerCacheHealth,
 } from './domain';
+import { CURRENT_RELEASE } from '../src/features/forecast/releaseContract';
 import { htmlResponse, jsonResponse } from './http';
 
 // /health judges two clocks because "the Worker is dead" and "the data is
@@ -46,6 +47,16 @@ export function buildHealthPayload(
   const asMin = (ms: number): number | null =>
     (Number.isFinite(ms) ? Math.round(ms / 60_000) : null);
 
+  const ready = entries
+    .filter((entry) => entry.exactGenerationReady)
+    .map((entry) => entry.id);
+  const available = entries
+    .filter((entry) => entry.hasCache)
+    .map((entry) => entry.id);
+  const fallback = entries
+    .filter((entry) => entry.hasCache && !entry.exactGenerationReady)
+    .map((entry) => entry.id);
+
   return {
     ok,
     service: 'frank-forecast',
@@ -65,6 +76,14 @@ export function buildHealthPayload(
     stalled,
     missing,
     storageAvailable: !storageUnavailable,
+    release: {
+      target: { ...CURRENT_RELEASE },
+      allLocationsReady: !storageUnavailable && ready.length === entries.length,
+      ready,
+      available,
+      fallback,
+      missing: [...missing],
+    },
     locations: entries,
     ages,
     // Internal presentation flag. /health strips it; /status needs it to avoid
@@ -121,14 +140,18 @@ export function statusResponse(health: HealthPayload): Response {
       <td><strong>${escapeHtml(location.areaName)}</strong><br><span class="dim">${escapeHtml(location.id)}</span></td>
       <td class="${missing ? 'bad' : level(age.checkAgeMs, HEALTH_MAX_CHECK_AGE_MS)}"><strong>${escapeHtml(formatAge(age.checkAgeMs))}</strong><br><span class="dim">${escapeHtml(cacheHealth.checkedBy ?? '—')}</span></td>
       <td class="${missing ? 'bad' : level(age.ageMs, HEALTH_MAX_DATA_AGE_MS)}"><strong>${escapeHtml(formatAge(age.ageMs))}</strong></td>
-      <td>${escapeHtml(health.storageUnavailable ? 'STORAGE UNAVAILABLE' : missing ? 'NO FORECAST' : cacheHealth.status ?? 'unknown')}${cacheHealth.providerBusy ? '<br><span class="warn">provider busy</span>' : ''}</td>
+      <td>${escapeHtml(health.storageUnavailable ? 'STORAGE UNAVAILABLE' : missing ? 'NO FORECAST' : cacheHealth.status ?? 'unknown')}
+        <br><span class="${location.exactGenerationReady ? 'good' : 'warn'}">${escapeHtml(location.availabilitySource)}</span>
+        ${cacheHealth.providerBusy ? '<br><span class="warn">provider busy</span>' : ''}</td>
       <td>${degraded ? `<span class="warn">${escapeHtml(degraded)}</span>` : '<span class="dim">none</span>'}</td>
       <td class="dim mono">${runs}</td>
     </tr>`;
   }).join('');
 
-  const banner = health.ok
+  const banner = health.ok && health.release.allLocationsReady
     ? '<div class="banner good">WORKER LIVE · ALL LOCATIONS CURRENT</div>'
+    : health.ok
+      ? `<div class="banner warn">WORKER LIVE · TARGET GENERATION ${escapeHtml(health.release.ready.length)}/${escapeHtml(health.locations.length)} READY</div>`
     : `<div class="banner bad">ATTENTION — ${escapeHtml(health.reason ?? health.stalled.join(', '))}</div>`;
 
   return htmlResponse(`<!doctype html>
@@ -145,6 +168,7 @@ export function statusResponse(health: HealthPayload): Response {
   .banner { padding:14px 16px; border-radius:8px; font-size:18px; letter-spacing:.06em;
             margin-bottom:18px; border:1px solid }
   .banner.good { background:#0f2a1f; border-color:#34d399; color:#34d399 }
+  .banner.warn { background:#2a2410; border-color:#fbbf24; color:#fbbf24 }
   .banner.bad  { background:#2a1010; border-color:#f87171; color:#f87171 }
   table { border-collapse:collapse; width:100%; max-width:900px }
   th { text-align:left; font-size:10px; letter-spacing:.12em; text-transform:uppercase;
@@ -161,7 +185,7 @@ export function statusResponse(health: HealthPayload): Response {
 <h1>FRANK · forecast worker</h1>
 ${banner}
 <table>
-  <tr><th>Location</th><th>Last check<br><span class="hdr-sub">own cycle per location</span></th><th>Data age<br><span class="hdr-sub">last rebuild</span></th><th>Status</th><th>Degraded</th><th>Water / wave run</th></tr>
+  <tr><th>Location</th><th>Last check<br><span class="hdr-sub">own cycle per location</span></th><th>Data age<br><span class="hdr-sub">last rebuild</span></th><th>Status<br><span class="hdr-sub">data generation</span></th><th>Degraded</th><th>Water / wave run</th></tr>
   ${rows}
 </table>
 <footer>
@@ -188,10 +212,9 @@ ${banner}
   ${escapeHtml(health.oldestAgeMin ?? '?')} minutes.</p>
 
   <p>The word under Last check names what triggered it. <code>cron</code> is the
-  10-minute schedule. <code>user-background</code> is a visitor opening the app, which
-  prompts a check after the response has already gone out. <code>manual</code> is the
-  refresh button. <code>cold-start</code> means no cached forecast existed and one had
-  to be built on the spot.</p>
+  10-minute schedule. <code>release-candidate</code> is a deployment warm-up for this
+  immutable data generation. Ordinary visitors and the refresh
+  button only read prepared snapshots; they never start provider work.</p>
 
   <p>This page reloads every 30 seconds and is meant for reading. The machine-readable
   alarm lives at <a href="/health">/health</a>, which returns 503 and a

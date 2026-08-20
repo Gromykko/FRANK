@@ -41,6 +41,7 @@ describe('PrivacyNotice', () => {
     expect(host.textContent).toContain('GitHub Pages serves the app files');
     expect(host.textContent).toContain('Cloudflare serves the forecast API');
     expect(host.textContent).toContain('MET Norway, DMI, and MeteoAlarm');
+    expect(host.textContent).toContain('not by a visitor request or the refresh button');
     expect(host.textContent).toContain('automatic request-and-response invocation logs are disabled');
     expect(host.textContent).toContain('3 days on Free plans and 7 days on paid plans');
   });
@@ -51,7 +52,7 @@ describe('PrivacyNotice', () => {
     });
 
     expect(host.querySelector('a[href*="docs.github.com/en/pages"]')).not.toBeNull();
-    expect(host.querySelector('a[href*="developers.cloudflare.com/fundamentals/reference/http-headers"]')).not.toBeNull();
+    expect(host.querySelector('a[href*="developers.cloudflare.com/fundamentals/reference/http-headers"]')).toBeNull();
     expect(host.querySelector('a[href*="developers.cloudflare.com/workers/observability/logs"]')).not.toBeNull();
     expect(host.querySelector('a[href*="met.no/en/About-us/privacy"]')).not.toBeNull();
     expect(host.querySelector('a[href*="dmi.dk/friedata"]')).not.toBeNull();

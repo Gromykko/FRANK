@@ -82,12 +82,11 @@ export const da: Record<string, string> = {
     'FRANK har intet kontosystem og beder ikke om din enheds GPS-position. Appens kode sætter ingen cookies og tilføjer ingen reklametracker eller særskilt tjeneste til produktanalyse. Dit valgte område, sprog, tema, dine sikkerhedsgrænser og den seneste prognose gemmes i denne browser til indstillinger og offlinebrug. Sprog, tema, sikkerhedsgrænser og den cachede prognose bliver i browseren; det valgte prognoseområde sendes med prognoseanmodninger.',
   'GitHub Pages serves the app files and logs visitor IP addresses for security. Cloudflare serves the forecast API and receives the requested forecast area and ordinary connection data such as IP address, HTTP/browser information, and time. Cloudflare also provides operational service metrics. FRANK’s custom Worker logs may record the forecast area and failures when service events occur; automatic request-and-response invocation logs are disabled. Cloudflare retains Workers Logs for 3 days on Free plans and 7 days on paid plans.':
     'GitHub Pages leverer appfilerne og logger besøgendes IP-adresser af sikkerhedshensyn. Cloudflare leverer prognose-API’et og modtager det ønskede prognoseområde samt almindelige forbindelsesdata som IP-adresse, HTTP-/browseroplysninger og tidspunkt. Cloudflare leverer også driftsmålinger for tjenesten. FRANKs egne Worker-logs kan registrere prognoseområdet og fejl, når der opstår tjenestehændelser; automatiske anmodnings- og svarlogs er slået fra. Cloudflare opbevarer Workers Logs i 3 dage på Free-abonnementer og 7 dage på betalte abonnementer.',
-  'When a visitor request must build new forecast data, the Cloudflare Worker contacts MET Norway, DMI, and MeteoAlarm with FRANK’s fixed forecast coordinates. For destinations that are not Cloudflare customer zones, Cloudflare documents that these subrequests also carry visitor-IP headers, so a provider can receive the visitor IP address. This does not use your device GPS or send FRANK’s saved language, theme, or safety limits. Scheduled refreshes are not tied to a visitor.':
-    'Når en besøgsanmodning kræver, at der bygges nye prognosedata, kontakter Cloudflare Workeren MET Norway, DMI og MeteoAlarm med FRANKs faste prognosekoordinater. For destinationer, der ikke er Cloudflare-kundezoner, dokumenterer Cloudflare, at disse underanmodninger også indeholder headere med den besøgendes IP-adresse, så en udbyder kan modtage IP-adressen. Dette bruger ikke din enheds GPS-position og sender ikke FRANKs gemte sprog, tema eller sikkerhedsgrænser. Planlagte opdateringer er ikke knyttet til en besøgende.',
+  'Forecast providers are contacted only by FRANK’s scheduled refreshes and zero-traffic release preparation, not by a visitor request or the refresh button. Those service jobs send FRANK’s fixed forecast coordinates to MET Norway, DMI, and MeteoAlarm. They do not send your device GPS, saved language, theme, safety limits, or browser request details.':
+    'Vejrudbyderne kontaktes kun af FRANKs planlagte opdateringer og klargøring af en udgivelse uden brugertrafik — ikke af en besøgsanmodning eller opdateringsknappen. Disse tjenestejob sender FRANKs faste prognosekoordinater til MET Norway, DMI og MeteoAlarm. De sender ikke din enheds GPS-position, gemte sprog, tema, sikkerhedsgrænser eller oplysninger fra browseranmodningen.',
   'The local values remain until you delete them below or clear browser site data. GitHub and the weather providers apply the retention periods in their own published terms.':
     'De lokale værdier bliver liggende, indtil du sletter dem nedenfor eller rydder browserens webstedsdata. GitHub og vejrudbyderne anvender opbevaringsperioderne i deres egne offentliggjorte vilkår.',
   'Technical sources:': 'Tekniske kilder:',
-  'headers': 'headere',
   'logs': 'logs',
   'Delete saved choices and forecasts': 'Slet gemte valg og prognoser',
   'Tap again to delete and reload': 'Tryk igen for at slette og genindlæse',
@@ -161,6 +160,7 @@ export const da: Record<string, string> = {
   'weather service': 'vejrtjenesten',
   'marine service': 'havtjenesten',
   'Refreshing…': 'Opdaterer…',
+  'Preparing update…': 'Klargør opdatering…',
   'Saved forecast · {0}': 'Gemt prognose · {0}',
   'Saved forecast': 'Gemt prognose',
   'Showing saved forecast · {0} old': 'Viser gemt prognose · {0} gammel',
@@ -170,6 +170,7 @@ export const da: Record<string, string> = {
   'Couldn’t refresh': 'Kunne ikke opdatere',
   'Checked · {0}': 'Tjekket · {0}',
   'Retrying automatically · checked {0}': 'Prøver igen automatisk · tjekket {0}',
+  'Retrying automatically': 'Prøver igen automatisk',
   'Showing earlier data · last try {0}': 'Viser ældre data · sidste forsøg {0}',
   '{0} from an earlier update · {1} busy': '{0} er ældre · {1} er optaget',
   '{0} from an earlier update · couldn’t refresh just now': '{0} fra en tidligere opdatering · kunne ikke opdatere lige nu',
@@ -180,6 +181,8 @@ export const da: Record<string, string> = {
     'Du er offline, så FRANK viser din senest gemte prognose fra {0}. Den opdateres af sig selv, når du er online igen.',
   'FRANK is updating now; meanwhile it is showing the saved forecast from {0}, which is {1} old.':
     'FRANK opdaterer nu; imens vises den gemte prognose fra {0}, som er {1} gammel.',
+  'FRANK reached the forecast service, which is preparing a complete update. It will retry automatically; meanwhile you are seeing the saved forecast from {0}.':
+    'FRANK har kontakt med prognosetjenesten, som klargør en komplet opdatering. FRANK prøver igen automatisk; imens ser du den gemte prognose fra {0}.',
   'The saved forecast from {0} needs a new check.':
     'Den gemte prognose fra {0} skal tjekkes igen.',
   '{0} is busy right now, so the forecast could not be refreshed. FRANK is retrying automatically; you are seeing the last good forecast from {1}.':

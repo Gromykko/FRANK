@@ -21,10 +21,14 @@ describe('active Worker rollback target', () => {
       { version_id: ACTIVE_ID, percentage: 100 },
       { version_id: 'b667d0b0-cb02-482d-b418-bfb56826ee0f', percentage: 100 },
     ] },
+    { versions: [
+      { version_id: ACTIVE_ID, percentage: 100 },
+      { version_id: 'b667d0b0-cb02-482d-b418-bfb56826ee0f', percentage: 0 },
+    ] },
     { versions: [{ version_id: 'not-a-version', percentage: 100 }] },
   ])('fails closed when production has no unambiguous rollback target', (status) => {
     expect(() => requireActiveWorkerVersion(status)).toThrow(
-      'Expected exactly one valid Worker version serving 100% of production traffic.',
+      'Expected an exact single-version Worker deployment serving 100% of production traffic.',
     );
   });
 });

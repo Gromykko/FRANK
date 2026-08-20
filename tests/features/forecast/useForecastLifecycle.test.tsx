@@ -5,16 +5,18 @@ import { CURRENT_LOCATION } from '../../../src/config/locations';
 import { FORECAST_PAYLOAD_VERSION } from '../../../src/features/forecast/types';
 import type { WeatherData } from '../../../src/features/forecast/types';
 import { saveCachedWeatherData } from '../../../src/features/forecast/cache';
+import {
+  CURRENT_RELEASE,
+  FORECAST_RELEASE_HEADERS,
+} from '../../../src/features/forecast/releaseContract';
+import type { ReleaseMetadata } from '../../../src/features/forecast/releaseContract';
 
 vi.mock('../../../src/features/forecast/fetchForecast', () => ({
   CAN_FETCH_FRESH_FORECAST: false,
   fetchWeatherData: vi.fn(),
 }));
 
-import {
-  COLD_MISS_PICKUP_DELAY_MS,
-  useForecast,
-} from '../../../src/features/forecast/useForecast';
+import { useForecast } from '../../../src/features/forecast/useForecast';
 
 let host: HTMLDivElement;
 let root: Root;
@@ -46,6 +48,7 @@ function forecast(): WeatherData {
     sunset: [],
     sources: {
       payloadVersion: FORECAST_PAYLOAD_VERSION,
+      release: { ...CURRENT_RELEASE },
       weather: 'MET Norway Locationforecast',
       waves: 'DMI WAM',
       water: 'DMI DKSS',
@@ -59,6 +62,18 @@ function forecast(): WeatherData {
       cacheHealth: { status: 'current', lastAttemptAt: fetchedAt },
     },
   };
+}
+
+function releaseHeaders(release: ReleaseMetadata, ready = true): Headers {
+  return new Headers({
+    [FORECAST_RELEASE_HEADERS.apiSchema]: String(release.apiSchemaVersion),
+    [FORECAST_RELEASE_HEADERS.modelRevision]: String(release.modelRevision),
+    [FORECAST_RELEASE_HEADERS.dataGeneration]: release.dataGenerationId,
+    [FORECAST_RELEASE_HEADERS.assembledCacheSchema]: String(release.assembledCacheSchema),
+    [FORECAST_RELEASE_HEADERS.marineCacheSchema]: String(release.marineCacheSchema),
+    [FORECAST_RELEASE_HEADERS.payloadVersion]: String(release.payloadVersion),
+    [FORECAST_RELEASE_HEADERS.generationReady]: String(ready),
+  });
 }
 
 function initializingResponse(retryAfterSeconds = 600) {
@@ -170,6 +185,115 @@ describe('useForecast startup lifecycle', () => {
     expect(latest?.initialization).toBeNull();
     expect(latest?.weatherData?.sources.fetchedAt).toBe(ready.sources.fetchedAt);
     expect(latest?.checkState).toBe('succeeded');
+  });
+
+  it('keeps saved phone data in one calm initialization state and recovers on Retry-After', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime('2026-08-20T15:00:00.000Z');
+    const saved = forecast();
+    saved.sources.fetchedAt = '2026-08-19T18:58:00.000Z';
+    saved.sources.cacheHealth = {
+      status: 'stale',
+      lastAttemptAt: '2026-08-19T18:58:00.000Z',
+      needsRebuild: true,
+    };
+    saveCachedWeatherData(saved, CURRENT_LOCATION);
+
+    const ready = forecast();
+    ready.sources.fetchedAt = '2026-08-20T14:36:00.000Z';
+    ready.sources.cacheHealth = {
+      status: 'current',
+      lastAttemptAt: ready.sources.fetchedAt,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(initializingResponse())
+      .mockResolvedValueOnce({
+        ok: true,
+        headers: { get: () => null },
+        json: async () => structuredClone(ready),
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await act(async () => {
+      root.render(<Harness />);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(latest?.weatherData?.sources.fetchedAt).toBe(saved.sources.fetchedAt);
+    expect(latest?.checkState).toBe('initializing');
+    expect(latest?.initialization?.location.id).toBe(CURRENT_LOCATION.id);
+    expect(latest?.error).toBeNull();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600_000);
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(latest?.weatherData?.sources.fetchedAt).toBe(ready.sources.fetchedAt);
+    expect(latest?.initialization).toBeNull();
+    expect(latest?.checkState).toBe('succeeded');
+    expect(latest?.error).toBeNull();
+  });
+
+  it('ends saved-data initialization on a later true network failure', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime('2026-08-20T15:00:00.000Z');
+    const saved = forecast();
+    saveCachedWeatherData(saved, CURRENT_LOCATION);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(initializingResponse())
+      .mockRejectedValueOnce(new TypeError('network unavailable'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await act(async () => {
+      root.render(<Harness />);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(latest?.checkState).toBe('initializing');
+
+    await act(async () => {
+      const retry = latest!.refreshForecast(false, true, true);
+      await vi.advanceTimersByTimeAsync(600);
+      await retry;
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(latest?.weatherData?.sources.fetchedAt).toBe(saved.sources.fetchedAt);
+    expect(latest?.initialization).toBeNull();
+    expect(latest?.checkState).toBe('failed');
+    expect(latest?.error).toContain('Could not reach the forecast service');
+  });
+
+  it('ends saved-data initialization on a later hard response failure', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime('2026-08-20T15:00:00.000Z');
+    const saved = forecast();
+    saveCachedWeatherData(saved, CURRENT_LOCATION);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(initializingResponse())
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        status: 'initializing',
+        code: 'FORECAST_INITIALIZING',
+      }), { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await act(async () => {
+      root.render(<Harness />);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(latest?.checkState).toBe('initializing');
+
+    await act(async () => {
+      const retry = latest!.refreshForecast(false, true, true);
+      await vi.advanceTimersByTimeAsync(600);
+      await retry;
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(latest?.weatherData?.sources.fetchedAt).toBe(saved.sources.fetchedAt);
+    expect(latest?.initialization).toBeNull();
+    expect(latest?.checkState).toBe('failed');
+    expect(latest?.error).toContain('Could not refresh forecast data');
   });
 
   it('does not let focus bypass Retry-After and retries promptly once an overdue offline location comes online', async () => {
@@ -376,7 +500,7 @@ describe('useForecast startup lifecycle', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const requestedUrl = String(fetchMock.mock.calls[0][0]);
-    expect(requestedUrl).toBe(`https://frank-forecast.alswatchs.workers.dev/forecast/${CURRENT_LOCATION.id}`);
+    expect(requestedUrl).toBe(`https://frank-forecast.alswatchs.workers.dev/api/v1/forecast/${CURRENT_LOCATION.id}`);
     expect(requestedUrl).not.toContain('refresh=1');
     expect(latest?.loading).toBe(false);
     expect(latest?.checkState).toBe('succeeded');
@@ -407,26 +531,104 @@ describe('useForecast startup lifecycle', () => {
     expect(latest?.weatherData?.sources.fetchedAt).toBe(worker.sources.fetchedAt);
   });
 
-  it('picks up a completed background check announced by the normal startup response', async () => {
+  it('follows an authoritative compatible-generation rollback in memory', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime('2026-08-20T15:00:00.000Z');
+    const stalePhoneCopy = forecast();
+    stalePhoneCopy.sources.payloadVersion = FORECAST_PAYLOAD_VERSION;
+    stalePhoneCopy.sources.fetchedAt = '2026-08-20T14:50:00.000Z';
+    stalePhoneCopy.sources.cacheHealth = {
+      status: 'stale',
+      lastAttemptAt: '2026-08-20T14:50:00.000Z',
+      needsRebuild: true,
+    };
+    saveCachedWeatherData(stalePhoneCopy, CURRENT_LOCATION);
+
+    const rollbackWorker = forecast();
+    rollbackWorker.sources.release = {
+      ...CURRENT_RELEASE,
+      modelRevision: CURRENT_RELEASE.modelRevision - 1,
+      dataGenerationId: 'api1-model6',
+    };
+    rollbackWorker.sources.fetchedAt = '2026-08-20T14:36:00.000Z';
+    rollbackWorker.sources.cacheHealth = {
+      status: 'current',
+      lastAttemptAt: '2026-08-20T14:36:00.000Z',
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: releaseHeaders(rollbackWorker.sources.release!),
+      json: async () => structuredClone(rollbackWorker),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await act(async () => {
+      root.render(<Harness />);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(latest?.weatherData?.sources.release?.dataGenerationId).toBe('api1-model6');
+    expect(latest?.weatherData?.sources.fetchedAt).toBe(rollbackWorker.sources.fetchedAt);
+    expect(latest?.weatherData?.sources.cacheHealth?.status).toBe('current');
+    expect(latest?.checkState).toBe('succeeded');
+    expect(latest?.error).toBeNull();
+  });
+
+  it('does not replace an exact generation on screen with a ready=false fallback', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime('2026-08-20T15:00:00.000Z');
+    const exact = forecast();
+    exact.sources.fetchedAt = '2026-08-20T13:00:00.000Z';
+    exact.sources.cacheHealth = {
+      status: 'current',
+      lastAttemptAt: exact.sources.fetchedAt,
+    };
+    saveCachedWeatherData(exact, CURRENT_LOCATION);
+
+    const availabilityFallback = forecast();
+    availabilityFallback.sources.release = {
+      ...CURRENT_RELEASE,
+      modelRevision: CURRENT_RELEASE.modelRevision - 1,
+      dataGenerationId: 'api1-model6',
+    };
+    availabilityFallback.sources.fetchedAt = '2026-08-20T14:50:00.000Z';
+    availabilityFallback.sources.cacheHealth = {
+      status: 'current',
+      lastAttemptAt: availabilityFallback.sources.fetchedAt,
+    };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify(availabilityFallback),
+      {
+        status: 200,
+        // The headers describe the target generation. `ready=false` proves
+        // that the body is merely its audited availability fallback.
+        headers: releaseHeaders(CURRENT_RELEASE, false),
+      },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await act(async () => {
+      root.render(<Harness />);
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(latest?.weatherData?.sources.release?.dataGenerationId)
+      .toBe(CURRENT_RELEASE.dataGenerationId);
+    expect(latest?.weatherData?.sources.fetchedAt).toBe(exact.sources.fetchedAt);
+    expect(latest?.checkState).toBe('succeeded');
+    expect(latest?.error).toBeNull();
+  });
+
+  it('does not poll when an obsolete Worker background header appears', async () => {
     vi.useFakeTimers();
     vi.setSystemTime('2026-08-20T10:15:00.000Z');
     const initial = forecast();
-    const completed = forecast();
-    completed.sources.fetchedAt = new Date(Date.now() + 60_000).toISOString();
-    completed.sources.cacheHealth = {
-      status: 'current',
-      lastAttemptAt: completed.sources.fetchedAt,
-    };
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce({
+    const fetchMock = vi.fn().mockResolvedValue({
         ok: true,
         headers: { get: (name: string) => name === 'X-FRANK-Background-Check' ? 'scheduled' : null },
         json: async () => structuredClone(initial),
-      })
-      .mockResolvedValue({
-        ok: true,
-        headers: { get: () => null },
-        json: async () => structuredClone(completed),
       });
     vi.stubGlobal('fetch', fetchMock);
 
@@ -437,37 +639,26 @@ describe('useForecast startup lifecycle', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.advanceTimersByTimeAsync(30_000);
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(latest?.weatherData?.sources.fetchedAt).toBe(completed.sources.fetchedAt);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(latest?.weatherData?.sources.fetchedAt).toBe(initial.sources.fetchedAt);
     expect(latest?.checkState).toBe('succeeded');
   });
 
-  it('clears a failed manual state when a later Worker pickup succeeds', async () => {
+  it('does not poll after a settled manual prepared-snapshot failure', async () => {
     vi.useFakeTimers();
     vi.setSystemTime('2026-08-20T10:15:00.000Z');
     const local = forecast();
     saveCachedWeatherData(local, CURRENT_LOCATION);
-    const recovered = forecast();
-    recovered.sources.fetchedAt = new Date(Date.now() + 60_000).toISOString();
-    recovered.sources.cacheHealth = {
-      status: 'current',
-      lastAttemptAt: recovered.sources.fetchedAt,
-    };
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
         headers: { get: () => null },
         json: async () => structuredClone(local),
       })
-      .mockResolvedValueOnce({ ok: false, headers: { get: () => null } })
-      .mockResolvedValue({
-        ok: true,
-        headers: { get: () => null },
-        json: async () => structuredClone(recovered),
-      });
+      .mockResolvedValueOnce({ ok: false, headers: { get: () => null } });
     vi.stubGlobal('fetch', fetchMock);
 
     await act(async () => {
@@ -481,19 +672,19 @@ describe('useForecast startup lifecycle', () => {
       await refresh;
     });
     expect(latest?.checkState).toBe('failed');
-    expect(latest?.error).toContain('Could not reach');
+    expect(latest?.error).toContain('Could not refresh forecast data');
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.advanceTimersByTimeAsync(30_000);
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(latest?.weatherData?.sources.fetchedAt).toBe(recovered.sources.fetchedAt);
-    expect(latest?.checkState).toBe('succeeded');
-    expect(latest?.error).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(latest?.weatherData?.sources.fetchedAt).toBe(local.sources.fetchedAt);
+    expect(latest?.checkState).toBe('failed');
+    expect(latest?.error).toContain('Could not refresh forecast data');
   });
 
-  it('recovers once after a local-backed startup misses a Worker cold build', async () => {
+  it('leaves retry cadence to the normal interval after a prepared-snapshot failure', async () => {
     vi.useFakeTimers();
     vi.setSystemTime('2026-08-20T10:15:00.000Z');
     const local = forecast();
@@ -521,7 +712,7 @@ describe('useForecast startup lifecycle', () => {
     expect(latest?.weatherData?.sources.fetchedAt).toBe(local.sources.fetchedAt);
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(COLD_MISS_PICKUP_DELAY_MS - 1);
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000 - 1);
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
 

@@ -17,16 +17,6 @@ const INITIALIZATION_MANUAL_RETRY_THROTTLE_MS = 5 * 1000;
 // still shows the spinner briefly — a button that does nothing visible
 // reads as broken.
 const MIN_MANUAL_SPINNER_MS = 600;
-// The Worker performs a manual rebuild in the background. Poll once near the
-// common fast path, once after ordinary upstream latency, and once after the
-// Worker's bounded 24s execution budget. No unbounded polling loop.
-export const POST_REFRESH_PICKUP_DELAYS_MS = [2_000, 8_000, 30_000] as const;
-// A local-backed startup gives the Worker 12s. The server may then finish two
-// bounded 2s KV reads plus a 24s cold build. One retry at ~32s leaves margin;
-// that retry itself gets the full cold-build timeout in case the disconnected
-// request was cancelled instead of completing.
-export const COLD_MISS_PICKUP_DELAY_MS = 20_000;
-
 export type ForecastCheckState = 'not-started' | 'checking' | 'initializing' | 'succeeded' | 'failed';
 
 export interface ForecastInitializationState extends ForecastInitialization {
@@ -91,17 +81,15 @@ export function useForecast(daylightOnly: boolean) {
   const initializationRef = useRef<ForecastInitializationState | null>(null);
   const initializationRetryTimerRef = useRef<number | null>(null);
   const lastInitializationManualRetryRef = useRef(0);
-  // Silent post-refresh cache pickups (the worker rebuilds in the background)
-  const pickupTimersRef = useRef<number[]>([]);
   useEffect(() => () => {
-    pickupTimersRef.current.forEach((id) => window.clearTimeout(id));
     if (initializationRetryTimerRef.current !== null) {
       window.clearTimeout(initializationRetryTimerRef.current);
     }
   }, []);
   const hasWeatherDataRef = useRef(false);
   // Exact payload last applied. Besides build ordering, this lets same-build
-  // pickups advance stable cache health without resetting the user's selection.
+  // Prepared-snapshot refreshes can advance stable cache health without
+  // resetting the user's selection.
   const latestWeatherDataRef = useRef<WeatherData | null>(null);
   // The timestamp of the hour the user is currently viewing, so background
   // refreshes can restore their selection instead of snapping back to "now".
@@ -129,20 +117,28 @@ export function useForecast(daylightOnly: boolean) {
     return () => window.clearInterval(intervalId);
   }, []);
 
-  const applyWeatherData = useCallback((data: WeatherData, preferDaylight: boolean) => {
-    // Refreshes overlap (the 10-min interval, focus/visibility, and the bounded
-    // post-refresh pickups all race), and KV is last-write-wins across edge
+  const applyWeatherData = useCallback((
+    data: WeatherData,
+    preferDaylight: boolean,
+    incomingIsServerAuthority = false,
+    incomingIsServerFallback = false,
+  ) => {
+    // Refreshes overlap (the 10-min interval, focus/visibility and manual
+    // actions can race), and distributed cache reads may return an older build
     // nodes — so a later response can legitimately carry an OLDER build than
     // one already on screen. Without this the header's timestamp walks
     // backwards and a rebuilt forecast is replaced by the one it superseded.
     const previousData = latestWeatherDataRef.current;
-    if (!shouldApplyForecastUpdate(previousData, data)) return;
+    if (!shouldApplyForecastUpdate(previousData, data, {
+      incomingIsServerAuthority,
+      incomingIsServerFallback,
+    })) return;
     latestWeatherDataRef.current = data;
     hasWeatherDataRef.current = true;
 
     setWeatherData(data);
 
-    // A health-only pickup represents the same immutable forecast build. It
+    // A health-only refresh represents the same immutable forecast build. It
     // must update the status line without re-running now/daylight selection or
     // moving the hour the user chose.
     if (previousData?.sources.fetchedAt === data.sources.fetchedAt) return;
@@ -227,7 +223,6 @@ export function useForecast(daylightOnly: boolean) {
     showBlockingLoader: boolean,
     force = false,
     forceRemoteRefresh = false,
-    recoverStartupWorkerMiss = false,
   ) => {
     const startedAt = Date.now();
     const currentInitialization = initializationRef.current;
@@ -269,7 +264,7 @@ export function useForecast(daylightOnly: boolean) {
     try {
       const loaded = CAN_FETCH_FRESH_FORECAST
         ? { data: await fetchWeatherData(), from: 'worker' as const }
-        : await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true, forceWorkerRefresh: forceRemoteRefresh });
+        : await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
       const data = loaded.data;
 
       if (!data) {
@@ -302,8 +297,30 @@ export function useForecast(daylightOnly: boolean) {
       }
 
       if (checkSequence !== checkSequenceRef.current) return;
+
+      if (loaded.initialization) {
+        // A valid initialization response is successful contact with the
+        // Worker, even when we keep rendering a saved forecast underneath it.
+        // Retain the retry contract and one calm lifecycle state instead of
+        // turning `from: local` into a false settled refresh failure.
+        rememberInitialization(loaded.initialization);
+        applyWeatherData(
+          data,
+          daylightOnlyRef.current,
+          loaded.serverAuthority === true,
+          loaded.serverFallback === true,
+        );
+        settledState = 'initializing';
+        return;
+      }
+
       clearInitialization();
-      applyWeatherData(data, daylightOnlyRef.current);
+      applyWeatherData(
+        data,
+        daylightOnlyRef.current,
+        loaded.serverAuthority === true,
+        loaded.serverFallback === true,
+      );
       settledState = CAN_FETCH_FRESH_FORECAST || loaded.from === 'worker'
         ? 'succeeded'
         : 'failed';
@@ -318,38 +335,11 @@ export function useForecast(daylightOnly: boolean) {
       // service" seconds after reaching it perfectly well. Never re-derive a
       // fact from someone else's throttled bookkeeping when the caller has it.
       if (forceRemoteRefresh && !CAN_FETCH_FRESH_FORECAST && loaded.from === 'local') {
-        settledError = 'Could not reach the forecast service — showing the last saved forecast.';
+        settledError = loaded.failureKind === 'network'
+          ? 'Could not reach the forecast service — showing the last saved forecast.'
+          : 'Could not refresh forecast data. Showing the latest cached forecast if available.';
       }
 
-      const recoverColdMiss = recoverStartupWorkerMiss && loaded.from === 'local';
-      if (!CAN_FETCH_FRESH_FORECAST && (forceRemoteRefresh || loaded.backgroundCheckScheduled || recoverColdMiss)) {
-
-        // Forced refreshes and due startup checks both complete in waitUntil.
-        // The Worker explicitly marks the latter in a response header, so
-        // ordinary cache hits create no polling traffic. Pick up the completed
-        // snapshot near the fast path and once after the 24s execution bound.
-        const pickupSequence = checkSequence;
-        pickupTimersRef.current.forEach((id) => window.clearTimeout(id));
-        const pickupDelays: readonly number[] = recoverColdMiss
-          ? [COLD_MISS_PICKUP_DELAY_MS]
-          : POST_REFRESH_PICKUP_DELAYS_MS;
-        pickupTimersRef.current = pickupDelays.map((delayMs) =>
-          window.setTimeout(async () => {
-            try {
-              const pickup = await loadCachedWeatherData(CURRENT_LOCATION, {
-                preferWorker: true,
-                allowColdWorkerBuild: recoverColdMiss,
-              });
-              if (pickup.data) applyWeatherData(pickup.data, daylightOnlyRef.current);
-              if (pickup.from === 'worker' && checkSequenceRef.current === pickupSequence) {
-                setCheckState('succeeded');
-                setError(null);
-              }
-            } catch {
-              // The 10-minute auto-refresh remains the retry path.
-            }
-          }, delayMs));
-      }
     } catch {
       if (showBlockingLoader || !hasWeatherDataRef.current) {
         settledError = 'Could not refresh forecast data. Showing the latest cached forecast if available.';
@@ -404,10 +394,10 @@ export function useForecast(daylightOnly: boolean) {
         applyWeatherData(cached, daylightOnlyRef.current);
         setLoading(false);
         // Startup asks once for the Worker's durable, completed snapshot. The
-        // normal endpoint already schedules a due background check;
-        // `?refresh=1` is reserved for an explicit user tap and its transient
-        // pending state.
-        await refreshForecast(false, false, false, true);
+        // normal endpoint reads the latest completed snapshot. Provider work
+        // belongs only to cron and the zero-traffic release warm-up;
+        // This is a user-visible prepared-snapshot re-read, never a build trigger.
+        await refreshForecast(false, false, false);
       } else {
         // localOnly above performs no I/O, so this is the one normal Worker
         // request on a true cold start.

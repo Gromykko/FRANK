@@ -1,12 +1,30 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker from '../../worker/index';
+import locationData from '../../src/config/locations.json';
+import type { ForecastLocation } from '../../src/config/locationTypes';
 import { FORECAST_PAYLOAD_VERSION } from '../../src/features/forecast/types';
+import { CURRENT_RELEASE } from '../../src/features/forecast/releaseContract';
+import type { ForecastData } from '../../worker/domain';
+import {
+  RELEASE_HEADER,
+  assembledForecastKey,
+  generationKeyPrefix,
+  initializationStateKey,
+} from '../../worker/generation';
 
+const LOCATIONS = locationData as ForecastLocation[];
 const LAST_COMPLETED_CHECK = new Date(Date.now() - 5 * 60_000).toISOString();
 const CURRENT_RUN = new Date().toISOString();
 const WORKER_VERSION_ID = 'cba7bd5e-93f4-4df7-8b61-8f00d5b6f3a1';
 
-function cachedForecast() {
+function locationById(id: string): ForecastLocation {
+  const location = LOCATIONS.find((candidate) => candidate.id === id);
+  if (!location) throw new Error(`Unknown test location: ${id}`);
+  return location;
+}
+
+function cachedForecast(locationId = 'horsens'): ForecastData {
+  const location = locationById(locationId);
   return {
     hourly: [{
       time: new Date(Date.now() + 60 * 60_000).toISOString(),
@@ -25,16 +43,24 @@ function cachedForecast() {
       currentSpeed: 0,
       currentDirection: 0,
       isDay: true,
+      weatherSource: 'met-locationforecast',
+      marineSource: 'dmi-dkss-wam',
     }],
     sunrise: [],
     sunset: [],
     warnings: [],
     sources: {
       payloadVersion: FORECAST_PAYLOAD_VERSION,
+      release: { ...CURRENT_RELEASE },
       weather: 'MET Norway Locationforecast',
       waves: 'DMI wam_nsb',
       water: 'DMI dkss_idw',
-      coordinate: { latitude: 55.858, longitude: 9.905 },
+      coordinate: location.coordinate,
+      location: {
+        id: location.id,
+        name: location.name,
+        areaName: location.areaName,
+      },
       fetchedAt: LAST_COMPLETED_CHECK,
       cacheHealth: {
         status: 'current',
@@ -49,15 +75,23 @@ function cachedForecast() {
   };
 }
 
-function makeRuntime(
-  initialPayload = cachedForecast(),
-  extraSeed: Record<string, unknown> = {},
-) {
-  let payload = initialPayload;
-  const extraStore = new Map(
-    Object.entries(extraSeed).map(([key, value]) => [key, JSON.stringify(value)]),
-  );
+function makeRuntime(options: {
+  exact?: boolean;
+  seed?: Record<string, unknown>;
+} = {}) {
+  const exact = options.exact ?? true;
+  const store = new Map<string, string>();
+  if (exact) {
+    for (const location of LOCATIONS) {
+      store.set(assembledForecastKey(location), JSON.stringify(cachedForecast(location.id)));
+    }
+  }
+  for (const [key, value] of Object.entries(options.seed ?? {})) {
+    store.set(key, JSON.stringify(value));
+  }
+
   const waits: Promise<unknown>[] = [];
+  const gets: string[] = [];
   const puts: Array<{ key: string; value: string }> = [];
   const env = {
     CF_VERSION_METADATA: {
@@ -67,17 +101,14 @@ function makeRuntime(
     },
     FRANK_FORECAST_CACHE: {
       get: async (key: string, type?: string) => {
-        if (key.startsWith('forecast:')) {
-          return type === 'json' ? payload : JSON.stringify(payload);
-        }
-        const raw = extraStore.get(key);
+        gets.push(key);
+        const raw = store.get(key);
         if (raw == null) return null;
         return type === 'json' ? JSON.parse(raw) : raw;
       },
       put: async (key: string, value: string) => {
         puts.push({ key, value });
-        if (key.startsWith('forecast:')) payload = JSON.parse(value);
-        else extraStore.set(key, value);
+        store.set(key, value);
       },
     },
   };
@@ -86,7 +117,7 @@ function makeRuntime(
       waits.push(Promise.resolve(value));
     },
   };
-  return { env, ctx, waits, puts, extraStore, getPayload: () => payload };
+  return { env, ctx, store, waits, gets, puts };
 }
 
 const request = (path: string, method = 'GET') =>
@@ -95,781 +126,347 @@ const request = (path: string, method = 'GET') =>
 const originalFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = originalFetch;
-  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
+function rejectProviderWork() {
+  return vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+    new Error('Browser route unexpectedly contacted a provider'),
+  );
+}
+
 describe('Worker route HTTP contract', () => {
-  const knownPaths = ['/', '/health', '/status', '/forecast/horsens'];
-
-  function useFakeAbortTimeouts() {
-    vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms: number) => {
-      const controller = new AbortController();
-      setTimeout(() => {
-        controller.abort(new DOMException('The operation timed out', 'TimeoutError'));
-      }, ms);
-      return controller.signal;
-    });
-  }
-
-  const metForecastAt = (time: string) => ({
-    properties: {
-      timeseries: [{
-        time,
-        data: {
-          instant: {
-            details: {
-              air_temperature: 15,
-              wind_speed: 2,
-              wind_speed_of_gust: 3,
-              wind_from_direction: 180,
-            },
-          },
-          next_1_hours: {
-            summary: { symbol_code: 'clearsky_day' },
-            details: { precipitation_amount: 0 },
-          },
-        },
-      }],
-    },
-  });
-
-  const marineIngredients = (locationId: string, runId: string, time: string) => ({
-    [`frank-marine-ingredient:v${FORECAST_PAYLOAD_VERSION}:water:${locationId}`]: {
-      schemaVersion: FORECAST_PAYLOAD_VERSION,
-      collection: 'dkss_idw',
-      id: runId,
-      series: [{
-        time,
-        timeMs: Date.parse(time),
-        tempWater: 16,
-        tideLevel: 0,
-        currentSpeed: 0,
-        currentDirection: 0,
-      }],
-    },
-    [`frank-marine-ingredient:v${FORECAST_PAYLOAD_VERSION}:waves:${locationId}`]: {
-      schemaVersion: FORECAST_PAYLOAD_VERSION,
-      collection: 'wam_nsb',
-      id: runId,
-      series: [{
-        time,
-        timeMs: Date.parse(time),
-        waveHeight: 0.1,
-        waveDirection: 180,
-        wavePeriod: 3,
-      }],
-    },
-  });
-
-  async function expectBrowserBackgroundDeadline(path: string, lastCheckAgeMs: number) {
-    vi.useFakeTimers();
-    // Keep this beyond clocks retained by earlier route tests in the shared
-    // Worker isolate, so the test exercises the deadline rather than a valid
-    // in-memory rate-limit short circuit.
-    vi.setSystemTime('2030-08-20T12:00:00Z');
-    const payload = cachedForecast();
-    payload.sources.cacheHealth.lastAttemptAt = new Date(Date.now() - lastCheckAgeMs).toISOString();
-    payload.sources.cacheHealth.weatherExpires = new Date(Date.now() + 30 * 60_000).toISOString();
-    const currentRun = new Date(Date.now() - 60 * 60_000).toISOString();
-    payload.sources.cacheHealth.marineInstances.water.id = currentRun;
-    payload.sources.cacheHealth.marineInstances.waves.id = currentRun;
-    const { env, ctx, waits } = makeRuntime(payload);
-    // The forecast is already current, so the background check reaches its KV
-    // stamp write. Simulate a binding call that never resolves: the absolute
-    // event policy, not the provider timeout, must still settle waitUntil.
-    env.FRANK_FORECAST_CACHE.put = () => new Promise<void>(() => {});
-
-    const startedAt = Date.now();
-    const response = await worker.fetch(request(path), env, ctx);
-    expect(response.status).toBe(200);
-    expect(waits).toHaveLength(1);
-
-    let settled = false;
-    void waits[0].then(
-      () => { settled = true; },
-      () => { settled = true; },
-    );
-    await vi.advanceTimersByTimeAsync(23_999);
-    expect(settled).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-    await waits[0];
-    expect(settled).toBe(true);
-    expect(Date.now() - startedAt).toBe(24_000);
-    expect(Date.now() - startedAt).toBeLessThan(25_000);
-  }
-
-  async function refreshWithFailedMarineProbe(options: {
-    clock: string;
-    path: string;
-    runAgeMs: number;
-    fetchedAgeMs: number;
-    failureStatus?: number;
-  }) {
-    vi.useFakeTimers();
-    vi.setSystemTime(options.clock);
-    const fetchedAt = new Date(Date.now() - options.fetchedAgeMs).toISOString();
-    const knownRun = new Date(Date.now() - options.runAgeMs).toISOString();
-    const payload = cachedForecast();
-    payload.sources.fetchedAt = fetchedAt;
-    payload.sources.cacheHealth.lastAttemptAt = new Date(Date.now() - 5 * 60_000).toISOString();
-    payload.sources.cacheHealth.weatherExpires = new Date(Date.now() + 30 * 60_000).toISOString();
-    payload.sources.cacheHealth.marineInstances.water.id = knownRun;
-    payload.sources.cacheHealth.marineInstances.waves.id = knownRun;
-
-    const calls: string[] = [];
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      calls.push(String(input));
-      return {
-        ok: false,
-        status: options.failureStatus ?? 429,
-        text: async () => options.failureStatus === 503
-          ? 'Upstream failed: internal provider detail'
-          : 'Server is busy: internal provider detail',
-      } as Response;
-    }) as typeof fetch;
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const runtime = makeRuntime(payload);
-
-    const response = await worker.fetch(request(options.path), runtime.env, runtime.ctx);
-    expect(response.status).toBe(200);
-    expect(runtime.waits).toHaveLength(1);
-    await Promise.all(runtime.waits);
-
-    return { ...runtime, calls, errorSpy, fetchedAt };
-  }
+  const knownPaths = [
+    '/',
+    '/health',
+    '/status',
+    '/forecast/horsens',
+    '/api/v1/forecast/horsens',
+  ];
 
   it.each(knownPaths)('rejects mutating methods consistently on %s', async (path) => {
-    const { env, ctx } = makeRuntime();
-    const response = await worker.fetch(request(path, 'POST'), env, ctx);
-
+    const runtime = makeRuntime();
+    const response = await worker.fetch(request(path, 'POST'), runtime.env, runtime.ctx);
     expect(response.status).toBe(405);
     expect(response.headers.get('Allow')).toBe('GET, HEAD, OPTIONS');
-    expect(await response.json()).toEqual({ error: 'Method not allowed' });
   });
 
   it.each(knownPaths)('answers OPTIONS consistently on %s', async (path) => {
-    const { env, ctx } = makeRuntime();
-    const response = await worker.fetch(request(path, 'OPTIONS'), env, ctx);
-
+    const runtime = makeRuntime();
+    const response = await worker.fetch(request(path, 'OPTIONS'), runtime.env, runtime.ctx);
     expect(response.status).toBe(204);
     expect(response.headers.get('Allow')).toBe('GET, HEAD, OPTIONS');
     expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, HEAD, OPTIONS');
-    expect(await response.text()).toBe('');
-  });
-
-  it.each(knownPaths)('models HEAD without a response body on %s', async (path) => {
-    const { env, ctx } = makeRuntime();
-    const response = await worker.fetch(request(path, 'HEAD'), env, ctx);
-
-    expect(response.status).toBe(200);
-    expect(await response.text()).toBe('');
-  });
-
-  it.each([
-    { path: '/forecast/horsens', method: 'GET', status: 503, kind: 'forecast' },
-    { path: '/forecast/horsens', method: 'HEAD', status: 503, kind: 'head' },
-    { path: '/health', method: 'GET', status: 503, kind: 'health' },
-    { path: '/health', method: 'HEAD', status: 503, kind: 'head' },
-    { path: '/status', method: 'GET', status: 200, kind: 'status' },
-    { path: '/status', method: 'HEAD', status: 200, kind: 'head' },
-  ])('bounds a stalled initial KV read on $method $path', async ({ path, method, status, kind }) => {
-    vi.useFakeTimers();
-    vi.setSystemTime('2026-08-25T12:00:00Z');
-    const runtime = makeRuntime();
-    runtime.env.FRANK_FORECAST_CACHE.get = () => new Promise<never>(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-
-    const startedAt = Date.now();
-    const pending = worker.fetch(request(path, method), runtime.env, runtime.ctx);
-    let settled = false;
-    void pending.then(
-      () => { settled = true; },
-      () => { settled = true; },
+    expect(response.headers.get('Access-Control-Expose-Headers')).toContain(
+      RELEASE_HEADER.generationReady,
     );
+  });
 
-    await vi.advanceTimersByTimeAsync(1_999);
-    expect(settled).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-
-    const response = await pending;
-    expect(response.status).toBe(status);
-    expect(Date.now() - startedAt).toBe(2_000);
-
-    if (kind === 'head') {
+  it.each(['/health', '/forecast/horsens', '/api/v1/forecast/horsens'])(
+    'models HEAD without a response body on %s',
+    async (path) => {
+      const runtime = makeRuntime();
+      const response = await worker.fetch(request(path, 'HEAD'), runtime.env, runtime.ctx);
+      expect(response.status).toBe(200);
       expect(await response.text()).toBe('');
-    } else if (kind === 'forecast') {
-      expect(await response.json()).toEqual({
-        error: 'Forecast service failed',
-        message: 'An internal error occurred while fetching or processing forecast data.',
-      });
-    } else if (kind === 'health') {
-      const body = await response.json();
-      expect(body).toMatchObject({
-        ok: false,
-        reason: 'forecast storage unavailable',
-      });
-      expect(JSON.stringify(body)).not.toContain('Execution deadline');
-    } else {
-      const body = await response.text();
-      expect(body).toContain('forecast storage unavailable');
-      expect(body).toContain('STORAGE UNAVAILABLE');
-      expect(body).not.toContain('Execution deadline');
-    }
+    },
+  );
+
+  it('keeps routing strict and does not advertise unknown paths', async () => {
+    const runtime = makeRuntime();
+    const [unknown, futureApi, unknownOptions] = await Promise.all([
+      worker.fetch(request('/forecast/not-a-place'), runtime.env, runtime.ctx),
+      worker.fetch(request('/api/v2/forecast/horsens'), runtime.env, runtime.ctx),
+      worker.fetch(request('/missing', 'OPTIONS'), runtime.env, runtime.ctx),
+    ]);
+    expect(unknown.status).toBe(404);
+    expect(futureApi.status).toBe(404);
+    expect(unknownOptions.status).toBe(404);
   });
 
   it('hardens the human status page against framing and referrer leakage', async () => {
-    const { env, ctx } = makeRuntime();
-    const response = await worker.fetch(request('/status'), env, ctx);
-
+    const runtime = makeRuntime();
+    const response = await worker.fetch(request('/status'), runtime.env, runtime.ctx);
     expect(response.headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'");
     expect(response.headers.get('Referrer-Policy')).toBe('no-referrer');
     expect(response.headers.get('X-Frame-Options')).toBe('DENY');
   });
 
-  it('does not advertise unknown paths through OPTIONS', async () => {
-    const { env, ctx } = makeRuntime();
-    const response = await worker.fetch(request('/missing', 'OPTIONS'), env, ctx);
-
-    expect(response.status).toBe(404);
-  });
-
-  it('returns pending for a manual refresh without moving the completed-check timestamp', async () => {
-    const { env, ctx, waits } = makeRuntime();
-    const response = await worker.fetch(request('/forecast/horsens?refresh=1'), env, ctx);
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(body.sources.cacheHealth).toMatchObject({
-      status: 'pending',
-      lastAttemptAt: LAST_COMPLETED_CHECK,
-      checkedBy: 'manual',
-    });
-    expect(waits).toHaveLength(1);
-    await Promise.all(waits);
-  });
-
-  it('serves an existing deployment warm-up cache without launching background work', async () => {
-    const { env, ctx, waits } = makeRuntime();
-    const providerFetch = vi.spyOn(globalThis, 'fetch');
-    const response = await worker.fetch(request('/forecast/horsens?warm=1'), env, ctx);
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(body.sources.payloadVersion).toBe(FORECAST_PAYLOAD_VERSION);
-    expect(body.sources.location?.id).toBeUndefined();
-    expect(waits).toHaveLength(0);
+  it('keeps the unversioned bootstrap route as an exact canonical alias', async () => {
+    const runtime = makeRuntime();
+    const providerFetch = rejectProviderWork();
+    const [unversionedRoute, versionedRoute] = await Promise.all([
+      worker.fetch(request('/forecast/horsens'), runtime.env, runtime.ctx),
+      worker.fetch(request('/api/v1/forecast/horsens'), runtime.env, runtime.ctx),
+    ]);
+    expect(unversionedRoute.status).toBe(200);
+    expect(versionedRoute.status).toBe(200);
+    const unversionedBody = await unversionedRoute.json<ForecastData>();
+    const versionedBody = await versionedRoute.json<ForecastData>();
+    expect(unversionedBody).toEqual(versionedBody);
+    expect(unversionedBody.sources.payloadVersion).toBe(7);
+    expect(unversionedBody.sources.release).toEqual(CURRENT_RELEASE);
+    expect(versionedBody.sources.payloadVersion).toBe(7);
+    expect(versionedBody.sources.release).toEqual(CURRENT_RELEASE);
+    expect(unversionedRoute.headers.get(RELEASE_HEADER.generationReady)).toBe('true');
+    expect(versionedRoute.headers.get(RELEASE_HEADER.generationReady)).toBe('true');
     expect(providerFetch).not.toHaveBeenCalled();
   });
 
-  it('returns a versioned initializing contract and rate-limits repeated cold and warm requests', async () => {
-    const runtime = makeRuntime(null as never);
-    const providerFetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
-      async () => new Response('Server is busy: owner-only provider detail', { status: 429 }),
+  it('returns exact release metadata in body and CORS-visible headers', async () => {
+    const runtime = makeRuntime();
+    const response = await worker.fetch(
+      request('/api/v1/forecast/horsens'),
+      runtime.env,
+      runtime.ctx,
     );
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const body = await response.json<ForecastData>();
+    expect(body.sources.release).toEqual(CURRENT_RELEASE);
+    expect(response.headers.get(RELEASE_HEADER.apiSchema)).toBe('1');
+    expect(response.headers.get(RELEASE_HEADER.modelRevision)).toBe('7');
+    expect(response.headers.get(RELEASE_HEADER.dataGeneration)).toBe('api1-model7');
+    expect(response.headers.get(RELEASE_HEADER.assembledCacheSchema)).toBe('1');
+    expect(response.headers.get(RELEASE_HEADER.marineCacheSchema)).toBe('1');
+    expect(response.headers.get(RELEASE_HEADER.payloadVersion)).toBe('7');
+    expect(response.headers.get(RELEASE_HEADER.generationReady)).toBe('true');
+    expect(response.headers.get('X-FRANK-Worker-Version')).toBe(WORKER_VERSION_ID);
+  });
 
-    const first = await worker.fetch(request('/forecast/aarhus'), runtime.env, runtime.ctx);
-    const firstBody = await first.json();
+  it.each(['/forecast/horsens', '/forecast/horsens?refresh=1'])(
+    'keeps browser request %s a pure prepared-snapshot read',
+    async (path) => {
+      const runtime = makeRuntime();
+      const providerFetch = rejectProviderWork();
+      const response = await worker.fetch(request(path), runtime.env, runtime.ctx);
+      expect(response.status).toBe(200);
+      expect((await response.json<ForecastData>()).sources.cacheHealth?.status).toBe('current');
+      expect(response.headers.get('X-FRANK-Background-Check')).toBeNull();
+      expect(runtime.waits).toHaveLength(0);
+      expect(runtime.puts).toHaveLength(0);
+      expect(providerFetch).not.toHaveBeenCalled();
+    },
+  );
 
-    expect(first.status).toBe(503);
-    expect(first.headers.get('Retry-After')).toBe('600');
-    expect(first.headers.get('Access-Control-Expose-Headers')).toContain('Retry-After');
-    expect(firstBody).toEqual({
+  it('returns typed initialization without making a first visitor build data', async () => {
+    const runtime = makeRuntime({ exact: false });
+    const providerFetch = rejectProviderWork();
+    const response = await worker.fetch(
+      request('/forecast/aarhus'),
+      runtime.env,
+      runtime.ctx,
+    );
+    const body = await response.json();
+    expect(response.status).toBe(503);
+    expect(response.headers.get('Retry-After')).toBe('600');
+    expect(response.headers.get(RELEASE_HEADER.generationReady)).toBe('false');
+    expect(body).toMatchObject({
       schemaVersion: 1,
       status: 'initializing',
       code: 'FORECAST_INITIALIZING',
-      message: 'Forecast for this location is being prepared. Please try again shortly.',
-      retryAfterSeconds: 600,
-      location: { id: 'aarhus', name: 'Aarhus', areaName: 'Aarhus Bugt' },
+      location: { id: 'aarhus' },
     });
-    expect(JSON.stringify(firstBody)).not.toContain('owner-only provider detail');
-    expect(runtime.puts).toEqual(expect.arrayContaining([
-      expect.objectContaining({ key: 'forecast-initialization:aarhus:v1' }),
-    ]));
-    expect(runtime.waits).toHaveLength(1);
-    await Promise.all(runtime.waits);
+    expect(runtime.puts).toHaveLength(0);
+    expect(runtime.waits).toHaveLength(0);
+    expect(providerFetch).not.toHaveBeenCalled();
+  });
 
-    const providerCalls = providerFetch.mock.calls.length;
-    const repeatedWarm = await worker.fetch(
+  it('does not expose candidate warming through the unversioned alias', async () => {
+    const runtime = makeRuntime({ exact: false });
+    const providerFetch = rejectProviderWork();
+    const response = await worker.fetch(
       request('/forecast/aarhus?warm=1'),
       runtime.env,
       runtime.ctx,
     );
-    expect(repeatedWarm.status).toBe(503);
-    expect((await repeatedWarm.json()).code).toBe('FORECAST_INITIALIZING');
-    expect(providerFetch).toHaveBeenCalledTimes(providerCalls);
-    expect(runtime.waits).toHaveLength(1);
+    expect(response.status).toBe(503);
+    expect((await response.json()).code).toBe('FORECAST_INITIALIZING');
+    expect(runtime.puts).toHaveLength(0);
+    expect(runtime.waits).toHaveLength(0);
+    expect(providerFetch).not.toHaveBeenCalled();
   });
 
-  it('honors a persisted initializing cooldown from warm mode without provider work', async () => {
-    const runtime = makeRuntime(null as never, {
-      'forecast-initialization:kolding:v1': {
-        schemaVersion: 1,
-        status: 'initializing',
-        locationId: 'kolding',
-        lastAttemptAt: new Date().toISOString(),
-        retryAfterSeconds: 600,
-      },
-    });
-    const providerFetch = vi.spyOn(globalThis, 'fetch');
+  it('keeps candidate 429 state inside the target generation and honors its cooldown', async () => {
+    const location = locationById('aarhus');
+    const runtime = makeRuntime({ exact: false });
+    const providerFetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      async () => new Response('Server is busy: private detail', { status: 429 }),
+    );
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    const response = await worker.fetch(
-      request('/forecast/kolding?warm=1'),
+    const first = await worker.fetch(
+      request('/api/v1/forecast/aarhus?warm=1'),
       runtime.env,
       runtime.ctx,
     );
+    expect(first.status).toBe(503);
+    expect((await first.json()).code).toBe('FORECAST_INITIALIZING');
+    expect(runtime.puts.map(({ key }) => key)).toEqual([initializationStateKey(location)]);
+    expect(runtime.puts.every(({ key }) =>
+      key.startsWith(`${generationKeyPrefix(CURRENT_RELEASE)}:`)))
+      .toBe(true);
+    await Promise.all(runtime.waits);
 
+    const callsAfterFirst = providerFetch.mock.calls.length;
+    const repeated = await worker.fetch(
+      request('/api/v1/forecast/aarhus?warm=1'),
+      runtime.env,
+      runtime.ctx,
+    );
+    expect(repeated.status).toBe(503);
+    expect(providerFetch).toHaveBeenCalledTimes(callsAfterFirst);
+  });
+
+  it('honors a persisted generation-scoped cooldown without provider work', async () => {
+    const location = locationById('kolding');
+    const runtime = makeRuntime({
+      exact: false,
+      seed: {
+        [initializationStateKey(location)]: {
+          schemaVersion: 1,
+          status: 'initializing',
+          locationId: location.id,
+          lastAttemptAt: new Date().toISOString(),
+          retryAfterSeconds: 600,
+        },
+      },
+    });
+    const providerFetch = rejectProviderWork();
+    const response = await worker.fetch(
+      request('/api/v1/forecast/kolding?warm=1'),
+      runtime.env,
+      runtime.ctx,
+    );
     expect(response.status).toBe(503);
     expect((await response.json()).code).toBe('FORECAST_INITIALIZING');
     expect(providerFetch).not.toHaveBeenCalled();
-    expect(runtime.waits).toHaveLength(0);
   });
 
-  it('lets a completed forecast win over a leftover initialization marker', async () => {
-    const runtime = makeRuntime(cachedForecast(), {
-      'forecast-initialization:vejle:v1': {
-        schemaVersion: 1,
-        status: 'initializing',
-        locationId: 'vejle',
-        lastAttemptAt: new Date().toISOString(),
-        retryAfterSeconds: 600,
+  it('lets a completed target generation win over a leftover cooldown marker', async () => {
+    const location = locationById('vejle');
+    const runtime = makeRuntime({
+      seed: {
+        [initializationStateKey(location)]: {
+          schemaVersion: 1,
+          status: 'initializing',
+          locationId: location.id,
+          lastAttemptAt: new Date().toISOString(),
+          retryAfterSeconds: 600,
+        },
       },
     });
-    const providerFetch = vi.spyOn(globalThis, 'fetch');
-
+    const providerFetch = rejectProviderWork();
     const response = await worker.fetch(
-      request('/forecast/vejle?warm=1'),
+      request('/api/v1/forecast/vejle?warm=1'),
       runtime.env,
       runtime.ctx,
     );
-
     expect(response.status).toBe(200);
-    expect((await response.json()).sources.payloadVersion).toBe(FORECAST_PAYLOAD_VERSION);
+    expect(response.headers.get(RELEASE_HEADER.generationReady)).toBe('true');
     expect(providerFetch).not.toHaveBeenCalled();
   });
 
-  it('fails hard on a malformed initialization marker without contacting providers', async () => {
-    const runtime = makeRuntime(null as never, {
-      'forecast-initialization:horsens:v1': {
-        schemaVersion: 999,
-        status: 'initializing',
-        locationId: 'horsens',
-      },
-    });
-    const providerFetch = vi.spyOn(globalThis, 'fetch');
+  it('keeps malformed provider contracts on the hard failure path', async () => {
+    const runtime = makeRuntime({ exact: false });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => (
+      new Response(JSON.stringify({ unexpected: [] }), { status: 200 })
+    ));
     vi.spyOn(console, 'error').mockImplementation(() => {});
-
     const response = await worker.fetch(
-      request('/forecast/horsens'),
+      request('/api/v1/forecast/vejle?warm=1'),
       runtime.env,
       runtime.ctx,
     );
-    const body = await response.json();
-
-    expect(response.status).toBe(503);
-    expect(body).toEqual({
-      error: 'Forecast service failed',
-      message: 'An internal error occurred while fetching or processing forecast data.',
-    });
-    expect(providerFetch).not.toHaveBeenCalled();
-  });
-
-  it('fails hard when the initialization marker storage read fails', async () => {
-    const runtime = makeRuntime(null as never);
-    const originalGet = runtime.env.FRANK_FORECAST_CACHE.get;
-    runtime.env.FRANK_FORECAST_CACHE.get = async (key: string, type?: string) => {
-      if (key.startsWith('forecast-initialization:')) {
-        throw new Error('KV initialization marker read failed');
-      }
-      return originalGet(key, type);
-    };
-    const providerFetch = vi.spyOn(globalThis, 'fetch');
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-
-    const response = await worker.fetch(
-      request('/forecast/horsens'),
-      runtime.env,
-      runtime.ctx,
-    );
-
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({
       error: 'Forecast service failed',
       message: 'An internal error occurred while fetching or processing forecast data.',
     });
-    expect(providerFetch).not.toHaveBeenCalled();
+    expect(runtime.puts.some(({ key }) => key.includes(':state:initialization:'))).toBe(false);
+    await Promise.all(runtime.waits);
   });
 
-  it('keeps malformed provider contracts on the hard failure path', async () => {
-    const runtime = makeRuntime(null as never);
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => (
-      new Response(JSON.stringify({ unexpected: [] }), { status: 200 })
-    ));
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-
+  it('ignores unmanaged historical keys instead of treating them as release data', async () => {
+    const runtime = makeRuntime({
+      exact: false,
+      seed: {
+        'forecast:horsens:weather-data:v7': cachedForecast('horsens'),
+        'forecast:horsens:weather-data:v1': cachedForecast('horsens'),
+      },
+    });
+    const providerFetch = rejectProviderWork();
     const response = await worker.fetch(
-      request('/forecast/vejle?warm=1'),
+      request('/api/v1/forecast/horsens'),
       runtime.env,
       runtime.ctx,
     );
-    const body = await response.json();
-
     expect(response.status).toBe(503);
-    expect(body).toEqual({
-      error: 'Forecast service failed',
-      message: 'An internal error occurred while fetching or processing forecast data.',
-    });
-    expect(body).not.toHaveProperty('code');
-    expect(runtime.puts.some(({ key }) => key.startsWith('forecast-initialization:'))).toBe(false);
-    await Promise.all(runtime.waits);
+    expect((await response.json()).code).toBe('FORECAST_INITIALIZING');
+    expect(runtime.gets).not.toContain('forecast:horsens:weather-data:v7');
+    expect(runtime.gets).not.toContain('forecast:horsens:weather-data:v1');
+    expect(runtime.puts).toHaveLength(0);
+    expect(providerFetch).not.toHaveBeenCalled();
   });
 
-  it('marks a due normal cache hit when a background check was actually scheduled', async () => {
-    const payload = cachedForecast();
-    payload.sources.cacheHealth.lastAttemptAt = new Date(Date.now() - 11 * 60_000).toISOString();
-    const { env, ctx, waits } = makeRuntime(payload);
-    const response = await worker.fetch(request('/forecast/kolding'), env, ctx);
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get('X-FRANK-Background-Check')).toBe('scheduled');
-    expect(response.headers.get('Access-Control-Expose-Headers')).toContain('X-FRANK-Background-Check');
-    expect(waits).toHaveLength(1);
-    await Promise.all(waits);
-  });
-
-  it.each(['/forecast/horsens', '/forecast/horsens?refresh=1', '/forecast/horsens?warm=1'])('does not re-read a known null forecast cache on %s', async (path) => {
-    const runId = new Date(Date.now() - 60 * 60_000).toISOString();
-    const forecastTime = new Date(Date.now() + 60 * 60_000).toISOString();
-    const runtime = makeRuntime(cachedForecast(), marineIngredients('horsens', runId, forecastTime));
-    const originalGet = runtime.env.FRANK_FORECAST_CACHE.get;
-    const originalPut = runtime.env.FRANK_FORECAST_CACHE.put;
-    const getKeys: string[] = [];
-    let forecastStored = false;
-
-    runtime.env.FRANK_FORECAST_CACHE.get = async (key: string, type?: string) => {
-      getKeys.push(key);
-      if (key.startsWith('forecast:') && !forecastStored) return null;
-      return originalGet(key, type);
-    };
-    runtime.env.FRANK_FORECAST_CACHE.put = async (key: string, value: string) => {
-      if (key.startsWith('forecast:')) forecastStored = true;
-      await originalPut(key, value);
-    };
-
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes('/instances')) {
-        return new Response(JSON.stringify({ instances: [{ id: runId }] }), { status: 200 });
-      }
-      if (url.includes('api.met.no')) {
-        return new Response(JSON.stringify(metForecastAt(forecastTime)), {
-          status: 200,
-          headers: {
-            'Last-Modified': new Date(Date.now() - 60_000).toUTCString(),
-            Expires: new Date(Date.now() + 30 * 60_000).toUTCString(),
-          },
-        });
-      }
-      if (url.includes('feeds.meteoalarm.org')) {
-        return new Response('<feed></feed>', { status: 200 });
-      }
-      throw new Error(`Unexpected cold-build fetch: ${url}`);
-    }) as typeof fetch;
-
-    const response = await worker.fetch(request(path), runtime.env, runtime.ctx);
-
-    expect(response.status).toBe(200);
-    expect(getKeys.filter((key) => key.startsWith('forecast:'))).toHaveLength(1);
-    expect(runtime.puts.some(({ key }) => key.startsWith('forecast:'))).toBe(true);
-    expect(runtime.waits).toHaveLength(1);
-  });
-
-  it('settles manual waitUntil work within the 25-second ceiling', async () => {
-    await expectBrowserBackgroundDeadline('/forecast/kolding?refresh=1', 11 * 60_000);
-  });
-
-  it('settles automatic user-background work within the same ceiling', async () => {
-    await expectBrowserBackgroundDeadline('/forecast/vejle', 16 * 60_000);
-  });
-
-  it('reserves enough time after an upstream timeout to persist stale/degraded health', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime('2026-08-23T12:00:00Z');
-    useFakeAbortTimeouts();
-    const originalFetchedAt = new Date(Date.now() - 60 * 60_000).toISOString();
-    const knownRun = new Date(Date.now() - 6 * 60 * 60_000).toISOString();
-    const payload = cachedForecast();
-    payload.sources.fetchedAt = originalFetchedAt;
-    payload.sources.cacheHealth.lastAttemptAt = new Date(Date.now() - 5 * 60_000).toISOString();
-    payload.sources.cacheHealth.weatherExpires = new Date(Date.now() + 30 * 60_000).toISOString();
-    payload.sources.cacheHealth.marineInstances.water.id = knownRun;
-    payload.sources.cacheHealth.marineInstances.waves.id = knownRun;
-
-    const calls: string[] = [];
-    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-      calls.push(String(input));
-      return new Promise<Response>((_resolve, reject) => {
-        const signal = init?.signal;
-        if (signal?.aborted) {
-          reject(signal.reason);
-          return;
-        }
-        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
-      });
-    }) as typeof fetch;
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    const runtime = makeRuntime(payload);
-    const startedAt = Date.now();
-
-    const response = await worker.fetch(request('/forecast/horsens?refresh=1'), runtime.env, runtime.ctx);
-    expect(response.status).toBe(200);
-    expect(runtime.waits).toHaveLength(1);
-    let settled = false;
-    void runtime.waits[0].then(() => { settled = true; }, () => { settled = true; });
-
-    await vi.advanceTimersByTimeAsync(14_999);
-    expect(settled).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-    await runtime.waits[0];
-
-    const retained = runtime.getPayload();
-    expect(Date.now() - startedAt).toBe(15_000);
-    expect(24_000 - (Date.now() - startedAt)).toBe(9_000);
-    expect(calls).toHaveLength(2); // one water + one wave attempt, no retry cascade
-    expect(runtime.puts.some(({ key }) => key.startsWith('forecast:'))).toBe(true);
-    expect(retained.sources.fetchedAt).toBe(originalFetchedAt);
-    expect(retained.sources.cacheHealth).toMatchObject({
-      status: 'stale',
-      degradedSources: ['water', 'waves'],
-      message: 'Marine service unavailable; keeping the last completed forecast.',
-    });
-    expect(retained.sources.cacheHealth.providerBusy).toBeUndefined();
-  });
-
-  it('does not let a stalled advisory warning feed abort a complete forecast build', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime('2026-08-24T12:00:00Z');
-    useFakeAbortTimeouts();
-    const originalFetchedAt = new Date(Date.now() - 60 * 60_000).toISOString();
-    const runId = new Date(Date.now() - 60 * 60_000).toISOString();
-    const forecastTime = new Date(Date.now() + 60 * 60_000).toISOString();
-    const payload = cachedForecast();
-    payload.sources.fetchedAt = originalFetchedAt;
-    payload.sources.cacheHealth.lastAttemptAt = new Date(Date.now() - 5 * 60_000).toISOString();
-    payload.sources.cacheHealth.weatherExpires = new Date(Date.now() - 60_000).toISOString();
-    payload.sources.cacheHealth.marineInstances.water.id = runId;
-    payload.sources.cacheHealth.marineInstances.waves.id = runId;
-    (payload as unknown as { warnings: Array<Record<string, unknown>> }).warnings = [{
-      id: 'held-warning',
-      expires: new Date(Date.now() + 60 * 60_000).toISOString(),
-    }];
-
-    const calls: string[] = [];
-    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      calls.push(url);
-      if (url.includes('api.met.no')) {
-        return Promise.resolve(new Response(JSON.stringify(metForecastAt(forecastTime)), {
-          status: 200,
-          headers: {
-            'Last-Modified': new Date(Date.now() - 60_000).toUTCString(),
-            Expires: new Date(Date.now() + 30 * 60_000).toUTCString(),
-          },
-        }));
-      }
-      if (url.includes('feeds.meteoalarm.org')) {
-        return new Promise<Response>((_resolve, reject) => {
-          const signal = init?.signal;
-          signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
-        });
-      }
-      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
-    }) as typeof fetch;
-    const runtime = makeRuntime(
-      payload,
-      marineIngredients('kolding', runId, forecastTime),
-    );
-
-    const response = await worker.fetch(request('/forecast/kolding?refresh=1'), runtime.env, runtime.ctx);
-    expect(response.status).toBe(200);
-    let settled = false;
-    void runtime.waits[0].then(() => { settled = true; }, () => { settled = true; });
-    await vi.advanceTimersByTimeAsync(4_999);
-    expect(settled).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-    await runtime.waits[0];
-
-    const fresh = runtime.getPayload();
-    expect(fresh.sources.fetchedAt).not.toBe(originalFetchedAt);
-    expect(fresh.sources.cacheHealth.status).toBe('current');
-    expect(fresh.warnings).toEqual([expect.objectContaining({ id: 'held-warning' })]);
-    expect(calls.filter((url) => url.includes('feeds.meteoalarm.org'))).toHaveLength(1);
-    expect(calls.some((url) => url.includes('opendataapi.dmi.dk'))).toBe(false);
-  });
-
-  it('fails closed on a future-dated retained MET Last-Modified value', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime('2026-08-25T12:00:00Z');
-    const originalFetchedAt = new Date(Date.now() - 60 * 60_000).toISOString();
-    const runId = new Date(Date.now() - 60 * 60_000).toISOString();
-    const forecastTime = new Date(Date.now() + 60 * 60_000).toISOString();
-    const payload = cachedForecast();
-    payload.sources.fetchedAt = originalFetchedAt;
-    payload.sources.cacheHealth.lastAttemptAt = new Date(Date.now() - 5 * 60_000).toISOString();
-    payload.sources.cacheHealth.weatherExpires = new Date(Date.now() - 60_000).toISOString();
-    payload.sources.cacheHealth.marineInstances.water.id = runId;
-    payload.sources.cacheHealth.marineInstances.waves.id = runId;
-    const futureLastModified = new Date(Date.now() + 60 * 60_000).toUTCString();
-    const seed = {
-      ...marineIngredients('vejle', runId, forecastTime),
-      'met-raw:vejle': {
-        lastModified: futureLastModified,
-        body: metForecastAt(forecastTime),
+  it('rejects corrupt target-generation KV as unavailable', async () => {
+    const location = locationById('horsens');
+    const runtime = makeRuntime({
+      exact: false,
+      seed: {
+        [assembledForecastKey(location)]: {
+          ...cachedForecast(location.id),
+          hourly: [{ time: 'corrupt' }],
+        },
       },
-    };
-
-    const calls: string[] = [];
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = String(input);
-      calls.push(url);
-      if (url.includes('api.met.no')) {
-        return new Response('upstream failed: internal provider detail', { status: 503 });
-      }
-      if (url.includes('feeds.meteoalarm.org')) {
-        return new Response('<feed xmlns="http://www.w3.org/2005/Atom"></feed>', { status: 200 });
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    }) as typeof fetch;
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    const runtime = makeRuntime(payload, seed);
-
-    const response = await worker.fetch(request('/forecast/vejle?refresh=1'), runtime.env, runtime.ctx);
-    expect(response.status).toBe(200);
-    await Promise.all(runtime.waits);
-
-    const retained = runtime.getPayload();
-    expect(retained.sources.fetchedAt).toBe(originalFetchedAt);
-    expect(retained.sources.cacheHealth).toMatchObject({
-      status: 'stale',
-      message: 'Forecast refresh failed; keeping the last completed forecast.',
     });
-    expect(retained.sources.cacheHealth.message).not.toContain('internal provider detail');
-    expect(calls.some((url) => url.includes('opendataapi.dmi.dk'))).toBe(false);
+    const response = await worker.fetch(
+      request('/api/v1/forecast/horsens'),
+      runtime.env,
+      runtime.ctx,
+    );
+    expect(response.status).toBe(503);
+    expect((await response.json()).code).toBe('FORECAST_INITIALIZING');
+    expect(response.headers.get(RELEASE_HEADER.generationReady)).toBe('false');
+    expect(runtime.puts).toHaveLength(0);
   });
 
-  it('keeps the original assembled timestamp when marine provenance is over 12 hours old', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime('2026-08-20T12:00:00Z');
-    const oldFetchedAt = new Date(Date.now() - 4 * 60 * 60_000).toISOString();
-    const oldRun = new Date(Date.now() - 13 * 60 * 60_000).toISOString();
-    const payload = cachedForecast();
-    payload.sources.fetchedAt = oldFetchedAt;
-    payload.sources.cacheHealth.lastAttemptAt = new Date(Date.now() - 5 * 60_000).toISOString();
-    payload.sources.cacheHealth.weatherExpires = new Date(Date.now() - 60_000).toISOString();
-    payload.sources.cacheHealth.marineInstances.water.id = oldRun;
-    payload.sources.cacheHealth.marineInstances.waves.id = oldRun;
-
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes('/instances')) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({ instances: [{ id: oldRun }] }),
-        } as Response;
-      }
-      return {
-        ok: false,
-        status: 429,
-        text: async () => 'Server is busy',
-      } as Response;
-    }) as typeof fetch;
-
-    const { env, ctx, waits, getPayload } = makeRuntime(payload);
-    const response = await worker.fetch(request('/forecast/aarhus?refresh=1'), env, ctx);
-    expect(response.status).toBe(200);
-    expect(waits).toHaveLength(1);
-    await Promise.all(waits);
-
-    const retained = getPayload();
-    expect(retained.sources.fetchedAt).toBe(oldFetchedAt);
-    expect(retained.sources.cacheHealth.status).toBe('stale');
-
-    // The unchanged fetchedAt is load-bearing: it lets the dead-man health
-    // check fail once old marine data can no longer be safely reassembled.
-    const health = await worker.fetch(request('/health'), env, ctx);
-    expect(health.status).toBe(503);
-    expect((await health.json()).reason).toContain('not rebuilding');
-  });
-
-  it('marks a failed marine probe stale even while MET remains unexpired', async () => {
-    const result = await refreshWithFailedMarineProbe({
-      clock: '2026-08-26T12:00:00Z',
-      path: '/forecast/kolding?refresh=1',
-      runAgeMs: 6 * 60 * 60_000,
-      fetchedAgeMs: 60 * 60_000,
+  it('reports exact all-location readiness independently from availability health', async () => {
+    const ids = LOCATIONS.map(({ id }) => id);
+    const exactRuntime = makeRuntime();
+    const exactResponse = await worker.fetch(
+      request('/health'),
+      exactRuntime.env,
+      exactRuntime.ctx,
+    );
+    const exactBody = await exactResponse.json();
+    expect(exactResponse.status).toBe(200);
+    expect(exactBody.release).toEqual({
+      target: CURRENT_RELEASE,
+      allLocationsReady: true,
+      ready: ids,
+      available: ids,
+      fallback: [],
+      missing: [],
     });
-    const retained = result.getPayload();
+    expect(exactBody.locations.every(
+      (entry: { exactGenerationReady: boolean; availabilitySource: string }) =>
+        entry.exactGenerationReady && entry.availabilitySource === 'generation',
+    )).toBe(true);
 
-    expect(retained.sources.fetchedAt).toBe(result.fetchedAt);
-    expect(retained.sources.cacheHealth).toMatchObject({
-      status: 'stale',
-      degradedSources: ['water', 'waves'],
-      providerBusy: true,
-      busyProvider: 'marine',
-      message: 'Marine service busy; keeping the last completed forecast.',
+    const emptyRuntime = makeRuntime({ exact: false });
+    const emptyResponse = await worker.fetch(
+      request('/health'),
+      emptyRuntime.env,
+      emptyRuntime.ctx,
+    );
+    const emptyBody = await emptyResponse.json();
+    expect(emptyResponse.status).toBe(503);
+    expect(emptyBody.ok).toBe(false);
+    expect(emptyBody.release).toMatchObject({
+      allLocationsReady: false,
+      ready: [],
+      available: [],
+      fallback: [],
+      missing: ids,
     });
-    expect(retained.sources.cacheHealth.message).not.toContain('internal provider detail');
-    expect(result.calls).toHaveLength(2);
-    expect(result.calls.every((url) => url.includes('/instances'))).toBe(true);
-    expect(result.errorSpy).toHaveBeenCalledWith(expect.stringContaining('"event":"marine_instance_probe_failed"'));
-  });
-
-  it('does not call an ordinary marine probe failure “service busy”', async () => {
-    const result = await refreshWithFailedMarineProbe({
-      clock: '2026-08-27T12:00:00Z',
-      path: '/forecast/aarhus?refresh=1',
-      runAgeMs: 6 * 60 * 60_000,
-      fetchedAgeMs: 60 * 60_000,
-      failureStatus: 503,
-    });
-    const health = result.getPayload().sources.cacheHealth;
-
-    expect(health).toMatchObject({
-      status: 'stale',
-      degradedSources: ['water', 'waves'],
-      message: 'Marine service unavailable; keeping the last completed forecast.',
-    });
-    expect(health.providerBusy).toBeUndefined();
-    expect(health.busyProvider).toBeUndefined();
-    expect(health.message).not.toContain('internal provider detail');
-    expect(result.calls).toHaveLength(2);
-    expect(result.calls.every((url) => url.includes('/instances'))).toBe(true);
-    expect(result.errorSpy).toHaveBeenCalledWith(expect.stringContaining('"event":"marine_instance_probe_failed"'));
-  });
-
-  it('never lets an unexpired MET window bless a known marine run older than 12 hours', async () => {
-    const result = await refreshWithFailedMarineProbe({
-      clock: '2026-08-28T12:00:00Z',
-      path: '/forecast/vejle?refresh=1',
-      runAgeMs: 13 * 60 * 60_000,
-      fetchedAgeMs: 4 * 60 * 60_000,
-    });
-    const retained = result.getPayload();
-
-    expect(retained.sources.fetchedAt).toBe(result.fetchedAt);
-    expect(retained.sources.cacheHealth).toMatchObject({
-      status: 'stale',
-      needsRebuild: true,
-      degradedSources: ['water', 'waves'],
-      providerBusy: true,
-      busyProvider: 'marine',
-    });
-    expect(result.calls.every((url) => url.includes('/instances'))).toBe(true);
-
-    const health = await worker.fetch(request('/health'), result.env, result.ctx);
-    expect(health.status).toBe(503);
-    expect((await health.json()).reason).toContain('not rebuilding');
   });
 });

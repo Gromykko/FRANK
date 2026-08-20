@@ -1,4 +1,5 @@
 import type { ForecastLocation } from '../src/config/locationTypes';
+import type { ReleaseMetadata } from '../src/features/forecast/releaseContract';
 import type { MetBlock } from '../src/features/forecast/normalize';
 import type {
   HourlyData,
@@ -38,6 +39,7 @@ export interface WorkerCacheHealth
 
 export interface WorkerSources extends Omit<WeatherData['sources'], 'cacheHealth'> {
   payloadVersion: number;
+  release?: ReleaseMetadata;
   cacheHealth?: WorkerCacheHealth;
 }
 
@@ -130,8 +132,22 @@ export interface HealthLocationEntry {
   id: string;
   areaName: string;
   hasCache: boolean;
+  exactGenerationReady: boolean;
+  availabilitySource:
+    | 'generation'
+    | `generation:${string}`
+    | 'none';
   fetchedAt?: string;
   cacheHealth?: WorkerCacheHealth;
+}
+
+export interface HealthReleaseReadiness {
+  target: ReleaseMetadata;
+  allLocationsReady: boolean;
+  ready: string[];
+  available: string[];
+  fallback: string[];
+  missing: string[];
 }
 
 export interface ForecastInitializationMarker {
@@ -173,6 +189,7 @@ export interface HealthPayload {
   stalled: string[];
   missing: string[];
   storageAvailable: boolean;
+  release: HealthReleaseReadiness;
   locations: HealthLocationEntry[];
   ages: HealthAge[];
   storageUnavailable: boolean;

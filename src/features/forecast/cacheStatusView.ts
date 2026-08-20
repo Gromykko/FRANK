@@ -29,6 +29,9 @@ export interface CacheStatusInput {
   // The app has been inactive long enough that it should verify again, but no
   // completed request has failed. This must never be worded as a failure.
   needsVerification?: boolean;
+  // The Worker answered with the explicit FORECAST_INITIALIZING contract while
+  // the browser still has a usable saved forecast to render.
+  preparing?: boolean;
 }
 
 // Turns the worker's cacheHealth into the header's label/detail/tone. Pure and
@@ -44,6 +47,7 @@ export function getCacheStatusView({
   savedAtLabel,
   savedAgeLabel,
   needsVerification,
+  preparing,
 }: CacheStatusInput, translate: Translate = interpolate): CacheStatusView {
   const status = cacheHealth?.status;
   const isStale = status === 'stale' || status === 'fallback';
@@ -96,43 +100,51 @@ export function getCacheStatusView({
   // withholding the large settled-failure banner.
   const tone: CacheStatusView['tone'] = refreshing
     ? (isStale ? 'watch' : 'neutral')
-    : needsVerification
+    : preparing
       ? (isStale ? 'watch' : 'neutral')
-    : (isStale || hasDegraded || isPending) ? 'watch' : 'fresh';
+      : needsVerification
+        ? (isStale ? 'watch' : 'neutral')
+        : (isStale || hasDegraded || isPending) ? 'watch' : 'fresh';
 
   // The forecast time rides on the "Checked" label so a timestamp is always
   // visible; other states keep it in the detail line.
   const label = refreshing
     ? translate('Refreshing…')
-    : needsVerification
-      ? (savedAtLabel ? translate('Saved forecast · {0}', savedAtLabel) : translate('Saved forecast'))
-    : isPending
-      ? translate('Checking…')
-      : isStale
-        ? (providerBusy ? translate('{0} busy', busyServiceName) : translate('Couldn’t refresh'))
-        : translate('Checked · {0}', checkedAtLabel);
+    : preparing
+      ? translate('Preparing update…')
+      : needsVerification
+        ? (savedAtLabel ? translate('Saved forecast · {0}', savedAtLabel) : translate('Saved forecast'))
+        : isPending
+          ? translate('Checking…')
+          : isStale
+            ? (providerBusy ? translate('{0} busy', busyServiceName) : translate('Couldn’t refresh'))
+            : translate('Checked · {0}', checkedAtLabel);
 
   const detail = refreshing
     ? (isStale && savedAgeLabel
       ? translate('Showing saved forecast · {0} old', savedAgeLabel)
       : '')
-    : needsVerification
-      ? (isStale && savedAgeLabel
+    : preparing
+      ? (savedAgeLabel
         ? translate('Showing saved forecast · {0} old', savedAgeLabel)
-        : translate('Needs a new check'))
-    : isPending
-      ? ''
-      : isStale
-        ? (providerBusy
-          ? translate('Retrying automatically · checked {0}', checkedAtLabel)
-          : translate('Showing earlier data · last try {0}', checkedAtLabel))
-        : partiallyDegraded
-          // One calm line: what you're looking at + why. Named cause per the
-          // confirmed wording ("· marine service busy").
-          ? (providerBusy
-            ? translate('{0} from an earlier update · {1} busy', degradedLabel, causeService)
-            : translate('{0} from an earlier update · couldn’t refresh just now', degradedLabel))
-          : '';
+        : translate('Retrying automatically'))
+      : needsVerification
+        ? (isStale && savedAgeLabel
+          ? translate('Showing saved forecast · {0} old', savedAgeLabel)
+          : translate('Needs a new check'))
+        : isPending
+          ? ''
+          : isStale
+            ? (providerBusy
+              ? translate('Retrying automatically · checked {0}', checkedAtLabel)
+              : translate('Showing earlier data · last try {0}', checkedAtLabel))
+            : partiallyDegraded
+              // One calm line: what you're looking at + why. Named cause per the
+              // confirmed wording ("· marine service busy").
+              ? (providerBusy
+                ? translate('{0} from an earlier update · {1} busy', degradedLabel, causeService)
+                : translate('{0} from an earlier update · couldn’t refresh just now', degradedLabel))
+              : '';
 
   return { label, detail, tone, partiallyDegraded, providerBusy, busyServiceName, degradedLabel };
 }
@@ -195,6 +207,7 @@ export function deriveCacheStatus(args: {
   checkState?: CacheCheckState;
 }, translate: Translate = interpolate): DerivedCacheStatus {
   const { sources, refreshing, online, nowMs, workerContactedAtMs, checkState } = args;
+  const isInitializing = checkState === 'initializing';
 
   const fetchedAtMs = new Date(sources.fetchedAt).getTime();
   const checkedAt = sources.cacheHealth?.lastAttemptAt ?? sources.fetchedAt;
@@ -255,7 +268,11 @@ export function deriveCacheStatus(args: {
   const showRefreshWarning = dataStale && (!online || (!refreshing && attemptSettled));
   // A payload stamped with an older version was built by outdated worker
   // logic — surface it instead of silently rendering mismatched data.
-  const workerOutdated = (sources.payloadVersion ?? 0) < FORECAST_PAYLOAD_VERSION;
+  // During an explicit preparation response, the saved forecast can naturally
+  // be from the prior compatible contract. The single preparation status below
+  // already explains that transition; a second "out of date" alert is noise.
+  const workerOutdated = !isInitializing
+    && (sources.payloadVersion ?? 0) < FORECAST_PAYLOAD_VERSION;
 
   const view = getCacheStatusView({
     refreshing,
@@ -265,6 +282,7 @@ export function deriveCacheStatus(args: {
     savedAtLabel: formatTime(sources.fetchedAt),
     savedAgeLabel: formatRelativeAge(cacheAgeMs, translate),
     needsVerification,
+    preparing: isInitializing,
   }, translate);
   const { providerBusy, busyServiceName, partiallyDegraded, degradedLabel } = view;
 
@@ -275,6 +293,8 @@ export function deriveCacheStatus(args: {
       ? (isStale
         ? translate('FRANK is updating now; meanwhile it is showing the saved forecast from {0}, which is {1} old.', fetchedAtFull, formatRelativeAge(cacheAgeMs, translate))
         : translate('Checking for a newer forecast'))
+    : isInitializing
+      ? translate('FRANK reached the forecast service, which is preparing a complete update. It will retry automatically; meanwhile you are seeing the saved forecast from {0}.', fetchedAtFull)
     : needsVerification
       ? translate('The saved forecast from {0} needs a new check.', fetchedAtFull)
     : isStale

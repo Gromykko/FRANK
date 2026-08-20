@@ -8,7 +8,8 @@ import {
   marineRunAgeMs,
   shouldCheckInBackground,
 } from '../../worker/index';
-import { FORECAST_PAYLOAD_VERSION } from '../../src/features/forecast/types';
+import { MARINE_INGREDIENT_CACHE_SCHEMA_VERSION } from '../../src/features/forecast/releaseContract';
+import { marineIngredientKey } from '../../worker/generation';
 
 // An in-memory stand-in for the KV binding (get(key,'json') / put(key,string)).
 function makeEnv(seed: Record<string, unknown> = {}) {
@@ -30,9 +31,9 @@ function makeEnv(seed: Record<string, unknown> = {}) {
 const LOCATION = { id: 'test', areaName: 'Test Fjord', coordinate: { longitude: 9.9, latitude: 55.8 } };
 const WATER_INSTANCE = { collection: 'dkss_idw', id: '2026-07-11T120000Z' };
 const identityMap = (features: unknown) => features as Array<{ timeMs: number }>;
-const CURRENT_INGREDIENT_KEY = `frank-marine-ingredient:v${FORECAST_PAYLOAD_VERSION}:water:test`;
+const CURRENT_INGREDIENT_KEY = marineIngredientKey(LOCATION, 'water');
 const retainedEnvelope = (id: string, series: unknown[]) => ({
-  schemaVersion: FORECAST_PAYLOAD_VERSION,
+  schemaVersion: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
   collection: 'dkss_idw',
   id,
   series,
@@ -66,7 +67,7 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     expect(result.series).toEqual(series);
     // Retained for the next outage, tagged with the run it came from.
     expect(JSON.parse(env.store.get(CURRENT_INGREDIENT_KEY)!)).toMatchObject({
-      schemaVersion: FORECAST_PAYLOAD_VERSION,
+      schemaVersion: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
       collection: 'dkss_idw',
       id: '2026-07-11T120000Z',
     });
@@ -86,7 +87,7 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     expect(result.series).toEqual(retained);
   });
 
-  it('never re-blesses a normalized ingredient written by an older payload version', async () => {
+  it('never re-blesses a normalized ingredient written by an older cache schema', async () => {
     const legacy = [{ time: '2026-07-11T12:00:00Z', timeMs: Date.parse('2026-07-11T12:00:00Z'), tideLevel: 999 }];
     const fresh = [{ time: '2026-07-11T12:00:00Z', timeMs: Date.parse('2026-07-11T12:00:00Z'), tideLevel: 0.4 }];
     const env = makeEnv({
@@ -107,7 +108,7 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     expect(fetches).toBe(1);
     expect(result.series).toEqual(fresh);
     expect(JSON.parse(env.store.get(CURRENT_INGREDIENT_KEY)!)).toMatchObject({
-      schemaVersion: FORECAST_PAYLOAD_VERSION,
+      schemaVersion: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
       series: fresh,
     });
   });

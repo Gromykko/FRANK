@@ -4,7 +4,6 @@ import { clearFrankLocalDataAndReload } from '../utils/storage';
 
 const TECHNICAL_SOURCES = {
   githubPages: 'https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages#data-collection',
-  cloudflareHeaders: 'https://developers.cloudflare.com/fundamentals/reference/http-headers/#cf-connecting-ip-in-worker-subrequests',
   cloudflareLogs: 'https://developers.cloudflare.com/workers/observability/logs/workers-logs/#pricing',
   met: 'https://www.met.no/en/About-us/privacy',
   dmi: 'https://www.dmi.dk/friedata/guides-til-frie-data/vilkar-for-brug-af-data',
@@ -44,7 +43,7 @@ export default function PrivacyNotice() {
           {t('GitHub Pages serves the app files and logs visitor IP addresses for security. Cloudflare serves the forecast API and receives the requested forecast area and ordinary connection data such as IP address, HTTP/browser information, and time. Cloudflare also provides operational service metrics. FRANK’s custom Worker logs may record the forecast area and failures when service events occur; automatic request-and-response invocation logs are disabled. Cloudflare retains Workers Logs for 3 days on Free plans and 7 days on paid plans.')}
         </p>
         <p>
-          {t('When a visitor request must build new forecast data, the Cloudflare Worker contacts MET Norway, DMI, and MeteoAlarm with FRANK’s fixed forecast coordinates. For destinations that are not Cloudflare customer zones, Cloudflare documents that these subrequests also carry visitor-IP headers, so a provider can receive the visitor IP address. This does not use your device GPS or send FRANK’s saved language, theme, or safety limits. Scheduled refreshes are not tied to a visitor.')}
+          {t('Forecast providers are contacted only by FRANK’s scheduled refreshes and zero-traffic release preparation, not by a visitor request or the refresh button. Those service jobs send FRANK’s fixed forecast coordinates to MET Norway, DMI, and MeteoAlarm. They do not send your device GPS, saved language, theme, safety limits, or browser request details.')}
         </p>
         <p>
           {t('The local values remain until you delete them below or clear browser site data. GitHub and the weather providers apply the retention periods in their own published terms.')}
@@ -52,8 +51,6 @@ export default function PrivacyNotice() {
         <p className="privacy-sources">
           {t('Technical sources:')}{' '}
           <a href={TECHNICAL_SOURCES.githubPages} target="_blank" rel="noreferrer">GitHub Pages</a>
-          {' · '}
-          <a href={TECHNICAL_SOURCES.cloudflareHeaders} target="_blank" rel="noreferrer">Cloudflare {t('headers')}</a>
           {' · '}
           <a href={TECHNICAL_SOURCES.cloudflareLogs} target="_blank" rel="noreferrer">Cloudflare {t('logs')}</a>
           {' · '}

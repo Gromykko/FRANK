@@ -3,7 +3,7 @@ import { shouldPersistFailureState } from '../../worker/index';
 
 // The KV write budget is 1,000/day for the whole app. This predicate is what
 // stands between a provider outage and an emptied allowance: a stale cache
-// drops the forced-refresh gate to 20 seconds, `?refresh=1` needs no auth, and
+// shortens the refresh gate, public reads need no auth, and
 // the refresh button has no client-side throttle, so ~100 kayakers tapping
 // refresh during an outage used to cost 3 writes/min/location.
 //

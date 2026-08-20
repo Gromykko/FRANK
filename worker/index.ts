@@ -1,6 +1,13 @@
 import locationData from '../src/config/locations.json';
 import type { ForecastLocation } from '../src/config/locationTypes';
 import {
+  CURRENT_RELEASE,
+  supportedForecastApiPaths,
+} from '../src/features/forecast/releaseContract';
+import type { ReleaseMetadata } from '../src/features/forecast/releaseContract';
+import { reviveReadings } from '../src/features/forecast/normalize';
+import { isValidForecastPayload } from '../src/features/forecast/validatePayload';
+import {
   headResponse,
   jsonResponse,
   matchRoute,
@@ -44,7 +51,6 @@ import {
 } from './providerAvailability';
 import {
   DMI_PROBE_QUIET_MS,
-  PAYLOAD_VERSION,
   buildForecastCache,
   classifyBuildFailure,
   degradedSourcesAfterProbe,
@@ -59,6 +65,17 @@ import {
   marineRunAgeMs,
 } from './providers';
 import { errorMessage, isRecord } from './validation';
+import {
+  RELEASE_IDENTITY,
+  AUDITED_PREVIOUS_GENERATIONS,
+  assembledForecastKey,
+  assembledForecastKeyForRelease,
+  hasReleaseMetadata,
+  initializationStateKey,
+  isForecastForRelease,
+  versionedForecastRoute,
+  withReleaseHeaders,
+} from './generation';
 
 // Preserve the small public test/API surface while provider implementation is
 // owned by its cohesive module.
@@ -90,8 +107,8 @@ const FORECAST_LOCATIONS = locationData as ForecastLocation[];
 // merely SLOW provider was 2s from being reported as a broken one.
 //
 //   CRON has ten minutes and nobody waiting -> be patient.
-//   A USER request already answers instantly from cache and rebuilds in
-//   waitUntil, so a long wait there buys nothing -> be impatient.
+//   A release-candidate warm request has a bounded deployment gate waiting for
+//   it -> stop early enough to return a structured result.
 //
 // Deliberately NOT paired with running the four locations in parallel: DMI is
 // the provider that rate-limits us (429 "Server is busy"), and eight concurrent
@@ -102,12 +119,12 @@ const FORECAST_LOCATIONS = locationData as ForecastLocation[];
 // waiting longer than this during a storage incident only turns a truthful 503
 // into an apparently frozen app/status monitor.
 const RESPONSE_KV_READ_BUDGET_MS = 2_000;
-// waitUntil work started by a browser request must be finished before 25s. The
-// one-second margin covers promise cleanup/logging after the final abort.
-const USER_BACKGROUND_EXECUTION_BUDGET_MS = 24_000;
+// A candidate warm request must finish before the caller's 25-second HTTP
+// budget. The one-second margin covers persistence and structured logging.
+const CANDIDATE_BUILD_EXECUTION_BUDGET_MS = 24_000;
 // Provider work stops before the event wall so cache-health assembly and the
 // final KV write still have a deterministic chance to finish.
-const USER_COMPLETION_RESERVE_MS = 4_000;
+const CANDIDATE_COMPLETION_RESERVE_MS = 4_000;
 
 const INITIALIZATION_SCHEMA_VERSION = 1;
 const INITIALIZATION_RETRY_SECONDS = 10 * 60;
@@ -116,16 +133,6 @@ const INITIALIZATION_RETRY_SECONDS = 10 * 60;
 // boundary; the marker itself stops gating at retryAfterSeconds.
 const INITIALIZATION_MARKER_TTL_SECONDS = INITIALIZATION_RETRY_SECONDS + 60;
 
-const MANUAL_CHECK_MIN_INTERVAL_MS = 60 * 1000;
-// When the cache is stale, a manual refresh is the user explicitly asking for
-// a retry — allow it much sooner than the normal manual gate. 20s still keeps
-// spam-taps from hammering the providers.
-const STALE_MANUAL_RETRY_MS = 20 * 1000;
-// How long after a recorded failure the fast 20s retry above stays available.
-// Past this the normal gate applies, so a long outage cannot be turned into a
-// sustained 3-checks-per-minute lever by anyone tapping refresh.
-const STALE_MANUAL_RETRY_GRACE_MS = 3 * 60 * 1000;
-const USER_BACKGROUND_CHECK_MIN_INTERVAL_MS = 10 * 60 * 1000;
 const CRON_CHECK_MIN_INTERVAL_MS = 4 * 60 * 1000;
 // Re-stamping "we checked, nothing changed" costs a KV WRITE, and the free tier
 // allows 1000 a day. The cron (every 10 min x 4 locations = 576 runs) was
@@ -147,23 +154,13 @@ const CRON_CHECK_MIN_INTERVAL_MS = 4 * 60 * 1000;
 // resets it, so this is ~2 writes per 40-minute quiet cycle, ~288/day across
 // four locations against an allowance of 1000.
 const CHECKED_STAMP_MIN_WRITE_INTERVAL_MS = 15 * 60 * 1000;
-// ...but `?refresh=1` is unauthenticated, so letting EVERY manual check bypass
-// the throttle hands anyone a 1-write-per-minute-per-location lever over the
-// same budget (4 locations x 1440 = 5760 writes/day against an allowance of
-// 1000). Manual gets its own, shorter throttle instead of a free pass: the
-// response already carries this check's real timestamp either way, so the
-// button still feels live — only the PERSISTED stamp is coarsened.
-const MANUAL_STAMP_MIN_WRITE_INTERVAL_MS = 10 * 60 * 1000;
 
 function cacheKey(location: Pick<ForecastLocation, 'id'>): string {
-  // Keep assembled payloads isolated by their public schema. A new release
-  // must never overwrite the last cache that the previous Worker understands:
-  // Cloudflare code rollback does not roll KV data back with it.
-  return `forecast:${location.id}:weather-data:v${PAYLOAD_VERSION}`;
+  return assembledForecastKey(location);
 }
 
 function initializationKey(location: Pick<ForecastLocation, 'id'>): string {
-  return `forecast-initialization:${location.id}:v${INITIALIZATION_SCHEMA_VERSION}`;
+  return initializationStateKey(location);
 }
 
 // Strict lookup — the caller 404s unknown ids; a silent first-location
@@ -190,7 +187,7 @@ export function tickOrder(
   return rotateTickOrder(scheduledTime, list);
 }
 
-function isUsableForecastCache(value: unknown): value is ForecastData {
+function hasUsableForecastStructure(value: unknown): value is ForecastData {
   if (!isRecord(value) || !isRecord(value.sources)) return false;
   return Boolean(
       Array.isArray(value.hourly) &&
@@ -198,14 +195,50 @@ function isUsableForecastCache(value: unknown): value is ForecastData {
       Array.isArray(value.sunrise) &&
       Array.isArray(value.sunset) &&
       typeof value.sources.fetchedAt === 'string' &&
-      // Payloads built by older worker logic are refused outright, forcing a
-      // rebuild on the next request/cron instead of being re-blessed as
-      // "current" forever.
-      value.sources.payloadVersion === PAYLOAD_VERSION
+      typeof value.sources.payloadVersion === 'number'
   );
 }
 
-function hasCurrentForecastWindow(data: ForecastData): boolean {
+function isUsableCurrentForecastCache(
+  value: unknown,
+  location: ForecastLocation,
+): value is ForecastData {
+  return isUsableForecastForRelease(value, location, CURRENT_RELEASE);
+}
+
+function isUsableForecastForRelease(
+  value: unknown,
+  location: ForecastLocation,
+  release: Readonly<ReleaseMetadata>,
+): value is ForecastData {
+  // All currently supported generations share this wire shape. A future API
+  // schema with an incompatible payload must register its own validator and
+  // response type here; release descriptors select bytes, but cannot make two
+  // structurally different contracts safe by themselves.
+  return hasUsableForecastStructure(value)
+    && isValidForecastPayload(value, location)
+    && isForecastForRelease(value, release)
+    && hasCurrentForecastWindow(value);
+}
+
+function parseForecastCache(
+  raw: string,
+  validator: (value: unknown) => value is ForecastData,
+): ForecastData | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    // KV stores JSON, where NaN becomes null. Restore the deliberate missing-
+    // reading sentinel before applying the same validation boundary as the
+    // browser; otherwise a sound production payload containing one unavailable
+    // measurement would be mistaken for a corrupt rollback cache.
+    if (hasUsableForecastStructure(parsed)) reviveReadings(parsed);
+    return validator(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function hasCurrentForecastWindow(data: Pick<ForecastData, 'hourly'>): boolean {
   const oneHourAgo = Date.now() - 60 * 60 * 1000;
   return data.hourly.some((hour) => new Date(hour.time).getTime() >= oneHourAgo);
 }
@@ -228,8 +261,8 @@ function buildCacheHealth(
   return {
     status,
     // A gated "recently checked" stamp must NOT advance lastAttemptAt: the
-    // cron and background gates compare against it, and sustained page loads
-    // inside the manual gate would otherwise starve real provider checks
+    // cron/candidate gates compare against it, and repeated gated checks would
+    // otherwise starve real provider work
     // forever.
     lastAttemptAt: options.preserveAttemptAt && previousHealth?.lastAttemptAt
       ? previousHealth.lastAttemptAt
@@ -262,23 +295,96 @@ function withCacheHealth(
 
 async function readCachedForecast(
   env: Env,
-  location: Pick<ForecastLocation, 'id'>,
+  location: ForecastLocation,
   policyInput?: ExecutionPolicyInput,
 ): Promise<ForecastData | null> {
   const policy = executionPolicy(policyInput);
   const raw = await awaitWithinDeadline(
     () => env.FRANK_FORECAST_CACHE.get(cacheKey(location)),
     policy,
-    `forecast cache read for ${location.id}`,
+    `current forecast cache read for ${location.id}`,
   );
-  if (!raw) return null;
+  return raw
+    ? parseForecastCache(
+        raw,
+        (value): value is ForecastData => isUsableCurrentForecastCache(value, location),
+      )
+    : null;
+}
 
-  try {
-    const parsed = JSON.parse(raw);
-    return isUsableForecastCache(parsed) ? parsed : null;
-  } catch {
-    return null;
+async function readForecastForRelease(
+  env: Env,
+  location: ForecastLocation,
+  release: Readonly<ReleaseMetadata>,
+  policyInput?: ExecutionPolicyInput,
+): Promise<ForecastData | null> {
+  if (hasReleaseMetadata(release, CURRENT_RELEASE)) {
+    return readCachedForecast(env, location, policyInput);
   }
+  const policy = executionPolicy(policyInput);
+  const raw = await awaitWithinDeadline(
+    () => env.FRANK_FORECAST_CACHE.get(assembledForecastKeyForRelease(release, location)),
+    policy,
+    `generation ${release.dataGenerationId} cache read for ${location.id}`,
+  );
+  return raw
+    ? parseForecastCache(
+        raw,
+        (value): value is ForecastData => isUsableForecastForRelease(
+          value,
+          location,
+          release,
+        ),
+      )
+    : null;
+}
+
+interface PreviousGenerationForecast {
+  data: ForecastData;
+  source: `generation:${string}`;
+}
+
+async function readAuditedPreviousGenerationForecast(
+  env: Env,
+  location: ForecastLocation,
+  apiSchemaVersion: number,
+  excludedDataGenerationId: string,
+  policyInput?: ExecutionPolicyInput,
+): Promise<PreviousGenerationForecast | null> {
+  // Audited previous-generation data is display-only. It must never enter
+  // refreshForecastCache as `cached`, seed provider assembly, or be copied to
+  // the current generation key.
+  const policy = executionPolicy(policyInput);
+
+  for (const previousRelease of AUDITED_PREVIOUS_GENERATIONS) {
+    if (previousRelease.apiSchemaVersion !== apiSchemaVersion
+      || previousRelease.dataGenerationId === excludedDataGenerationId) continue;
+    const previousRaw = await awaitWithinDeadline(
+      () => env.FRANK_FORECAST_CACHE.get(
+        assembledForecastKeyForRelease(previousRelease, location),
+      ),
+      policy,
+      `previous generation ${previousRelease.dataGenerationId} cache read for ${location.id}`,
+    );
+    const previous = previousRaw
+      ? parseForecastCache(
+          previousRaw,
+          (value): value is ForecastData => hasUsableForecastStructure(value)
+            && isValidForecastPayload(value, location)
+            && value.sources.payloadVersion === previousRelease.payloadVersion
+            && hasReleaseMetadata(value.sources.release, previousRelease)
+            && hasCurrentForecastWindow(value),
+        )
+      : null;
+    if (previous) {
+      return {
+        data: previous,
+        source: `generation:${previousRelease.dataGenerationId}`,
+      };
+    }
+  }
+
+  return null;
 }
 
 async function writeCachedForecast(
@@ -387,6 +493,7 @@ function initializationRetrySeconds(
 function forecastInitializingResponse(
   location: ForecastLocation,
   retryAfterSeconds = INITIALIZATION_RETRY_SECONDS,
+  release: Readonly<ReleaseMetadata> = CURRENT_RELEASE,
 ): Response {
   const boundedRetrySeconds = Math.max(1, Math.min(
     INITIALIZATION_RETRY_SECONDS,
@@ -404,7 +511,10 @@ function forecastInitializingResponse(
       areaName: location.areaName,
     },
   };
-  return jsonResponse(payload, 503, { 'Retry-After': String(boundedRetrySeconds) });
+  return withReleaseHeaders(
+    jsonResponse(payload, 503, { 'Retry-After': String(boundedRetrySeconds) }),
+    { ready: false, payloadVersion: release.payloadVersion, release },
+  );
 }
 
 // Whether a failed check is worth a KV write. Exported only so the decision has
@@ -468,9 +578,9 @@ async function _refreshForecastCache(
 ): Promise<ForecastData> {
   const policy = executionPolicy(options.executionPolicy);
   assertBeforeDeadline(policy, `refresh start for ${location.id}`);
-  // Browser-triggered background work already read this payload to answer the
-  // request. Reusing that event-local value removes a redundant KV operation
-  // and guarantees the waitUntil task enters its bounded try/catch immediately.
+  // A candidate warm operation may already have read this payload before
+  // deciding to build. Reusing that event-local value removes a redundant KV
+  // operation and guarantees the build enters its bounded try/catch promptly.
   // `null` is meaningful: the route already completed its bounded KV read and
   // proved the key absent. Nullish coalescing treated that result as "not
   // supplied" and performed the same read again on every cold request.
@@ -483,24 +593,7 @@ async function _refreshForecastCache(
     return health?.status === 'stale' || health?.status === 'fallback' || health?.needsRebuild;
   })();
 
-  // A forced (user-initiated) refresh of a stale cache retries after 20s
-  // instead of the normal gate — a gated no-op here is what used to make the
-  // refresh button feel dead right after a failure.
-  //
-  // But only while the failure is still NEW. Left open for the whole outage it
-  // becomes an unauthenticated 20-second lever on the upstream providers and
-  // (before the throttle below) on the KV write budget. Past the grace window
-  // a forced tap falls back to the normal 60s gate: the button still answers
-  // instantly from cache either way.
-  const failedRecently = (() => {
-    const stampMs = Date.parse(cached?.sources?.cacheHealth?.lastAttemptAt ?? '');
-    if (!Number.isFinite(stampMs)) return false;
-    return Date.now() - stampMs < STALE_MANUAL_RETRY_GRACE_MS;
-  })();
-  const baseIntervalMs = options.minIntervalMs ?? CRON_CHECK_MIN_INTERVAL_MS;
-  const minIntervalMs = options.force && cachedNeedsRecovery && failedRecently
-    ? Math.min(baseIntervalMs, STALE_MANUAL_RETRY_MS)
-    : baseIntervalMs;
+  const minIntervalMs = options.minIntervalMs ?? CRON_CHECK_MIN_INTERVAL_MS;
 
   if (cached && !shouldCheckInBackground(location, cached, minIntervalMs)) {
     if (options.force && !cachedNeedsRecovery) {
@@ -634,10 +727,8 @@ async function _refreshForecastCache(
       // skipped write costs the stored stamp some precision and nothing else.
       const storedStampMs = Date.parse(cachedHealth?.lastAttemptAt ?? '');
       const stampAgeMs = Date.now() - storedStampMs;
-      const minIntervalMs = options.reason === 'manual'
-        ? MANUAL_STAMP_MIN_WRITE_INTERVAL_MS
-        : CHECKED_STAMP_MIN_WRITE_INTERVAL_MS;
-      if (!Number.isFinite(storedStampMs) || stampAgeMs >= minIntervalMs) {
+      if (!Number.isFinite(storedStampMs)
+        || stampAgeMs >= CHECKED_STAMP_MIN_WRITE_INTERVAL_MS) {
         await writeCachedForecast(env, location, checkedCache, policy);
       }
       return checkedCache;
@@ -716,12 +807,9 @@ async function _refreshForecastCache(
         message: 'Forecast refresh failed; keeping the last completed forecast.',
       });
 
-      // This was the one KV write with no throttle at all, and it sits on the
-      // path a hammering user actually reaches: once the cache is 'stale',
-      // cachedNeedsRecovery drops the forced-refresh gate to
-      // STALE_MANUAL_RETRY_MS (20s), `?refresh=1` is unauthenticated, and the
-      // refresh button deliberately has no client-side throttle. See
-      // shouldPersistFailureState for what survives that.
+      // Persist only a changed failure verdict or a deliberately coarsened
+      // repeat. This protects the KV write budget during a prolonged provider
+      // outage while leaving the in-response health truthful.
       if (shouldPersistFailureState(cached.sources?.cacheHealth, failedCache.sources?.cacheHealth)) {
         try {
           await writeCachedForecast(env, location, failedCache, policy);
@@ -773,15 +861,15 @@ async function refreshForecastCache(
   }
 }
 
-function userExecutionPolicy(): ExecutionPolicy {
+function candidateExecutionPolicy(): ExecutionPolicy {
   return executionPolicy({
-    deadlineAt: Date.now() + USER_BACKGROUND_EXECUTION_BUDGET_MS,
+    deadlineAt: Date.now() + CANDIDATE_BUILD_EXECUTION_BUDGET_MS,
     fetchTimeoutMs: FETCH_TIMEOUT_MS,
-    // A browser refresh gets one bounded attempt. The next page visit/manual
-    // tap is the retry schedule; spending the event on in-place retries leaves
-    // no time to persist the truthful stale/degraded outcome.
+    // A candidate build gets one bounded attempt. The release orchestrator or
+    // next cron tick is the retry schedule; in-place retries would consume the
+    // persistence reserve without making a busy provider ready sooner.
     maxAttempts: 1,
-    completionReserveMs: USER_COMPLETION_RESERVE_MS,
+    completionReserveMs: CANDIDATE_COMPLETION_RESERVE_MS,
   });
 }
 
@@ -795,7 +883,7 @@ async function activeInitializationRetrySeconds(
   return initializationRetrySeconds(location, marker);
 }
 
-function keepColdRefreshAlive(
+function keepCandidateBuildAlive(
   ctx: ExecutionContext,
   refresh: Promise<ForecastData>,
   location: ForecastLocation,
@@ -809,7 +897,7 @@ function keepColdRefreshAlive(
       // owner-visible structured failure without leaking into the response.
       if (!isProviderUnavailableError(error)) {
         console.error(JSON.stringify({
-          event: 'cold_forecast_failed',
+          event: 'candidate_build_failed',
           locationId: location.id,
           reason,
           error: error instanceof Error
@@ -821,21 +909,39 @@ function keepColdRefreshAlive(
   ));
 }
 
-async function coldForecastResponse(
+function preparedForecastResponse(
+  data: ForecastData,
+  ready: boolean,
+  extraHeaders: Record<string, string> = {},
+  release: Readonly<ReleaseMetadata> = CURRENT_RELEASE,
+): Response {
+  return withReleaseHeaders(jsonResponse(data, 200, extraHeaders), {
+    ready,
+    payloadVersion: data.sources.payloadVersion,
+    release,
+  });
+}
+
+async function candidateWarmResponse(
   ctx: ExecutionContext,
-  refresh: Promise<ForecastData>,
   location: ForecastLocation,
+  refresh: Promise<ForecastData>,
+  fallback: ForecastData | null,
   reason: string,
 ): Promise<Response> {
-  keepColdRefreshAlive(ctx, refresh, location, reason);
+  keepCandidateBuildAlive(ctx, refresh, location, reason);
   try {
-    return jsonResponse(await refresh);
+    const data = await refresh;
+    return preparedForecastResponse(data, true);
   } catch (error) {
     if (isProviderUnavailableError(error)) {
-      return forecastInitializingResponse(
-        location,
-        initializationRetrySeconds(location),
-      );
+      const retryAfterSeconds = initializationRetrySeconds(location);
+      if (fallback) {
+        return preparedForecastResponse(fallback, false, {
+          'Retry-After': String(Math.max(1, retryAfterSeconds)),
+        });
+      }
+      return forecastInitializingResponse(location, retryAfterSeconds);
     }
     throw error;
   }
@@ -847,6 +953,8 @@ async function handleForecastRequest(
   ctx: ExecutionContext,
   locationId: string,
   eventMemo: EventMemo,
+  versionedApiRoute: boolean,
+  requestedRelease: Readonly<ReleaseMetadata>,
 ): Promise<Response> {
   const location = findLocation(locationId);
   if (!location) {
@@ -854,121 +962,82 @@ async function handleForecastRequest(
   }
 
   const url = new URL(request.url);
-  const force = url.searchParams.get('refresh') === '1' || url.searchParams.get('refresh') === 'true';
-  const deploymentWarm = url.searchParams.get('warm') === '1' || url.searchParams.get('warm') === 'true';
+  const isCurrentReleaseRoute = hasReleaseMetadata(requestedRelease, CURRENT_RELEASE);
+  const deploymentWarm = versionedApiRoute
+    && isCurrentReleaseRoute
+    && (url.searchParams.get('warm') === '1' || url.searchParams.get('warm') === 'true');
   const forceRebuildRequested = url.searchParams.get('rebuild') === '1' || url.searchParams.get('rebuild') === 'true';
 
   if (forceRebuildRequested) {
     return jsonResponse({ error: 'Manual rebuild is not available from the public forecast endpoint.' }, 403);
   }
 
+  // The compiled generation always wins. Explicitly audited previous
+  // generations are read-only availability fallbacks and can never become
+  // build seeds or be re-stamped as this generation.
+  const readPolicy = responseKvReadPolicy();
+  const cached = await readForecastForRelease(env, location, requestedRelease, readPolicy);
+  const previous = cached
+    ? null
+    : await readAuditedPreviousGenerationForecast(
+        env,
+        location,
+        requestedRelease.apiSchemaVersion,
+        requestedRelease.dataGenerationId,
+        readPolicy,
+      );
+  const fallback = previous?.data ?? null;
+
   if (deploymentWarm) {
-    // The post-deploy gate needs a cache-readiness contract, not another
-    // asynchronous provider check. An existing compatible payload is returned
-    // without waitUntil work; a missing/invalid payload is built synchronously
-    // unless an explicitly classified transient is still inside its cooldown.
-    // This makes sequential warm requests genuinely sequential and guarantees
-    // the final /health request cannot overtake a cold build. The mode is safe
-    // The public warm mode honors that same cooldown; otherwise `?warm=1`
-    // would be an unauthenticated bypass that could hammer a busy provider.
-    const cached = await readCachedForecast(env, location, responseKvReadPolicy());
-    if (cached) return jsonResponse(cached);
+    if (cached) return preparedForecastResponse(cached, true, {}, requestedRelease);
+
+    // `warm=1` is the existing deployment candidate path. It is the only HTTP
+    // path allowed to build an empty generation, and it still honors the
+    // generation-scoped provider cooldown (no public rebuild bypass).
     const retryAfterSeconds = await activeInitializationRetrySeconds(env, location);
     if (retryAfterSeconds > 0) {
-      return forecastInitializingResponse(location, retryAfterSeconds);
+      return fallback
+        ? preparedForecastResponse(fallback, false, {
+            'Retry-After': String(retryAfterSeconds),
+          }, requestedRelease)
+        : forecastInitializingResponse(location, retryAfterSeconds, requestedRelease);
     }
 
     const refresh = refreshForecastCache(env, location, {
       force: true,
+      forceRebuild: true,
       reason: 'deployment-warm',
       minIntervalMs: 0,
-      executionPolicy: userExecutionPolicy(),
+      executionPolicy: candidateExecutionPolicy(),
       eventMemo,
-      cached,
+      // Previous-generation bytes are never trusted as current ingredients.
+      cached: null,
     });
-    // The caller also awaits this promise, but waitUntil keeps the cold fill
-    // alive if the HTTP client disconnects at its own deadline.
-    return coldForecastResponse(ctx, refresh, location, 'deployment-warm');
+    return candidateWarmResponse(
+      ctx,
+      location,
+      refresh,
+      fallback,
+      'deployment-warm',
+    );
   }
 
-  if (force) {
-    // A user request cannot make upstream models publish sooner, so there is
-    // nothing worth waiting for: answer instantly from cache and run the
-    // forced rebuild in the background (measured worst case of the old
-    // synchronous wait: 30s of DMI retry backoff ending in the same stale
-    // payload). The response is explicitly pending and keeps the timestamp of
-    // the last COMPLETED check. Re-dating lastAttemptAt here used to make the
-    // header claim "Checked just now" before any provider had answered.
-    const cached = await readCachedForecast(env, location, responseKvReadPolicy());
-    if (cached) {
-      ctx.waitUntil(refreshForecastCache(env, location, {
-        force: true,
-        reason: 'manual',
-        minIntervalMs: MANUAL_CHECK_MIN_INTERVAL_MS,
-        executionPolicy: userExecutionPolicy(),
-        eventMemo,
-        cached,
-      }));
-      const cachedHealth = cached.sources?.cacheHealth;
-      return jsonResponse({
-        ...cached,
-        sources: {
-          ...cached.sources,
-          cacheHealth: {
-            ...cachedHealth,
-            status: 'pending',
-            checkedBy: 'manual',
-          },
-        },
-      });
-    }
-    const retryAfterSeconds = await activeInitializationRetrySeconds(env, location);
-    if (retryAfterSeconds > 0) {
-      return forecastInitializingResponse(location, retryAfterSeconds);
-    }
-    const refresh = refreshForecastCache(env, location, {
-      force: true,
-      reason: 'manual',
-      minIntervalMs: MANUAL_CHECK_MIN_INTERVAL_MS,
-      executionPolicy: userExecutionPolicy(),
-      eventMemo,
-      cached,
-    });
-    return coldForecastResponse(ctx, refresh, location, 'manual');
-  }
-
-  const cached = await readCachedForecast(env, location, responseKvReadPolicy());
   if (cached) {
-    let backgroundCheckScheduled = false;
-    if (shouldCheckInBackground(location, cached, USER_BACKGROUND_CHECK_MIN_INTERVAL_MS)) {
-      ctx.waitUntil(refreshForecastCache(env, location, {
-        reason: 'user-background',
-        minIntervalMs: USER_BACKGROUND_CHECK_MIN_INTERVAL_MS,
-        executionPolicy: userExecutionPolicy(),
-        eventMemo,
-        cached,
-      }));
-      backgroundCheckScheduled = true;
-    }
-    return jsonResponse(cached, 200, backgroundCheckScheduled
-      ? { 'X-FRANK-Background-Check': 'scheduled' }
-      : {});
+    // Browser traffic only reads the last fully prepared snapshot. Cron owns
+    // provider refreshes, so 100 simultaneous first visitors stay 100 KV reads
+    // instead of becoming 100 upstream initialization attempts.
+    return preparedForecastResponse(cached, true, {}, requestedRelease);
+  }
+  if (fallback) {
+    return preparedForecastResponse(fallback, false, {}, requestedRelease);
   }
 
   const retryAfterSeconds = await activeInitializationRetrySeconds(env, location);
-  if (retryAfterSeconds > 0) {
-    return forecastInitializingResponse(location, retryAfterSeconds);
-  }
-
-  const refresh = refreshForecastCache(env, location, {
-    force: true,
-    reason: 'cold-start',
-    minIntervalMs: 0,
-    executionPolicy: userExecutionPolicy(),
-    eventMemo,
-    cached,
-  });
-  return coldForecastResponse(ctx, refresh, location, 'cold-start');
+  return forecastInitializingResponse(
+    location,
+    retryAfterSeconds > 0 ? retryAfterSeconds : INITIALIZATION_RETRY_SECONDS,
+    requestedRelease,
+  );
 }
 
 async function loadHealthPayload(env: Env): Promise<HealthPayload> {
@@ -978,11 +1047,26 @@ async function loadHealthPayload(env: Env): Promise<HealthPayload> {
   try {
     entries = await Promise.all(
       FORECAST_LOCATIONS.map(async (location) => {
-        const data = await readCachedForecast(env, location, policy);
+        // Availability may include an explicitly audited previous generation.
+        // Its original timestamps still drive health, so fallback data can age
+        // into failure without being re-stamped as the current generation.
+        const current = await readCachedForecast(env, location, policy);
+        const previous = current
+          ? null
+          : await readAuditedPreviousGenerationForecast(
+              env,
+              location,
+              CURRENT_RELEASE.apiSchemaVersion,
+              CURRENT_RELEASE.dataGenerationId,
+              policy,
+            );
+        const data = current ?? previous?.data ?? null;
         return {
           id: location.id,
           areaName: location.areaName,
           hasCache: Boolean(data),
+          exactGenerationReady: Boolean(current),
+          availabilitySource: current ? 'generation' : previous?.source ?? 'none',
           fetchedAt: data?.sources.fetchedAt,
           cacheHealth: data?.sources.cacheHealth,
         };
@@ -1000,6 +1084,8 @@ async function loadHealthPayload(env: Env): Promise<HealthPayload> {
       id: location.id,
       areaName: location.areaName,
       hasCache: false,
+      exactGenerationReady: false,
+      availabilitySource: 'none',
     }));
   }
   return buildHealthPayload(entries, storageUnavailable);
@@ -1015,9 +1101,13 @@ async function handleStatusRequest(env: Env): Promise<Response> {
 
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const finalize = (response: Response): Response => withWorkerVersion(
-      request.method === 'HEAD' ? headResponse(response) : response,
-      env.CF_VERSION_METADATA.id,
+    let responseRelease: Readonly<ReleaseMetadata> = CURRENT_RELEASE;
+    const finalize = (response: Response): Response => withReleaseHeaders(
+      withWorkerVersion(
+        request.method === 'HEAD' ? headResponse(response) : response,
+        env.CF_VERSION_METADATA.id,
+      ),
+      { release: responseRelease },
     );
 
     try {
@@ -1025,7 +1115,11 @@ const worker = {
       // Cloudflare events.
       const eventMemo: EventMemo = new Map();
       const url = new URL(request.url);
-      const route = matchRoute(url.pathname);
+      const apiRoute = versionedForecastRoute(url.pathname);
+      responseRelease = apiRoute?.release ?? CURRENT_RELEASE;
+      const route = apiRoute
+        ? { kind: 'forecast' as const, locationId: apiRoute.locationId }
+        : matchRoute(url.pathname);
 
       if (!route) {
         const response = jsonResponse({ error: 'Not found' }, 404);
@@ -1046,14 +1140,31 @@ const worker = {
         response = jsonResponse({
           ok: true,
           service: 'frank-forecast',
-          endpoints: [...FORECAST_LOCATIONS.map((l) => `/forecast/${l.id}`), '/health', '/status'],
+          release: RELEASE_IDENTITY,
+          endpoints: [
+            ...FORECAST_LOCATIONS.flatMap((location) =>
+              supportedForecastApiPaths(location.id)),
+            '/health',
+            '/status',
+          ],
         });
       } else if (route.kind === 'health') {
         response = await handleHealthRequest(env);
       } else if (route.kind === 'status') {
         response = await handleStatusRequest(env);
       } else {
-        response = await handleForecastRequest(request, env, ctx, route.locationId, eventMemo);
+        // Temporary bootstrap alias: the unversioned route serves the exact
+        // current contract without re-stamping it. New clients use /api/vN;
+        // removing this alias later changes no storage or release semantics.
+        response = await handleForecastRequest(
+          request,
+          env,
+          ctx,
+          route.locationId,
+          eventMemo,
+          Boolean(apiRoute),
+          apiRoute?.release ?? CURRENT_RELEASE,
+        );
       }
 
       return finalize(response);

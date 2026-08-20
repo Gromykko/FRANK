@@ -32,6 +32,7 @@ import { useSettings } from './hooks/useSettings';
 import { useTheme } from './hooks/useTheme';
 import { useOnline } from './hooks/useOnline';
 import { useLang } from './i18n';
+import { requestPreparedAppReleaseCheck } from './pwa/releaseUpdate';
 
 import type { SafetySettings } from './hooks/useSettings';
 import { CURRENT_LOCATION } from './config/locations';
@@ -296,7 +297,10 @@ export default function App() {
         cacheClass={cacheStatusClass}
         cacheAriaLabel={cacheAriaLabel}
         refreshing={refreshing}
-        onRefresh={() => refreshForecast(false, true, true)}
+        onRefresh={() => {
+          void requestPreparedAppReleaseCheck();
+          void refreshForecast(false, true, true);
+        }}
         themeMode={themeMode}
         themeTitle={themeTitle}
         onToggleTheme={cycleThemeMode}

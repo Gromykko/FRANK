@@ -3,9 +3,9 @@ import {
   boundedInitializationRetryMs,
   INITIALIZATION_RETRY_MAX_MS,
   INITIALIZATION_RETRY_MIN_MS,
-  POST_REFRESH_PICKUP_DELAYS_MS,
   shouldApplyForecastUpdate,
 } from '../../../src/features/forecast/useForecast';
+import { CURRENT_RELEASE } from '../../../src/features/forecast/releaseContract';
 import type { WeatherData } from '../../../src/features/forecast/types';
 
 const FETCHED_AT = '2026-08-20T10:00:00.000Z';
@@ -60,10 +60,32 @@ describe('forecast refresh ordering', () => {
     expect(shouldApplyForecastUpdate(current, newer)).toBe(true);
   });
 
-  it('starts pickups near 2s and ends with one bounded final pickup', () => {
-    expect(POST_REFRESH_PICKUP_DELAYS_MS[0]).toBe(2_000);
-    expect(POST_REFRESH_PICKUP_DELAYS_MS).toEqual([2_000, 8_000, 30_000]);
-    expect(POST_REFRESH_PICKUP_DELAYS_MS.at(-1)).toBeLessThanOrEqual(30_000);
+  it('treats a model revision as a different authority even when its label is unchanged', () => {
+    const previous = payload(
+      'current',
+      '2026-08-20T10:02:00.000Z',
+      '2026-08-20T11:00:00.000Z',
+    );
+    previous.sources.payloadVersion = CURRENT_RELEASE.payloadVersion;
+    previous.sources.release = {
+      ...CURRENT_RELEASE,
+      modelRevision: CURRENT_RELEASE.modelRevision - 1,
+      dataGenerationId: CURRENT_RELEASE.dataGenerationId,
+    };
+    const promoted = payload(
+      'current',
+      '2026-08-20T10:01:00.000Z',
+      '2026-08-20T09:00:00.000Z',
+    );
+    promoted.sources.payloadVersion = CURRENT_RELEASE.payloadVersion;
+    promoted.sources.release = { ...CURRENT_RELEASE };
+
+    expect(shouldApplyForecastUpdate(previous, promoted, {
+      incomingIsServerAuthority: true,
+    })).toBe(true);
+    expect(shouldApplyForecastUpdate(previous, promoted, {
+      incomingIsServerFallback: true,
+    })).toBe(false);
   });
 
   it('keeps initialization retries inside the non-hammering cadence', () => {

@@ -6,33 +6,176 @@ import { isValidForecastPayload } from './validatePayload';
 import { shouldApplyForecastUpdate } from './forecastOrdering';
 import { parseForecastInitialization } from './initialization';
 import type { ForecastInitialization } from './initialization';
+import {
+  FORECAST_RELEASE_HEADERS,
+  supportedForecastApiPaths,
+} from './releaseContract';
+import type { ReleaseMetadata } from './releaseContract';
 
 const DEFAULT_FORECAST_WORKER_BASE = 'https://frank-forecast.alswatchs.workers.dev';
 const WEATHER_CACHE_KEY_PREFIX = 'frank_weather_data_v2';
 const CACHED_WORKER_FETCH_TIMEOUT_MS = 12 * 1000;
-// A true cold route may spend 2s on the forecast KV read and another 2s on its
-// initialization marker before starting a synchronous build under the
-// Worker's separate 24s budget. Keep 4s for both network legs and serialization
-// rather than racing that 28s server ceiling.
-const COLD_WORKER_FETCH_TIMEOUT_MS = 32 * 1000;
+const AUTHORITY_MARKER_SCHEMA_VERSION = 1;
+const AUTHORITY_MARKERS_TO_RETAIN = 8;
 
 const FORECAST_WORKER_BASE = (import.meta.env.VITE_FORECAST_WORKER_BASE ?? DEFAULT_FORECAST_WORKER_BASE).replace(/\/$/, '');
 
-function getLegacyWeatherCacheKey(location: ForecastLocation): string {
+function getLegacyWeatherCacheKey(location: Pick<ForecastLocation, 'id'>): string {
   return `${WEATHER_CACHE_KEY_PREFIX}_${location.id}`;
 }
 
-function getWeatherCacheKey(location: ForecastLocation, payloadVersion: number): string {
+function getAuthorityMarkerPrefix(location: ForecastLocation): string {
+  return `${getLegacyWeatherCacheKey(location)}_authority_`;
+}
+
+type BrowserForecastReleaseIdentity = Pick<
+  ReleaseMetadata,
+  'apiSchemaVersion' | 'modelRevision' | 'dataGenerationId' | 'payloadVersion'
+>;
+
+export function forecastReleaseCacheKey(
+  location: Pick<ForecastLocation, 'id'>,
+  release: BrowserForecastReleaseIdentity,
+): string {
+  return [
+    getLegacyWeatherCacheKey(location),
+    `api${release.apiSchemaVersion}`,
+    `model${release.modelRevision}`,
+    `generation_${encodeURIComponent(release.dataGenerationId)}`,
+    `payload${release.payloadVersion}`,
+  ].join('_');
+}
+
+function getWeatherCacheKey(location: ForecastLocation, data: WeatherData): string | null {
+  const release = data.sources.release;
+  const payloadVersion = data.sources.payloadVersion;
+  if (
+    release
+    && Number.isSafeInteger(release.apiSchemaVersion)
+    && release.apiSchemaVersion > 0
+    && Number.isSafeInteger(release.modelRevision)
+    && release.modelRevision > 0
+    && typeof release.dataGenerationId === 'string'
+    && release.dataGenerationId.length > 0
+    && Number.isSafeInteger(release.payloadVersion)
+    && release.payloadVersion > 0
+    && payloadVersion === release.payloadVersion
+  ) {
+    // Never trust the human generation label as the only partition. API,
+    // model and payload can each change independently, and an accidental
+    // unchanged label must still create a different offline slot.
+    return forecastReleaseCacheKey(location, release);
+  }
+
+  if (!Number.isSafeInteger(payloadVersion) || (payloadVersion as number) <= 0) return null;
   return `${getLegacyWeatherCacheKey(location)}_v${payloadVersion}`;
 }
 
 function getWeatherCacheKeys(location: ForecastLocation): string[] {
   const legacyKey = getLegacyWeatherCacheKey(location);
-  const versionedKeyPattern = new RegExp(`^${legacyKey}_v\\d+$`);
+  const escapedLegacyKey = legacyKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const versionedKeyPattern = new RegExp(
+    `^${escapedLegacyKey}_(?:api\\d+_model\\d+_generation_.+_payload\\d+|v\\d+)$`,
+  );
   return [
     ...Object.keys(localStorage).filter((key) => versionedKeyPattern.test(key)),
     legacyKey,
   ];
+}
+
+interface AuthorityMarker {
+  schemaVersion: number;
+  requestStartedAtMs: number;
+  receivedAtMs: number;
+  cacheKey: string;
+}
+
+function authorityMarkerEntries(location: ForecastLocation): Array<{
+  storageKey: string;
+  marker: AuthorityMarker;
+}> {
+  const prefix = getAuthorityMarkerPrefix(location);
+  const cacheKeys = new Set(getWeatherCacheKeys(location));
+  const entries: Array<{ storageKey: string; marker: AuthorityMarker }> = [];
+  const latestPlausibleMs = Date.now() + 5 * 60 * 1000;
+
+  for (const storageKey of Object.keys(localStorage)) {
+    if (!storageKey.startsWith(prefix)) continue;
+    try {
+      const value = JSON.parse(localStorage.getItem(storageKey) ?? 'null') as Partial<AuthorityMarker> | null;
+      if (
+        value?.schemaVersion !== AUTHORITY_MARKER_SCHEMA_VERSION
+        || !Number.isFinite(value.requestStartedAtMs)
+        || !Number.isFinite(value.receivedAtMs)
+        || (value.requestStartedAtMs as number) > latestPlausibleMs
+        || (value.receivedAtMs as number) > latestPlausibleMs
+        || typeof value.cacheKey !== 'string'
+        || !cacheKeys.has(value.cacheKey)
+      ) {
+        try {
+          localStorage.removeItem(storageKey);
+        } catch {
+          // Validation already excluded it from authority selection.
+        }
+        continue;
+      }
+      entries.push({ storageKey, marker: value as AuthorityMarker });
+    } catch {
+      // Invalid markers never influence which forecast is trusted.
+      try {
+        localStorage.removeItem(storageKey);
+      } catch {
+        // Best-effort scoped cleanup only.
+      }
+    }
+  }
+
+  return entries.sort((left, right) =>
+    right.marker.requestStartedAtMs - left.marker.requestStartedAtMs
+    || right.marker.receivedAtMs - left.marker.receivedAtMs
+    || right.storageKey.localeCompare(left.storageKey));
+}
+
+function rememberServerAuthority(
+  location: ForecastLocation,
+  cacheKey: string,
+  requestStartedAtMs: number,
+): void {
+  const marker: AuthorityMarker = {
+    schemaVersion: AUTHORITY_MARKER_SCHEMA_VERSION,
+    requestStartedAtMs,
+    receivedAtMs: Date.now(),
+    cacheKey,
+  };
+  try {
+    const prefix = getAuthorityMarkerPrefix(location);
+    const random = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
+    const storageKey = `${prefix}${Math.trunc(requestStartedAtMs)}_${random}`;
+    // Make space before the append. If quota pressure still wins, remove only
+    // older FRANK authority markers and retry once; forecast slots themselves
+    // remain available to older shells during the handover.
+    for (const entry of authorityMarkerEntries(location).slice(AUTHORITY_MARKERS_TO_RETAIN - 1)) {
+      localStorage.removeItem(entry.storageKey);
+    }
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(marker));
+    } catch {
+      for (const entry of authorityMarkerEntries(location).slice(1)) {
+        localStorage.removeItem(entry.storageKey);
+      }
+      localStorage.setItem(storageKey, JSON.stringify(marker));
+    }
+
+    // Markers are append-only so two tabs cannot lose a compare-and-set race.
+    // Keep a small journal: the newest valid marker decides, while older ones
+    // preserve ordering if a later payload slot becomes corrupt or expires.
+    for (const entry of authorityMarkerEntries(location).slice(AUTHORITY_MARKERS_TO_RETAIN)) {
+      localStorage.removeItem(entry.storageKey);
+    }
+  } catch {
+    // Authority persistence is an offline enhancement. The validated network
+    // response remains authoritative for the current in-memory session.
+  }
 }
 
 function hasCurrentForecastWindow(data: WeatherData): boolean {
@@ -49,19 +192,24 @@ function hasCurrentForecastWindow(data: WeatherData): boolean {
 }
 
 export function saveCachedWeatherData(data: WeatherData, location: ForecastLocation) {
+  void persistCachedWeatherData(data, location);
+}
+
+function persistCachedWeatherData(
+  data: WeatherData,
+  location: ForecastLocation,
+): string | null {
   // New writes must always carry an explicit compatible version and matching
   // location. The relaxed unversioned policy is only for already-saved legacy
   // data in readLocalCachedWeatherData below.
-  if (!isValidForecastPayload(data, location)) return;
-  const payloadVersion = data.sources.payloadVersion;
-  if (typeof payloadVersion !== 'number' || !Number.isSafeInteger(payloadVersion)) return;
-  const cacheKey = getWeatherCacheKey(location, payloadVersion);
+  if (!isValidForecastPayload(data, location)) return null;
+  const cacheKey = getWeatherCacheKey(location, data);
+  if (!cacheKey) return null;
 
-  // `pending` exists only on the immediate response to ?refresh=1 while the
-  // Worker rebuilds in waitUntil. It is not durable forecast health. Persisting
-  // it overwrites the last completed status and can leave "Checking…" stuck
-  // across reloads when the completed check keeps the same fetchedAt.
-  if (data.sources.cacheHealth?.status === 'pending') return;
+  // `pending` is a historical response-only health state. Prepared-snapshot
+  // routes never emit it, and persisting an older response would leave
+  // "Checking…" stuck across reloads.
+  if (data.sources.cacheHealth?.status === 'pending') return null;
 
   try {
     const existingRaw = localStorage.getItem(cacheKey);
@@ -72,7 +220,7 @@ export function saveCachedWeatherData(data: WeatherData, location: ForecastLocat
           isValidForecastPayload(existing, location, { allowLegacyMissingVersion: true })
           && !shouldApplyForecastUpdate(existing, data)
         ) {
-          return;
+          return cacheKey;
         }
       } catch {
         // A corrupt local value has no ordering claim. Replace it with the
@@ -84,9 +232,11 @@ export function saveCachedWeatherData(data: WeatherData, location: ForecastLocat
     // that slot and cannot validate a future payload contract. Keeping one
     // slot per contract lets old/new tabs and rollback builds coexist safely.
     localStorage.setItem(cacheKey, JSON.stringify(data));
+    return cacheKey;
   } catch {
     // Caching also provides the offline fallback, but storage can be blocked;
     // the live forecast remains usable for the current session.
+    return null;
   }
 }
 
@@ -99,6 +249,7 @@ function readLocalCachedWeatherData(location: ForecastLocation): WeatherData | n
   }
 
   let best: WeatherData | null = null;
+  const candidates = new Map<string, WeatherData>();
   for (const cacheKey of cacheKeys) {
     try {
       const raw = localStorage.getItem(cacheKey);
@@ -113,6 +264,26 @@ function readLocalCachedWeatherData(location: ForecastLocation): WeatherData | n
       if (!isValidForecastPayload(parsed, location, { allowLegacyMissingVersion: true }) || !hasCurrentForecastWindow(parsed)) {
         continue;
       }
+
+      // New release-stamped writes always use the exact slot derived from all
+      // browser-facing axes. Retain `_vN`/unversioned recovery for an older
+      // installed shell, but never accept a partially scoped API slot such as
+      // the pre-hardening `_apiN_generation_X` form.
+      const expectedCacheKey = getWeatherCacheKey(location, parsed);
+      const legacyVersionKey = Number.isSafeInteger(parsed.sources.payloadVersion)
+        ? `${getLegacyWeatherCacheKey(location)}_v${parsed.sources.payloadVersion}`
+        : null;
+      if (
+        parsed.sources.release
+        && expectedCacheKey !== cacheKey
+        && cacheKey !== getLegacyWeatherCacheKey(location)
+        && cacheKey !== legacyVersionKey
+      ) continue;
+      if (
+        !parsed.sources.release
+        && cacheKey !== getLegacyWeatherCacheKey(location)
+        && expectedCacheKey !== cacheKey
+      ) continue;
 
       let candidate = parsed;
       if (parsed.sources.cacheHealth?.status === 'pending') {
@@ -136,59 +307,184 @@ function readLocalCachedWeatherData(location: ForecastLocation): WeatherData | n
         }
       }
 
+      candidates.set(cacheKey, candidate);
       if (!best || shouldApplyForecastUpdate(best, candidate)) best = candidate;
     } catch {
       // One corrupt copy/version must not mask another valid offline forecast.
     }
   }
-  return best;
+
+  // The most recent completed Worker response decides which compatible model
+  // generation is production-authoritative. This is deliberately separate
+  // from fetchedAt: immediately before promotion the old cron can build a few
+  // minutes after the shadow generation, and an intentional rollback must be
+  // able to select N-1 again. If that slot is corrupt/expired, degrade to the
+  // best other validated copy instead of letting a marker strand the app.
+  const authoritative = authorityMarkerEntries(location)
+    .map(({ marker }) => candidates.get(marker.cacheKey))
+    .find((candidate): candidate is WeatherData => Boolean(candidate));
+  return authoritative ?? best;
 }
 
 interface WorkerCacheRead {
   data: WeatherData | null;
-  backgroundCheckScheduled: boolean;
   initialization: ForecastInitialization | null;
   failureKind: 'network' | 'response' | null;
+  serverAuthority: boolean;
+  serverFallback: boolean;
+}
+
+type ResponseGenerationRole = 'authority' | 'fallback' | 'unproven';
+
+function classifyResponseGeneration(response: Response, data: WeatherData): ResponseGenerationRole {
+  const release = data.sources.release;
+  if (!release) return 'unproven';
+  // Real fetch responses always expose Headers. Keeping this boundary
+  // fail-closed also makes non-browser adapters and lightweight test doubles
+  // harmless: missing release evidence can never grant generation authority.
+  if (!response.headers || typeof response.headers.get !== 'function') return 'unproven';
+  const ready = response.headers.get(FORECAST_RELEASE_HEADERS.generationReady);
+  if (ready !== 'true' && ready !== 'false') return 'unproven';
+  const integerHeader = (name: string): number | null => {
+    const value = response.headers.get(name);
+    if (value === null || !/^\d+$/.test(value)) return null;
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : null;
+  };
+  const target = {
+    apiSchemaVersion: integerHeader(FORECAST_RELEASE_HEADERS.apiSchema),
+    modelRevision: integerHeader(FORECAST_RELEASE_HEADERS.modelRevision),
+    dataGenerationId: response.headers.get(FORECAST_RELEASE_HEADERS.dataGeneration),
+    assembledCacheSchema: integerHeader(FORECAST_RELEASE_HEADERS.assembledCacheSchema),
+    marineCacheSchema: integerHeader(FORECAST_RELEASE_HEADERS.marineCacheSchema),
+    payloadVersion: integerHeader(FORECAST_RELEASE_HEADERS.payloadVersion),
+  };
+  if (
+    target.apiSchemaVersion === null
+    || target.modelRevision === null
+    || !target.dataGenerationId
+    || target.assembledCacheSchema === null
+    || target.marineCacheSchema === null
+    || target.payloadVersion === null
+  ) {
+    return 'unproven';
+  }
+  if (ready === 'false') return 'fallback';
+  return target.apiSchemaVersion === release.apiSchemaVersion
+    && target.modelRevision === release.modelRevision
+    && target.dataGenerationId === release.dataGenerationId
+    && target.assembledCacheSchema === release.assembledCacheSchema
+    && target.marineCacheSchema === release.marineCacheSchema
+    && target.payloadVersion === release.payloadVersion
+    ? 'authority'
+    : 'unproven';
+}
+
+export async function resolveForecastApiResponse(
+  paths: readonly string[],
+  fetchEndpoint: (path: string) => Promise<Response>,
+  location: ForecastLocation,
+): Promise<{
+  response: Response | null;
+  initialization: ForecastInitialization | null;
+  usedAvailabilityFallback: boolean;
+}> {
+  let lastResponse: Response | null = null;
+  let targetInitialization: ForecastInitialization | null = null;
+  let usedAvailabilityFallback = false;
+
+  for (const [index, path] of paths.entries()) {
+    const response = await fetchEndpoint(path);
+    lastResponse = response;
+    if (response.ok) return { response, initialization: null, usedAvailabilityFallback };
+    if (response.status === 404) continue;
+
+    const initialization = await parseForecastInitialization(response, location);
+    if (!initialization) {
+      // A malformed or hard response must not be disguised by an older API.
+      return { response, initialization: null, usedAvailabilityFallback: false };
+    }
+
+    targetInitialization ??= initialization;
+    if (index < paths.length - 1) {
+      // Expand-contract rollout: /api/v2 may still be preparing at this edge
+      // while the audited /api/v1 representation is complete. Try only the
+      // explicitly supported N-1 route; generic errors remain fail-closed.
+      usedAvailabilityFallback = true;
+      continue;
+    }
+    return {
+      response: null,
+      initialization: targetInitialization,
+      usedAvailabilityFallback: false,
+    };
+  }
+
+  return targetInitialization
+    ? { response: null, initialization: targetInitialization, usedAvailabilityFallback: false }
+    : { response: lastResponse, initialization: null, usedAvailabilityFallback: false };
 }
 
 async function readWorkerCachedWeatherData(
   location: ForecastLocation,
-  forceRefresh = false,
   timeoutMs = CACHED_WORKER_FETCH_TIMEOUT_MS,
 ): Promise<WorkerCacheRead> {
   if (!FORECAST_WORKER_BASE) {
-    return { data: null, backgroundCheckScheduled: false, initialization: null, failureKind: 'response' };
+    return {
+      data: null,
+      initialization: null,
+      failureKind: 'response',
+      serverAuthority: false,
+      serverFallback: false,
+    };
   }
 
   let receivedResponse = false;
+  const requestStartedAtMs = Date.now();
   try {
-    const query = new URLSearchParams();
+    const deadlineAt = requestStartedAtMs + timeoutMs;
+    const fetchEndpoint = async (path: string): Promise<Response> => {
+      // One total deadline covers every explicitly supported API revision. A
+      // future client may try /api/v2 then /api/v1 during an expand-contract
+      // release; a stalled request must not earn another full timeout.
+      const remainingMs = Math.max(1, deadlineAt - Date.now());
+      const response = await fetch(`${FORECAST_WORKER_BASE}${path}`, {
+        cache: 'no-store',
+        // Kayakers open this on fjord-edge mobile signal, where a socket can
+        // stay open indefinitely without ever answering. Without a deadline
+        // the saved forecast never gets a chance to take over.
+        signal: AbortSignal.timeout(remainingMs),
+      });
+      receivedResponse = true;
+      return response;
+    };
 
-    if (forceRefresh) {
-      query.set('refresh', '1');
-    }
-
-    const queryString = query.size > 0 ? `?${query.toString()}` : '';
-    const response = await fetch(`${FORECAST_WORKER_BASE}/forecast/${location.id}${queryString}`, {
-      cache: 'no-store',
-      // Kayakers open this on fjord-edge mobile signal, where a socket can
-      // stay open indefinitely without ever answering. Without a deadline the
-      // preferWorker path never falls through to the saved forecast and the
-      // app just spins — the one moment a cached answer matters most.
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    receivedResponse = true;
-
-    if (!response.ok) {
-      const initialization = await parseForecastInitialization(response, location);
+    const resolved = await resolveForecastApiResponse(
+      supportedForecastApiPaths(location.id),
+      fetchEndpoint,
+      location,
+    );
+    const response = resolved.response;
+    if (resolved.initialization) {
       return {
         data: null,
-        backgroundCheckScheduled: false,
-        initialization,
-        failureKind: initialization ? null : 'response',
+        initialization: resolved.initialization,
+        failureKind: null,
+        serverAuthority: false,
+        serverFallback: false,
       };
     }
-    const backgroundCheckScheduled = response.headers?.get('X-FRANK-Background-Check') === 'scheduled';
+    if (!response) throw new Error('No supported forecast API route is configured.');
+
+    if (!response.ok) {
+      return {
+        data: null,
+        initialization: null,
+        failureKind: 'response',
+        serverAuthority: false,
+        serverFallback: false,
+      };
+    }
 
     const parsed = reviveReadings(await response.json());
     // USABILITY, not freshness: does this payload still cover the hours the app
@@ -201,41 +497,59 @@ async function readWorkerCachedWeatherData(
     // forecast — hourly rows running days ahead — was refused here, so
     // loadCachedWeatherData returned null and users got the dead "Kan ikke nå
     // prognosen" screen instead of the forecast plus "Viser ældre data". Same
-    // Older compatible stamps stay accepted so Worker and Pages can deploy
-    // independently. A NEWER stamp is different: this client cannot know its
-    // contract, so it must not render or overwrite the compatible last-good
-    // local copy.
-    if (isValidForecastPayload(parsed, location) && hasCurrentForecastWindow(parsed)) {
+    // Explicitly audited compatible generations stay accepted so Worker and
+    // Pages can expand before they contract. An unknown payload contract is
+    // different: this client must not render it or overwrite a validated copy.
+    // A stable API response must identify the release that produced it. The
+    // release gate owns target-generation readiness; this trust boundary owns
+    // the shape that a kayaker's browser is allowed to render and persist.
+    if (
+      isValidForecastPayload(parsed, location, { requireReleaseMetadata: true })
+      && hasCurrentForecastWindow(parsed)
+    ) {
+      // Prepared-snapshot routes never return an in-flight health overlay.
+      // Treat one as an incompatible response rather than persisting a state
+      // that has no completion/pickup contract in this architecture.
       if (parsed.sources.cacheHealth?.status === 'pending') {
-        // A forced refresh returns the existing Worker cache with a transient
-        // pending overlay. Keep the browser's completed snapshot on screen
-        // during the 600ms button spinner; silent pickups below will apply the
-        // completed health even when the forecast build itself does not change.
-        // But never throw away a NEWER Worker forecast merely because its
-        // health overlay is pending: that extended a cold-start stale flash
-        // until the first pickup. Pending remains memory-only either way.
-        const local = readLocalCachedWeatherData(location);
-        if (!local) {
-          return { data: parsed, backgroundCheckScheduled, initialization: null, failureKind: null };
-        }
-        const localFetchedMs = Date.parse(local.sources.fetchedAt);
-        const workerFetchedMs = Date.parse(parsed.sources.fetchedAt);
         return {
-          data: workerFetchedMs > localFetchedMs ? parsed : local,
-          backgroundCheckScheduled,
+          data: null,
           initialization: null,
-          failureKind: null,
+          failureKind: 'response',
+          serverAuthority: false,
+          serverFallback: false,
         };
       }
-      saveCachedWeatherData(parsed, location);
-      return { data: parsed, backgroundCheckScheduled, initialization: null, failureKind: null };
+      const cacheKey = persistCachedWeatherData(parsed, location);
+      const generationRole = resolved.usedAvailabilityFallback
+        ? 'fallback'
+        : classifyResponseGeneration(response, parsed);
+      const serverAuthority = generationRole === 'authority';
+      // Missing or contradictory release headers are not proof of a control-
+      // plane promotion. The body remains usable as an availability response,
+      // but across generations it gets the same non-demotion treatment as an
+      // explicit ready=false fallback.
+      const serverFallback = generationRole !== 'authority';
+      if (cacheKey && serverAuthority) {
+        // Only a completed, fully validated HTTP 200 can change offline
+        // generation authority. Initialization, malformed/error responses,
+        // local saves and transient pending overlays never create a marker.
+        rememberServerAuthority(location, cacheKey, requestStartedAtMs);
+      }
+      return {
+        data: parsed,
+        initialization: null,
+        failureKind: null,
+        serverAuthority,
+        serverFallback,
+      };
     }
   } catch {
     return {
       data: null,
-      backgroundCheckScheduled: false,
       initialization: null,
       failureKind: receivedResponse ? 'response' : 'network',
+      serverAuthority: false,
+      serverFallback: false,
     };
   } finally {
     // In the `finally`, not before the fetch. Setting it up front collapsed the
@@ -246,14 +560,18 @@ async function readWorkerCachedWeatherData(
     workerAttempted = true;
   }
 
-  return { data: null, backgroundCheckScheduled: false, initialization: null, failureKind: 'response' };
+  return {
+    data: null,
+    initialization: null,
+    failureKind: 'response',
+    serverAuthority: false,
+    serverFallback: false,
+  };
 }
 
 export interface LoadCacheOptions {
   localOnly?: boolean;
   preferWorker?: boolean;
-  forceWorkerRefresh?: boolean;
-  allowColdWorkerBuild?: boolean;
 }
 
 // Where the payload came from, and therefore whether the worker was reachable.
@@ -271,9 +589,10 @@ export type CacheSource = 'worker' | 'local' | null;
 export interface LoadCacheResult {
   data: WeatherData | null;
   from: CacheSource;
-  backgroundCheckScheduled?: boolean;
   initialization?: ForecastInitialization;
   failureKind?: 'network' | 'response';
+  serverAuthority?: boolean;
+  serverFallback?: boolean;
 }
 
 // Contact record for this browser session. Three states, and the difference
@@ -302,41 +621,46 @@ export async function loadCachedWeatherData(
   }
 
   if (options.preferWorker) {
-    // A saved forecast gives the user an immediate fallback, so retain the
-    // shorter fjord-edge network deadline. With no local copy, allow the
-    // Worker's one bounded cold build to complete instead of timing out in the
-    // middle and leaving a first-time user on an avoidable error screen.
+    // Browser requests only read prepared snapshots; they never perform a cold
+    // provider build. The same fjord-edge deadline therefore applies whether
+    // or not a local fallback already exists.
     const local = readLocalCachedWeatherData(location);
     const workerResult = await readWorkerCachedWeatherData(
       location,
-      options.forceWorkerRefresh,
-      local && !options.allowColdWorkerBuild
-        ? CACHED_WORKER_FETCH_TIMEOUT_MS
-        : COLD_WORKER_FETCH_TIMEOUT_MS,
+      CACHED_WORKER_FETCH_TIMEOUT_MS,
     );
     if (workerResult.data) {
       lastWorkerContactMs = Date.now();
       return {
         data: workerResult.data,
         from: 'worker',
-        ...(workerResult.backgroundCheckScheduled ? { backgroundCheckScheduled: true } : {}),
+        ...(workerResult.serverAuthority ? { serverAuthority: true } : {}),
+        ...(workerResult.serverFallback ? { serverFallback: true } : {}),
       };
     }
 
     if (workerResult.initialization) {
       lastWorkerContactMs = Date.now();
       // A still-usable local snapshot remains the right UI when one exists.
-      // Initialization is a first-build state, not a reason to hide last-good
-      // data or change established degraded-cache behaviour.
-      if (!local) {
-        return { data: null, from: null, initialization: workerResult.initialization };
-      }
+      // Keep the classified initialization alongside it: the Worker DID answer
+      // and told us it is preparing this location. Dropping that fact made the
+      // hook misclassify a healthy 503 contract as a failed refresh, producing
+      // three contradictory warnings over the saved forecast.
+      return {
+        data: local,
+        from: local ? 'local' : null,
+        initialization: workerResult.initialization,
+      };
     }
 
     return {
       data: local,
       from: local ? 'local' : null,
-      ...(!local && workerResult.failureKind ? { failureKind: workerResult.failureKind } : {}),
+      // Preserve the failure classification even when the local fallback is
+      // usable. A valid initialization response is handled calmly above, while
+      // true network and malformed/error responses must remain distinguishable
+      // and surface through the established failure presentation.
+      ...(workerResult.failureKind ? { failureKind: workerResult.failureKind } : {}),
     };
   }
 
@@ -345,15 +669,15 @@ export async function loadCachedWeatherData(
 
   const workerResult = await readWorkerCachedWeatherData(
     location,
-    options.forceWorkerRefresh,
-    COLD_WORKER_FETCH_TIMEOUT_MS,
+    CACHED_WORKER_FETCH_TIMEOUT_MS,
   );
   if (workerResult.data) lastWorkerContactMs = Date.now();
   if (workerResult.initialization) lastWorkerContactMs = Date.now();
   return {
     data: workerResult.data,
     from: workerResult.data ? 'worker' : null,
-    ...(workerResult.backgroundCheckScheduled ? { backgroundCheckScheduled: true } : {}),
+    ...(workerResult.serverAuthority ? { serverAuthority: true } : {}),
+    ...(workerResult.serverFallback ? { serverFallback: true } : {}),
     ...(workerResult.initialization ? { initialization: workerResult.initialization } : {}),
     ...(workerResult.failureKind ? { failureKind: workerResult.failureKind } : {}),
   };

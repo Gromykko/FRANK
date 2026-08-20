@@ -1,4 +1,4 @@
-name: Deploy to GitHub Pages
+name: Validate FRANK
 
 on:
   push:
@@ -6,18 +6,15 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Least privilege at the top; the deploy credentials are granted only to the
-# job that deploys. Workflow-level `pages: write` + `id-token: write` handed
-# them to the build job too — the job that runs `npm ci`, and therefore
-# arbitrary dependency lifecycle scripts.
+# Pushes and pull requests validate a releasable commit but never mutate
+# production. The protected manual production workflow builds its own exact
+# artifact from the dispatched SHA after repeating these gates.
 permissions:
   contents: read
 
 concurrency:
-  # Keep production publishes serialized, while allowing an updated pull
-  # request to replace its own obsolete validation run.
-  group: pages-${{ github.event.pull_request.number || 'production' }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: validate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -34,6 +31,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Validate release compatibility policy
+        run: npm run release:check-contract
 
       - name: Audit high-severity dependencies
         run: npm audit --audit-level=high
@@ -64,25 +64,3 @@ jobs:
 
       - name: End-to-end test
         run: npm exec -- playwright test
-
-      - name: Upload Pages artifact
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
-        with:
-          path: dist
-
-  deploy:
-    needs: build
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5

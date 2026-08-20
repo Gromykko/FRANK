@@ -1,5 +1,9 @@
 import { readFileSync } from 'node:fs';
 import type { Page, Route } from 'playwright/test';
+import {
+  CURRENT_RELEASE,
+  FORECAST_RELEASE_HEADERS,
+} from '../../src/features/forecast/releaseContract';
 import { FORECAST_PAYLOAD_VERSION } from '../../src/features/forecast/types';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -18,6 +22,20 @@ const locations = JSON.parse(
 ) as FixtureLocation[];
 
 const locationById = new Map(locations.map((location) => [location.id, location]));
+
+function releaseHeaders(ready: boolean): Record<string, string> {
+  const exposedHeaders = Object.values(FORECAST_RELEASE_HEADERS).join(', ');
+  return {
+    [FORECAST_RELEASE_HEADERS.apiSchema]: String(CURRENT_RELEASE.apiSchemaVersion),
+    [FORECAST_RELEASE_HEADERS.modelRevision]: String(CURRENT_RELEASE.modelRevision),
+    [FORECAST_RELEASE_HEADERS.dataGeneration]: CURRENT_RELEASE.dataGenerationId,
+    [FORECAST_RELEASE_HEADERS.assembledCacheSchema]: String(CURRENT_RELEASE.assembledCacheSchema),
+    [FORECAST_RELEASE_HEADERS.marineCacheSchema]: String(CURRENT_RELEASE.marineCacheSchema),
+    [FORECAST_RELEASE_HEADERS.payloadVersion]: String(CURRENT_RELEASE.payloadVersion),
+    [FORECAST_RELEASE_HEADERS.generationReady]: String(ready),
+    'Access-Control-Expose-Headers': `Retry-After, ${exposedHeaders}`,
+  };
+}
 
 function buildHourly(startMs: number) {
   return Array.from({ length: 72 }, (_, index) => ({
@@ -56,6 +74,7 @@ export function buildForecastFixture(locationId: string, nowMs = FIXTURE_NOW_MS)
     warnings: [],
     sources: {
       payloadVersion: FORECAST_PAYLOAD_VERSION,
+      release: { ...CURRENT_RELEASE },
       weather: 'MET Norway Locationforecast',
       waves: 'DMI WAM',
       water: 'DMI DKSS',
@@ -94,10 +113,10 @@ export async function mockInitializingForecastWorker(page: Page): Promise<Foreca
       contentType: 'application/json; charset=utf-8',
       headers: {
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Expose-Headers': 'Retry-After',
         'Cache-Control': 'no-store',
         'Retry-After': '600',
         'X-Content-Type-Options': 'nosniff',
+        ...releaseHeaders(false),
       },
       body: JSON.stringify({
         schemaVersion: 1,
@@ -135,6 +154,7 @@ export async function mockForecastWorker(page: Page): Promise<ForecastMock> {
         'Access-Control-Allow-Origin': '*',
         'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff',
+        ...releaseHeaders(true),
       },
       body: JSON.stringify(buildForecastFixture(locationId)),
     });

@@ -1,32 +1,34 @@
-name: Deploy forecast Worker
+name: Release FRANK production
 
 on:
   workflow_dispatch:
 
+# Production is one conservative release mode. Even a UI-only commit passes
+# the exact-all Worker gate; there is no checkbox that can accidentally bypass
+# data readiness for a commit that also changed shared forecast code.
 permissions:
   contents: read
 
 concurrency:
-  group: frank-worker-production
+  group: frank-production
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    # Manual dispatch is deliberate: ordinary pushes, pull requests, and forks
-    # can validate the bundle but can never receive production credentials.
+  build:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment:
-      name: worker-production
-    env:
-      # The release gate must always test the production service this workflow
-      # deploys; a dispatch-time URL could accidentally green an unrelated host.
-      FRANK_WORKER_BASE_URL: https://frank-forecast.alswatchs.workers.dev
-
+    timeout-minutes: 25
+    outputs:
+      build_id: ${{ steps.release.outputs.build_id }}
     steps:
-      - name: Checkout
+      - name: Checkout dispatched commit
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify exact release commit
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
       - name: Setup Node
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
@@ -37,7 +39,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Audit dependencies
+      - name: Validate release compatibility policy
+        run: npm run release:check-contract
+
+      - name: Audit high-severity dependencies
         run: npm audit --audit-level=high
 
       - name: Lint
@@ -58,6 +63,64 @@ jobs:
       - name: Validate Worker bundle
         run: npm run worker:dry-run
 
+      - name: Build exact Pages artifact
+        run: npm run build
+
+      - name: Install Chromium
+        run: npm exec -- playwright install --with-deps chromium
+
+      - name: End-to-end test exact artifact
+        run: npm exec -- playwright test
+
+      - name: Record immutable Pages build
+        id: release
+        shell: bash
+        run: |
+          build_id="$(npm run --silent release:build-id)"
+          echo "build_id=$build_id" >> "$GITHUB_OUTPUT"
+          echo "### Release candidate" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: \`$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Pages build: \`$build_id\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload exact Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
+        with:
+          path: dist
+
+  worker_release:
+    needs: build
+    runs-on: ubuntu-latest
+    # Leave enough time for bounded provider calls and, critically, the
+    # restoration steps. A job-level cancellation cannot safely repair traffic.
+    timeout-minutes: 30
+    environment:
+      name: worker-production
+      url: https://frank-forecast.alswatchs.workers.dev
+    env:
+      FRANK_WORKER_BASE_URL: https://frank-forecast.alswatchs.workers.dev
+      FRANK_WORKER_SCRIPT: frank-forecast
+    outputs:
+      candidate_version: ${{ steps.candidate.outputs.version_id }}
+      previous_version: ${{ steps.previous.outputs.version_id }}
+    steps:
+      - name: Checkout dispatched commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify exact release commit
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install pinned release tooling
+        run: npm ci
+
       - name: Check deployment credentials
         shell: bash
         env:
@@ -69,7 +132,7 @@ jobs:
             exit 1
           fi
 
-      - name: Capture active production version
+      - name: Capture exact production version
         id: previous
         shell: bash
         run: |
@@ -79,45 +142,164 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Deploy Worker
-        id: deploy
-        run: npm run worker:deploy
+      - name: Upload candidate Worker version without traffic
+        id: upload
+        shell: bash
+        run: |
+          version_tag="gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          npm run worker:upload-version -- \
+            --tag "$version_tag" \
+            --message "Candidate for $GITHUB_SHA" \
+            --strict
+          echo "tag=$version_tag" >> "$GITHUB_OUTPUT"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Capture deployed production version
-        id: deployed
+      - name: Resolve immutable candidate version
+        id: candidate
         shell: bash
         run: |
-          previous_id="${{ steps.previous.outputs.version_id }}"
-          version_id=""
-          for attempt in 1 2 3 4 5; do
-            candidate="$(npm run --silent worker:active-version)"
-            if [[ "$candidate" != "$previous_id" ]]; then
-              version_id="$candidate"
-              break
-            fi
-            if [[ "$attempt" -lt 5 ]]; then
-              echo "Cloudflare still reports the pre-deploy version; retrying control-plane lookup ($attempt/5)."
-              sleep $((attempt * 2))
-            fi
-          done
-          if [[ -z "$version_id" ]]; then
-            echo "::error::Cloudflare still reports the pre-deploy Worker version as active after bounded retries."
-            exit 1
-          fi
+          version_id="$(npm run --silent worker:version-by-tag -- '${{ steps.upload.outputs.tag }}')"
           echo "version_id=$version_id" >> "$GITHUB_OUTPUT"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Warm forecasts and verify release safety
-        run: npm run worker:warm -- --base-url "$FRANK_WORKER_BASE_URL" --expected-worker-version-id "${{ steps.deployed.outputs.version_id }}"
-
-      - name: Roll back a release that fails its production gate
-        if: failure() && steps.deploy.outcome == 'success'
-        run: npm run worker:rollback -- "${{ steps.previous.outputs.version_id }}" --yes --message "Automatic rollback after failed FRANK release gate $GITHUB_SHA"
+      - name: Include candidate at zero traffic
+        id: stage
+        shell: bash
+        run: |
+          npm run worker:deploy-versions -- \
+            '${{ steps.previous.outputs.version_id }}@100%' \
+            '${{ steps.candidate.outputs.version_id }}@0%' \
+            --yes \
+            --message "Stage $GITHUB_SHA at zero traffic"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Verify zero-traffic deployment
+        run: npm run --silent worker:verify-deployment -- '${{ steps.previous.outputs.version_id }}@100' '${{ steps.candidate.outputs.version_id }}@0'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Build shadow caches and verify exact candidate
+        run: |
+          npm run worker:warm -- \
+            --base-url "$FRANK_WORKER_BASE_URL" \
+            --worker-name "$FRANK_WORKER_SCRIPT" \
+            --expected-worker-version-id '${{ steps.candidate.outputs.version_id }}' \
+            --require-target-ready-all \
+            --attempts 6 \
+            --retry-delay-ms 5000
+
+      - name: Promote exact-ready candidate to all traffic
+        id: promote
+        shell: bash
+        run: |
+          npm run worker:deploy-versions -- \
+            '${{ steps.candidate.outputs.version_id }}@100%' \
+            --yes \
+            --message "Promote exact-ready release $GITHUB_SHA"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Verify promoted deployment
+        run: npm run --silent worker:verify-deployment -- '${{ steps.candidate.outputs.version_id }}@100'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Verify exact-ready ordinary traffic
+        run: |
+          npm run worker:warm -- \
+            --base-url "$FRANK_WORKER_BASE_URL" \
+            --expected-worker-version-id '${{ steps.candidate.outputs.version_id }}' \
+            --require-target-ready-all \
+            --read-only \
+            --attempts 5 \
+            --retry-delay-ms 3000
+
+      - name: Restore captured production version after failure
+        id: restore
+        # Staging can mutate the control plane and still exit non-zero. Once a
+        # candidate upload succeeded, normalize every later failure back to the
+        # exact captured deployment instead of relying on a step outcome guess.
+        if: ${{ failure() && steps.previous.outputs.version_id != '' && steps.upload.outcome == 'success' }}
+        shell: bash
+        run: |
+          npm run worker:deploy-versions -- \
+            '${{ steps.previous.outputs.version_id }}@100%' \
+            --yes \
+            --message "Restore exact production after failed release $GITHUB_SHA"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Verify restored production version
+        # Verify even when Wrangler reported that restoration failed: the API
+        # may have accepted the change before the client lost its response.
+        if: ${{ always() && steps.restore.outcome != 'skipped' }}
+        run: npm run --silent worker:verify-deployment -- '${{ steps.previous.outputs.version_id }}@100'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Summarize Worker release
+        if: always()
+        shell: bash
+        run: |
+          echo "### Worker release gate" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: \`$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Previous version: \`${{ steps.previous.outputs.version_id || 'not captured' }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Candidate version: \`${{ steps.candidate.outputs.version_id || 'not resolved' }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Candidate gate: exact current target" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Compatibility gate: breaking APIs blocked without continuous adapters" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Post-promotion gate: read-only ordinary traffic" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Promotion: \`${{ steps.promote.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Automatic restore: \`${{ steps.restore.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  pages_release:
+    needs: [build, worker_release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout dispatched commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+
+      - name: Deploy the tested Pages artifact
+        id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5
+
+      - name: Verify exact Pages build and every shell asset
+        run: |
+          node scripts/verify-pages-release.mjs \
+            --base-url '${{ steps.deployment.outputs.page_url }}' \
+            --expected-build-id '${{ needs.build.outputs.build_id }}'
+
+      - name: Summarize production release
+        if: always()
+        shell: bash
+        run: |
+          echo "### Production release" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: \`$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Worker: \`${{ needs.worker_release.outputs.candidate_version }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Pages build: \`${{ needs.build.outputs.build_id }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- URL: ${{ steps.deployment.outputs.page_url }}" >> "$GITHUB_STEP_SUMMARY"

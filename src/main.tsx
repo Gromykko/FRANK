@@ -6,6 +6,7 @@ import App from './App.tsx'
 import { LanguageProvider } from './i18n'
 import ErrorBoundary from './components/ErrorBoundary.tsx'
 import PixelSky from './components/PixelSky.tsx'
+import { startReleaseUpdateManager } from './pwa/releaseUpdate.ts'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -24,14 +25,9 @@ createRoot(document.getElementById('root')!).render(
 // of what a CSP is for. Registration is not on the critical path anyway.
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    const baseUrl = import.meta.env.BASE_URL;
-    const workerUrl = new URL(`${baseUrl}sw.js`, window.location.origin);
-    // Changing the script URL forces an update check for every production
-    // build. The worker verifies this id against frank-precache.json before it
-    // activates, so a partial deployment cannot replace the last good shell.
-    workerUrl.searchParams.set('build', import.meta.env.VITE_APP_BUILD_ID);
-    navigator.serviceWorker
-      .register(workerUrl.toString(), { scope: baseUrl, updateViaCache: 'none' })
-      .catch((err) => console.error('Service Worker registration failed:', err));
-  });
+    // The active app reads a cache-busted release descriptor rather than
+    // accepting new HTML first. A complete candidate installs silently and
+    // waits until the current app has closed before taking over.
+    startReleaseUpdateManager()
+  })
 }

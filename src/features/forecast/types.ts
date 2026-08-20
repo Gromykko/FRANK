@@ -1,3 +1,5 @@
+import type { ForecastReleaseMetadata } from './releaseContract';
+
 export interface HourlyData {
   time: string;
   tempAir: number;
@@ -72,9 +74,23 @@ export interface WeatherWarning {
   coverage?: 'confirmed' | 'excluded' | 'unknown';
 }
 
-// Re-export the shared wire-contract constant so existing callers keep their
-// stable import path. The Worker imports the same dependency-free source.
+// Re-export the historical payload stamp so existing callers keep their stable
+// import path. Stable API/model/cache identities now live independently in
+// releaseContract.ts.
 export { FORECAST_PAYLOAD_VERSION } from './payloadVersion';
+export {
+  ASSEMBLED_FORECAST_CACHE_SCHEMA_VERSION,
+  CURRENT_FORECAST_RELEASE,
+  CURRENT_RELEASE,
+  FORECAST_API_SCHEMA_VERSION,
+  FORECAST_DATA_GENERATION_ID,
+  FORECAST_MODEL_REVISION,
+  MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
+  AUDITED_PREVIOUS_FORECAST_GENERATIONS,
+  SUPPORTED_FORECAST_API_SCHEMA_VERSIONS,
+  SUPPORTED_LEGACY_FORECAST_PAYLOAD_VERSIONS,
+} from './releaseContract';
+export type { ForecastReleaseMetadata, ReleaseMetadata } from './releaseContract';
 
 export interface WeatherData {
   hourly: HourlyData[];
@@ -85,6 +101,9 @@ export interface WeatherData {
   warnings?: WeatherWarning[];
   sources: {
     payloadVersion?: number;
+    // Additive release identity for the stable /api/vN contract. Legacy
+    // payloads may omit it; versioned API responses must include it.
+    release?: ForecastReleaseMetadata;
     weather: string;
     waves: string;
     water: string;

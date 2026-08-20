@@ -1,14 +1,26 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CURRENT_LOCATION } from '../../../src/config/locations';
 import { deriveCacheStatus } from '../../../src/features/forecast/cacheStatusView';
-import { loadCachedWeatherData, saveCachedWeatherData } from '../../../src/features/forecast/cache';
+import {
+  forecastReleaseCacheKey,
+  loadCachedWeatherData,
+  resolveForecastApiResponse,
+  saveCachedWeatherData,
+} from '../../../src/features/forecast/cache';
 import { FORECAST_PAYLOAD_VERSION } from '../../../src/features/forecast/types';
 import type { HourlyData, WeatherData } from '../../../src/features/forecast/types';
 import { isValidForecastPayload } from '../../../src/features/forecast/validatePayload';
+import {
+  CURRENT_RELEASE,
+  FORECAST_API_SCHEMA_VERSION,
+  FORECAST_RELEASE_HEADERS,
+} from '../../../src/features/forecast/releaseContract';
+import type { ReleaseMetadata } from '../../../src/features/forecast/releaseContract';
 
 const NOW = Date.parse('2026-08-12T12:00:00Z');
 const LEGACY_CACHE_KEY = `frank_weather_data_v2_${CURRENT_LOCATION.id}`;
-const CACHE_KEY = `${LEGACY_CACHE_KEY}_v6`;
+const CACHE_KEY = `${LEGACY_CACHE_KEY}_v${FORECAST_PAYLOAD_VERSION}`;
+const API_CACHE_KEY = forecastReleaseCacheKey(CURRENT_LOCATION, CURRENT_RELEASE);
 
 function hour(time: string, blockSpanHours?: number): HourlyData {
   return {
@@ -41,7 +53,7 @@ function weatherData(hourly: HourlyData[]): WeatherData {
     sunrise: [],
     sunset: [],
     sources: {
-      payloadVersion: 6,
+      payloadVersion: FORECAST_PAYLOAD_VERSION,
       weather: 'MET Norway Locationforecast',
       waves: 'DMI WAM',
       water: 'DMI DKSS',
@@ -57,21 +69,63 @@ function weatherData(hourly: HourlyData[]): WeatherData {
   };
 }
 
+function apiWeatherData(hourly: HourlyData[]): WeatherData {
+  const data = weatherData(hourly);
+  data.sources.release = { ...CURRENT_RELEASE };
+  return data;
+}
+
+function releaseHeaders(release: ReleaseMetadata, ready = true): Headers {
+  return new Headers({
+    'Content-Type': 'application/json',
+    [FORECAST_RELEASE_HEADERS.apiSchema]: String(release.apiSchemaVersion),
+    [FORECAST_RELEASE_HEADERS.modelRevision]: String(release.modelRevision),
+    [FORECAST_RELEASE_HEADERS.dataGeneration]: release.dataGenerationId,
+    [FORECAST_RELEASE_HEADERS.assembledCacheSchema]: String(release.assembledCacheSchema),
+    [FORECAST_RELEASE_HEADERS.marineCacheSchema]: String(release.marineCacheSchema),
+    [FORECAST_RELEASE_HEADERS.payloadVersion]: String(release.payloadVersion),
+    [FORECAST_RELEASE_HEADERS.generationReady]: String(ready),
+  });
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe('forecast payload trust boundary', () => {
-  it('accepts older compatible versions and limits the unversioned exception to legacy cache reads', () => {
-    const older = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
-    expect(isValidForecastPayload(older, CURRENT_LOCATION)).toBe(true);
+  it('accepts the canonical payload and limits the unversioned exception to legacy cache reads', () => {
+    const canonical = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
+    expect(isValidForecastPayload(canonical, CURRENT_LOCATION)).toBe(true);
 
-    const unversioned = structuredClone(older);
+    const unversioned = structuredClone(canonical);
     delete unversioned.sources.payloadVersion;
 
     expect(isValidForecastPayload(unversioned, CURRENT_LOCATION)).toBe(false);
     expect(isValidForecastPayload(unversioned, CURRENT_LOCATION, { allowLegacyMissingVersion: true })).toBe(true);
+
+    const unauditedOldVersion = structuredClone(canonical);
+    unauditedOldVersion.sources.payloadVersion = FORECAST_PAYLOAD_VERSION - 1;
+    expect(isValidForecastPayload(unauditedOldVersion, CURRENT_LOCATION)).toBe(false);
+  });
+
+  it('validates additive stable-API release identity without requiring it on legacy copies', () => {
+    const legacy = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
+    expect(isValidForecastPayload(legacy, CURRENT_LOCATION)).toBe(true);
+    expect(isValidForecastPayload(legacy, CURRENT_LOCATION, { requireReleaseMetadata: true })).toBe(false);
+
+    const current = structuredClone(legacy);
+    current.sources.payloadVersion = CURRENT_RELEASE.payloadVersion;
+    current.sources.release = { ...CURRENT_RELEASE };
+    expect(isValidForecastPayload(current, CURRENT_LOCATION, { requireReleaseMetadata: true })).toBe(true);
+
+    const wrongApi = structuredClone(current);
+    wrongApi.sources.release!.apiSchemaVersion = FORECAST_API_SCHEMA_VERSION + 1;
+    expect(isValidForecastPayload(wrongApi, CURRENT_LOCATION)).toBe(false);
+
+    const mismatchedLegacyStamp = structuredClone(current);
+    mismatchedLegacyStamp.sources.release!.payloadVersion = 6;
+    expect(isValidForecastPayload(mismatchedLegacyStamp, CURRENT_LOCATION)).toBe(false);
   });
 
   it('rejects partial rows while preserving revived NaN as an unavailable reading', () => {
@@ -192,6 +246,140 @@ describe('forecast payload trust boundary', () => {
 });
 
 describe('browser forecast cache recovery', () => {
+  it('derives browser slots from every representation axis even if the label is forgotten', () => {
+    const unchangedLabel = {
+      ...CURRENT_RELEASE,
+      dataGenerationId: 'forgotten:id/with space',
+    };
+    const releases = [
+      unchangedLabel,
+      { ...unchangedLabel, apiSchemaVersion: unchangedLabel.apiSchemaVersion + 1 },
+      { ...unchangedLabel, modelRevision: unchangedLabel.modelRevision + 1 },
+      { ...unchangedLabel, payloadVersion: unchangedLabel.payloadVersion + 1 },
+      { ...unchangedLabel, dataGenerationId: `${unchangedLabel.dataGenerationId}-next` },
+    ];
+    const keys = releases.map((release) =>
+      forecastReleaseCacheKey(CURRENT_LOCATION, release));
+
+    expect(new Set(keys).size).toBe(releases.length);
+    expect(keys[0]).toBe(
+      `${LEGACY_CACHE_KEY}_api1_model7_generation_forgotten%3Aid%2Fwith%20space_payload7`,
+    );
+  });
+
+  it('uses the stable API route and isolates its offline slot from legacy apps', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const apiPayload = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
+    apiPayload.sources.payloadVersion = CURRENT_RELEASE.payloadVersion;
+    apiPayload.sources.release = { ...CURRENT_RELEASE };
+    apiPayload.sources.fetchedAt = new Date(NOW).toISOString();
+
+    const oldAppCopy = structuredClone(apiPayload);
+    delete oldAppCopy.sources.release;
+    localStorage.setItem(
+      `${LEGACY_CACHE_KEY}_v${CURRENT_RELEASE.payloadVersion}`,
+      JSON.stringify(oldAppCopy),
+    );
+
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(apiPayload), {
+      status: 200,
+      headers: releaseHeaders(apiPayload.sources.release!),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const loaded = await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
+
+    expect(loaded).toEqual({ data: apiPayload, from: 'worker', serverAuthority: true });
+    expect(String(fetchMock.mock.calls[0][0])).toContain(`/api/v${FORECAST_API_SCHEMA_VERSION}/forecast/${CURRENT_LOCATION.id}`);
+    expect(JSON.parse(localStorage.getItem(API_CACHE_KEY)!))
+      .toEqual(apiPayload);
+    expect(JSON.parse(localStorage.getItem(`${LEGACY_CACHE_KEY}_v${CURRENT_RELEASE.payloadVersion}`)!))
+      .toEqual(oldAppCopy);
+  });
+
+  it('fails closed when no explicitly supported API route exists', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('{"error":"Not found"}', { status: 404 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const loaded = await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
+
+    expect(loaded).toEqual({ data: null, from: null, failureKind: 'response' });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/v1/forecast/');
+  });
+
+  it('uses an audited N-1 API while a future target API is still initializing', async () => {
+    const ready = new Response(JSON.stringify(apiWeatherData([
+      hour(new Date(NOW + 60 * 60 * 1000).toISOString()),
+    ])), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const initializing = new Response(JSON.stringify({
+      schemaVersion: 1,
+      status: 'initializing',
+      code: 'FORECAST_INITIALIZING',
+      message: 'Forecast is being initialized.',
+      retryAfterSeconds: 600,
+      location: {
+        id: CURRENT_LOCATION.id,
+        name: CURRENT_LOCATION.name,
+        areaName: CURRENT_LOCATION.areaName,
+      },
+    }), { status: 503, headers: { 'Retry-After': '600' } });
+    const fetchEndpoint = vi.fn()
+      .mockResolvedValueOnce(initializing)
+      .mockResolvedValueOnce(ready);
+
+    const result = await resolveForecastApiResponse(
+      ['/api/v2/forecast/horsens', '/api/v1/forecast/horsens'],
+      fetchEndpoint,
+      CURRENT_LOCATION,
+    );
+
+    expect(result.response).toBe(ready);
+    expect(result.initialization).toBeNull();
+    expect(result.usedAvailabilityFallback).toBe(true);
+    expect(fetchEndpoint).toHaveBeenCalledTimes(2);
+  });
+
+  it('treats an older API reached through 404 as an authoritative Worker rollback', async () => {
+    const notFound = new Response('{"error":"not found"}', { status: 404 });
+    const ready = new Response(JSON.stringify(apiWeatherData([
+      hour(new Date(NOW + 60 * 60 * 1000).toISOString()),
+    ])), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const fetchEndpoint = vi.fn()
+      .mockResolvedValueOnce(notFound)
+      .mockResolvedValueOnce(ready);
+
+    const result = await resolveForecastApiResponse(
+      ['/api/v2/forecast/horsens', '/api/v1/forecast/horsens'],
+      fetchEndpoint,
+      CURRENT_LOCATION,
+    );
+
+    expect(result.response).toBe(ready);
+    expect(result.initialization).toBeNull();
+    expect(result.usedAvailabilityFallback).toBe(false);
+    expect(fetchEndpoint).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not hide a hard target-API failure behind an older API', async () => {
+    const hardFailure = new Response(JSON.stringify({ error: 'schema failure' }), { status: 503 });
+    const fetchEndpoint = vi.fn().mockResolvedValue(hardFailure);
+
+    const result = await resolveForecastApiResponse(
+      ['/api/v2/forecast/horsens', '/api/v1/forecast/horsens'],
+      fetchEndpoint,
+      CURRENT_LOCATION,
+    );
+
+    expect(result.response).toBe(hardFailure);
+    expect(result.initialization).toBeNull();
+    expect(result.usedAvailabilityFallback).toBe(false);
+    expect(fetchEndpoint).toHaveBeenCalledOnce();
+  });
+
   it('surfaces a valid first-build response when this location has no saved forecast', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(NOW);
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
@@ -239,7 +427,15 @@ describe('browser forecast cache recovery', () => {
 
     const loaded = await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
 
-    expect(loaded).toEqual({ data: saved, from: 'local' });
+    expect(loaded.data).toEqual(saved);
+    expect(loaded.from).toBe('local');
+    expect(loaded.failureKind).toBeUndefined();
+    expect(loaded.initialization).toMatchObject({
+      status: 'initializing',
+      code: 'FORECAST_INITIALIZING',
+      retryAfterSeconds: 600,
+      location: { id: CURRENT_LOCATION.id },
+    });
   });
 
   it('never persists a transient pending response over the durable last-good copy', async () => {
@@ -260,9 +456,9 @@ describe('browser forecast cache recovery', () => {
     expect(JSON.parse(localStorage.getItem(CACHE_KEY)!).sources.cacheHealth.status).toBe('current');
   });
 
-  it('uses stable local health for a live pending Worker response without persisting pending', async () => {
+  it('rejects an unexpected pending API response without disturbing the stable local copy', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(NOW);
-    const stable = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
+    const stable = apiWeatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
     saveCachedWeatherData(stable, CURRENT_LOCATION);
     const pending = structuredClone(stable);
     pending.sources.cacheHealth = {
@@ -277,57 +473,12 @@ describe('browser forecast cache recovery', () => {
 
     const loaded = await loadCachedWeatherData(CURRENT_LOCATION, {
       preferWorker: true,
-      forceWorkerRefresh: true,
     });
 
-    expect(loaded.from).toBe('worker');
+    expect(loaded.from).toBe('local');
+    expect(loaded.failureKind).toBe('response');
     expect(loaded.data?.sources.cacheHealth?.status).toBe('current');
-    expect(JSON.parse(localStorage.getItem(CACHE_KEY)!).sources.cacheHealth.status).toBe('current');
-  });
-
-  it('uses a newer pending Worker forecast in memory instead of substituting an older local snapshot', async () => {
-    vi.spyOn(Date, 'now').mockReturnValue(NOW);
-    const local = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
-    saveCachedWeatherData(local, CURRENT_LOCATION);
-
-    const pendingWorker = weatherData([hour(new Date(NOW + 2 * 60 * 60 * 1000).toISOString())]);
-    pendingWorker.sources.fetchedAt = new Date(NOW - 60 * 60 * 1000).toISOString();
-    pendingWorker.sources.cacheHealth = {
-      status: 'pending',
-      lastAttemptAt: pendingWorker.sources.fetchedAt,
-      checkedBy: 'manual',
-    };
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => structuredClone(pendingWorker),
-    }));
-
-    const loaded = await loadCachedWeatherData(CURRENT_LOCATION, {
-      preferWorker: true,
-      forceWorkerRefresh: true,
-    });
-
-    expect(loaded.from).toBe('worker');
-    expect(loaded.data?.sources.fetchedAt).toBe(pendingWorker.sources.fetchedAt);
-    expect(loaded.data?.sources.cacheHealth?.status).toBe('pending');
-    // Pending is response-only: the durable fallback remains the old completed
-    // snapshot even though the newer forecast can be shown in memory now.
-    expect(JSON.parse(localStorage.getItem(CACHE_KEY)!).sources.fetchedAt).toBe(local.sources.fetchedAt);
-    expect(JSON.parse(localStorage.getItem(CACHE_KEY)!).sources.cacheHealth.status).toBe('current');
-  });
-
-  it('returns pending only in memory when no durable copy exists', async () => {
-    vi.spyOn(Date, 'now').mockReturnValue(NOW);
-    const pending = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
-    pending.sources.cacheHealth = { ...pending.sources.cacheHealth!, status: 'pending' };
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => structuredClone(pending),
-    }));
-
-    const loaded = await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
-    expect(loaded.data?.sources.cacheHealth?.status).toBe('pending');
-    expect(localStorage.getItem(CACHE_KEY)).toBeNull();
+    expect(JSON.parse(localStorage.getItem(API_CACHE_KEY)!).sources.cacheHealth.status).toBe('current');
   });
 
   it('heals pending values written by older clients to conservative stable health', async () => {
@@ -408,23 +559,187 @@ describe('browser forecast cache recovery', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('accepts and persists an older compatible Worker payload', async () => {
-    vi.spyOn(Date, 'now').mockReturnValue(NOW);
-    const olderWorker = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
-    olderWorker.sources.fetchedAt = new Date(NOW).toISOString();
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => structuredClone(olderWorker) });
+  it('isolates a changed model even when its generation label was not updated', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const previous = apiWeatherData([hour(new Date(NOW + 3 * 60 * 60 * 1000).toISOString())]);
+    previous.sources.release = {
+      ...CURRENT_RELEASE,
+      modelRevision: CURRENT_RELEASE.modelRevision - 1,
+      dataGenerationId: CURRENT_RELEASE.dataGenerationId,
+    };
+    // The still-active old generation can legitimately rebuild after the
+    // shadow generation, so its forecast timestamp is newer.
+    previous.sources.fetchedAt = new Date(NOW).toISOString();
+    previous.sources.cacheHealth = { status: 'current', lastAttemptAt: previous.sources.fetchedAt };
+    saveCachedWeatherData(previous, CURRENT_LOCATION);
+
+    const promoted = apiWeatherData([hour(new Date(NOW + 2 * 60 * 60 * 1000).toISOString())]);
+    promoted.sources.fetchedAt = new Date(NOW - 30 * 60 * 1000).toISOString();
+    promoted.sources.cacheHealth = { status: 'current', lastAttemptAt: promoted.sources.fetchedAt };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(promoted), {
+      status: 200,
+      headers: releaseHeaders(promoted.sources.release!),
+    }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const loaded = await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
-    expect(loaded).toEqual({ data: olderWorker, from: 'worker' });
+    expect(await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true }))
+      .toEqual({ data: promoted, from: 'worker', serverAuthority: true });
+    expect(await loadCachedWeatherData(CURRENT_LOCATION, { localOnly: true }))
+      .toEqual({ data: promoted, from: 'local' });
 
-    const persisted = await loadCachedWeatherData(CURRENT_LOCATION);
-    expect(persisted).toEqual({ data: olderWorker, from: 'local' });
+    const previousKey = forecastReleaseCacheKey(
+      CURRENT_LOCATION,
+      previous.sources.release!,
+    );
+    expect(localStorage.getItem(previousKey)).not.toBeNull();
+    expect(localStorage.getItem(API_CACHE_KEY)).not.toBeNull();
+    expect(previousKey).not.toBe(API_CACHE_KEY);
+
+    // A deliberate control-plane rollback makes the previous generation
+    // authoritative again even though its model revision is lower.
+    now.mockReturnValue(NOW + 1_000);
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(previous), {
+      status: 200,
+      headers: releaseHeaders(previous.sources.release!),
+    }));
+    expect(await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true }))
+      .toEqual({ data: previous, from: 'worker', serverAuthority: true });
+    expect(await loadCachedWeatherData(CURRENT_LOCATION, { localOnly: true }))
+      .toEqual({ data: previous, from: 'local' });
+  });
+
+  it('ignores a pre-hardening partially scoped API slot', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const stamped = apiWeatherData([
+      hour(new Date(NOW + 60 * 60 * 1000).toISOString()),
+    ]);
+    const weakKey = `${LEGACY_CACHE_KEY}_api${FORECAST_API_SCHEMA_VERSION}_generation_${CURRENT_RELEASE.dataGenerationId}`;
+    const raw = JSON.stringify(stamped);
+    localStorage.setItem(weakKey, raw);
+
+    expect(await loadCachedWeatherData(CURRENT_LOCATION, { localOnly: true }))
+      .toEqual({ data: null, from: null });
+    expect(localStorage.getItem(weakKey)).toBe(raw);
+  });
+
+  it('retains a release-stamped legacy slot as non-authoritative offline recovery', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const stamped = apiWeatherData([
+      hour(new Date(NOW + 60 * 60 * 1000).toISOString()),
+    ]);
+    const legacyVersionKey = `${LEGACY_CACHE_KEY}_v${CURRENT_RELEASE.payloadVersion}`;
+    localStorage.setItem(legacyVersionKey, JSON.stringify(stamped));
+
+    expect(await loadCachedWeatherData(CURRENT_LOCATION, { localOnly: true }))
+      .toEqual({ data: stamped, from: 'local' });
+    expect(localStorage.getItem(API_CACHE_KEY)).toBeNull();
+  });
+
+  it('does not let a ready=false N-1 availability response demote exact offline authority', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const exact = apiWeatherData([hour(new Date(NOW + 2 * 60 * 60 * 1000).toISOString())]);
+    exact.sources.fetchedAt = new Date(NOW - 60 * 60 * 1000).toISOString();
+    const prior = apiWeatherData([hour(new Date(NOW + 3 * 60 * 60 * 1000).toISOString())]);
+    prior.sources.release = {
+      ...CURRENT_RELEASE,
+      modelRevision: CURRENT_RELEASE.modelRevision - 1,
+      dataGenerationId: 'api1-model6',
+    };
+    prior.sources.fetchedAt = new Date(NOW).toISOString();
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(exact), {
+      status: 200,
+      headers: releaseHeaders(exact.sources.release!),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
+    now.mockReturnValue(NOW + 1_000);
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(prior), {
+      status: 200,
+      // Header identity describes the candidate target; the body is the
+      // audited prior generation available while that target propagates.
+      headers: releaseHeaders(CURRENT_RELEASE, false),
+    }));
+    const fallback = await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
+
+    expect(fallback).toEqual({ data: prior, from: 'worker', serverFallback: true });
+    expect(await loadCachedWeatherData(CURRENT_LOCATION, { localOnly: true }))
+      .toEqual({ data: exact, from: 'local' });
+  });
+
+  it('does not let an unproven cross-generation response demote exact authority', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const exact = apiWeatherData([hour(new Date(NOW + 2 * 60 * 60 * 1000).toISOString())]);
+    exact.sources.fetchedAt = new Date(NOW - 60 * 60 * 1000).toISOString();
+    const unprovenPrior = apiWeatherData([
+      hour(new Date(NOW + 3 * 60 * 60 * 1000).toISOString()),
+    ]);
+    unprovenPrior.sources.release = {
+      ...CURRENT_RELEASE,
+      modelRevision: CURRENT_RELEASE.modelRevision - 1,
+      dataGenerationId: 'api1-model6',
+    };
+    unprovenPrior.sources.fetchedAt = new Date(NOW).toISOString();
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(exact), {
+      status: 200,
+      headers: releaseHeaders(exact.sources.release!),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
+    now.mockReturnValue(NOW + 1_000);
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(unprovenPrior), {
+      status: 200,
+      // No release/readiness headers: the response is usable, never authority.
+      headers: { 'Content-Type': 'application/json' },
+    }));
+
+    expect(await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true }))
+      .toEqual({ data: unprovenPrior, from: 'worker', serverFallback: true });
+    expect(await loadCachedWeatherData(CURRENT_LOCATION, { localOnly: true }))
+      .toEqual({ data: exact, from: 'local' });
+  });
+
+  it('does not let an earlier-started late response reverse cross-tab generation authority', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const slowPrevious = apiWeatherData([hour(new Date(NOW + 3 * 60 * 60 * 1000).toISOString())]);
+    slowPrevious.sources.release = {
+      ...CURRENT_RELEASE,
+      modelRevision: CURRENT_RELEASE.modelRevision - 1,
+      dataGenerationId: 'api1-model6',
+    };
+    const current = apiWeatherData([hour(new Date(NOW + 2 * 60 * 60 * 1000).toISOString())]);
+    let resolveSlow!: (response: Response) => void;
+    const slowResponse = new Promise<Response>((resolve) => {
+      resolveSlow = resolve;
+    });
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => slowResponse)
+      .mockResolvedValueOnce(new Response(JSON.stringify(current), {
+        status: 200,
+        headers: releaseHeaders(current.sources.release!),
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const earlierRequest = loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
+    await Promise.resolve();
+    now.mockReturnValue(NOW + 1_000);
+    const laterRequest = loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
+    expect(await laterRequest).toEqual({ data: current, from: 'worker', serverAuthority: true });
+
+    resolveSlow(new Response(JSON.stringify(slowPrevious), {
+      status: 200,
+      headers: releaseHeaders(slowPrevious.sources.release!),
+    }));
+    expect(await earlierRequest).toEqual({ data: slowPrevious, from: 'worker', serverAuthority: true });
+
+    expect(await loadCachedWeatherData(CURRENT_LOCATION, { localOnly: true }))
+      .toEqual({ data: current, from: 'local' });
   });
 
   it('never lets an older Worker build regress the durable offline cache', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(NOW);
-    const newerLocal = weatherData([hour(new Date(NOW + 3 * 60 * 60 * 1000).toISOString())]);
+    const newerLocal = apiWeatherData([hour(new Date(NOW + 3 * 60 * 60 * 1000).toISOString())]);
     newerLocal.sources.fetchedAt = new Date(NOW - 30 * 60 * 1000).toISOString();
     newerLocal.sources.cacheHealth = {
       status: 'current',
@@ -432,20 +747,20 @@ describe('browser forecast cache recovery', () => {
     };
     saveCachedWeatherData(newerLocal, CURRENT_LOCATION);
 
-    const olderWorker = weatherData([hour(new Date(NOW + 2 * 60 * 60 * 1000).toISOString())]);
+    const olderWorker = apiWeatherData([hour(new Date(NOW + 2 * 60 * 60 * 1000).toISOString())]);
     olderWorker.sources.fetchedAt = new Date(NOW - 2 * 60 * 60 * 1000).toISOString();
     olderWorker.sources.cacheHealth = {
       status: 'stale',
       lastAttemptAt: new Date(NOW).toISOString(),
     };
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => structuredClone(olderWorker),
-    }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(olderWorker), {
+      status: 200,
+      headers: releaseHeaders(olderWorker.sources.release!),
+    })));
 
     const loaded = await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
-    expect(loaded).toEqual({ data: olderWorker, from: 'worker' });
-    expect(JSON.parse(localStorage.getItem(CACHE_KEY)!).sources.fetchedAt).toBe(newerLocal.sources.fetchedAt);
+    expect(loaded).toEqual({ data: olderWorker, from: 'worker', serverAuthority: true });
+    expect(JSON.parse(localStorage.getItem(API_CACHE_KEY)!).sources.fetchedAt).toBe(newerLocal.sources.fetchedAt);
 
     const offline = await loadCachedWeatherData(CURRENT_LOCATION, { localOnly: true });
     expect(offline.data?.sources.fetchedAt).toBe(newerLocal.sources.fetchedAt);
@@ -512,7 +827,7 @@ describe('browser forecast cache recovery', () => {
     saveCachedWeatherData(valid, CURRENT_LOCATION);
 
     const loaded = await loadCachedWeatherData(CURRENT_LOCATION, { localOnly: true });
-    expect(loaded.data?.sources.payloadVersion).toBe(6);
+    expect(loaded.data?.sources.payloadVersion).toBe(FORECAST_PAYLOAD_VERSION);
   });
 
   it('ignores a future-version browser slot and retains the compatible slot for offline recovery', async () => {
@@ -540,7 +855,7 @@ describe('browser forecast cache recovery', () => {
     expect(localStorage.getItem(futureKey)).toBe(futureRaw);
   });
 
-  it('aligns browser timeouts with cached and true cold-start Worker paths', async () => {
+  it('uses one bounded prepared-snapshot timeout with or without a local fallback', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(NOW);
     const timeout = vi.spyOn(AbortSignal, 'timeout');
     const worker = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
@@ -551,7 +866,7 @@ describe('browser forecast cache recovery', () => {
     }));
 
     await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
-    expect(timeout).toHaveBeenLastCalledWith(32_000);
+    expect(timeout).toHaveBeenLastCalledWith(12_000);
 
     const local = structuredClone(worker);
     local.sources.fetchedAt = new Date(NOW + 60_000).toISOString();
@@ -561,11 +876,6 @@ describe('browser forecast cache recovery', () => {
     await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
     expect(timeout).toHaveBeenLastCalledWith(12_000);
 
-    await loadCachedWeatherData(CURRENT_LOCATION, {
-      preferWorker: true,
-      allowColdWorkerBuild: true,
-    });
-    expect(timeout).toHaveBeenLastCalledWith(32_000);
   });
 
   it('does not let a newer incompatible Worker overwrite the compatible last-good cache', async () => {
@@ -580,7 +890,7 @@ describe('browser forecast cache recovery', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const loaded = await loadCachedWeatherData(CURRENT_LOCATION, { preferWorker: true });
-    expect(loaded).toEqual({ data: lastGood, from: 'local' });
+    expect(loaded).toEqual({ data: lastGood, from: 'local', failureKind: 'response' });
 
     const stillLastGood = await loadCachedWeatherData(CURRENT_LOCATION);
     expect(stillLastGood).toEqual({ data: lastGood, from: 'local' });

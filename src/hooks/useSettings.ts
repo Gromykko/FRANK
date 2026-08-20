@@ -16,6 +16,51 @@ import { clampNumber, roundToDecimals } from '../utils/number';
 
 export type { SafetySettings } from '../features/safety/presets';
 
+// Settings storage deliberately has its own small schema. It is NOT tied to a
+// Pages build, service-worker cache, forecast API, payload, or Worker data
+// generation: those can all change without changing a user's choices.
+//
+// The metadata is inline rather than wrapping `settings`. That keeps the
+// record backwards-compatible with a previous FRANK shell: an older client
+// ignores the unknown metadata field but can still read every setting at its
+// familiar top-level path. A future breaking settings format must use an
+// explicit migration/expand-contract step before this number is advanced.
+export const SETTINGS_STORAGE_SCHEMA_VERSION = 1;
+export const SETTINGS_STORAGE_METADATA_KEY = '__frankSettingsStorage';
+const SETTINGS_STORAGE_KIND = 'frank-safety-settings';
+
+interface SettingsStorageMetadata {
+  kind: typeof SETTINGS_STORAGE_KIND;
+  schemaVersion: typeof SETTINGS_STORAGE_SCHEMA_VERSION;
+  locationId: string;
+}
+
+export interface DecodedStoredSettings {
+  settings: SafetySettings;
+  // Raw pre-schema records remain supported and are rewritten in the current
+  // inline format only after they have parsed and healed successfully.
+  needsMigration: boolean;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function serializeStoredSettings(
+  settings: SafetySettings,
+  location: ForecastLocation = CURRENT_LOCATION,
+): string {
+  const metadata: SettingsStorageMetadata = {
+    kind: SETTINGS_STORAGE_KIND,
+    schemaVersion: SETTINGS_STORAGE_SCHEMA_VERSION,
+    locationId: location.id,
+  };
+  return JSON.stringify({
+    ...(settings as unknown as Record<string, unknown>),
+    [SETTINGS_STORAGE_METADATA_KEY]: metadata,
+  });
+}
+
 // Settings saved under the old fixed easterly/westerly model carried 8 flat
 // fields; the new model keys caps by sector id. Map easterly*→the onshore
 // sector, westerly*→the offshore sector, preserving each user's exact caps (and
@@ -188,20 +233,101 @@ export function healSettings(s: SafetySettings): SafetySettings {
     // this exactly (5.5+2.5=8, 4+2=6, 7+3=10; 0.3+0.3=0.6, 0.2+0.2=0.4,
     // 0.5+0.3=0.8), so no preset user's verdict moves — only a drifted stored
     // profile is pulled back, and always toward the stricter number.
-    maxWindSpeedCaution: floorCaution(healed.maxWindSpeedSafe, healed.maxWindSpeedSafe + healed.gustMargin),
-    maxWaveHeightCaution: Math.max(healed.maxWaveHeightSafe, healed.maxWaveHeightSafe + healed.waveCautionMargin),
+    maxWindSpeedCaution: roundToDecimals(
+      floorCaution(healed.maxWindSpeedSafe, healed.maxWindSpeedSafe + healed.gustMargin),
+      1,
+    ),
+    maxWaveHeightCaution: roundToDecimals(
+      Math.max(healed.maxWaveHeightSafe, healed.maxWaveHeightSafe + healed.waveCautionMargin),
+      2,
+    ),
     minWaterTempCaution: Math.min(healed.minWaterTempSafe, healed.minWaterTempCaution),
   };
 }
 
-// Parse a stored blob, migrate legacy sector fields, merge over defaults, heal.
+// Decode both the original raw object and the current versioned record. The
+// recognized values remain top-level for backwards compatibility; metadata is
+// removed before settings enter React state. A malformed/future envelope is a
+// whole-record failure so the caller can preserve its original bytes, while a
+// malformed individual setting is still healed independently below.
+export function decodeStoredSettings(
+  json: string,
+  location: ForecastLocation = CURRENT_LOCATION,
+): DecodedStoredSettings {
+  const parsed: unknown = JSON.parse(json);
+  if (!isRecord(parsed)) throw new Error('Stored settings must be a JSON object');
+
+  const metadata = parsed[SETTINGS_STORAGE_METADATA_KEY];
+  let needsMigration = true;
+  const raw = { ...parsed };
+
+  if (metadata !== undefined) {
+    if (!isRecord(metadata)
+      || metadata.kind !== SETTINGS_STORAGE_KIND
+      || metadata.schemaVersion !== SETTINGS_STORAGE_SCHEMA_VERSION
+      || metadata.locationId !== location.id) {
+      throw new Error('Unsupported or misplaced settings storage schema');
+    }
+    needsMigration = false;
+    delete raw[SETTINGS_STORAGE_METADATA_KEY];
+  }
+
+  const migrated = migrateLegacySectors(raw, location);
+  return {
+    settings: healSettings({ ...DEFAULT_SETTINGS, ...migrated } as SafetySettings),
+    needsMigration,
+  };
+}
+
 export function parseStoredSettings(json: string): SafetySettings {
-  const raw = migrateLegacySectors(JSON.parse(json) as Record<string, unknown>, CURRENT_LOCATION);
-  return healSettings({ ...DEFAULT_SETTINGS, ...raw } as SafetySettings);
+  return decodeStoredSettings(json).settings;
+}
+
+function persistStoredSettings(storageKey: string, settings: SafetySettings, unreadableRaw: string | null): boolean {
+  // Preserve an unreadable/unsupported record before the user's first
+  // deliberate replacement. This is best-effort: an unavailable/full storage
+  // area must not make the live controls stop responding.
+  if (unreadableRaw !== null) {
+    try {
+      localStorage.setItem(`${storageKey}_corrupt`, unreadableRaw);
+    } catch {
+      // The authoritative write below may still succeed by replacing bytes in
+      // the existing slot, so do not turn a backup quota failure into data loss
+      // for the user's new choice.
+    }
+  }
+
+  try {
+    localStorage.setItem(storageKey, serializeStoredSettings(settings));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+interface PendingStorageMigration {
+  sourceKey: string;
+  sourceRaw: string;
+  targetRawAtLoad: string | null;
+}
+
+function migrationSourceIsUnchanged(targetKey: string, migration: PendingStorageMigration): boolean {
+  // localStorage has no compare-and-set primitive. Rechecking both slots just
+  // before the migration write is the important half: a slower old/new tab
+  // must never overwrite a more recent user edit it did not load.
+  return readStorage(migration.sourceKey) === migration.sourceRaw
+    && readStorage(targetKey) === migration.targetRawAtLoad;
 }
 
 export function useSettings() {
   const customProfileRef = useRef<SafetySettings | null>(null);
+  const customWriteNeededRef = useRef(false);
+  const customMigrationRef = useRef<PendingStorageMigration | null>(null);
+  const customSlotMissingRef = useRef(false);
+  const customWriteAuthorizedRef = useRef(false);
+  const customRecoveryAvailableRef = useRef(false);
+  const activeWriteNeededRef = useRef(false);
+  const activeMigrationRef = useRef<PendingStorageMigration | null>(null);
   // The raw bytes of a stored profile we could not parse, or null. A failed load
   // must NOT be silently replaced: the debounced write below fires on mount too,
   // so falling back to defaults used to stamp them over the unreadable blob
@@ -213,7 +339,13 @@ export function useSettings() {
   // each launch. So: mount never overwrites, and the first deliberate edit
   // stashes the unreadable bytes under a _corrupt key (the only thing they were
   // ever worth — a future build might parse them) and then writes normally.
-  const loadFailedRef = useRef<string | null>(null);
+  const activeLoadFailedRef = useRef<string | null>(null);
+  // The active choice and the remembered Custom profile are two independent
+  // records. A corrupt custom record must not be replaced merely because the
+  // user switches from Default to Pro; it becomes replaceable only when a
+  // valid active Custom profile can recover it during an intentional mode
+  // change, or the user deliberately edits that profile.
+  const customLoadFailedRef = useRef<string | null>(null);
   // Whether the user has deliberately changed anything this session.
   const hasEditedRef = useRef(false);
 
@@ -222,54 +354,112 @@ export function useSettings() {
     // written by the Horsens-only build. Reading them for every city
     // transplanted inner-fjord caps onto open-water sectors (Aarhus Bugt).
     const legacyOwnsThisLocation = CURRENT_LOCATION.id === DEFAULT_LOCATION_ID;
-    const savedCustom = readStorage(CUSTOM_SETTINGS_STORAGE_KEY)
-      ?? (legacyOwnsThisLocation ? readStorage(LEGACY_CUSTOM_SETTINGS_STORAGE_KEY) : null);
-    if (savedCustom) {
+    const currentSavedCustom = readStorage(CUSTOM_SETTINGS_STORAGE_KEY);
+    const legacySavedCustom = currentSavedCustom === null && legacyOwnsThisLocation
+      ? readStorage(LEGACY_CUSTOM_SETTINGS_STORAGE_KEY)
+      : null;
+    const savedCustom = currentSavedCustom ?? legacySavedCustom;
+    const savedCustomSourceKey = currentSavedCustom !== null
+      ? CUSTOM_SETTINGS_STORAGE_KEY
+      : LEGACY_CUSTOM_SETTINGS_STORAGE_KEY;
+    customSlotMissingRef.current = currentSavedCustom === null;
+    if (savedCustom !== null) {
       try {
-        customProfileRef.current = { ...parseStoredSettings(savedCustom), tripMode: 'custom' };
-      } catch {}
+        const decoded = decodeStoredSettings(savedCustom);
+        customProfileRef.current = { ...decoded.settings, tripMode: 'custom' };
+        customRecoveryAvailableRef.current = true;
+        if (decoded.needsMigration || savedCustomSourceKey !== CUSTOM_SETTINGS_STORAGE_KEY) {
+          customWriteNeededRef.current = true;
+          customMigrationRef.current = {
+            sourceKey: savedCustomSourceKey,
+            sourceRaw: savedCustom,
+            targetRawAtLoad: currentSavedCustom,
+          };
+        }
+      } catch {
+        customLoadFailedRef.current = savedCustom;
+      }
     }
     if (!customProfileRef.current) {
       customProfileRef.current = getPresetSettings('custom');
     }
 
-    const saved = readStorage(SETTINGS_STORAGE_KEY)
-      ?? (legacyOwnsThisLocation ? readStorage(LEGACY_SETTINGS_STORAGE_KEY) : null);
-    if (saved) {
+    const currentSaved = readStorage(SETTINGS_STORAGE_KEY);
+    const legacySaved = currentSaved === null && legacyOwnsThisLocation
+      ? readStorage(LEGACY_SETTINGS_STORAGE_KEY)
+      : null;
+    const saved = currentSaved ?? legacySaved;
+    const savedSourceKey = currentSaved !== null ? SETTINGS_STORAGE_KEY : LEGACY_SETTINGS_STORAGE_KEY;
+    if (saved !== null) {
       try {
-        const parsed = parseStoredSettings(saved);
-        return parsed.tripMode === 'custom' ? parsed : getPresetSettings(parsed.tripMode);
+        const decoded = decodeStoredSettings(saved);
+        const parsed = decoded.settings;
+        if (decoded.needsMigration || savedSourceKey !== SETTINGS_STORAGE_KEY) {
+          activeWriteNeededRef.current = true;
+          activeMigrationRef.current = {
+            sourceKey: savedSourceKey,
+            sourceRaw: saved,
+            targetRawAtLoad: currentSaved,
+          };
+        }
+        if (parsed.tripMode === 'custom') {
+          // The active record is itself a valid last-good Custom profile. Use
+          // it to recover a missing/corrupt remembered-custom slot rather than
+          // replacing the user's limits with the factory Custom preset.
+          customProfileRef.current = parsed;
+          customRecoveryAvailableRef.current = true;
+          if (customSlotMissingRef.current) customWriteNeededRef.current = true;
+          return parsed;
+        }
+        return getPresetSettings(parsed.tripMode);
       } catch {
-        loadFailedRef.current = saved;
+        activeLoadFailedRef.current = saved;
         return DEFAULT_SETTINGS;
       }
     }
     return DEFAULT_SETTINGS;
   });
+  const activeModeRef = useRef(settings.tripMode);
+  activeModeRef.current = settings.tripMode;
 
   useEffect(() => {
     // Never persist over a profile we failed to read on MOUNT. `hasEdited`
     // flips on the first deliberate change (see saveSettings/setTripMode).
-    if (loadFailedRef.current !== null && !hasEditedRef.current) return;
+    const canWriteActive = activeWriteNeededRef.current
+      && (activeLoadFailedRef.current === null || hasEditedRef.current);
+    const canWriteCustom = customLoadFailedRef.current === null || customWriteAuthorizedRef.current;
+    const shouldWriteCustom = customWriteNeededRef.current;
+    if (!canWriteActive && !(canWriteCustom && shouldWriteCustom)) return;
 
     const write = () => {
-      // First deliberate write after a failed load: keep the unreadable bytes
-      // aside rather than destroying them, then proceed normally.
-      if (loadFailedRef.current !== null) {
-        try {
-          localStorage.setItem(`${SETTINGS_STORAGE_KEY}_corrupt`, loadFailedRef.current);
-        } catch {
-          // Best effort; losing the corrupt copy must not block the real write.
+      if (canWriteActive) {
+        const migration = activeMigrationRef.current;
+        if (migration && !migrationSourceIsUnchanged(SETTINGS_STORAGE_KEY, migration)) {
+          activeMigrationRef.current = null;
+          activeWriteNeededRef.current = false;
+        } else if (persistStoredSettings(SETTINGS_STORAGE_KEY, settings, activeLoadFailedRef.current)) {
+          activeLoadFailedRef.current = null;
+          activeMigrationRef.current = null;
+          activeWriteNeededRef.current = false;
         }
-        loadFailedRef.current = null;
       }
-      try {
-        localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
-        if (settings.tripMode === 'custom') {
-          localStorage.setItem(CUSTOM_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+
+      if (canWriteCustom && shouldWriteCustom && customProfileRef.current) {
+        // When Custom is active, state is the newest source of truth. When it
+        // is inactive, only a successfully decoded legacy custom profile is
+        // eligible for the one-time format migration.
+        const custom = settings.tripMode === 'custom' ? settings : customProfileRef.current;
+        const migration = customMigrationRef.current;
+        if (migration && !migrationSourceIsUnchanged(CUSTOM_SETTINGS_STORAGE_KEY, migration)) {
+          customMigrationRef.current = null;
+          customWriteNeededRef.current = false;
+        } else if (persistStoredSettings(CUSTOM_SETTINGS_STORAGE_KEY, custom, customLoadFailedRef.current)) {
+          customProfileRef.current = custom;
+          customLoadFailedRef.current = null;
+          customMigrationRef.current = null;
+          customWriteNeededRef.current = false;
+          customSlotMissingRef.current = false;
         }
-      } catch {
-        // Ignore storage failures so slider interaction stays responsive.
       }
     };
 
@@ -289,26 +479,52 @@ export function useSettings() {
 
   const saveSettings = useCallback((newSettings: SafetySettings) => {
     hasEditedRef.current = true;
+    activeMigrationRef.current = null;
+    activeWriteNeededRef.current = true;
     // Heal on the way in (idempotent for the editors, which already maintain
     // the invariants) so an inverted band can never reach the assessment.
     const healed = healSettings(newSettings);
     setSettings(healed);
     if (healed.tripMode === 'custom') {
       customProfileRef.current = healed;
+      customWriteAuthorizedRef.current = true;
+      customRecoveryAvailableRef.current = true;
+      customMigrationRef.current = null;
+      customWriteNeededRef.current = true;
     }
   }, []);
 
   const setTripMode = useCallback((mode: SafetySettings['tripMode']) => {
     hasEditedRef.current = true;
+    activeMigrationRef.current = null;
+    activeWriteNeededRef.current = true;
     if (mode === 'custom') {
+      if (customSlotMissingRef.current && customLoadFailedRef.current === null) {
+        customWriteNeededRef.current = true;
+        customRecoveryAvailableRef.current = true;
+      }
       setSettings(customProfileRef.current ?? getPresetSettings('custom'));
     } else {
       // Leaving custom cancels the debounced write, so flush the profile now
-      // or an edit made within the last 250ms never reaches storage
-      if (customProfileRef.current) {
-        try {
-          localStorage.setItem(CUSTOM_SETTINGS_STORAGE_KEY, JSON.stringify(customProfileRef.current));
-        } catch {}
+      // or an edit made within the last 250ms never reaches storage. A valid
+      // active Custom record can also recover a broken remembered-custom slot,
+      // but merely viewing fallback Custom defaults cannot erase bad bytes.
+      const leavingCustom = activeModeRef.current === 'custom';
+      if (leavingCustom && customLoadFailedRef.current !== null && customRecoveryAvailableRef.current) {
+        customWriteAuthorizedRef.current = true;
+      }
+      if (leavingCustom
+        && customProfileRef.current
+        && (customLoadFailedRef.current === null || customWriteAuthorizedRef.current)
+        && persistStoredSettings(
+          CUSTOM_SETTINGS_STORAGE_KEY,
+          customProfileRef.current,
+          customLoadFailedRef.current,
+        )) {
+        customLoadFailedRef.current = null;
+        customMigrationRef.current = null;
+        customWriteNeededRef.current = false;
+        customSlotMissingRef.current = false;
       }
       setSettings(getPresetSettings(mode));
     }
