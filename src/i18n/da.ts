@@ -122,6 +122,8 @@ export const da: Record<string, string> = {
     'FRANK tjekker automatisk igen. Skærmen opdateres, efterhånden som prognoserne bliver klar.',
   "You're offline. FRANK will continue as soon as this device is back online.":
     'Du er offline. FRANK fortsætter, så snart enheden er online igen.',
+  'Check now': 'Tjek nu',
+  'Check now ({0}s)': 'Tjek nu ({0}s)',
   'Check again': 'Tjek igen',
   'Check again ({0}s)': 'Tjek igen ({0}s)',
   'Forecasts ready now': 'Prognoser klar nu',

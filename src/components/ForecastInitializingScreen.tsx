@@ -137,8 +137,8 @@ export default function ForecastInitializingScreen({
             {refreshing
               ? t('Checking…')
               : cooldownSeconds > 0
-                ? t('Check again ({0}s)', cooldownSeconds)
-                : t('Check again')}
+                ? t('Check now ({0}s)', cooldownSeconds)
+                : t('Check now')}
           </span>
         </button>
 

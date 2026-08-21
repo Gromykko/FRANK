@@ -136,7 +136,7 @@ describe('ForecastInitializingScreen', () => {
 
     const retryButton = host.querySelector<HTMLButtonElement>('.initialization-retry')!;
     expect(retryButton.disabled).toBe(false);
-    expect(retryButton.textContent).toBe('Check again');
+    expect(retryButton.textContent).toBe('Check now');
     await act(async () => retryButton.click());
     expect(retry).toHaveBeenCalledOnce();
   });
