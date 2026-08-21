@@ -182,7 +182,7 @@ describe('fetchLatestInstanceForCollections memo', () => {
       maxAttempts: 3,
       retryDelayMs: 1_500,
     }, new Map());
-    const assertion = expect(pending).rejects.toThrow(/deadline/i);
+    const assertion = expect(pending).rejects.toThrow(/(deadline|temporarily unavailable)/i);
 
     await vi.advanceTimersByTimeAsync(1_000);
     await assertion;

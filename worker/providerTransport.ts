@@ -1,8 +1,10 @@
 import {
   assertBeforeProviderDeadline,
+  deadlineError,
   delayWithinDeadline,
   executionPolicy,
   fetchWithTimeout,
+  remainingProviderMs,
 } from './execution';
 import type { ExecutionPolicy } from './execution';
 import type {
@@ -83,17 +85,6 @@ export function openMarineBusyCircuit(
   } satisfies MarineBusyCircuit));
 }
 
-function retryAfterSeconds(response: Response): number | undefined {
-  // Tests and edge mocks may provide the minimum Response-shaped object.
-  const value = response.headers?.get?.('Retry-After');
-  if (!value) return undefined;
-  const seconds = Number(value);
-  if (Number.isFinite(seconds) && seconds >= 0) return Math.max(1, Math.ceil(seconds));
-  const atMs = Date.parse(value);
-  if (!Number.isFinite(atMs)) return undefined;
-  return Math.max(1, Math.ceil((atMs - Date.now()) / 1000));
-}
-
 function marineCircuitError(circuit: MarineBusyCircuit): ProviderUnavailableError {
   return new ProviderUnavailableError(
     'marine',
@@ -104,8 +95,6 @@ function marineCircuitError(circuit: MarineBusyCircuit): ProviderUnavailableErro
   );
 }
 
-// Structured provider diagnostics belong to transport, never forecast-model
-// identity. They are visible in Workers Logs but not copied into public data.
 export function logUpstream(
   source: string,
   startedAt: number,
@@ -114,6 +103,17 @@ export function logUpstream(
 ): void {
   const ms = Date.now() - startedAt;
   console.log(`upstream ${source} ${outcome} ${ms}ms${extra ? ' ' + extra : ''}`);
+}
+
+function retryAfterSeconds(response: Response): number | undefined {
+  // Tests and edge mocks may provide the minimum Response-shaped object.
+  const value = response.headers?.get?.('Retry-After');
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.max(1, Math.ceil(seconds));
+  const atMs = Date.parse(value);
+  if (!Number.isFinite(atMs)) return undefined;
+  return Math.max(1, Math.ceil((atMs - Date.now()) / 1000));
 }
 
 export async function fetchJsonWithRetries(
@@ -131,6 +131,10 @@ export async function fetchJsonWithRetries(
     if (provider === 'marine') {
       const circuit = await readMarineBusyCircuit(eventMemo);
       if (circuit) throw marineCircuitError(circuit);
+    }
+    if (remainingProviderMs(policy) <= 0) {
+      if (lastError) throw lastError;
+      throw deadlineError(`${label} attempt ${attempt + 1} (completion reserve reached)`, 'provider');
     }
     assertBeforeProviderDeadline(policy, `${label} attempt ${attempt + 1}`);
     const startedAt = Date.now();
@@ -155,7 +159,12 @@ export async function fetchJsonWithRetries(
         String(normalized.message ?? '').slice(0, 120),
       );
       if (attempt < policy.maxAttempts - 1) {
-        await delayWithinDeadline(retryDelay(attempt, false, policy), policy, `${label} retry`);
+        try {
+          await delayWithinDeadline(retryDelay(attempt, false, policy), policy, `${label} retry`);
+        } catch (delayErr) {
+          if (lastError) throw lastError;
+          throw delayErr;
+        }
       }
       continue;
     }
@@ -213,7 +222,12 @@ export async function fetchJsonWithRetries(
 
     if (attempt < policy.maxAttempts - 1) {
       const isBusy = response?.status === 429;
-      await delayWithinDeadline(retryDelay(attempt, isBusy, policy), policy, `${label} retry`);
+      try {
+        await delayWithinDeadline(retryDelay(attempt, isBusy, policy), policy, `${label} retry`);
+      } catch (delayErr) {
+        if (lastError) throw lastError;
+        throw delayErr;
+      }
     }
   }
 
