@@ -972,8 +972,8 @@ export function statusResponse(health: HealthPayload): Response {
   <header class="frank-device-shell rating-${rating}">
     <div class="frank-cache">
       <span>System checked ${escapeHtml(formatUtcTimestamp(health.checkedAt))}</span>
-      <span class="cron-heartbeat-pill ${health.cronHeartbeat && health.cronHeartbeat.ageMin <= 10 ? 'good' : 'warn'}">
-        Cron Heartbeat: ${health.cronHeartbeat ? `Active · ${health.cronHeartbeat.ageMin}m ago (${escapeHtml(formatUtcTimestamp(health.cronHeartbeat.lastTickAt))})` : 'Awaiting first tick'}
+      <span class="cron-heartbeat-pill ${health.cronHeartbeat && typeof health.cronHeartbeat.ageMin === 'number' && health.cronHeartbeat.ageMin <= 10 ? 'good' : 'warn'}">
+        Cron Heartbeat: ${health.cronHeartbeat && typeof health.cronHeartbeat.ageMin === 'number' ? `Active · ${health.cronHeartbeat.ageMin}m ago (${escapeHtml(formatUtcTimestamp(health.cronHeartbeat.lastTickAt))})` : 'Awaiting first tick'}
       </span>
     </div>
     <div class="frank-device-columns">
@@ -997,8 +997,8 @@ export function statusResponse(health: HealthPayload): Response {
         <h2 id="locations-title">Forecast locations</h2>
         <p>${escapeHtml(statusDetail)}</p>
       </div>
-      <div class="cron-heartbeat-tag ${health.cronHeartbeat && health.cronHeartbeat.ageMin <= 10 ? 'good' : 'warn'}">
-        <i></i> <span>Heartbeat ${health.cronHeartbeat ? `${health.cronHeartbeat.ageMin}m ago` : 'pending'}</span>
+      <div class="cron-heartbeat-tag ${health.cronHeartbeat && typeof health.cronHeartbeat.ageMin === 'number' && health.cronHeartbeat.ageMin <= 10 ? 'good' : 'warn'}">
+        <i></i> <span>Heartbeat ${health.cronHeartbeat && typeof health.cronHeartbeat.ageMin === 'number' ? `${health.cronHeartbeat.ageMin}m ago` : 'pending'}</span>
       </div>
     </div>
     <div class="locations-board">${locationCards}</div>
