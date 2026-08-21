@@ -1,4 +1,5 @@
 import type {
+  CronHeartbeat,
   HealthLocationEntry,
   HealthPayload,
   WorkerCacheHealth,
@@ -16,6 +17,7 @@ export function buildHealthPayload(
   entries: HealthLocationEntry[],
   storageUnavailable: boolean,
   now = Date.now(),
+  cronHeartbeat?: CronHeartbeat | null,
 ): HealthPayload {
   const missing = entries
     .filter((entry) => !entry.hasCache)
@@ -24,11 +26,17 @@ export function buildHealthPayload(
     const ms = Date.parse(iso ?? '');
     return Number.isFinite(ms) ? now - ms : Number.POSITIVE_INFINITY;
   };
+  const heartbeatMs = Date.parse(cronHeartbeat?.lastTickAt ?? '');
+  const heartbeatValid = Number.isFinite(heartbeatMs) && heartbeatMs <= now;
+
   const ages = entries.map((entry) => ({
     id: entry.id,
     // Data age: when this location's forecast was last built.
     ageMs: age(entry.fetchedAt),
-    // Liveness: when the Worker last checked upstream for this location.
+    // Liveness: when the Worker last checked upstream for this location. The
+    // caller has already folded the cron heartbeat into cacheHealth, so this
+    // stays a per-location fact; the heartbeat must never lower a city's check
+    // age on its own, because a tick that ran out of budget skipped some.
     checkAgeMs: age(
       entry.cacheHealth?.lastAttemptAt
       ?? entry.initialization?.lastAttemptAt
@@ -64,10 +72,21 @@ export function buildHealthPayload(
     .filter((entry) => entry.hasCache && !entry.exactGenerationReady)
     .map((entry) => entry.id);
 
+  // Reported on its own rather than mixed into any location's age: a stalled
+  // cron is otherwise invisible, because every location keeps serving its last
+  // good forecast and nothing in the payload says the ticks stopped.
+  const cronHeartbeatView = heartbeatValid
+    ? {
+        lastTickAt: new Date(heartbeatMs).toISOString(),
+        ageMin: Math.round((now - heartbeatMs) / 60_000),
+      }
+    : null;
+
   return {
     ok,
     service: 'frank-forecast',
     checkedAt: new Date(now).toISOString(),
+    cronHeartbeat: cronHeartbeatView,
     oldestCheckAgeMin: asMin(oldestCheckAgeMs),
     checkStaleAfterMin: Math.round(HEALTH_MAX_CHECK_AGE_MS / 60_000),
     oldestAgeMin: asMin(oldestAgeMs),

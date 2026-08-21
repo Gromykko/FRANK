@@ -16,15 +16,14 @@ const LOCATION = { id: 'horsens', forecastConfigRevision: 1 };
 describe('release generation identity and storage isolation', () => {
   it('keeps the independent release identities explicit', () => {
     expect(RELEASE_IDENTITY).toMatchObject({
-      apiSchemaVersion: 1,
-      modelRevision: 11,
-      assembledCacheSchema: 1,
-      marineCacheSchema: 1,
-      dataGenerationId: 'api1-model11',
-      payloadVersion: 7,
+      ...CURRENT_RELEASE,
       metRawCacheSchemaVersion: 1,
       initializationStateSchemaVersion: 2,
     });
+    // The label is free-form, so pin the one thing a typo could break silently:
+    // it must still identify the model revision it belongs to.
+    expect(CURRENT_RELEASE.dataGenerationId)
+      .toBe(`api${CURRENT_RELEASE.apiSchemaVersion}-model${CURRENT_RELEASE.modelRevision}`);
   });
 
   it('keeps every DERIVED KV object inside its immutable generation', () => {
@@ -36,8 +35,15 @@ describe('release generation identity and storage isolation', () => {
     expect(derivedKeys).toHaveLength(new Set(derivedKeys).size);
     expect(derivedKeys.every((key) => key.startsWith(`${generationKeyPrefix(CURRENT_RELEASE)}:`)))
       .toBe(true);
+    // Shape, not today's numbers: every independent axis must appear, in this
+    // order, so a forgotten label can never collide two releases onto one key.
     expect(generationKeyPrefix(CURRENT_RELEASE)).toBe(
-      'frank:forecast-release:api:v1:model:v11:generation:api1-model11:payload:v7:assembled-cache:v1:marine-cache:v1',
+      `frank:forecast-release:api:v${CURRENT_RELEASE.apiSchemaVersion}`
+      + `:model:v${CURRENT_RELEASE.modelRevision}`
+      + `:generation:${CURRENT_RELEASE.dataGenerationId}`
+      + `:payload:v${CURRENT_RELEASE.payloadVersion}`
+      + `:assembled-cache:v${CURRENT_RELEASE.assembledCacheSchema}`
+      + `:marine-cache:v${CURRENT_RELEASE.marineCacheSchema}`,
     );
   });
 

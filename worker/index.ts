@@ -36,6 +36,7 @@ import {
 import type { ExecutionPolicy, ExecutionPolicyInput } from './execution';
 import type {
   BusyProvider,
+  CronHeartbeat,
   EventMemo,
   ForecastData,
   ForecastInitializationMarker,
@@ -136,6 +137,90 @@ const INITIALIZATION_MARKER_TTL_SECONDS = INITIALIZATION_RETRY_SECONDS + 60;
 
 const CRON_CHECK_MIN_INTERVAL_MS = 2 * 60 * 1000;
 const CHECKED_STAMP_MIN_WRITE_INTERVAL_MS = 25 * 60 * 1000;
+
+// Proof that the cron is still firing, and which cities each tick actually got
+// to. Stamping "we checked" into every city's forecast payload would be one KV
+// write per city per tick; against a 1,000-write day that is what forced the
+// coarse CHECKED_STAMP_MIN_WRITE_INTERVAL_MS throttle, and with it a "checked"
+// time that could be 25 minutes behind the truth. One shared object costs one
+// write per tick no matter how many cities exist, which is what makes an
+// honest five-minute claim affordable - and what keeps adding a fifth city
+// free instead of costing another ~57 writes a day.
+const CRON_HEARTBEAT_SCHEMA_VERSION = 1;
+export const CRON_HEARTBEAT_KEY = 'frank:system:cron-heartbeat';
+
+function isCronHeartbeat(value: unknown): value is CronHeartbeat {
+  return isRecord(value)
+    && value.schemaVersion === CRON_HEARTBEAT_SCHEMA_VERSION
+    && typeof value.lastTickAt === 'string'
+    && Number.isFinite(Date.parse(value.lastTickAt))
+    && isRecord(value.locations);
+}
+
+async function readCronHeartbeat(
+  env: Env,
+  policyInput?: ExecutionPolicyInput,
+): Promise<CronHeartbeat | null> {
+  try {
+    const raw = await awaitWithinDeadline(
+      () => env.FRANK_FORECAST_CACHE.get(CRON_HEARTBEAT_KEY, 'json'),
+      executionPolicy(policyInput),
+      'cron heartbeat read',
+    );
+    return isCronHeartbeat(raw) ? raw : null;
+  } catch {
+    // Liveness is a nice-to-have on the read path. Failing to prove the cron
+    // ran must never turn a servable forecast into an error.
+    return null;
+  }
+}
+
+async function writeCronHeartbeat(
+  env: Env,
+  attemptedAt: Record<string, string>,
+): Promise<void> {
+  try {
+    const previous = await readCronHeartbeat(env);
+    const known = new Set(FORECAST_LOCATIONS.map((location) => location.id));
+    const locations = Object.fromEntries(
+      Object.entries({ ...previous?.locations, ...attemptedAt })
+        .filter(([id]) => known.has(id)),
+    );
+    await env.FRANK_FORECAST_CACHE.put(CRON_HEARTBEAT_KEY, JSON.stringify({
+      schemaVersion: CRON_HEARTBEAT_SCHEMA_VERSION,
+      lastTickAt: new Date().toISOString(),
+      locations,
+    } satisfies CronHeartbeat));
+  } catch (error) {
+    console.error('Cron heartbeat write failed:', error);
+  }
+}
+
+// A city's own payload is only rewritten when something about it changed, so
+// its "we checked" stamp lags by design. The heartbeat carries the same fact
+// more cheaply and more often, so serve whichever of the two is later.
+//
+// Both are RECORDED times. Never substitute Date.now() here: on a Worker whose
+// cron has stopped firing that reads as "checked just now" forever, which is
+// the one failure this whole mechanism exists to make visible.
+export function withCronAttempt<T extends ForecastData>(
+  data: T,
+  locationId: string,
+  heartbeat: CronHeartbeat | null,
+): T {
+  const cacheHealth = data.sources.cacheHealth;
+  const attemptedAt = heartbeat?.locations?.[locationId];
+  const attemptedMs = Date.parse(attemptedAt ?? '');
+  if (!cacheHealth || !attemptedAt || !Number.isFinite(attemptedMs)) return data;
+  if (Date.parse(cacheHealth.lastAttemptAt) >= attemptedMs) return data;
+  return {
+    ...data,
+    sources: {
+      ...data.sources,
+      cacheHealth: { ...cacheHealth, lastAttemptAt: attemptedAt },
+    },
+  };
+}
 
 type ForecastCacheLocation = Pick<
   ForecastLocation,
@@ -879,7 +964,12 @@ async function handleForecastRequest(
   }
 
   const readPolicy = responseKvReadPolicy();
-  const cached = await readCachedForecast(env, location, readPolicy);
+  // Concurrent, so proving the cron is alive costs no extra latency.
+  const [cachedRaw, heartbeat] = await Promise.all([
+    readCachedForecast(env, location, readPolicy),
+    readCronHeartbeat(env, readPolicy),
+  ]);
+  const cached = cachedRaw && withCronAttempt(cachedRaw, location.id, heartbeat);
 
   if (deploymentWarm) {
     if (cached) return preparedForecastResponse(cached, true);
@@ -927,10 +1017,12 @@ async function loadHealthPayload(env: Env): Promise<HealthPayload> {
   const policy = responseKvReadPolicy();
   let entries: HealthLocationEntry[];
   let storageUnavailable = false;
+  const heartbeat = await readCronHeartbeat(env, policy);
   try {
     entries = await Promise.all(
       FORECAST_LOCATIONS.map(async (location) => {
-        const current = await readCachedForecast(env, location, policy);
+        const currentRaw = await readCachedForecast(env, location, policy);
+        const current = currentRaw && withCronAttempt(currentRaw, location.id, heartbeat);
         const marker = current
           ? null
           : await readInitializationMarker(env, location, policy);
@@ -968,7 +1060,7 @@ async function loadHealthPayload(env: Env): Promise<HealthPayload> {
       availabilitySource: 'none',
     }));
   }
-  return buildHealthPayload(entries, storageUnavailable);
+  return buildHealthPayload(entries, storageUnavailable, Date.now(), heartbeat);
 }
 
 async function handleHealthRequest(env: Env): Promise<Response> {
@@ -1079,6 +1171,7 @@ const worker = {
     const tickStartedAt = Date.now();
     const tickDeadlineAt = tickStartedAt + CRON_TICK_BUDGET_MS;
     const eventMemo: EventMemo = new Map();
+    const attemptedAt: Record<string, string> = {};
     try {
       // Isolate failures per location: a rebuild throw (no cached payload + a
       // provider outage) must not starve the remaining locations of their cron
@@ -1105,8 +1198,13 @@ const worker = {
         } catch (error) {
           console.error(`Cron refresh failed for ${location.id}:`, error);
         }
+        // Recorded after the attempt, and for a throw too: the city was
+        // reached and upstream was asked. Cities the loop broke before never
+        // land here, so they keep their own older stamp.
+        attemptedAt[location.id] = new Date().toISOString();
       }
     } finally {
+      await writeCronHeartbeat(env, attemptedAt);
       console.log(`cron tick done in ${Date.now() - tickStartedAt}ms`);
     }
   },

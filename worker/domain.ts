@@ -193,10 +193,27 @@ export interface HealthAge {
   checkAgeMs: number;
 }
 
+// One KV object recording that the cron ran, and which cities it actually got
+// to. A per-city "we checked" stamp inside each forecast payload costs one KV
+// write per city per tick; this costs one write for all of them, which is what
+// makes an honest five-minute freshness claim affordable at all.
+export interface CronHeartbeat {
+  schemaVersion: number;
+  lastTickAt: string;
+  // Only cities this tick actually attempted. A tick that runs out of budget
+  // breaks early, and the cities it never reached must keep their own older
+  // stamp instead of inheriting the tick's.
+  locations: Record<string, string>;
+}
+
 export interface HealthPayload {
   ok: boolean;
   service: 'frank-forecast';
   checkedAt: string;
+  cronHeartbeat?: {
+    lastTickAt: string;
+    ageMin: number | null;
+  } | null;
   oldestCheckAgeMin: number | null;
   checkStaleAfterMin: number;
   oldestAgeMin: number | null;

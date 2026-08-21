@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { shouldPersistFailureState } from '../../worker/index';
+import { shouldPersistFailureState, withCronAttempt } from '../../worker/index';
 
 // The KV write budget is 1,000/day for the whole app. This predicate is what
 // stands between a provider outage and an emptied allowance: a stale cache
@@ -76,5 +76,60 @@ describe('shouldPersistFailureState', () => {
   it('does not treat an unparseable stored stamp as fresh', () => {
     const prev = failure({ lastAttemptAt: 'not a date' });
     expect(shouldPersistFailureState(prev, failure(), NOW)).toBe(true);
+  });
+});
+
+// The other half of the same budget problem. Because the stamp above is
+// deliberately throttled, the payload's "we checked" time can trail reality by
+// the whole throttle window, which is why the app used to have no honest way to
+// tell a user it checked five minutes ago. The cron heartbeat carries that fact
+// for every city in one shared object, so it costs one write per tick instead
+// of one per city per tick.
+//
+// The trap this guards: it is tempting to just stamp Date.now() onto the
+// response. That reads as "checked just now" forever on a Worker whose cron has
+// silently stopped firing, which is the exact failure the heartbeat exists to
+// expose.
+describe('withCronAttempt', () => {
+  const at = (ms: number) => new Date(NOW - ms).toISOString();
+  const payload = (lastAttemptAt: string) => ({
+    sources: { cacheHealth: { status: 'current', lastAttemptAt } },
+  } as unknown as Parameters<typeof withCronAttempt>[0]);
+  const beat = (locations: Record<string, string>) => ({
+    schemaVersion: 1,
+    lastTickAt: at(0),
+    locations,
+  });
+
+  const attemptOf = (data: unknown) =>
+    (data as { sources: { cacheHealth: { lastAttemptAt: string } } })
+      .sources.cacheHealth.lastAttemptAt;
+
+  it('serves the heartbeat time when the throttled payload stamp is older', () => {
+    const result = withCronAttempt(
+      payload(at(THROTTLE_WINDOW_MS)),
+      'horsens',
+      beat({ horsens: at(3 * 60 * 1000) }),
+    );
+    expect(attemptOf(result)).toBe(at(3 * 60 * 1000));
+  });
+
+  it('never moves a stamp backwards', () => {
+    const fresh = at(60 * 1000);
+    const result = withCronAttempt(payload(fresh), 'horsens', beat({ horsens: at(9 * 60 * 1000) }));
+    expect(attemptOf(result)).toBe(fresh);
+  });
+
+  // A tick that runs out of budget breaks before the tail of the rotation, so
+  // those cities are absent from the heartbeat and must not inherit its time.
+  it('leaves a city the tick never reached alone', () => {
+    const stale = at(THROTTLE_WINDOW_MS);
+    const result = withCronAttempt(payload(stale), 'aarhus', beat({ horsens: at(0) }));
+    expect(attemptOf(result)).toBe(stale);
+  });
+
+  it('leaves the payload alone when there is no heartbeat at all', () => {
+    const stale = at(THROTTLE_WINDOW_MS);
+    expect(attemptOf(withCronAttempt(payload(stale), 'horsens', null))).toBe(stale);
   });
 });
