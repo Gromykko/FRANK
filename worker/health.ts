@@ -40,7 +40,10 @@ export function buildHealthPayload(
     .filter((item) => item.checkAgeMs > HEALTH_MAX_CHECK_AGE_MS)
     .map((item) => item.id);
   const notRebuilding = ages
-    .filter((item) => item.ageMs > HEALTH_MAX_DATA_AGE_MS)
+    .filter((item) => {
+      const entry = entries.find((e) => e.id === item.id);
+      return Boolean(entry?.hasCache) && item.ageMs > HEALTH_MAX_DATA_AGE_MS;
+    })
     .map((item) => item.id);
   const stalled = [...new Set([...notChecking, ...notRebuilding])];
   const worst = (key: 'ageMs' | 'checkAgeMs'): number =>
