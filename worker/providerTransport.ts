@@ -1,9 +1,8 @@
 import {
-  deadlineError,
+  assertBeforeProviderDeadline,
   delayWithinDeadline,
   executionPolicy,
   fetchWithTimeout,
-  remainingProviderMs,
 } from './execution';
 import type { ExecutionPolicy } from './execution';
 import type {
@@ -133,10 +132,7 @@ export async function fetchJsonWithRetries(
       const circuit = await readMarineBusyCircuit(eventMemo);
       if (circuit) throw marineCircuitError(circuit);
     }
-    if (remainingProviderMs(policy) <= 0) {
-      if (lastError) throw lastError;
-      throw deadlineError(`${label} attempt ${attempt + 1} (completion reserve reached)`, 'provider');
-    }
+    assertBeforeProviderDeadline(policy, `${label} attempt ${attempt + 1}`);
     const startedAt = Date.now();
     let response: Response;
     try {
@@ -159,12 +155,7 @@ export async function fetchJsonWithRetries(
         String(normalized.message ?? '').slice(0, 120),
       );
       if (attempt < policy.maxAttempts - 1) {
-        try {
-          await delayWithinDeadline(retryDelay(attempt, false, policy), policy, `${label} retry`);
-        } catch (delayErr) {
-          if (lastError) throw lastError;
-          throw delayErr;
-        }
+        await delayWithinDeadline(retryDelay(attempt, false, policy), policy, `${label} retry`);
       }
       continue;
     }
@@ -222,12 +213,7 @@ export async function fetchJsonWithRetries(
 
     if (attempt < policy.maxAttempts - 1) {
       const isBusy = response?.status === 429;
-      try {
-        await delayWithinDeadline(retryDelay(attempt, isBusy, policy), policy, `${label} retry`);
-      } catch (delayErr) {
-        if (lastError) throw lastError;
-        throw delayErr;
-      }
+      await delayWithinDeadline(retryDelay(attempt, isBusy, policy), policy, `${label} retry`);
     }
   }
 
