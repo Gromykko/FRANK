@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { DEFAULT_FETCH_TIMEOUT_MS } from '../../worker/execution';
 import {
   cronExecutionPolicy,
   fetchLatestInstanceForCollections,
@@ -137,6 +138,23 @@ describe('fetchLatestInstanceForCollections memo', () => {
     expect(calls).toHaveLength(2);
     expect(timeoutSpy).toHaveBeenCalledWith(15_000);
     expect(timeoutSpy).toHaveBeenCalledWith(50_000);
+  });
+
+  it('uses the full candidate provider window without consuming its completion reserve', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime('2026-08-21T08:00:00Z');
+    stubOk(['2026-08-21T000000Z']);
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+
+    await fetchLatestInstanceForCollections(WATER, {
+      deadlineAt: Date.now() + 24_000,
+      fetchTimeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
+      maxAttempts: 1,
+      completionReserveMs: 4_000,
+    }, new Map());
+
+    expect(DEFAULT_FETCH_TIMEOUT_MS).toBe(20_000);
+    expect(timeoutSpy).toHaveBeenCalledWith(20_000);
   });
 
   it('starts no upstream stage when the event deadline is already exhausted', async () => {

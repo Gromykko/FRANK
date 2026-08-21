@@ -1,4 +1,9 @@
-export const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
+// The authenticated candidate route has a 24-second hard budget and reserves
+// four seconds for assembly and KV persistence, leaving at most 20 seconds for
+// one provider stage. DMI position responses have repeatedly completed just
+// beyond the former 15-second cutoff, so use the whole defensible provider
+// window. Cron keeps its separate explicit 50-second timeout.
+export const DEFAULT_FETCH_TIMEOUT_MS = 20_000;
 const DEFAULT_MAX_FETCH_ATTEMPTS = 3;
 const CRON_FETCH_TIMEOUT_MS = 50_000;
 const CRON_LOCATION_BUDGET_MS = 70_000;
