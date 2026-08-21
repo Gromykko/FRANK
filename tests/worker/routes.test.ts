@@ -396,12 +396,18 @@ describe('Worker route HTTP contract', () => {
     );
     const body = await response.json<ForecastData>();
     expect(body.sources.release).toEqual(CURRENT_RELEASE);
-    expect(response.headers.get(RELEASE_HEADER.apiSchema)).toBe('1');
-    expect(response.headers.get(RELEASE_HEADER.modelRevision)).toBe('8');
-    expect(response.headers.get(RELEASE_HEADER.dataGeneration)).toBe('api1-model8');
-    expect(response.headers.get(RELEASE_HEADER.assembledCacheSchema)).toBe('1');
-    expect(response.headers.get(RELEASE_HEADER.marineCacheSchema)).toBe('1');
-    expect(response.headers.get(RELEASE_HEADER.payloadVersion)).toBe('7');
+    expect(response.headers.get(RELEASE_HEADER.apiSchema))
+      .toBe(String(CURRENT_RELEASE.apiSchemaVersion));
+    expect(response.headers.get(RELEASE_HEADER.modelRevision))
+      .toBe(String(CURRENT_RELEASE.modelRevision));
+    expect(response.headers.get(RELEASE_HEADER.dataGeneration))
+      .toBe(CURRENT_RELEASE.dataGenerationId);
+    expect(response.headers.get(RELEASE_HEADER.assembledCacheSchema))
+      .toBe(String(CURRENT_RELEASE.assembledCacheSchema));
+    expect(response.headers.get(RELEASE_HEADER.marineCacheSchema))
+      .toBe(String(CURRENT_RELEASE.marineCacheSchema));
+    expect(response.headers.get(RELEASE_HEADER.payloadVersion))
+      .toBe(String(CURRENT_RELEASE.payloadVersion));
     expect(response.headers.get(RELEASE_HEADER.generationReady)).toBe('true');
     expect(response.headers.get('X-FRANK-Worker-Version')).toBe(WORKER_VERSION_ID);
   });

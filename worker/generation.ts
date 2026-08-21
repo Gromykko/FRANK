@@ -3,6 +3,7 @@ import {
   AUDITED_PREVIOUS_FORECAST_GENERATIONS,
   CURRENT_FORECAST_RELEASE,
   FORECAST_RELEASE_HEADERS,
+  MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
   SUPPORTED_FORECAST_API_SCHEMA_VERSIONS,
 } from '../src/features/forecast/releaseContract';
 import type { ForecastReleaseMetadata } from '../src/features/forecast/releaseContract';
@@ -25,6 +26,18 @@ type StorageReleaseIdentity = Pick<
   | 'marineCacheSchema'
 >;
 
+// Storage has exactly two layers.
+//
+//   frank:raw:...              provider truth. Shared by every app version.
+//   frank:forecast-release:... everything this release DERIVED from that truth.
+//
+// The raw layer holds what the providers said, which no forecast model can
+// change. It is therefore keyed only by its own envelope schema and the
+// location's config revision, never by the release identity, so a freshly
+// deployed candidate reads the running production ingredients and can assemble
+// its first forecast on the very next cron tick instead of re-fetching every
+// provider from cold. `generationKeyPrefix` below governs the derived layer.
+//
 // A maintainer-controlled generation label is useful for humans, but it is
 // not a safe namespace by itself: forgetting to update it must never let a
 // candidate overwrite production bytes. Derive storage identity from every
@@ -38,6 +51,9 @@ export function generationKeyPrefix(release: StorageReleaseIdentity): string {
     `generation:${encodeURIComponent(release.dataGenerationId)}`,
     `payload:v${release.payloadVersion}`,
     `assembled-cache:v${release.assembledCacheSchema}`,
+    // Also an axis of the derived layer: an assembled forecast is only valid
+    // for the marine normalization it was built from, so bumping the marine
+    // schema must retire the assembled bytes as well as the raw ingredients.
     `marine-cache:v${release.marineCacheSchema}`,
   ].join(':');
 }
@@ -67,15 +83,38 @@ export function assembledForecastKeyForRelease(
   return `${generationKeyPrefix(release)}:forecast:assembled:${locationKeySuffix(location)}`;
 }
 
+// Root of the shared raw layer. Deliberately not under the generation root, so
+// `scripts/gc-worker-kv.mjs` — which only ever lists `frank:forecast-release:` —
+// cannot mistake a live ingredient for an abandoned generation's leftovers.
+// ponytail: the flip side is that nothing sweeps this root either, so a bumped
+// ingredient schema or a retired forecastConfigRevision strands its old keys.
+// That is 3 keys per location per bump against a 1 GB namespace; teach the GC
+// script a second prefix only if the schemas ever start moving regularly.
+export const RAW_INGREDIENT_KEY_ROOT = 'frank:raw';
+
+// MET's stored body is the provider response verbatim, so only the envelope
+// shape can ever go stale. Sharing it also keeps the conditional-request
+// contract intact: MET's terms require repeat requests to carry the
+// If-Modified-Since they last received, and a per-generation copy would make
+// every deployment re-request every location unconditionally.
 export function metRawKey(location: CacheLocationIdentity): string {
-  return `${GENERATION_KEY_PREFIX}:ingredient:met-raw:v${MET_RAW_CACHE_SCHEMA_VERSION}:${locationKeySuffix(location)}`;
+  return `${RAW_INGREDIENT_KEY_ROOT}:met:v${MET_RAW_CACHE_SCHEMA_VERSION}:${locationKeySuffix(location)}`;
 }
 
+// The marine ingredient is DMI's run mapped to our series shape, so unlike MET
+// it is app-shaped output: a release that changed the mapping would be handing
+// its own dialect to every other release reading this key.
+// MARINE_INGREDIENT_CACHE_SCHEMA_VERSION is the guard, and it is in the key, so
+// a bump lands the new format in a new namespace instead of reinterpreting
+// bytes. Bumping it is a judgement call, not an enforced one - see the constant
+// for when it is actually owed. What keeps the unbumped case survivable is that
+// every marine field is optional on SeriesPoint, so a reader from either side
+// of a mapping change sees a missing field for one cycle, never a wrong one.
 export function marineIngredientKey(
   location: CacheLocationIdentity,
   kind: MarineKind,
 ): string {
-  return `${GENERATION_KEY_PREFIX}:ingredient:marine:${kind}:${locationKeySuffix(location)}`;
+  return `${RAW_INGREDIENT_KEY_ROOT}:marine:v${MARINE_INGREDIENT_CACHE_SCHEMA_VERSION}:${kind}:${locationKeySuffix(location)}`;
 }
 
 export function initializationStateKey(location: CacheLocationIdentity): string {

@@ -19,31 +19,64 @@ describe('release generation identity and storage isolation', () => {
   it('keeps the independent release identities explicit', () => {
     expect(RELEASE_IDENTITY).toMatchObject({
       apiSchemaVersion: 1,
-      modelRevision: 8,
+      modelRevision: 9,
       assembledCacheSchema: 1,
       marineCacheSchema: 1,
-      dataGenerationId: 'api1-model8',
+      dataGenerationId: 'api1-model9',
       payloadVersion: 7,
       metRawCacheSchemaVersion: 1,
       initializationStateSchemaVersion: 2,
     });
   });
 
-  it('puts every candidate-mutated KV object inside its immutable generation', () => {
-    const mutableKeys = [
+  it('keeps every DERIVED KV object inside its immutable generation', () => {
+    const derivedKeys = [
       assembledForecastKey(LOCATION),
-      metRawKey(LOCATION),
-      marineIngredientKey(LOCATION, 'water'),
-      marineIngredientKey(LOCATION, 'waves'),
       initializationStateKey(LOCATION),
     ];
 
-    expect(mutableKeys).toHaveLength(new Set(mutableKeys).size);
-    expect(mutableKeys.every((key) => key.startsWith(`${generationKeyPrefix(CURRENT_RELEASE)}:`)))
+    expect(derivedKeys).toHaveLength(new Set(derivedKeys).size);
+    expect(derivedKeys.every((key) => key.startsWith(`${generationKeyPrefix(CURRENT_RELEASE)}:`)))
       .toBe(true);
     expect(generationKeyPrefix(CURRENT_RELEASE)).toBe(
-      'frank:forecast-release:api:v1:model:v8:generation:api1-model8:payload:v7:assembled-cache:v1:marine-cache:v1',
+      'frank:forecast-release:api:v1:model:v9:generation:api1-model9:payload:v7:assembled-cache:v1:marine-cache:v1',
     );
+  });
+
+  // The whole point of the raw layer: a candidate on a brand new model revision
+  // addresses the exact same ingredients production is already filling, so it
+  // can assemble immediately instead of re-fetching every provider from cold.
+  it('keeps every RAW ingredient outside the generation, shared across releases', () => {
+    const rawKeys = [
+      metRawKey(LOCATION),
+      marineIngredientKey(LOCATION, 'water'),
+      marineIngredientKey(LOCATION, 'waves'),
+    ];
+
+    expect(rawKeys).toHaveLength(new Set(rawKeys).size);
+    expect(rawKeys.some((key) => key.startsWith('frank:forecast-release:'))).toBe(false);
+    expect(rawKeys.some((key) => key.includes(String(CURRENT_RELEASE.modelRevision)))).toBe(false);
+    expect(rawKeys.some((key) => key.includes(CURRENT_RELEASE.dataGenerationId))).toBe(false);
+
+    expect(rawKeys).toEqual([
+      'frank:raw:met:v1:location:horsens:config:v1',
+      'frank:raw:marine:v1:water:location:horsens:config:v1',
+      'frank:raw:marine:v1:waves:location:horsens:config:v1',
+    ]);
+  });
+
+  // A raw ingredient is read by code from other releases, so its own envelope
+  // schema is the only thing that may retire it. Both roots must move together
+  // when a schema is bumped, or a stale ingredient survives under a live key.
+  it('retires raw ingredients only through their own envelope schema version', () => {
+    const bumpedMarine = { ...CURRENT_RELEASE, marineCacheSchema: CURRENT_RELEASE.marineCacheSchema + 1 };
+
+    expect(marineIngredientKey(LOCATION, 'water')).toContain(
+      `:marine:v${CURRENT_RELEASE.marineCacheSchema}:`,
+    );
+    expect(metRawKey(LOCATION)).toContain(`:met:v${RELEASE_IDENTITY.metRawCacheSchemaVersion}:`);
+    // Bumping the marine schema must also retire everything assembled from it.
+    expect(generationKeyPrefix(bumpedMarine)).not.toBe(generationKeyPrefix(CURRENT_RELEASE));
   });
 
   it('changes the KV namespace when any release axis changes even if the label is forgotten', () => {

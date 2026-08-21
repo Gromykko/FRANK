@@ -10,6 +10,7 @@ import {
   assertForecastSemanticBoundary,
   assertForecastModelBaseline,
   assertRecordableForecastModelTransition,
+  buildForecastModelSnapshot,
   describeForecastModelDiff,
 } from '../../scripts/forecast-model-contract.mjs';
 
@@ -81,7 +82,7 @@ describe('forecast model release guard', () => {
     const mutatingReader = (target: string) => async (fileName: string) => {
       const source = await readFile(fileName, 'utf8');
       return fileName.replaceAll('\\', '/').endsWith(target)
-        ? `${source}\n// release-boundary mutation\n`
+        ? `${source}\nexport const RELEASE_BOUNDARY_MUTATION = 1;\n`
         : source;
     };
     await expect(assertForecastModelBaseline({
@@ -96,6 +97,46 @@ describe('forecast model release guard', () => {
       locations: locationData,
       readFileImpl: mutatingReader('/worker/providers.ts'),
     })).rejects.toThrow('Forecast model baseline is out of date (worker/providers.ts)');
+  });
+
+  // The guard's price is a model revision and a full generation rebuild, so it
+  // must be charged for behaviour only. If a comment ever starts costing that,
+  // the honest response is to stop writing comments, which is the opposite of
+  // what these files need.
+  it('fingerprints forecast behaviour and ignores comments', async () => {
+    const snapshotWith = (readFileImpl?: typeof readFile) => buildForecastModelSnapshot({
+      release: CURRENT_RELEASE,
+      locations: locationData,
+      ...(readFileImpl ? { readFileImpl } : {}),
+    });
+    const appendEverywhere = (suffix: string) => (async (fileName: string) =>
+      `${await readFile(fileName, 'utf8')}${suffix}`) as unknown as typeof readFile;
+
+    const base = await snapshotWith();
+
+    const commented = await snapshotWith(appendEverywhere(`
+// prose, not behaviour
+`));
+    expect(commented.semanticInputs).toEqual(base.semanticInputs);
+
+    const reformatted = await snapshotWith(appendEverywhere(`
+
+
+`));
+    expect(reformatted.semanticInputs).toEqual(base.semanticInputs);
+
+    const edited = await snapshotWith((async (fileName: string) => {
+      const source = await readFile(fileName, 'utf8');
+      return fileName.endsWith('generation.ts')
+        ? `${source}
+export const BEHAVIOUR_CHANGE = 1;
+`
+        : source;
+    }) as unknown as typeof readFile);
+    expect(edited.semanticInputs['worker/generation.ts'])
+      .not.toBe(base.semanticInputs['worker/generation.ts']);
+    expect(edited.semanticInputs['worker/providers.ts'])
+      .toBe(base.semanticInputs['worker/providers.ts']);
   });
 
   it('accepts an unchanged recorded model', () => {

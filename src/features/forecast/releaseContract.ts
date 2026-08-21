@@ -4,15 +4,25 @@
 // new software contract.
 export const FORECAST_API_SCHEMA_VERSION = 1;
 export const SUPPORTED_FORECAST_API_SCHEMA_VERSIONS = [1] as const;
-export const FORECAST_MODEL_REVISION = 8;
+export const FORECAST_MODEL_REVISION = 9;
 export const ASSEMBLED_FORECAST_CACHE_SCHEMA_VERSION = 1;
+
+// Unlike the versions above, this one is a CROSS-RELEASE contract, not a
+// private cache tag: the marine ingredient lives in the shared raw layer
+// (`frank:raw:marine:v<this>:...`), so a candidate and the production version
+// it is shadowing read and write the same objects. Bump it whenever the stored
+// series changes meaning — different units, a different point spacing, a
+// renamed field. Adding an optional field does not need a bump, because every
+// marine field is already optional on SeriesPoint and a reader that predates it
+// simply ignores it. Bumping moves both the raw key and the generation prefix,
+// which retires the ingredients and everything assembled from them together.
 export const MARINE_INGREDIENT_CACHE_SCHEMA_VERSION = 1;
 
 // Compiled into an immutable Worker version. A serious model release writes a
 // new generation in parallel, proves every public location is complete, and
 // only then receives production traffic. Never replace this with an eventually
 // consistent KV "active generation" pointer.
-export const FORECAST_DATA_GENERATION_ID = 'api1-model8';
+export const FORECAST_DATA_GENERATION_ID = 'api1-model9';
 
 // `payloadVersion` is the historical browser/Worker payload stamp. It remains
 // independent from the API, model and storage identities, but there is no
@@ -49,10 +59,10 @@ export type ForecastReleaseMetadata = ReleaseMetadata;
 export const AUDITED_PREVIOUS_FORECAST_GENERATIONS: readonly Readonly<ReleaseMetadata>[] = Object.freeze([
   Object.freeze({
     apiSchemaVersion: 1,
-    modelRevision: 7,
+    modelRevision: 8,
     assembledCacheSchema: 1,
     marineCacheSchema: 1,
-    dataGenerationId: 'api1-model7',
+    dataGenerationId: 'api1-model8',
     payloadVersion: 7,
   }),
 ]);

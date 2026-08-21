@@ -87,6 +87,28 @@ function normalizedSource(source) {
   return source.replace(/^\uFEFF/, '').replaceAll('\r\n', '\n');
 }
 
+// The fingerprint must move when BEHAVIOUR moves, not when prose does. These
+// files carry their reasoning in comments, so hashing raw bytes made a
+// comment-only edit demand a new FORECAST_MODEL_REVISION and a full generation
+// rebuild: a guard that charges for documentation is a guard that teaches
+// people to stop documenting. Re-emitting the parsed file without comments
+// hashes what the compiler will actually run, and normalizes formatting and
+// line endings along the way. It reuses the same parse this module already
+// validates, rather than a hand-rolled tokenizer that would have to re-derive
+// template-literal and regex-vs-division context to stay correct.
+//
+// The tradeoff is that the printer belongs to TypeScript, so a TypeScript
+// upgrade can move every hash at once and cost one model revision. That is
+// rare, loud, and pinned by package-lock, unlike editing a comment.
+const FINGERPRINT_PRINTER = ts.createPrinter({
+  removeComments: true,
+  newLine: ts.NewLineKind.LineFeed,
+});
+
+function sourceFingerprint(source, fileName) {
+  return sha256(FINGERPRINT_PRINTER.printFile(sourceFile(normalizedSource(source), fileName)));
+}
+
 function sourceFile(source, fileName) {
   const parsed = ts.createSourceFile(
     fileName,
@@ -324,7 +346,7 @@ export async function buildForecastModelSnapshot({
   const semanticInputs = {};
   for (const relativePath of FORECAST_SEMANTIC_INPUT_FILES) {
     const source = await readFileImpl(path.join(repositoryRoot, relativePath), 'utf8');
-    semanticInputs[relativePath] = sha256(normalizedSource(source));
+    semanticInputs[relativePath] = sourceFingerprint(source, relativePath);
   }
 
   const seenIds = new Set();
