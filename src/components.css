@@ -3521,9 +3521,9 @@ button.legend-toggle.is-on {
 }
 
 /* The phrase CRT is decorative personality, not the safety assessment. On
-   legacy 320–360px phones it collapsed to a 26px slit, so remove that middle
+   legacy 320–384px phones it collapsed to a narrow slit, so remove that middle
    column and let the face/actions remain useful instead of showing fragments. */
-@media (max-width: 360px) {
+@media (max-width: 384px) {
   .frank-device-columns {
     grid-template-columns: 64px minmax(0, 1fr);
     grid-template-areas:

@@ -37,7 +37,10 @@ export default function TripProfilePanel({ tripMode, onTripModeChange }: TripPro
       setShowInfo(false);
     };
     const closeOnEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setShowInfo(false);
+      if (e.key === 'Escape') {
+        setShowInfo(false);
+        infoBtnRef.current?.focus();
+      }
     };
     document.addEventListener('pointerdown', closeOutside);
     document.addEventListener('keydown', closeOnEscape);

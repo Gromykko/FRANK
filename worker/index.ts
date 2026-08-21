@@ -517,9 +517,12 @@ function forecastInitializingResponse(
 // and its order is not meaningful - an order-sensitive compare would spend a
 // write on a reshuffle that says nothing.
 function stableJson(value: unknown): string {
+  if (value === undefined) return 'null';
   if (Array.isArray(value)) return `[${[...value].map(stableJson).sort().join(',')}]`;
   if (isRecord(value)) {
-    return `{${Object.keys(value).sort()
+    return `{${Object.keys(value)
+      .filter((key) => value[key] !== undefined)
+      .sort()
       .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
       .join(',')}}`;
   }
@@ -544,9 +547,13 @@ export function shouldPersistFailureState(
   next: Partial<WorkerCacheHealth> | null | undefined,
   nowMs = Date.now(),
 ): boolean {
+  const sameDegraded = (prev?.degradedSources ?? []).slice().sort().join(',') ===
+    (next?.degradedSources ?? []).slice().sort().join(',');
   const sameFailure =
     prev?.status === next?.status &&
     prev?.message === next?.message &&
+    prev?.busyProvider === next?.busyProvider &&
+    sameDegraded &&
     Boolean(prev?.needsRebuild) === Boolean(next?.needsRebuild) &&
     Boolean(prev?.providerBusy) === Boolean(next?.providerBusy) &&
     marineInstancesEqual(prev?.marineInstances, next?.marineInstances);

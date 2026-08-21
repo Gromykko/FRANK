@@ -97,7 +97,7 @@ export default class ErrorBoundary extends Component<Props, State> {
 
     return (
       <div className="loader-container error-screen" role="alert">
-        <h2 className="error-screen-title">{copy.title}</h2>
+        <h1 className="error-screen-title">{copy.title}</h1>
         <p className="error-screen-text">{copy.body}</p>
         <div className="error-screen-actions">
           <button type="button" className="btn-control" onClick={() => window.location.reload()}>

@@ -351,9 +351,9 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
 
   if (request.mode === 'navigate') {
-    // The active worker always returns its own cached HTML. A newer release is
-    // downloaded into a waiting worker, never mixed into this document.
-    event.respondWith(verifiedShellOrRecover());
+    // The active worker returns its own cached HTML, with network fallback if
+    // cache recovery is impossible (e.g. storage eviction during a release rollout).
+    event.respondWith(verifiedShellOrRecover().catch(() => fetch(request)));
     return;
   }
 

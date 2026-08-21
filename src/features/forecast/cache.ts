@@ -98,46 +98,50 @@ function authorityMarkerEntries(location: ForecastLocation): Array<{
   storageKey: string;
   marker: AuthorityMarker;
 }> {
-  const prefix = getAuthorityMarkerPrefix(location);
-  const cacheKeys = new Set(getWeatherCacheKeys(location));
-  const entries: Array<{ storageKey: string; marker: AuthorityMarker }> = [];
-  const latestPlausibleMs = Date.now() + 5 * 60 * 1000;
+  try {
+    const prefix = getAuthorityMarkerPrefix(location);
+    const cacheKeys = new Set(getWeatherCacheKeys(location));
+    const entries: Array<{ storageKey: string; marker: AuthorityMarker }> = [];
+    const latestPlausibleMs = Date.now() + 5 * 60 * 1000;
 
-  for (const storageKey of Object.keys(localStorage)) {
-    if (!storageKey.startsWith(prefix)) continue;
-    try {
-      const value = JSON.parse(localStorage.getItem(storageKey) ?? 'null') as Partial<AuthorityMarker> | null;
-      if (
-        value?.schemaVersion !== AUTHORITY_MARKER_SCHEMA_VERSION
-        || !Number.isFinite(value.requestStartedAtMs)
-        || !Number.isFinite(value.receivedAtMs)
-        || (value.requestStartedAtMs as number) > latestPlausibleMs
-        || (value.receivedAtMs as number) > latestPlausibleMs
-        || typeof value.cacheKey !== 'string'
-        || !cacheKeys.has(value.cacheKey)
-      ) {
+    for (const storageKey of Object.keys(localStorage)) {
+      if (!storageKey.startsWith(prefix)) continue;
+      try {
+        const value = JSON.parse(localStorage.getItem(storageKey) ?? 'null') as Partial<AuthorityMarker> | null;
+        if (
+          value?.schemaVersion !== AUTHORITY_MARKER_SCHEMA_VERSION
+          || !Number.isFinite(value.requestStartedAtMs)
+          || !Number.isFinite(value.receivedAtMs)
+          || (value.requestStartedAtMs as number) > latestPlausibleMs
+          || (value.receivedAtMs as number) > latestPlausibleMs
+          || typeof value.cacheKey !== 'string'
+          || !cacheKeys.has(value.cacheKey)
+        ) {
+          try {
+            localStorage.removeItem(storageKey);
+          } catch {
+            // Validation already excluded it from authority selection.
+          }
+          continue;
+        }
+        entries.push({ storageKey, marker: value as AuthorityMarker });
+      } catch {
+        // Invalid markers never influence which forecast is trusted.
         try {
           localStorage.removeItem(storageKey);
         } catch {
-          // Validation already excluded it from authority selection.
+          // Best-effort scoped cleanup only.
         }
-        continue;
-      }
-      entries.push({ storageKey, marker: value as AuthorityMarker });
-    } catch {
-      // Invalid markers never influence which forecast is trusted.
-      try {
-        localStorage.removeItem(storageKey);
-      } catch {
-        // Best-effort scoped cleanup only.
       }
     }
-  }
 
-  return entries.sort((left, right) =>
-    right.marker.requestStartedAtMs - left.marker.requestStartedAtMs
-    || right.marker.receivedAtMs - left.marker.receivedAtMs
-    || right.storageKey.localeCompare(left.storageKey));
+    return entries.sort((left, right) =>
+      right.marker.requestStartedAtMs - left.marker.requestStartedAtMs
+      || right.marker.receivedAtMs - left.marker.receivedAtMs
+      || right.storageKey.localeCompare(left.storageKey));
+  } catch {
+    return [];
+  }
 }
 
 type AuthorityMarkerEntry = ReturnType<typeof authorityMarkerEntries>[number];

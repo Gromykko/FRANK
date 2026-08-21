@@ -384,6 +384,10 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
         </span>
       </div>
 
+      <div className="sr-only" role="region" aria-label={t('Detailed graph summary')}>
+        <p>{t('Detailed weather graphs showing wind, gusts, waves, water level, and temperature. All values are also available in text in the hourly forecast timeline table above.')}</p>
+      </div>
+
       <div
         ref={scrollRef}
         className="chart-scroll-container chart-scroll-single"

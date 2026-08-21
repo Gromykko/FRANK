@@ -145,9 +145,9 @@ export function metForecastUrl(location: Pick<ForecastLocation, 'coordinate'>): 
 
 function parseDmiInstanceMs(id: unknown): number {
   if (typeof id !== 'string') return Number.NaN;
-  const compact = id.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+  const compact = id.match(/^(\d{4})-?(\d{2})-?(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
   if (compact) {
-    return new Date(`${compact[1]}T${compact[2]}:${compact[3]}:${compact[4]}Z`).getTime();
+    return new Date(`${compact[1]}-${compact[2]}-${compact[3]}T${compact[4]}:${compact[5]}:${compact[6]}Z`).getTime();
   }
   return new Date(id).getTime();
 }

@@ -137,9 +137,11 @@ export const da: Record<string, string> = {
   // ── StatusBar ──────────────────────────────────────────────────────────────
   '{0}. {1}. FRANK says: {2}.': '{0}. {1}. FRANK siger: {2}.',
   'Refresh forecast': 'Opdater prognosen',
-  // The flag button shows the CURRENT language; its label names the switch
-  // action — so the Danish rendering is "switch to English".
-  'Switch to Danish': 'Skift til engelsk',
+  'Switch to English': 'Skift til engelsk',
+  'Switch to Danish': 'Skift til dansk',
+  'Detailed graph summary': 'Oversigt over detaljerede grafer',
+  'Detailed weather graphs showing wind, gusts, waves, water level, and temperature. All values are also available in text in the hourly forecast timeline table above.':
+    'Detaljerede vejrgrafer for vind, vindstød, bølger, vandstand og temperatur. Alle værdier findes også som tekst i timeoversigten ovenfor.',
 
   // ── FRANK's dot-matrix phrases ─────────────────────────────────────────────
   'Good weather, go ahead!': 'Godt vejr — af sted med dig!',

@@ -166,8 +166,9 @@ const WORKER_CONTACT_STALE_MS = 20 * 60 * 1000;
 export type CacheCheckState = 'not-started' | 'checking' | 'initializing' | 'succeeded' | 'failed';
 
 function formatRelativeAge(ms: number, translate: Translate): string {
-  if (!Number.isFinite(ms) || ms < 0) return '';
-  const minutes = Math.round(ms / 60000);
+  if (!Number.isFinite(ms)) return '';
+  const safeMs = Math.max(0, ms);
+  const minutes = Math.round(safeMs / 60000);
   if (minutes < 60) return translate('{0} min', minutes);
   const hours = Math.round(minutes / 60);
   if (hours < 48) return translate('{0} h', hours);

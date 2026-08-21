@@ -375,13 +375,10 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                     : endHourLabel;
                   const sunsetCutoff = slot.lowConfidence ? null : sunsetCutoffFor(slot, data, sunsets);
                   // An official DMI warning overlapping this window (most severe
-                  // first) — a heads-up badge; it never removes the window. For
-                  // hourly windows, endHour.time is the START of the last hour, so
-                  // extend the overlap window by that hour; block windows already
-                  // include their full span in windowEndMs. Warnings whose kommune
-                  // list demonstrably excludes this town don't badge windows at
-                  // all — they still show region-level in the warning stripe.
-                  const overlapEndMs = slot.lowConfidence ? windowEndMs : windowEndMs + 3_600_000;
+                  // first) — a heads-up badge; it never removes the window. Warnings
+                  // whose kommune list demonstrably excludes this town don't badge
+                  // windows at all — they still show region-level in the warning stripe.
+                  const overlapEndMs = windowEndMs;
                   const slotWarning = warningsOverlapping(
                     warnings,
                     new Date(startHour.time).getTime(),

@@ -48,9 +48,9 @@ export function executionPolicy(policy: ExecutionPolicyInput = {}): ExecutionPol
     deadlineAt: deadline,
     hardDeadlineAt: policy.hardDeadlineAt ?? policy.deadlineAt ?? Number.POSITIVE_INFINITY,
     fetchTimeoutMs: policy.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS,
-    maxAttempts: policy.maxAttempts !== undefined && policy.maxAttempts > 1
-      ? policy.maxAttempts
-      : (policy.maxAttempts === 1 && availableMs < 6_000 ? 1 : dynamicAttempts),
+    maxAttempts: policy.maxAttempts !== undefined
+      ? Math.max(1, policy.maxAttempts)
+      : dynamicAttempts,
     completionReserveMs: reserve,
     retryDelayMs: policy.retryDelayMs,
     retryBusyDelayMs: policy.retryBusyDelayMs,
@@ -69,7 +69,7 @@ export function rotateTickOrder<T>(
   scheduledTime: number | undefined,
   list: T[],
 ): T[] {
-  const tickIndex = Math.floor(Number(scheduledTime) / CRON_PERIOD_MS);
+  const tickIndex = Math.round(Number(scheduledTime) / CRON_PERIOD_MS);
   if (!Number.isFinite(tickIndex) || list.length === 0) return list;
   const offset = ((tickIndex % list.length) + list.length) % list.length;
   return [...list.slice(offset), ...list.slice(0, offset)];
@@ -83,7 +83,9 @@ export function cronExecutionPolicy(
   locationsRemaining: number,
 ): ExecutionPolicy | null {
   const remainingMs = tickDeadlineAt - nowMs;
-  if (remainingMs <= 0 || locationsRemaining <= 0) return null;
+  if (remainingMs < CRON_LOCATION_MIN_BUDGET_MS || remainingMs <= CRON_COMPLETION_RESERVE_MS || locationsRemaining <= 0) {
+    return null;
+  }
   const locationBudgetMs = Math.max(
     CRON_LOCATION_MIN_BUDGET_MS,
     Math.floor(remainingMs / locationsRemaining),

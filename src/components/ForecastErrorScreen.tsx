@@ -23,14 +23,14 @@ export default function ForecastErrorScreen({ message, onRetry }: ForecastErrorS
           type="button"
           className="header-icon-btn"
           onClick={() => setLang(lang === 'da' ? 'en' : 'da')}
-          aria-label={t('Switch to Danish')}
+          aria-label={t(lang === 'da' ? 'Switch to English' : 'Switch to Danish')}
         >
           {lang === 'da' ? <FlagDK /> : <FlagUK />}
         </button>
       </div>
       <div role="alert">
         <AlertTriangle size={48} className="error-screen-icon" />
-        <h2 className="error-screen-title">{t("Can't reach the forecast right now")}</h2>
+        <h1 className="error-screen-title">{t("Can't reach the forecast right now")}</h1>
         <p className="error-screen-text">{t(message)}</p>
       </div>
       <button

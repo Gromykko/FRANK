@@ -47,9 +47,8 @@ const HOUR_MS = 3_600_000;
 function isContiguous(previous: HourlyData, current: HourlyData): boolean {
   const gap = new Date(current.time).getTime() - new Date(previous.time).getTime();
   if (!Number.isFinite(gap)) return false;
-  // An hourly sample is followed one hour later; an outlook block is followed
-  // by the next block one full span later.
-  return gap <= (previous.blockSpanHours ?? 1) * HOUR_MS * 1.01;
+  const expectedSpan = (previous.blockSpanHours ?? 1) * HOUR_MS;
+  return gap >= expectedSpan * 0.95 && gap <= expectedSpan * 1.05;
 }
 
 // A window is a run of consecutive safe forecast samples within one day.

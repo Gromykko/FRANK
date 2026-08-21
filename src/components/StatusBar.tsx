@@ -159,7 +159,7 @@ export default function StatusBar({
                   type="button"
                   className="header-icon-btn"
                   onClick={() => setLang(lang === 'da' ? 'en' : 'da')}
-                  aria-label={t('Switch to Danish')}
+                  aria-label={t(lang === 'da' ? 'Switch to English' : 'Switch to Danish')}
                 >
                   {lang === 'da' ? <FlagDK /> : <FlagUK />}
                 </button>

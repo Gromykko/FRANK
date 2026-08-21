@@ -250,7 +250,11 @@ export function isValidForecastPayload(
     || requestedLocation.forecastConfigRevision < 1) return false;
   if (!isRecord(value)) return false;
   if (!hasValidHourlyRows(value.hourly)) return false;
-  if (!isStrictlyIncreasingTimestampArray(value.sunrise) || !isStrictlyIncreasingTimestampArray(value.sunset)) return false;
+  if (
+    !isStrictlyIncreasingTimestampArray(value.sunrise)
+    || !isStrictlyIncreasingTimestampArray(value.sunset)
+    || value.sunrise.length !== value.sunset.length
+  ) return false;
   if (!hasValidWarnings(value.warnings)) return false;
 
   const sources = value.sources;

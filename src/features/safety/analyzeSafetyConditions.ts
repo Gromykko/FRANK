@@ -97,6 +97,7 @@ export interface SafetyAnalysis {
 }
 
 export interface SafetyAnalysisContext {
+  location?: ForecastLocation;
   blockDaylight?: {
     /**
      * Whole-period UI ratings must disclose any night contained by a block.
@@ -191,6 +192,8 @@ export function analyzeSafetyConditions(
 
   const addReason = (severity: SafetyRating, text: string) => {
     reasons.push({ severity, text });
+    if (severity === 'danger') rating = 'danger';
+    else if (severity === 'caution' && rating !== 'danger') rating = 'caution';
   };
 
   // These thresholds are inclusive (value ≥ limit triggers), so a reading that
@@ -239,24 +242,16 @@ export function analyzeSafetyConditions(
   // MET issues no gust forecast for the longer-range blocks, so an absent gust
   // there is a known limit of the source, not a hole in this hour's data.
   const hasWindGust = isNonnegativeReading(data.windGust);
-  if (
-    enableWindGust &&
-    !hasWindGust &&
-    // MET intentionally omits gusts from outlook blocks. Preserve that known
-    // exemption for NaN/missing, but never exempt a finite negative sentinel.
-    (!data.blockSpanHours || isReading(data.windGust))
-  ) missing.push('wind gusts');
+  if (enableWindGust && !hasWindGust && (!data.blockSpanHours || isReading(data.windGust))) missing.push('wind gusts');
   if (enableWindGust && hasWindGust) {
     const gustLabel = translate(getWindSpeedLabel(data.windGust));
     const gustDangerLimit = settings.maxWindSpeedSafe + (settings.gustMargin ?? 2.5);
     if (data.windGust >= gustDangerLimit) {
-      rating = 'danger';
       addReason('danger', limitReason(data.windGust, gustDangerLimit, 1,
         'Wind gusts: {0} m/s ({1}). At your gust ceiling of {2} m/s.',
         'Wind gusts: {0} m/s ({1}). Above your gust ceiling of {2} m/s.',
         data.windGust.toFixed(1), gustLabel, gustDangerLimit.toFixed(1)));
     } else if (data.windGust >= settings.maxWindSpeedSafe) {
-      if (rating !== 'danger') rating = 'caution';
       addReason('caution', limitReason(data.windGust, settings.maxWindSpeedSafe, 1,
         'Wind gusts: {0} m/s ({1}). At your safe limit of {2} m/s.',
         'Wind gusts: {0} m/s ({1}). Exceeds your safe limit of {2} m/s.',
@@ -271,12 +266,12 @@ export function analyzeSafetyConditions(
   const hasWindDir = isBearing(data.windDirection);
   if (enableCustom && !hasWindDir) missing.push('wind direction');
   const sectors = enableCustom && hasWindSpeed && hasWindDir
-    ? resolveSectors(CURRENT_LOCATION, settings)
+    ? resolveSectors(context?.location ?? CURRENT_LOCATION, settings)
     : [];
   let windIsOnshore = false;
   let windIsOffshore = false;
   // 359.6° rounds to 360, which is not a bearing — wrap it back to 0.
-  const windDir = Math.round(data.windDirection) % 360;
+  const windDir = ((Math.round(data.windDirection) % 360) + 360) % 360;
   for (const sector of sectors) {
     if (!inSector(data.windDirection, sector.min, sector.max)) continue;
     if (sector.exposure === 'onshore') windIsOnshore = true;
@@ -284,7 +279,6 @@ export function analyzeSafetyConditions(
     // In user copy the upper boundary is always the DANGER cap — calling it a
     // "caution cap" on a red reason read as caution, not Rough.
     if (data.windSpeed >= sector.cautionLimit) {
-      rating = 'danger';
       addReason('danger', limitReason(data.windSpeed, sector.cautionLimit, 1,
         '{0} wind ({1}°) is at your {2} m/s danger cap for this direction.',
         '{0} wind ({1}°) is over your {2} m/s danger cap for this direction.',

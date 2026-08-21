@@ -45,7 +45,7 @@ export function corsHeaders(): Record<string, string> {
   return {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': ALLOW_READ_METHODS,
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Expose-Headers': `Retry-After, X-FRANK-Background-Check, ${WORKER_VERSION_HEADER}`,
     'Access-Control-Max-Age': '86400',
   };
