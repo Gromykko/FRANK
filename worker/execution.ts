@@ -57,11 +57,19 @@ export function executionPolicy(policy: ExecutionPolicyInput = {}): ExecutionPol
   };
 }
 
+// Must match `triggers.crons` in wrangler.jsonc. The rotation below turns the
+// scheduled time into a tick counter, so a period larger than the real cron
+// makes consecutive ticks share an index and start from the same city twice in
+// a row - exactly when a budget-truncated tick starves the same tail of the
+// list it starved last time. The test reads wrangler.jsonc and fails if these
+// two ever drift apart again.
+export const CRON_PERIOD_MS = 5 * 60_000;
+
 export function rotateTickOrder<T>(
   scheduledTime: number | undefined,
   list: T[],
 ): T[] {
-  const tickIndex = Math.floor(Number(scheduledTime) / (10 * 60_000));
+  const tickIndex = Math.floor(Number(scheduledTime) / CRON_PERIOD_MS);
   if (!Number.isFinite(tickIndex) || list.length === 0) return list;
   const offset = ((tickIndex % list.length) + list.length) % list.length;
   return [...list.slice(offset), ...list.slice(0, offset)];

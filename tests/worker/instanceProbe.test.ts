@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { DEFAULT_FETCH_TIMEOUT_MS } from '../../worker/execution';
+import { readFile } from 'node:fs/promises';
+import { CRON_PERIOD_MS, DEFAULT_FETCH_TIMEOUT_MS } from '../../worker/execution';
 import {
   cronExecutionPolicy,
   fetchLatestInstanceForCollections,
@@ -173,26 +174,42 @@ describe('fetchLatestInstanceForCollections memo', () => {
 describe('tickOrder', () => {
   const fjords = ['horsens', 'vejle', 'kolding', 'aarhus'];
   const at = (iso: string) => Date.parse(iso);
+  const tick = (iso: string, ticks: number) => at(iso) + ticks * CRON_PERIOD_MS;
+
+  // The rotation counts ticks, so it is only fair if it counts the ticks that
+  // actually happen. Moving the cron in wrangler.jsonc without moving
+  // CRON_PERIOD_MS silently halves the rotation rate instead of failing.
+  it('derives its tick counter from the deployed cron schedule', async () => {
+    const config = await readFile('wrangler.jsonc', 'utf8');
+    const cron = config.match(/"crons"\s*:\s*\[\s*"([^"]+)"/)?.[1];
+    const everyMinutes = Number(cron?.match(/^\*\/(\d+) \* \* \* \*$/)?.[1]);
+
+    expect(Number.isFinite(everyMinutes)).toBe(true);
+    expect(CRON_PERIOD_MS).toBe(everyMinutes * 60_000);
+  });
 
   it('advances the starting fjord by one every tick', () => {
-    expect(tickOrder(at('2026-08-08T15:40:00Z'), fjords)[0]).toBe('kolding');
-    expect(tickOrder(at('2026-08-08T15:50:00Z'), fjords)[0]).toBe('aarhus');
-    expect(tickOrder(at('2026-08-08T16:00:00Z'), fjords)[0]).toBe('horsens');
+    const start = '2026-08-08T15:40:00Z';
+    expect(tickOrder(tick(start, 0), fjords)[0]).toBe('horsens');
+    expect(tickOrder(tick(start, 1), fjords)[0]).toBe('vejle');
+    expect(tickOrder(tick(start, 2), fjords)[0]).toBe('kolding');
+    expect(tickOrder(tick(start, 3), fjords)[0]).toBe('aarhus');
   });
 
   it('keeps every fjord in the tick, just rotated', () => {
-    const order = tickOrder(at('2026-08-08T15:50:00Z'), fjords);
+    const order = tickOrder(tick('2026-08-08T15:40:00Z', 3), fjords);
     expect(order).toEqual(['aarhus', 'horsens', 'vejle', 'kolding']);
     expect([...order].sort()).toEqual([...fjords].sort());
   });
 
   it('gives each fjord the first slot equally often over a day', () => {
+    const ticksPerDay = Math.round(24 * 60 * 60_000 / CRON_PERIOD_MS);
     const firsts = new Map<string, number>();
-    for (let t = 0; t < 144; t++) {
-      const first = tickOrder(at('2026-08-08T00:00:00Z') + t * 10 * 60 * 1000, fjords)[0];
+    for (let t = 0; t < ticksPerDay; t++) {
+      const first = tickOrder(tick('2026-08-08T00:00:00Z', t), fjords)[0];
       firsts.set(first, (firsts.get(first) ?? 0) + 1);
     }
-    expect([...firsts.values()]).toEqual([36, 36, 36, 36]);
+    expect([...firsts.values()]).toEqual(Array(fjords.length).fill(ticksPerDay / fjords.length));
   });
 
   it('falls back to the plain order when the tick clock is unusable', () => {
