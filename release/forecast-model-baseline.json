@@ -3,17 +3,17 @@
   "semanticBoundary": "worker-generation-owned-v1",
   "release": {
     "apiSchemaVersion": 1,
-    "modelRevision": 7,
+    "modelRevision": 8,
     "assembledCacheSchema": 1,
     "marineCacheSchema": 1,
-    "dataGenerationId": "api1-model7",
+    "dataGenerationId": "api1-model8",
     "payloadVersion": 7
   },
   "semanticInputs": {
     "src/features/forecast/normalize.ts": "2468188d2e01b3a50405e64ecf7fb809b0006468769fa69bf8c14805c1253b24",
     "src/features/forecast/parseWarnings.ts": "987c06d81248e03f6ad96470f0fb3ef9a2250780dfda1c3cf093fb2c59da8091",
     "src/features/forecast/providerUrls.ts": "bcb26c08e8ec0562ffb6aba26101edbf25acd3e36424907cda5b453abee5dedf",
-    "src/features/forecast/releaseContract.ts": "e19b7cfd6ed87991436e4b52c2ce786b186db10a7f8209ccdbd496ad95691163",
+    "src/features/forecast/releaseContract.ts": "1d3fef282f9e3da5e617957fbe108cba29a86e33649000ea72ff3a38ba8c2827",
     "src/features/forecast/sun.ts": "c36999f0ae4bbb071a608c43b6774592d439e1d6ab87a4f58808fd8c26c444d5",
     "src/features/forecast/types.ts": "2d73b013a475bf2c4eb6afa3bd4e528bcc962b5205a39b39c5aa584b8fbda5c2",
     "src/features/forecast/validatePayload.ts": "f05cb45eb615efad0224d9b95841e88114e448f38197005eef025f46d8ab279a",
@@ -22,9 +22,9 @@
     "worker/forecastModel.ts": "a21dec3b0c2db05d3cd21bdcf21502f9a2b77f2923aee203ad42fa5e9815be33",
     "worker/generation.ts": "9f84527d890b122982fa695939d3a86ded904b72d8c483f6be541f7a9b956390",
     "worker/domain.ts": "60beb19a57ba199fc5f9f5a9d467d1f1988bfc99f1d91e02563557096a6e39b0",
-    "worker/index.ts": "73a85475dfc152d9823d0f6a86f6428dc63fbeaccc8891f33035a515a31bb6a1",
+    "worker/index.ts": "87ab31004f201b5aa8ef8f869032c913343208b3d1dd73cab0a130f6ae9bdcd7",
     "worker/providerAvailability.ts": "07fe18a729cdd17cdb50a988354948153d97a35a68ef80f19b77f961551f160c",
-    "worker/providers.ts": "1bde6b078b82fd55d1d7d8a49c0ee7f594c8fc6d1bb2d27f9af2ecb0d3c907fa",
+    "worker/providers.ts": "3d23d39968686deaf065b7df432e11faca12a76b7acc12d5bb5258db5aa9387b",
     "worker/validation.ts": "77d7ae840b95f0687e7481e518262a784d3afa6ba64827ef4e4080e79886be34"
   },
   "locations": [

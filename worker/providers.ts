@@ -382,6 +382,55 @@ async function fetchMetWeather(
   }
 }
 
+export async function readRetainedMarineInstances(
+  env: Env,
+  location: Pick<ForecastLocation, 'id' | 'forecastConfigRevision'>,
+  policy: ExecutionPolicy,
+): Promise<MarineInstances | undefined> {
+  const waterKey = marineIngredientKey(location, 'water');
+  const wavesKey = marineIngredientKey(location, 'waves');
+
+  let waterStored: MarineIngredientEnvelope | null = null;
+  let wavesStored: MarineIngredientEnvelope | null = null;
+
+  try {
+    const [waterRaw, wavesRaw] = await Promise.all([
+      awaitWithinDeadline(
+        () => env.FRANK_FORECAST_CACHE.get(waterKey, 'json'),
+        policy,
+        `water retained instance check for ${location.id}`,
+      ),
+      awaitWithinDeadline(
+        () => env.FRANK_FORECAST_CACHE.get(wavesKey, 'json'),
+        policy,
+        `waves retained instance check for ${location.id}`,
+      ),
+    ]);
+    waterStored = isMarineIngredientEnvelope(waterRaw, location) ? waterRaw : null;
+    wavesStored = isMarineIngredientEnvelope(wavesRaw, location) ? wavesRaw : null;
+  } catch (error) {
+    rethrowIfDeadlineReached(error, policy, `retained instances read recovery for ${location.id}`);
+    return undefined;
+  }
+
+  const currentWater = currentMarineIngredient(waterStored);
+  const currentWaves = currentMarineIngredient(wavesStored);
+
+  if (
+    currentWater?.collection
+    && currentWater?.id
+    && currentWaves?.collection
+    && currentWaves?.id
+  ) {
+    const candidate: MarineInstances = {
+      water: { collection: currentWater.collection, id: currentWater.id },
+      waves: { collection: currentWaves.collection, id: currentWaves.id },
+    };
+    return marineInstancesWithinFallbackAge(candidate) ? candidate : undefined;
+  }
+  return undefined;
+}
+
 // Last-good marine series per source, so one provider's brownout can't
 // freeze the other's fresh data ("split retention, single serving": each
 // ingredient falls back independently, the served payload stays one

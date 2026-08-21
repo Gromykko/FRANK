@@ -855,7 +855,7 @@ describe('Worker deployment warm-up', () => {
       timeoutMs: 500,
       retryDelayMs: 1,
       logger: silentLogger,
-    })).rejects.toThrow('target release api1-model7 is not ready');
+    })).rejects.toThrow(`target release ${contract.release.dataGenerationId} is not ready`);
   });
 
   it('accepts rotating provider-busy degradation when exact data and health remain current', async () => {

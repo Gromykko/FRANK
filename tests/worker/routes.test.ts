@@ -397,8 +397,8 @@ describe('Worker route HTTP contract', () => {
     const body = await response.json<ForecastData>();
     expect(body.sources.release).toEqual(CURRENT_RELEASE);
     expect(response.headers.get(RELEASE_HEADER.apiSchema)).toBe('1');
-    expect(response.headers.get(RELEASE_HEADER.modelRevision)).toBe('7');
-    expect(response.headers.get(RELEASE_HEADER.dataGeneration)).toBe('api1-model7');
+    expect(response.headers.get(RELEASE_HEADER.modelRevision)).toBe('8');
+    expect(response.headers.get(RELEASE_HEADER.dataGeneration)).toBe('api1-model8');
     expect(response.headers.get(RELEASE_HEADER.assembledCacheSchema)).toBe('1');
     expect(response.headers.get(RELEASE_HEADER.marineCacheSchema)).toBe('1');
     expect(response.headers.get(RELEASE_HEADER.payloadVersion)).toBe('7');

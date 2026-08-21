@@ -4,7 +4,7 @@
 // new software contract.
 export const FORECAST_API_SCHEMA_VERSION = 1;
 export const SUPPORTED_FORECAST_API_SCHEMA_VERSIONS = [1] as const;
-export const FORECAST_MODEL_REVISION = 7;
+export const FORECAST_MODEL_REVISION = 8;
 export const ASSEMBLED_FORECAST_CACHE_SCHEMA_VERSION = 1;
 export const MARINE_INGREDIENT_CACHE_SCHEMA_VERSION = 1;
 
@@ -12,7 +12,7 @@ export const MARINE_INGREDIENT_CACHE_SCHEMA_VERSION = 1;
 // new generation in parallel, proves every public location is complete, and
 // only then receives production traffic. Never replace this with an eventually
 // consistent KV "active generation" pointer.
-export const FORECAST_DATA_GENERATION_ID = 'api1-model7';
+export const FORECAST_DATA_GENERATION_ID = 'api1-model8';
 
 // `payloadVersion` is the historical browser/Worker payload stamp. It remains
 // independent from the API, model and storage identities, but there is no
@@ -46,7 +46,16 @@ export type ForecastReleaseMetadata = ReleaseMetadata;
 // descriptors here. The full descriptor is required because its internal
 // assembled schema may differ from the new release. Entries are read-only
 // migration/rollback sources and never satisfy exact target readiness.
-export const AUDITED_PREVIOUS_FORECAST_GENERATIONS: readonly Readonly<ReleaseMetadata>[] = Object.freeze([]);
+export const AUDITED_PREVIOUS_FORECAST_GENERATIONS: readonly Readonly<ReleaseMetadata>[] = Object.freeze([
+  Object.freeze({
+    apiSchemaVersion: 1,
+    modelRevision: 7,
+    assembledCacheSchema: 1,
+    marineCacheSchema: 1,
+    dataGenerationId: 'api1-model7',
+    payloadVersion: 7,
+  }),
+]);
 
 export const CURRENT_RELEASE: Readonly<ReleaseMetadata> = Object.freeze({
   apiSchemaVersion: FORECAST_API_SCHEMA_VERSION,

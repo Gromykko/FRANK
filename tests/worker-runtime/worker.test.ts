@@ -144,8 +144,8 @@ describe('Worker runtime integration contract', () => {
     expect(response.headers.get('x-content-type-options')).toBe('nosniff');
     expect(response.headers.get('access-control-expose-headers')).toContain('X-FRANK-Worker-Version');
     expect(response.headers.get('x-frank-api-schema')).toBe('1');
-    expect(response.headers.get('x-frank-model-revision')).toBe('7');
-    expect(response.headers.get('x-frank-data-generation')).toBe('api1-model7');
+    expect(response.headers.get('x-frank-model-revision')).toBe('8');
+    expect(response.headers.get('x-frank-data-generation')).toBe('api1-model8');
     expect(response.headers.get('x-frank-generation-ready')).toBe('true');
     expectCurrentWorkerVersion(response);
 

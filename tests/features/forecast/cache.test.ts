@@ -282,7 +282,7 @@ describe('browser forecast cache recovery', () => {
 
     expect(new Set(keys).size).toBe(releases.length);
     expect(keys[0]).toBe(
-      `${LEGACY_CACHE_KEY}_config${CURRENT_LOCATION.forecastConfigRevision}_api1_model7_generation_forgotten%3Aid%2Fwith%20space_payload7`,
+      `${LEGACY_CACHE_KEY}_config${CURRENT_LOCATION.forecastConfigRevision}_api1_model8_generation_forgotten%3Aid%2Fwith%20space_payload7`,
     );
   });
 

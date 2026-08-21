@@ -66,6 +66,7 @@ import {
   marineInstancesEqual,
   marineInstancesWithinFallbackAge,
   readMarineBusyCircuit,
+  readRetainedMarineInstances,
 } from './providers';
 import { isRecord } from './validation';
 import {
@@ -592,7 +593,8 @@ async function _refreshForecastCache(
     // degraded rather than re-dating unverified water/wave data.
     let marineProbeFailed = false;
     let marineProbeBusy = false;
-    const knownMarine = cachedHealth?.marineInstances;
+    const knownMarine = cachedHealth?.marineInstances
+      ?? await readRetainedMarineInstances(env, location, policy);
     // DMI's official completion windows determine when a newer marine run can
     // actually exist. A short post-due backoff stops a late publication from
     // being queried on every cron tick. Forced/recovery work and provenance
