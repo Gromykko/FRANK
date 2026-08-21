@@ -123,7 +123,7 @@ test('zero ready locations produce one calm app-wide preparation screen', async 
   await expect(page.locator('.location-switcher')).toHaveCount(0);
   await expect(page.locator('.initialization-ready-option')).toHaveCount(0);
 
-  const retry = page.getByRole('button', { name: 'Tjek nu' });
+  const retry = page.getByRole('button', { name: 'Tjek manuelt' });
   const retryShape = await retry.evaluate((button) => {
     const style = getComputedStyle(button);
     const bounds = button.getBoundingClientRect();
