@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { FocusEvent as ReactFocusEvent, KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { MapPin, Check, ChevronDown } from 'lucide-react';
 import { AVAILABLE_LOCATIONS, CURRENT_LOCATION, setLocation } from '../config/locations';
+import { useForecastAvailability } from '../features/forecast/useForecastAvailability';
 import { useLang } from '../i18n';
 
 // The header's location readout, made switchable. With a single configured
@@ -20,6 +21,7 @@ export default function LocationSwitcher({
   const { t } = useLang();
   const currentStateLabel = currentState === 'initializing' ? t('preparing') : null;
   const [open, setOpen] = useState(false);
+  const { availability, settled } = useForecastAvailability(open ? Date.now() : 0);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLUListElement>(null);
@@ -114,6 +116,8 @@ export default function LocationSwitcher({
         >
           {AVAILABLE_LOCATIONS.map((loc) => {
             const isCurrent = loc.id === CURRENT_LOCATION.id;
+            const isAvailable = availability ? availability.availableLocationIds.includes(loc.id) : true;
+            const isPreparing = settled && availability && !isAvailable;
             return (
               <li key={loc.id} role="none">
                 <button
@@ -139,6 +143,9 @@ export default function LocationSwitcher({
                   {loc.areaName}
                   {isCurrent && currentStateLabel && (
                     <span className="location-switcher-pill is-initializing">{currentStateLabel}</span>
+                  )}
+                  {!isCurrent && isPreparing && (
+                    <span className="location-switcher-pill is-initializing">{t('preparing')}</span>
                   )}
                 </button>
               </li>
