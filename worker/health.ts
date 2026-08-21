@@ -537,6 +537,32 @@ export function statusResponse(health: HealthPayload): Response {
     background:var(--frank-phosphor);
     box-shadow:0 0 4px var(--frank-phosphor);
   }
+  .cron-heartbeat-pill {
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    margin-left:auto;
+    font:700 var(--text-instrument)/1.4 var(--font-mono);
+    letter-spacing:.02em;
+  }
+  .cron-heartbeat-tag {
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    padding:4px 9px;
+    border-radius:var(--radius-sm);
+    border:1px solid var(--module-edge);
+    background:var(--module-bg);
+    font:700 var(--text-instrument)/1.3 var(--font-mono);
+    letter-spacing:.04em;
+    text-transform:uppercase;
+  }
+  .cron-heartbeat-tag i {
+    width:6px;
+    height:6px;
+    border-radius:50%;
+    background:currentColor;
+  }
   .frank-device-columns {
     display:grid;
     grid-template-columns:auto minmax(0,1fr) 142px;
@@ -944,7 +970,12 @@ export function statusResponse(health: HealthPayload): Response {
 <main class="status-shell">
   <h1 class="sr-only">FRANK forecast worker status</h1>
   <header class="frank-device-shell rating-${rating}">
-    <div class="frank-cache"><span>System checked ${escapeHtml(formatUtcTimestamp(health.checkedAt))}</span></div>
+    <div class="frank-cache">
+      <span>System checked ${escapeHtml(formatUtcTimestamp(health.checkedAt))}</span>
+      <span class="cron-heartbeat-pill ${health.cronHeartbeat && health.cronHeartbeat.ageMin <= 10 ? 'good' : 'warn'}">
+        Cron Heartbeat: ${health.cronHeartbeat ? `Active · ${health.cronHeartbeat.ageMin}m ago (${escapeHtml(formatUtcTimestamp(health.cronHeartbeat.lastTickAt))})` : 'Awaiting first tick'}
+      </span>
+    </div>
     <div class="frank-device-columns">
       <span class="frank-crt">${gertyStatusFace(rating)}</span>
       <div class="frank-cell-display">
@@ -962,8 +993,13 @@ export function statusResponse(health: HealthPayload): Response {
 
   <section class="instrument-panel" aria-labelledby="locations-title">
     <div class="panel-bezel">
-      <h2 id="locations-title">Forecast locations</h2>
-      <p>${escapeHtml(statusDetail)}</p>
+      <div>
+        <h2 id="locations-title">Forecast locations</h2>
+        <p>${escapeHtml(statusDetail)}</p>
+      </div>
+      <div class="cron-heartbeat-tag ${health.cronHeartbeat && health.cronHeartbeat.ageMin <= 10 ? 'good' : 'warn'}">
+        <i></i> <span>Heartbeat ${health.cronHeartbeat ? `${health.cronHeartbeat.ageMin}m ago` : 'pending'}</span>
+      </div>
     </div>
     <div class="locations-board">${locationCards}</div>
   </section>
