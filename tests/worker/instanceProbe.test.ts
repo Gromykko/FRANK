@@ -3,7 +3,6 @@ import { DEFAULT_FETCH_TIMEOUT_MS } from '../../worker/execution';
 import {
   cronExecutionPolicy,
   fetchLatestInstanceForCollections,
-  readMarineBusyCircuit,
   tickOrder,
 } from '../../worker/index';
 

@@ -12,12 +12,8 @@ import type {
   EventMemo,
   MarineBusyCircuit,
 } from './domain';
-import {
-  ProviderUnavailableError,
-  isProviderUnavailableError,
-  transientProviderError,
-} from './providerAvailability';
-import { errorWithStatus, isRecord } from './validation';
+import { transientProviderError } from './providerAvailability';
+import { errorWithStatus } from './validation';
 
 const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_BUSY_DELAY_MS = 1_200;

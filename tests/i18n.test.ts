@@ -23,8 +23,8 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-// t('...') and translate('...'), single-quoted, allowing escaped quotes.
-const CALL = /\b(?:t|translate)\(\s*'((?:[^'\\]|\\.)*)'/g;
+// t('...') and translate('...'), single-quoted or double-quoted, allowing escaped quotes.
+const CALL = /\b(?:t|translate)\(\s*(['"])((?:(?!\1)[^\\]|\\.)*)\1/g;
 
 const files = sourceFiles(resolve(process.cwd(), 'src'));
 
@@ -43,7 +43,9 @@ describe('Danish dictionary covers every translated literal', () => {
       if (file.endsWith(`i18n${sep}da.ts`)) continue;
       const source = readFileSync(file, 'utf8');
       for (const match of source.matchAll(CALL)) {
-        const key = match[1].replace(/\\'/g, "'");
+        const quote = match[1];
+        const raw = match[2];
+        const key = quote === "'" ? raw.replace(/\\'/g, "'") : raw.replace(/\\"/g, '"');
         if (key in da) continue;
         // A key with no letters carries no language: t('{0} {1} · {2}') is pure
         // assembly, and a Danish "translation" of it would be the same string.

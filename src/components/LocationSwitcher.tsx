@@ -21,10 +21,19 @@ export default function LocationSwitcher({
   const { t } = useLang();
   const currentStateLabel = currentState === 'initializing' ? t('preparing') : null;
   const [open, setOpen] = useState(false);
-  const { availability, settled } = useForecastAvailability(open ? Date.now() : 0);
+  const [openedAt, setOpenedAt] = useState(0);
+  const { availability, settled } = useForecastAvailability(open ? openedAt : 0);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLUListElement>(null);
+
+  const handleToggle = () => {
+    setOpen((prev) => {
+      const next = !prev;
+      if (next) setOpenedAt(Date.now());
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -98,7 +107,7 @@ export default function LocationSwitcher({
         className="location-switcher-btn"
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={handleToggle}
       >
         <MapPin size={12} />
         {label}

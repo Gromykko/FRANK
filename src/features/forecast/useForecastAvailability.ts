@@ -19,6 +19,7 @@ export function useForecastAvailability(retryCycleAtMs: number): ForecastAvailab
   });
 
   useEffect(() => {
+    if (retryCycleAtMs <= 0) return;
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), AVAILABILITY_TIMEOUT_MS);
     let active = true;
