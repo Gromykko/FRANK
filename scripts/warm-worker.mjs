@@ -1194,6 +1194,10 @@ async function requireHealthStage({
     }
     if (assessment.kind === 'transport') {
       if (propagationReason) {
+        if (allowWaiting && lastWaitingAssessment && Date.now() >= deadlineAt) {
+          logger.warn(`[warm] health: ${propagationReason}; deferring promotion`);
+          return waitingResult(lastWaitingAssessment);
+        }
         logger.warn(`[warm] health: ${assessment.reason}; waiting for ${propagationKind} propagation`);
         await delay(Math.min(propagationRetryDelayMs, Math.max(1, deadlineAt - Date.now())));
         continue;
@@ -1363,7 +1367,7 @@ export async function warmWorker({
       versionOverride,
       authorization: readOnly ? null : warmAuthorization,
       requireTargetVersion: requireTargetReadyAll,
-      retryInitializing: readOnly && requireTargetReadyAll,
+      retryInitializing: true,
       attempts: boundedAttempts,
       timeoutMs: boundedTimeoutMs,
       retryDelayMs: boundedRetryDelayMs,

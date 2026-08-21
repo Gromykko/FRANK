@@ -1195,6 +1195,7 @@ describe('Worker deployment warm-up', () => {
     expect(requests).toEqual([
       '/api/v1/forecast/horsens?warm=1',
       '/api/v1/forecast/horsens?warm=1',
+      '/api/v1/forecast/horsens?warm=1',
       '/api/v1/forecast/vejle?warm=1',
       '/health',
     ]);
