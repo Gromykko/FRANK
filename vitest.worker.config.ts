@@ -8,6 +8,9 @@ import { defineConfig } from 'vitest/config';
 process.env.FRANK_WARM_TOKEN ??= 'frank-runtime-test-warm-token-32-chars';
 
 export default defineConfig({
+  define: {
+    __VITEST_WORKER__: 'true',
+  },
   plugins: [
     cloudflareTest({
       // The deployment config remains the single source of truth for the

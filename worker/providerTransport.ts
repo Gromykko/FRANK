@@ -21,8 +21,18 @@ const RETRY_BUSY_JITTER_MS = 600;
 export const MARINE_BUSY_DEFAULT_RETRY_SECONDS = 10 * 60;
 
 function isTestEnvironment(): boolean {
-  const nodeProcess = (globalThis as { process?: { env?: Record<string, string> } }).process;
-  return typeof nodeProcess === 'object' && nodeProcess !== null && nodeProcess.env?.NODE_ENV === 'test';
+  const g = globalThis as {
+    process?: { env?: Record<string, string> };
+    __vitest_worker__?: unknown;
+    __vitest_environment__?: unknown;
+    VITEST?: unknown;
+  };
+  return Boolean(
+    g.__vitest_worker__
+    || g.__vitest_environment__
+    || g.VITEST
+    || (typeof g.process === 'object' && g.process !== null && (g.process.env?.NODE_ENV === 'test' || g.process.env?.VITEST === 'true'))
+  );
 }
 
 function retryDelay(attempt: number, isBusy = false, policy?: ExecutionPolicy): number {
