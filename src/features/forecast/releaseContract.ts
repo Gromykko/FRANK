@@ -4,7 +4,7 @@
 // new software contract.
 export const FORECAST_API_SCHEMA_VERSION = 1;
 export const SUPPORTED_FORECAST_API_SCHEMA_VERSIONS = [1] as const;
-export const FORECAST_MODEL_REVISION = 9;
+export const FORECAST_MODEL_REVISION = 10;
 export const ASSEMBLED_FORECAST_CACHE_SCHEMA_VERSION = 1;
 
 // Unlike the versions above, this one is a CROSS-RELEASE contract, not a
@@ -22,7 +22,7 @@ export const MARINE_INGREDIENT_CACHE_SCHEMA_VERSION = 1;
 // new generation in parallel, proves every public location is complete, and
 // only then receives production traffic. Never replace this with an eventually
 // consistent KV "active generation" pointer.
-export const FORECAST_DATA_GENERATION_ID = 'api1-model9';
+export const FORECAST_DATA_GENERATION_ID = 'api1-model10';
 
 // `payloadVersion` is the historical browser/Worker payload stamp. It remains
 // independent from the API, model and storage identities, but there is no
@@ -52,17 +52,22 @@ export const FORECAST_RELEASE_HEADERS = Object.freeze({
 
 export type ForecastReleaseMetadata = ReleaseMetadata;
 
-// A future serious model release lists only explicitly audited N-1 generation
-// descriptors here. The full descriptor is required because its internal
-// assembled schema may differ from the new release. Entries are read-only
-// migration/rollback sources and never satisfy exact target readiness.
+// Rollback retention, not compatibility. Nothing serves these bytes: a request
+// for a location this generation has not assembled yet gets the typed
+// initializing 503, never a verdict computed by the model revision we just
+// replaced. What the list does is tell `scripts/gc-worker-kv.mjs` which
+// generation prefix it may not sweep, so `wrangler versions deploy <previous>`
+// lands on warm KV instead of a cold namespace. The full descriptor is required
+// because the previous generation's internal assembled schema may differ.
+// scripts/forecast-model-contract.mjs refuses to record a new release until the
+// outgoing one is listed here, which is what makes the retention deliberate.
 export const AUDITED_PREVIOUS_FORECAST_GENERATIONS: readonly Readonly<ReleaseMetadata>[] = Object.freeze([
   Object.freeze({
     apiSchemaVersion: 1,
-    modelRevision: 8,
+    modelRevision: 9,
     assembledCacheSchema: 1,
     marineCacheSchema: 1,
-    dataGenerationId: 'api1-model8',
+    dataGenerationId: 'api1-model9',
     payloadVersion: 7,
   }),
 ]);

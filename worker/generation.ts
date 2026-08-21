@@ -1,10 +1,9 @@
 import type { ForecastLocation } from '../src/config/locationTypes';
 import {
-  AUDITED_PREVIOUS_FORECAST_GENERATIONS,
   CURRENT_FORECAST_RELEASE,
+  FORECAST_API_SCHEMA_VERSION,
   FORECAST_RELEASE_HEADERS,
   MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
-  SUPPORTED_FORECAST_API_SCHEMA_VERSIONS,
 } from '../src/features/forecast/releaseContract';
 import type { ForecastReleaseMetadata } from '../src/features/forecast/releaseContract';
 import type { ForecastData, MarineKind } from './domain';
@@ -126,37 +125,13 @@ export interface VersionedForecastRoute {
   release: Readonly<ForecastReleaseMetadata>;
 }
 
-export function selectReleaseForApiSchemaVersion(
-  apiSchemaVersion: number,
-  supportedApiSchemaVersions: readonly number[],
-  currentRelease: Readonly<ForecastReleaseMetadata>,
-  auditedPreviousGenerations: readonly Readonly<ForecastReleaseMetadata>[],
-): Readonly<ForecastReleaseMetadata> | null {
-  if (!Number.isInteger(apiSchemaVersion)
-    || !supportedApiSchemaVersions.includes(apiSchemaVersion)) return null;
-  if (currentRelease.apiSchemaVersion === apiSchemaVersion) return currentRelease;
-  return auditedPreviousGenerations.find(
-    (release) => release.apiSchemaVersion === apiSchemaVersion,
-  ) ?? null;
-}
-
-export function releaseForApiSchemaVersion(
-  apiSchemaVersion: number,
-): Readonly<ForecastReleaseMetadata> | null {
-  return selectReleaseForApiSchemaVersion(
-    apiSchemaVersion,
-    SUPPORTED_FORECAST_API_SCHEMA_VERSIONS,
-    CURRENT_FORECAST_RELEASE,
-    AUDITED_PREVIOUS_FORECAST_GENERATIONS,
-  );
-}
-
+// The version is matched rather than hard-coded so a future breaking /api/v2
+// is a route this Worker knowingly declines, not an unrecognized path.
 export function versionedForecastRoute(pathname: string): VersionedForecastRoute | null {
   const normalized = pathname.replace(/\/+$/, '') || '/';
   const match = normalized.match(/^\/api\/v([1-9][0-9]*)\/forecast\/([a-z0-9-]+)$/);
-  if (!match) return null;
-  const release = releaseForApiSchemaVersion(Number(match[1]));
-  return release ? { locationId: match[2], release } : null;
+  if (!match || Number(match[1]) !== FORECAST_API_SCHEMA_VERSION) return null;
+  return { locationId: match[2], release: CURRENT_FORECAST_RELEASE };
 }
 
 export function hasReleaseMetadata(
@@ -232,5 +207,3 @@ export const RELEASE_IDENTITY = Object.freeze({
   metRawCacheSchemaVersion: MET_RAW_CACHE_SCHEMA_VERSION,
   initializationStateSchemaVersion: INITIALIZATION_STATE_SCHEMA_VERSION,
 });
-
-export const AUDITED_PREVIOUS_GENERATIONS = AUDITED_PREVIOUS_FORECAST_GENERATIONS;

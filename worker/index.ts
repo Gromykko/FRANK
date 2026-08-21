@@ -71,11 +71,8 @@ import {
 import { isRecord } from './validation';
 import {
   RELEASE_IDENTITY,
-  AUDITED_PREVIOUS_GENERATIONS,
   INITIALIZATION_STATE_SCHEMA_VERSION,
   assembledForecastKey,
-  assembledForecastKeyForRelease,
-  hasReleaseMetadata,
   initializationStateKey,
   isForecastForRelease,
   versionedForecastRoute,
@@ -212,21 +209,12 @@ function isUsableCurrentForecastCache(
   value: unknown,
   location: ForecastLocation,
 ): value is ForecastData {
-  return isUsableForecastForRelease(value, location, CURRENT_RELEASE);
-}
-
-function isUsableForecastForRelease(
-  value: unknown,
-  location: ForecastLocation,
-  release: Readonly<ReleaseMetadata>,
-): value is ForecastData {
-  // All currently supported generations share this wire shape. A future API
-  // schema with an incompatible payload must register its own validator and
-  // response type here; release descriptors select bytes, but cannot make two
-  // structurally different contracts safe by themselves.
+  // A future API schema with an incompatible payload must register its own
+  // validator and response type here; the release descriptor selects bytes, but
+  // cannot make two structurally different contracts safe by itself.
   return hasUsableForecastStructure(value)
     && isValidForecastPayload(value, location)
-    && isForecastForRelease(value, release)
+    && isForecastForRelease(value, CURRENT_RELEASE)
     && hasCurrentForecastWindow(value);
 }
 
@@ -269,81 +257,6 @@ async function readCachedForecast(
         (value): value is ForecastData => isUsableCurrentForecastCache(value, location),
       )
     : null;
-}
-
-async function readForecastForRelease(
-  env: Env,
-  location: ForecastLocation,
-  release: Readonly<ReleaseMetadata>,
-  policyInput?: ExecutionPolicyInput,
-): Promise<ForecastData | null> {
-  if (hasReleaseMetadata(release, CURRENT_RELEASE)) {
-    return readCachedForecast(env, location, policyInput);
-  }
-  const policy = executionPolicy(policyInput);
-  const raw = await awaitWithinDeadline(
-    () => env.FRANK_FORECAST_CACHE.get(assembledForecastKeyForRelease(release, location)),
-    policy,
-    `generation ${release.dataGenerationId} cache read for ${location.id}`,
-  );
-  return raw
-    ? parseForecastCache(
-        raw,
-        (value): value is ForecastData => isUsableForecastForRelease(
-          value,
-          location,
-          release,
-        ),
-      )
-    : null;
-}
-
-interface PreviousGenerationForecast {
-  data: ForecastData;
-  source: `generation:${string}`;
-}
-
-async function readAuditedPreviousGenerationForecast(
-  env: Env,
-  location: ForecastLocation,
-  apiSchemaVersion: number,
-  excludedDataGenerationId: string,
-  policyInput?: ExecutionPolicyInput,
-): Promise<PreviousGenerationForecast | null> {
-  // Audited previous-generation data is display-only. It must never enter
-  // refreshForecastCache as `cached`, seed provider assembly, or be copied to
-  // the current generation key.
-  const policy = executionPolicy(policyInput);
-
-  for (const previousRelease of AUDITED_PREVIOUS_GENERATIONS) {
-    if (previousRelease.apiSchemaVersion !== apiSchemaVersion
-      || previousRelease.dataGenerationId === excludedDataGenerationId) continue;
-    const previousRaw = await awaitWithinDeadline(
-      () => env.FRANK_FORECAST_CACHE.get(
-        assembledForecastKeyForRelease(previousRelease, location),
-      ),
-      policy,
-      `previous generation ${previousRelease.dataGenerationId} cache read for ${location.id}`,
-    );
-    const previous = previousRaw
-      ? parseForecastCache(
-          previousRaw,
-          (value): value is ForecastData => hasUsableForecastStructure(value)
-            && isValidForecastPayload(value, location)
-            && value.sources.payloadVersion === previousRelease.payloadVersion
-            && hasReleaseMetadata(value.sources.release, previousRelease)
-            && hasCurrentForecastWindow(value),
-        )
-      : null;
-    if (previous) {
-      return {
-        data: previous,
-        source: `generation:${previousRelease.dataGenerationId}`,
-      };
-    }
-  }
-
-  return null;
 }
 
 async function writeCachedForecast(
@@ -944,7 +857,6 @@ async function candidateWarmResponse(
   ctx: ExecutionContext,
   location: ForecastLocation,
   refresh: Promise<ForecastData>,
-  fallback: ForecastData | null,
   reason: string,
 ): Promise<Response> {
   keepCandidateBuildAlive(ctx, refresh, location, reason);
@@ -954,11 +866,6 @@ async function candidateWarmResponse(
   } catch (error) {
     if (isProviderUnavailableError(error)) {
       const retryAfterSeconds = initializationRetrySeconds(location);
-      if (fallback) {
-        return preparedForecastResponse(fallback, false, {
-          'Retry-After': String(Math.max(1, retryAfterSeconds)),
-        });
-      }
       return forecastInitializingResponse(location, retryAfterSeconds);
     }
     throw error;
@@ -972,7 +879,6 @@ async function handleForecastRequest(
   locationId: string,
   eventMemo: EventMemo,
   versionedApiRoute: boolean,
-  requestedRelease: Readonly<ReleaseMetadata>,
 ): Promise<Response> {
   const location = findLocation(locationId);
   if (!location) {
@@ -980,45 +886,25 @@ async function handleForecastRequest(
   }
 
   const url = new URL(request.url);
-  const isCurrentReleaseRoute = hasReleaseMetadata(requestedRelease, CURRENT_RELEASE);
-  const deploymentWarm = versionedApiRoute
-    && isCurrentReleaseRoute
-    && isWarmQueryRequested(url);
+  const deploymentWarm = versionedApiRoute && isWarmQueryRequested(url);
   const forceRebuildRequested = url.searchParams.get('rebuild') === '1' || url.searchParams.get('rebuild') === 'true';
 
   if (forceRebuildRequested) {
     return jsonResponse({ error: 'Manual rebuild is not available from the public forecast endpoint.' }, 403);
   }
 
-  // The compiled generation always wins. Explicitly audited previous
-  // generations are read-only availability fallbacks and can never become
-  // build seeds or be re-stamped as this generation.
   const readPolicy = responseKvReadPolicy();
-  const cached = await readForecastForRelease(env, location, requestedRelease, readPolicy);
-  const previous = cached
-    ? null
-    : await readAuditedPreviousGenerationForecast(
-        env,
-        location,
-        requestedRelease.apiSchemaVersion,
-        requestedRelease.dataGenerationId,
-        readPolicy,
-      );
-  const fallback = previous?.data ?? null;
+  const cached = await readCachedForecast(env, location, readPolicy);
 
   if (deploymentWarm) {
-    if (cached) return preparedForecastResponse(cached, true, {}, requestedRelease);
+    if (cached) return preparedForecastResponse(cached, true);
 
     // Authenticated `warm=1` is the deployment candidate path. It is the only
     // HTTP path allowed to build an empty generation, and it still honors the
     // generation-scoped provider cooldown (no rebuild bypass).
     const retryAfterSeconds = await activeInitializationRetrySeconds(env, location);
     if (retryAfterSeconds > 0) {
-      return fallback
-        ? preparedForecastResponse(fallback, false, {
-            'Retry-After': String(retryAfterSeconds),
-          }, requestedRelease)
-        : forecastInitializingResponse(location, retryAfterSeconds, requestedRelease);
+      return forecastInitializingResponse(location, retryAfterSeconds);
     }
 
     const refresh = refreshForecastCache(env, location, {
@@ -1028,14 +914,12 @@ async function handleForecastRequest(
       minIntervalMs: 0,
       executionPolicy: candidateExecutionPolicy(),
       eventMemo,
-      // Previous-generation bytes are never trusted as current ingredients.
       cached: null,
     });
     return candidateWarmResponse(
       ctx,
       location,
       refresh,
-      fallback,
       'deployment-warm',
     );
   }
@@ -1044,17 +928,13 @@ async function handleForecastRequest(
     // Browser traffic only reads the last fully prepared snapshot. Cron owns
     // provider refreshes, so 100 simultaneous first visitors stay 100 KV reads
     // instead of becoming 100 upstream initialization attempts.
-    return preparedForecastResponse(cached, true, {}, requestedRelease);
-  }
-  if (fallback) {
-    return preparedForecastResponse(fallback, false, {}, requestedRelease);
+    return preparedForecastResponse(cached, true);
   }
 
   const retryAfterSeconds = await activeInitializationRetrySeconds(env, location);
   return forecastInitializingResponse(
     location,
     retryAfterSeconds > 0 ? retryAfterSeconds : INITIALIZATION_RETRY_SECONDS,
-    requestedRelease,
   );
 }
 
@@ -1065,21 +945,8 @@ async function loadHealthPayload(env: Env): Promise<HealthPayload> {
   try {
     entries = await Promise.all(
       FORECAST_LOCATIONS.map(async (location) => {
-        // Availability may include an explicitly audited previous generation.
-        // Its original timestamps still drive health, so fallback data can age
-        // into failure without being re-stamped as the current generation.
         const current = await readCachedForecast(env, location, policy);
-        const previous = current
-          ? null
-          : await readAuditedPreviousGenerationForecast(
-              env,
-              location,
-              CURRENT_RELEASE.apiSchemaVersion,
-              CURRENT_RELEASE.dataGenerationId,
-              policy,
-            );
-        const data = current ?? previous?.data ?? null;
-        const marker = data
+        const marker = current
           ? null
           : await readInitializationMarker(env, location, policy);
         const markerAttemptMs = Date.parse(marker?.lastAttemptAt ?? '');
@@ -1091,11 +958,11 @@ async function loadHealthPayload(env: Env): Promise<HealthPayload> {
         return {
           id: location.id,
           areaName: location.areaName,
-          hasCache: Boolean(data),
+          hasCache: Boolean(current),
           exactGenerationReady: Boolean(current),
-          availabilitySource: current ? 'generation' : previous?.source ?? 'none',
-          fetchedAt: data?.sources.fetchedAt,
-          cacheHealth: data?.sources.cacheHealth,
+          availabilitySource: current ? 'generation' : 'none',
+          fetchedAt: current?.sources.fetchedAt,
+          cacheHealth: current?.sources.cacheHealth,
           ...(initialization ? { initialization } : {}),
         };
       }),
@@ -1134,13 +1001,12 @@ function isWarmQueryRequested(url: URL): boolean {
 
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    let responseRelease: Readonly<ReleaseMetadata> = CURRENT_RELEASE;
     const finalize = (response: Response): Response => withReleaseHeaders(
       withWorkerVersion(
         request.method === 'HEAD' ? headResponse(response) : response,
         env.CF_VERSION_METADATA.id,
       ),
-      { release: responseRelease },
+      { release: CURRENT_RELEASE },
     );
 
     try {
@@ -1149,7 +1015,6 @@ const worker = {
       const eventMemo: EventMemo = new Map();
       const url = new URL(request.url);
       const apiRoute = versionedForecastRoute(url.pathname);
-      responseRelease = apiRoute?.release ?? CURRENT_RELEASE;
       const route = apiRoute
         ? { kind: 'forecast' as const, locationId: apiRoute.locationId }
         : matchRoute(url.pathname);
@@ -1206,7 +1071,6 @@ const worker = {
           route.locationId,
           eventMemo,
           Boolean(apiRoute),
-          apiRoute?.release ?? CURRENT_RELEASE,
         );
       }
 
