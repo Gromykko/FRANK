@@ -73,20 +73,22 @@ export default function ForecastInitializingScreen({
   return (
     <main className="container app-main initialization-page" aria-labelledby="initialization-title">
       <section className="panel initialization-card" aria-busy={refreshing || !settled}>
-        <div className="initialization-top-bar">
-          <button
-            type="button"
-            className="header-icon-btn"
-            onClick={() => setLang(lang === 'da' ? 'en' : 'da')}
-            aria-label={t('Switch to Danish')}
-          >
-            {lang === 'da' ? <FlagDK /> : <FlagUK />}
-          </button>
-        </div>
-
-        <div className="initialization-progress" aria-hidden="true">
-          <Waves size={20} strokeWidth={1.8} />
-          <span>{t(refreshing || !settled ? 'Checking forecast availability…' : 'Preparation in progress')}</span>
+        <div className="initialization-header-row">
+          <div className="initialization-header-spacer" aria-hidden="true" />
+          <div className="initialization-progress" aria-hidden="true">
+            <Waves size={20} strokeWidth={1.8} />
+            <span>{t('Preparation in progress')}</span>
+          </div>
+          <div className="initialization-header-actions">
+            <button
+              type="button"
+              className="header-icon-btn"
+              onClick={() => setLang(lang === 'da' ? 'en' : 'da')}
+              aria-label={t('Switch to Danish')}
+            >
+              {lang === 'da' ? <FlagDK /> : <FlagUK />}
+            </button>
+          </div>
         </div>
 
         <div className="initialization-status" role="status" aria-live="polite" aria-atomic="true">

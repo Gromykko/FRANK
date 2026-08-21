@@ -1039,22 +1039,34 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .initialization-card {
-  position: relative;
   width: min(100%, 580px);
   text-align: center;
   padding: clamp(28px, 6vw, 48px);
 }
 
-.initialization-top-bar {
-  position: absolute;
-  top: 16px;
-  right: 16px;
+.initialization-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 22px;
+}
+
+.initialization-header-spacer,
+.initialization-header-actions {
+  flex: 0 0 36px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.initialization-header-spacer {
+  justify-content: flex-start;
 }
 
 .initialization-progress {
   width: fit-content;
   min-height: 36px;
-  margin: 0 auto 22px;
+  margin: 0 auto;
   padding: 7px 11px;
   display: inline-flex;
   align-items: center;
