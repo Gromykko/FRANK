@@ -930,6 +930,7 @@ function assessHealth(
   expectedWorkerVersionId,
   expectedRelease,
   requireTargetReadyAll,
+  allowWaiting = false,
 ) {
   if (!result.received) return { kind: 'transport', reason: result.reason };
   if (result.workerVersionId !== expectedWorkerVersionId) {
@@ -1061,17 +1062,27 @@ function assessHealth(
   if (!sameStringSet(payload.stalled, computedStalled)) {
     return { kind: 'hard', reason: 'stalled locations do not match health clocks' };
   }
-  if (notCheckingReady.length > 0) {
-    return {
-      kind: 'hard',
-      reason: `ready location is not checking upstream: ${notCheckingReady.join(', ')}`,
-    };
-  }
 
   const expectedOk = payload.stalled.length === 0;
   const expectedStatus = expectedOk ? 200 : 503;
   if (payload.ok !== expectedOk || result.status !== expectedStatus) {
     return { kind: 'hard', reason: 'health status contract mismatch' };
+  }
+
+  if (notCheckingReady.length > 0) {
+    if (allowWaiting) {
+      return {
+        kind: 'propagation',
+        reason: `ready location is not checking upstream: ${notCheckingReady.join(', ')}`,
+        waitingLocationIds: notCheckingReady,
+        missing,
+        staleDataReady,
+      };
+    }
+    return {
+      kind: 'hard',
+      reason: `ready location is not checking upstream: ${notCheckingReady.join(', ')}`,
+    };
   }
 
   if (exactReadinessReason) {
@@ -1155,6 +1166,7 @@ async function requireHealthStage({
       expectedWorkerVersionId,
       expectedRelease,
       requireTargetReadyAll,
+      allowWaiting,
     );
 
     if (assessment.kind === 'passed') {

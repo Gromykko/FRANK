@@ -1943,6 +1943,57 @@ describe('Worker deployment warm-up', () => {
     expect(healthChecks).toBe(1);
   });
 
+  it('reports ready locations not checking upstream as waiting when allowWaiting is true', async () => {
+    const contract = await loadReleaseContract();
+    const location = contract.locations[0];
+    const baseUrl = await listen((request, response) => {
+      if (request.url?.startsWith(`/api/v1/forecast/${location.id}`)) {
+        return json(
+          response,
+          200,
+          forecast(
+            location.id,
+            contract.expectedVersion,
+            location.coordinate,
+            contract.release,
+          ),
+          EXPECTED_WORKER_VERSION_ID,
+          exactReleaseHeaders(contract.release, true),
+        );
+      }
+      if (request.url === '/health') {
+        return json(
+          response,
+          503,
+          releaseHealth([location.id], contract.release, { notChecking: [location.id] }),
+          EXPECTED_WORKER_VERSION_ID,
+          exactReleaseHeaders(contract.release),
+        );
+      }
+      return json(response, 404, { error: 'not found' });
+    });
+
+    await expect(warmRelease({
+      baseUrl,
+      locationIds: [location.id],
+      locationContracts: [location],
+      expectedVersion: contract.expectedVersion,
+      expectedRelease: contract.release,
+      requireTargetReadyAll: true,
+      allowWaiting: true,
+      attempts: 1,
+      timeoutMs: 500,
+      retryDelayMs: 1,
+      healthPropagationTimeoutMs: 20,
+      healthPropagationRetryDelayMs: 1,
+      logger: silentLogger,
+    })).resolves.toMatchObject({
+      readyForPromotion: false,
+      waitingLocationIds: [location.id],
+      retryAfterSeconds: 600,
+    });
+  });
+
   it('fails immediately when health reports storage unavailable', async () => {
     let healthChecks = 0;
     const baseUrl = await listen((request, response) => {
