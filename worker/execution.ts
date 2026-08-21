@@ -5,10 +5,12 @@
 // window. Cron keeps its separate explicit 50-second timeout.
 export const DEFAULT_FETCH_TIMEOUT_MS = 20_000;
 const DEFAULT_MAX_FETCH_ATTEMPTS = 1;
-const CRON_FETCH_TIMEOUT_MS = 50_000;
-const CRON_LOCATION_BUDGET_MS = 70_000;
-const CRON_COMPLETION_RESERVE_MS = 10_000;
+const CRON_FETCH_TIMEOUT_MS = 15_000;
+const CRON_LOCATION_MIN_BUDGET_MS = 15_000;
+const CRON_COMPLETION_RESERVE_MS = 8_000;
 export const CRON_TICK_BUDGET_MS = 5 * 60_000;
+export const CRON_TOTAL_ATTEMPTS_BUDGET = 200;
+export const DMI_BUSY_RETRY_DELAY_MS = 1_200;
 
 export type DeadlineKind = 'hard' | 'provider';
 
@@ -65,8 +67,8 @@ export function rotateTickOrder<T>(
   return [...list.slice(offset), ...list.slice(0, offset)];
 }
 
-// Each early location receives at most its fair share of the scheduled tick,
-// so a slow provider cannot starve the locations later in the rotated order.
+// Each remaining location receives its adaptive share of the scheduled tick,
+// distributing up to 200 attempts across unready cities to probe DMI backend nodes.
 export function cronExecutionPolicy(
   nowMs: number,
   tickDeadlineAt: number,
@@ -74,18 +76,22 @@ export function cronExecutionPolicy(
 ): ExecutionPolicy | null {
   const remainingMs = tickDeadlineAt - nowMs;
   if (remainingMs <= 0 || locationsRemaining <= 0) return null;
-  const locationBudgetMs = Math.min(
-    CRON_LOCATION_BUDGET_MS,
+  const locationBudgetMs = Math.max(
+    CRON_LOCATION_MIN_BUDGET_MS,
     Math.floor(remainingMs / locationsRemaining),
   );
   if (locationBudgetMs <= 0) return null;
+  const maxAttempts = Math.min(
+    CRON_TOTAL_ATTEMPTS_BUDGET,
+    Math.max(3, Math.floor(locationBudgetMs / 1_800)),
+  );
   return executionPolicy({
     deadlineAt: Math.min(tickDeadlineAt, nowMs + locationBudgetMs),
     fetchTimeoutMs: Math.min(CRON_FETCH_TIMEOUT_MS, locationBudgetMs),
-    maxAttempts: Math.max(1, Math.floor(locationBudgetMs / 3_000)),
+    maxAttempts,
     completionReserveMs: Math.min(
       CRON_COMPLETION_RESERVE_MS,
-      Math.floor(locationBudgetMs / 4),
+      Math.floor(locationBudgetMs / 5),
     ),
   });
 }

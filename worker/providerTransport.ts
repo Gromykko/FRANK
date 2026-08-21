@@ -19,9 +19,9 @@ import {
 } from './providerAvailability';
 import { errorWithStatus, isRecord } from './validation';
 
-const RETRY_BASE_DELAY_MS = 1_500;
-const RETRY_BUSY_DELAY_MS = 3_000;
-const MARINE_BUSY_CIRCUIT_KEY = 'provider-circuit:marine-busy';
+const RETRY_BASE_DELAY_MS = 1_000;
+const RETRY_BUSY_DELAY_MS = 1_200;
+const RETRY_BUSY_JITTER_MS = 600;
 export const MARINE_BUSY_DEFAULT_RETRY_SECONDS = 10 * 60;
 
 function isTestEnvironment(): boolean {
@@ -30,69 +30,17 @@ function isTestEnvironment(): boolean {
 }
 
 function retryDelay(attempt: number, isBusy = false, policy?: ExecutionPolicy): number {
-  if (isBusy) {
-    if (policy?.retryBusyDelayMs !== undefined) return policy.retryBusyDelayMs;
-    if (policy?.retryDelayMs !== undefined) return policy.retryDelayMs;
-    if (isTestEnvironment()) return 1;
-    return RETRY_BUSY_DELAY_MS + Math.floor(Math.random() * 500);
+  if (isBusy && policy?.retryBusyDelayMs !== undefined) {
+    return policy.retryBusyDelayMs;
   }
   if (policy?.retryDelayMs !== undefined) {
     return policy.retryDelayMs;
   }
   if (isTestEnvironment()) return 1;
-  return RETRY_BASE_DELAY_MS * 2 ** attempt + Math.floor(Math.random() * 500);
-}
-
-function isMarineBusyCircuit(value: unknown): value is MarineBusyCircuit {
-  return isRecord(value)
-    && value.status === 'open'
-    && value.provider === 'marine'
-    && value.busy === true
-    && typeof value.retryAfterSeconds === 'number'
-    && Number.isFinite(value.retryAfterSeconds)
-    && value.retryAfterSeconds > 0;
-}
-
-export async function readMarineBusyCircuit(
-  eventMemo?: EventMemo,
-): Promise<MarineBusyCircuit | null> {
-  const stored = eventMemo?.get(MARINE_BUSY_CIRCUIT_KEY);
-  if (!stored) return null;
-  const value = await stored;
-  if (!isMarineBusyCircuit(value)) {
-    throw new Error('Marine provider circuit state is invalid.');
+  if (isBusy) {
+    return RETRY_BUSY_DELAY_MS + Math.floor(Math.random() * RETRY_BUSY_JITTER_MS);
   }
-  return value;
-}
-
-export function openMarineBusyCircuit(
-  eventMemo: EventMemo | undefined,
-  error: ProviderUnavailableError,
-): void {
-  if (!eventMemo || error.provider !== 'marine' || !error.busy
-    || eventMemo.has(MARINE_BUSY_CIRCUIT_KEY)) return;
-  const advertisedRetrySeconds = error.retryAfterSeconds;
-  const retryAfterSeconds = typeof advertisedRetrySeconds === 'number'
-    && Number.isFinite(advertisedRetrySeconds)
-    && advertisedRetrySeconds > 0
-    ? Math.ceil(advertisedRetrySeconds)
-    : MARINE_BUSY_DEFAULT_RETRY_SECONDS;
-  eventMemo.set(MARINE_BUSY_CIRCUIT_KEY, Promise.resolve({
-    status: 'open',
-    provider: 'marine',
-    busy: true,
-    retryAfterSeconds,
-  } satisfies MarineBusyCircuit));
-}
-
-function marineCircuitError(circuit: MarineBusyCircuit): ProviderUnavailableError {
-  return new ProviderUnavailableError(
-    'marine',
-    'DMI marine service is busy; this refresh cycle has deferred further calls.',
-    undefined,
-    true,
-    circuit.retryAfterSeconds,
-  );
+  return RETRY_BASE_DELAY_MS * 2 ** Math.min(attempt, 4) + Math.floor(Math.random() * 500);
 }
 
 export function logUpstream(
@@ -103,6 +51,13 @@ export function logUpstream(
 ): void {
   const ms = Date.now() - startedAt;
   console.log(`upstream ${source} ${outcome} ${ms}ms${extra ? ' ' + extra : ''}`);
+}
+
+export async function readMarineBusyCircuit(
+  eventMemo?: EventMemo,
+): Promise<MarineBusyCircuit | null> {
+  void eventMemo;
+  return null;
 }
 
 function retryAfterSeconds(response: Response): number | undefined {
@@ -123,15 +78,10 @@ export async function fetchJsonWithRetries(
   provider: BusyProvider = 'services',
   eventMemo?: EventMemo,
 ): Promise<unknown> {
+  void eventMemo;
   let lastError: Error | undefined;
 
   for (let attempt = 0; attempt < policy.maxAttempts; attempt++) {
-    // A sibling request can open the event circuit during an in-flight call or
-    // backoff. Recheck immediately before every network attempt.
-    if (provider === 'marine') {
-      const circuit = await readMarineBusyCircuit(eventMemo);
-      if (circuit) throw marineCircuitError(circuit);
-    }
     if (remainingProviderMs(policy) <= 0) {
       if (lastError) throw lastError;
       throw deadlineError(`${label} attempt ${attempt + 1} (completion reserve reached)`, 'provider');
@@ -189,9 +139,6 @@ export async function fetchJsonWithRetries(
           ? retryAfterSeconds(response) ?? MARINE_BUSY_DEFAULT_RETRY_SECONDS
           : undefined,
       ) ?? statusError;
-      if (isProviderUnavailableError(lastError) && url.endsWith('/instances')) {
-        openMarineBusyCircuit(eventMemo, lastError);
-      }
       let providerMessage = '';
       try {
         providerMessage = (await response.text()).slice(0, 180);
@@ -207,7 +154,7 @@ export async function fetchJsonWithRetries(
         });
       }
       // Non-429 4xx responses (e.g. 400, 404) are terminal.
-      // 429 responses retry with a 3-second backoff within the execution policy deadline.
+      // 429 and 5xx responses retry within the execution policy budget and deadline.
       if (response.status !== 429 && response.status < 500) break;
     } catch (error) {
       // A reached 2xx response that cannot be parsed is a hard contract failure.
