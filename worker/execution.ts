@@ -73,7 +73,7 @@ export function cronExecutionPolicy(
   return executionPolicy({
     deadlineAt: Math.min(tickDeadlineAt, nowMs + locationBudgetMs),
     fetchTimeoutMs: Math.min(CRON_FETCH_TIMEOUT_MS, locationBudgetMs),
-    maxAttempts: Math.max(1, Math.floor(locationBudgetMs / 5_000)),
+    maxAttempts: Math.max(1, Math.floor(locationBudgetMs / 3_000)),
     completionReserveMs: Math.min(
       CRON_COMPLETION_RESERVE_MS,
       Math.floor(locationBudgetMs / 4),

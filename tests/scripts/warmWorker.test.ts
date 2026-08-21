@@ -1237,7 +1237,7 @@ describe('Worker deployment warm-up', () => {
     );
   });
 
-  it('pauses a busy cold cycle after one city and resumes through ready cities next cycle', async () => {
+  it('continues through all cold cities when busy and resumes through ready cities next cycle', async () => {
     const contract = await loadReleaseContract();
     const locations = contract.locations;
     const locationIds = locations.map(({ id }) => id);
@@ -1257,10 +1257,6 @@ describe('Worker deployment warm-up', () => {
             EXPECTED_WORKER_VERSION_ID,
             exactReleaseHeaders(contract.release, true),
           );
-        }
-        const expectedInitializingId = cycle === 1 ? locationIds[0] : locationIds[2];
-        if (locationId !== expectedInitializingId) {
-          return json(response, 500, { error: `unexpected warm request for ${locationId}` });
         }
         const retryAfter = cycle === 1 ? 120 : 300;
         return json(
@@ -1307,12 +1303,12 @@ describe('Worker deployment warm-up', () => {
     expect(firstResult).toMatchObject({
       readyForPromotion: false,
       waitingLocationIds: locationIds,
-      retryAfterSeconds: 600,
+      retryAfterSeconds: 120,
       targetReadyLocationIds: [],
       initializingLocationIds: locationIds,
     });
     expect(requests).toEqual([
-      `/api/v1/forecast/${locationIds[0]}?warm=1`,
+      ...locationIds.map((id) => `/api/v1/forecast/${id}?warm=1`),
       '/health',
     ]);
 
@@ -1323,20 +1319,18 @@ describe('Worker deployment warm-up', () => {
     expect(secondResult).toMatchObject({
       readyForPromotion: false,
       waitingLocationIds: locationIds.slice(2),
-      retryAfterSeconds: 600,
+      retryAfterSeconds: 300,
       targetReadyLocationIds: locationIds.slice(0, 2),
       initializingLocationIds: locationIds.slice(2),
-      transientLocationIds: [locationIds[2]],
+      transientLocationIds: locationIds.slice(2),
     });
     expect(requests).toEqual([
-      `/api/v1/forecast/${locationIds[0]}?warm=1`,
-      `/api/v1/forecast/${locationIds[1]}?warm=1`,
-      `/api/v1/forecast/${locationIds[2]}?warm=1`,
+      ...locationIds.map((id) => `/api/v1/forecast/${id}?warm=1`),
       '/health',
     ]);
   });
 
-  it('gives every cold location first chance across four ten-minute retry buckets', async () => {
+  it('probes all cold locations during progressive warm cycles', async () => {
     const contract = await loadReleaseContract();
     const locations = contract.locations;
     const locationIds = locations.map(({ id }) => id);
@@ -1391,14 +1385,15 @@ describe('Worker deployment warm-up', () => {
         readyForPromotion: false,
         waitingLocationIds: locationIds,
         initializingLocationIds: locationIds,
-        transientLocationIds: [locationIds[bucket]],
+        transientLocationIds: locationIds,
       });
     }
 
-    expect(requestsByCycle).toEqual(locationIds.map((id) => [
-      `/api/v1/forecast/${id}?warm=1`,
-      '/health',
-    ]));
+    expect(requestsByCycle).toHaveLength(locationIds.length);
+    for (const cycleReqs of requestsByCycle) {
+      expect(cycleReqs).toHaveLength(locationIds.length + 1);
+      expect(cycleReqs[cycleReqs.length - 1]).toBe('/health');
+    }
   });
 
   it('returns promotion-ready only after exact forecasts and exact health agree', async () => {

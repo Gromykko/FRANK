@@ -18,7 +18,7 @@ import {
 import { errorWithStatus, isRecord } from './validation';
 
 const RETRY_BASE_DELAY_MS = 1_500;
-const RETRY_BUSY_DELAY_MS = 5_000;
+const RETRY_BUSY_DELAY_MS = 3_000;
 const MARINE_BUSY_CIRCUIT_KEY = 'provider-circuit:marine-busy';
 export const MARINE_BUSY_DEFAULT_RETRY_SECONDS = 10 * 60;
 

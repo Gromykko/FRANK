@@ -13,9 +13,9 @@ const DEFAULT_ATTEMPTS = 3;
 // 24s build. Seven seconds of release-runner/network margin keeps the deploy
 // gate from aborting a Worker that is still within its own bounded contract.
 const DEFAULT_TIMEOUT_MS = 35_000;
-const DEFAULT_RETRY_DELAY_MS = 2_000;
+const DEFAULT_RETRY_DELAY_MS = 3_000;
 const DEFAULT_HEALTH_PROPAGATION_TIMEOUT_MS = 90_000;
-const DEFAULT_HEALTH_RETRY_DELAY_MS = 5_000;
+const DEFAULT_HEALTH_RETRY_DELAY_MS = 3_000;
 const DEFAULT_WAIT_RETRY_AFTER_SECONDS = 10 * 60;
 const PROGRESSIVE_WARM_ROTATION_BUCKET_MS = 10 * 60_000;
 const MAX_RESPONSE_BODY_CHARS = 64 * 1024;
@@ -1393,9 +1393,8 @@ export async function warmWorker({
     });
     if (result === 'initializing' && requireTargetReadyAll && allowWaiting && !readOnly) {
       logger.warn(
-        `[warm] forecast ${locationId}: exact initialization pauses further city warming; checking aggregate health`,
+        `[warm] forecast ${locationId}: exact initialization; continuing to next city`,
       );
-      break;
     }
   }
 

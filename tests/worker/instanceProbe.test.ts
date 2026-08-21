@@ -236,7 +236,7 @@ describe('cronExecutionPolicy', () => {
       deadlineAt: now + 70_000,
       hardDeadlineAt: now + 70_000,
       fetchTimeoutMs: 50_000,
-      maxAttempts: 14,
+      maxAttempts: 23,
       completionReserveMs: 10_000,
       retryDelayMs: undefined,
       retryBusyDelayMs: undefined,
@@ -250,7 +250,7 @@ describe('cronExecutionPolicy', () => {
     expect(policy).toMatchObject({
       deadlineAt: now + 20_000,
       fetchTimeoutMs: 20_000,
-      maxAttempts: 4,
+      maxAttempts: 6,
       completionReserveMs: 5_000,
     });
   });
