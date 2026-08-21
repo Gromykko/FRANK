@@ -35,12 +35,21 @@ export interface ExecutionPolicy {
 export type ExecutionDeadlineError = Error & { deadlineKind: DeadlineKind };
 
 export function executionPolicy(policy: ExecutionPolicyInput = {}): ExecutionPolicy {
+  const deadline = policy.deadlineAt ?? Number.POSITIVE_INFINITY;
+  const reserve = Math.max(0, policy.completionReserveMs ?? 0);
+  const availableMs = Number.isFinite(deadline) ? Math.max(0, deadline - Date.now() - reserve) : 0;
+  const dynamicAttempts = availableMs >= 6_000
+    ? Math.max(1, Math.floor(availableMs / 3_000))
+    : DEFAULT_MAX_FETCH_ATTEMPTS;
+
   return {
-    deadlineAt: policy.deadlineAt ?? Number.POSITIVE_INFINITY,
+    deadlineAt: deadline,
     hardDeadlineAt: policy.hardDeadlineAt ?? policy.deadlineAt ?? Number.POSITIVE_INFINITY,
     fetchTimeoutMs: policy.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS,
-    maxAttempts: policy.maxAttempts ?? DEFAULT_MAX_FETCH_ATTEMPTS,
-    completionReserveMs: Math.max(0, policy.completionReserveMs ?? 0),
+    maxAttempts: policy.maxAttempts !== undefined && policy.maxAttempts > 1
+      ? policy.maxAttempts
+      : (policy.maxAttempts === 1 && availableMs < 6_000 ? 1 : dynamicAttempts),
+    completionReserveMs: reserve,
     retryDelayMs: policy.retryDelayMs,
     retryBusyDelayMs: policy.retryBusyDelayMs,
   };
