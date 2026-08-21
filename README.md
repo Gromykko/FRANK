@@ -32,30 +32,42 @@ Provider attribution is also shown in the app. Forecast values are model-grid es
 ## How it works
 
 ```text
-Browser / installed PWA
+Browser / Installed PWA
         │
-        ├── app files ─────────────── GitHub Pages
+        ├── App shell assets ────────── GitHub Pages (Offline PWA)
         │
-        └── versioned forecast GET ─ Cloudflare Worker ── Cloudflare KV
-                                            │
-                                  cron or release warm-up
-                                            │
-                              MET Norway · DMI · MeteoAlarm
+        └── Versioned forecast GET ──── Cloudflare Worker ─── Cloudflare KV
+                                                │
+                                       5-minute cron / warm-up
+                                                │
+                                 MET Norway · DMI · MeteoAlarm
 ```
 
-Visitors only read completed snapshots from the Worker. They do not trigger calls to weather providers. Cloudflare cron considers production locations every ten minutes, but contacts a provider only when its own source policy says work is due: MET follows its expiry window, while DMI probing follows six-hour model publication/completion windows and backoff. A separate ten-minute GitHub schedule resumes or repairs unfinished coordinated releases; it is not a forecast cron.
+* **Zero-Upstream Public Traffic**: Visitors only read pre-built, verified snapshots from Cloudflare's edge CDN memory and KV storage. Browser requests never trigger upstream provider calls.
+* **5-Minute Ingestion Cron**: A Cloudflare cron wakes up every 5 minutes (`*/5 * * * *`). It probes DMI model run catalogs, fetches hourly MET Norway updates, and checks MeteoAlarm emergency warning feeds.
+* **Write-on-Change Storage Optimization**: Forecast data is only re-written to Cloudflare KV when upstream weather models actually change, preserving daily KV write quotas while keeping status timestamps fresh.
+* **Resilient Multi-Tier Fallbacks**: If DMI or MET experiences a temporary rate limit or outage, FRANK automatically falls back to held previous simulations and retained raw ingredients, keeping forecasts live with clear degradation indicators.
+* **Client-Side Safety Engine**: Risk assessment calculations (wind, gusts, water level, waves, daylight, water temperature) run 100% locally in the paddler's browser against their own chosen safety profile.
 
-Cloudflare KV holds prepared forecasts and last-good provider ingredients. Browser storage holds the selected location, display preferences, safety limits, and validated offline forecast copies. Those are separate layers: clearing browser data does not clear Worker KV, and rolling back Worker code does not roll back KV.
+## Production Deployment & CI/CD
 
-The safety engine runs entirely in the browser. It applies every enabled rule independently and only raises a rating; one passing rule cannot cancel a failing one. A missing enabled safety input produces at least an amber result. Missing optional planner data blocks only the preference that requires it; it is never converted to a safe-looking zero.
+Production is continuously validated and deployed via [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml):
 
-## Production Deployment
+- **Automated Validation**: Every commit runs full typechecking, linting (`oxlint`), 500+ Vitest unit/integration tests, Miniflare Cloudflare Worker runtime tests, model contract verification, and 28 Playwright cross-browser/PWA end-to-end tests.
+- **Atomic Deployment**: When merged to `main`, the Cloudflare Worker deploys to 100% production traffic and GitHub Pages deploys the client bundle.
+- **5-Minute Cron Maintenance**: Scheduled edge crons maintain shared raw provider ingredients (`frank:raw:...`) and immutable generation forecasts (`frank:forecast-release:...`).
 
-Production is deployed automatically via [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml).
+## Cloudflare Free Tier Quotas & Guardrails
 
-- All pushes and pull requests run the full validation suite (lint, typechecks, unit tests, worker runtime tests, release contract verification, and Playwright end-to-end tests).
-- When merged to `main`, the workflow deploys the Cloudflare Worker directly to 100% production and publishes the frontend artifact to GitHub Pages.
-- Cloudflare crons run every 10 minutes to populate and maintain the shared raw provider data (`frank:raw:...`) and generation-scoped forecasts (`frank:forecast-release:...`).
+FRANK is engineered to operate 100% within Cloudflare's Free Tier with wide safety margins:
+
+| Metric | Free Tier Allowance | FRANK Usage | Utilization |
+|---|---|---|---|
+| **Worker Invocations** | 100,000 / day | 288 cron ticks + visitors | < 1% |
+| **KV Storage Reads** | 100,000 / day | ~2,300 reads / day | ~2.3% |
+| **KV Storage Writes** | 1,000 / day | ~112 writes / day (Write-on-Change) | ~11.2% |
+| **External Subrequests** | Max 50 per invocation | Hard-capped at **45** | Safe (< 50 limit) |
+| **Edge Cache Reads** | Unlimited | Unlimited | 0 KV cost |
 
 ## Privacy
 
