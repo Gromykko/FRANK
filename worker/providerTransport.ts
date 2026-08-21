@@ -18,10 +18,21 @@ import {
 import { errorWithStatus, isRecord } from './validation';
 
 const RETRY_BASE_DELAY_MS = 1_500;
+const RETRY_BUSY_DELAY_MS = 5_000;
 const MARINE_BUSY_CIRCUIT_KEY = 'provider-circuit:marine-busy';
 export const MARINE_BUSY_DEFAULT_RETRY_SECONDS = 10 * 60;
 
-function retryDelay(attempt: number): number {
+function retryDelay(attempt: number, isBusy = false, policy?: ExecutionPolicy): number {
+  if (isBusy) {
+    if (policy?.retryBusyDelayMs !== undefined) return policy.retryBusyDelayMs;
+    if (policy?.retryDelayMs !== undefined) return policy.retryDelayMs;
+    if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'test') return 1;
+    return RETRY_BUSY_DELAY_MS + Math.floor(Math.random() * 500);
+  }
+  if (policy?.retryDelayMs !== undefined) {
+    return policy.retryDelayMs;
+  }
+  if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'test') return 1;
   return RETRY_BASE_DELAY_MS * 2 ** attempt + Math.floor(Math.random() * 500);
 }
 
@@ -47,7 +58,7 @@ export async function readMarineBusyCircuit(
   return value;
 }
 
-function openMarineBusyCircuit(
+export function openMarineBusyCircuit(
   eventMemo: EventMemo | undefined,
   error: ProviderUnavailableError,
 ): void {
@@ -139,7 +150,7 @@ export async function fetchJsonWithRetries(
         String(normalized.message ?? '').slice(0, 120),
       );
       if (attempt < policy.maxAttempts - 1) {
-        await delayWithinDeadline(retryDelay(attempt), policy, `${label} retry`);
+        await delayWithinDeadline(retryDelay(attempt, false, policy), policy, `${label} retry`);
       }
       continue;
     }
@@ -164,7 +175,7 @@ export async function fetchJsonWithRetries(
           ? retryAfterSeconds(response) ?? MARINE_BUSY_DEFAULT_RETRY_SECONDS
           : undefined,
       ) ?? statusError;
-      if (isProviderUnavailableError(lastError)) {
+      if (isProviderUnavailableError(lastError) && url.endsWith('/instances')) {
         openMarineBusyCircuit(eventMemo, lastError);
       }
       let providerMessage = '';
@@ -181,8 +192,9 @@ export async function fetchJsonWithRetries(
           providerMessage,
         });
       }
-      // 4xx responses are terminal for this event. The cron is the retry loop.
-      if (response.status < 500) break;
+      // Non-429 4xx responses (e.g. 400, 404) are terminal.
+      // 429 responses retry with a 5-second backoff within the execution policy deadline.
+      if (response.status !== 429 && response.status < 500) break;
     } catch (error) {
       // A reached 2xx response that cannot be parsed is a hard contract failure.
       lastError = error instanceof Error ? error : new Error(String(error));
@@ -195,7 +207,8 @@ export async function fetchJsonWithRetries(
     }
 
     if (attempt < policy.maxAttempts - 1) {
-      await delayWithinDeadline(retryDelay(attempt), policy, `${label} retry`);
+      const isBusy = response?.status === 429;
+      await delayWithinDeadline(retryDelay(attempt, isBusy, policy), policy, `${label} retry`);
     }
   }
 

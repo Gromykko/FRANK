@@ -180,6 +180,7 @@ describe('fetchLatestInstanceForCollections memo', () => {
       deadlineAt: Date.now() + 1_000,
       fetchTimeoutMs: 15_000,
       maxAttempts: 3,
+      retryDelayMs: 1_500,
     }, new Map());
     const assertion = expect(pending).rejects.toThrow(/deadline/i);
 
@@ -235,8 +236,10 @@ describe('cronExecutionPolicy', () => {
       deadlineAt: now + 70_000,
       hardDeadlineAt: now + 70_000,
       fetchTimeoutMs: 50_000,
-      maxAttempts: 1,
+      maxAttempts: 14,
       completionReserveMs: 10_000,
+      retryDelayMs: undefined,
+      retryBusyDelayMs: undefined,
     });
   });
 
@@ -247,7 +250,7 @@ describe('cronExecutionPolicy', () => {
     expect(policy).toMatchObject({
       deadlineAt: now + 20_000,
       fetchTimeoutMs: 20_000,
-      maxAttempts: 1,
+      maxAttempts: 4,
       completionReserveMs: 5_000,
     });
   });

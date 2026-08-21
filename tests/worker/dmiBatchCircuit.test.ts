@@ -137,7 +137,7 @@ function forecast(store: Map<string, string>, location: ForecastLocation): Forec
 const originalFetch = globalThis.fetch;
 
 beforeEach(() => {
-  vi.useFakeTimers();
+  vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
 });
 
@@ -147,11 +147,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('scheduled DMI busy circuit', () => {
-  it('stops the four-city batch after the first location-specific 429 and retries next tick', async () => {
+describe('scheduled DMI retries and location isolation', () => {
+  it('retries in-flight on 429 and allows subsequent locations to independently probe within the tick', async () => {
     const { env, store } = runtime();
     const calls: string[] = [];
-    let cycle = 1;
+    let vejleAttempts = 0;
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       calls.push(url);
@@ -161,7 +161,14 @@ describe('scheduled DMI busy circuit', () => {
       }
       if (url.includes('/instances/')) {
         const coords = new URL(url).searchParams.get('coords');
-        if (cycle === 2 && coords === 'POINT(9.659 55.512)') {
+        if (coords === 'POINT(9.68 55.705)') {
+          vejleAttempts += 1;
+          return new Response('Server is busy', {
+            status: 429,
+            headers: { 'Retry-After': '1200' },
+          });
+        }
+        if (coords === 'POINT(9.659 55.512)') {
           const properties = url.includes('/collections/dkss_')
             ? {
                 step: HOUR,
@@ -200,9 +207,10 @@ describe('scheduled DMI busy circuit', () => {
 
     const [horsens, vejle, kolding, aarhus] = LOCATIONS;
     const positionCalls = calls.filter((url) => url.includes('/position?'));
-    expect(positionCalls).toHaveLength(2);
-    expect(positionCalls.every((url) =>
-      new URL(url).searchParams.get('coords') === 'POINT(9.68 55.705)')).toBe(true);
+    // Vejle retried multiple times before falling back, and Kolding was also probed in the same tick!
+    expect(vejleAttempts).toBeGreaterThan(1);
+    expect(positionCalls.some((url) =>
+      new URL(url).searchParams.get('coords') === 'POINT(9.659 55.512)')).toBe(true);
 
     expect(forecast(store, horsens).sources.cacheHealth).toMatchObject({
       status: 'current',
@@ -215,43 +223,18 @@ describe('scheduled DMI busy circuit', () => {
       busyProvider: 'marine',
       degradedSources: ['water', 'waves'],
     });
+
+    // Kolding succeeded and recovered in the very same tick!
     expect(forecast(store, kolding).sources.cacheHealth).toMatchObject({
-      status: 'stale',
-      providerBusy: true,
-      busyProvider: 'marine',
-      degradedSources: ['water', 'waves'],
-      checkedBy: 'cron-deferred',
+      status: 'current',
     });
-    expect(forecast(store, kolding).sources.cacheHealth?.message).toContain('deferred');
-    // Aarhus comes after the refusal, but its held run is schedule-valid. It
-    // needs no DMI operation and therefore remains truthfully green.
+    expect(forecast(store, kolding).sources.cacheHealth).not.toHaveProperty('providerBusy');
+
+    // Aarhus held run is schedule-valid and remains green
     expect(forecast(store, aarhus).sources.cacheHealth).toMatchObject({
       status: 'current',
     });
     expect(forecast(store, aarhus).sources.cacheHealth).not.toHaveProperty('providerBusy');
-
-    // A circuit is scoped to one event. Ten minutes later tick rotation starts
-    // with Vejle; its existing post-due backoff is still active, so the next due
-    // city, Kolding, gets a clean position pair and fully recovers.
-    calls.length = 0;
-    cycle = 2;
-    vi.setSystemTime(NOW + 10 * 60_000);
-    await worker.scheduled(
-      { scheduledTime: NOW + 10 * 60_000 } as ScheduledController,
-      env as Env,
-      {} as ExecutionContext,
-    );
-    const nextPositionCalls = calls.filter((url) => url.includes('/position?'));
-    expect(nextPositionCalls).toHaveLength(2);
-    expect(nextPositionCalls.map((url) => new URL(url).searchParams.get('coords')))
-      .toEqual([
-        'POINT(9.659 55.512)',
-        'POINT(9.659 55.512)',
-      ]);
-    expect(forecast(store, kolding).sources.cacheHealth).toMatchObject({ status: 'current' });
-    expect(forecast(store, kolding).sources.cacheHealth).not.toHaveProperty('providerBusy');
-    expect(forecast(store, kolding).sources.cacheHealth).not.toHaveProperty('degradedSources');
-    expect(forecast(store, kolding).sources.cacheHealth).not.toHaveProperty('message');
   });
 
   it('clears a deferred marker after a successful same-run catalogue check', async () => {

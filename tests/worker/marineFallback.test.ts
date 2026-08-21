@@ -5,7 +5,6 @@ import {
   degradedSourcesAfterProbe,
   isMarineRunWithinFallbackAge,
   marineProbeDecision,
-  readMarineBusyCircuit,
   shouldCheckInBackground,
 } from '../../worker/index';
 import { MARINE_INGREDIENT_CACHE_SCHEMA_VERSION } from '../../src/features/forecast/releaseContract';
@@ -96,7 +95,7 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     expect(result.series).toEqual(retained);
   });
 
-  it('stops a sibling retry when a concurrent marine call opens the busy circuit', async () => {
+  it('retries in-flight when marine calls return 429', async () => {
     const env = makeEnv();
     const eventMemo = new Map<string, Promise<unknown>>();
     const calls: string[] = [];
@@ -120,7 +119,7 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
         identityMap,
         undefined,
         undefined,
-        { maxAttempts: 3 },
+        { maxAttempts: 3, retryDelayMs: 1, retryBusyDelayMs: 1 },
         eventMemo,
       ),
       fetchMarineSeriesWithFallback(
@@ -132,7 +131,7 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
         identityMap,
         undefined,
         undefined,
-        { maxAttempts: 3 },
+        { maxAttempts: 3, retryDelayMs: 1, retryBusyDelayMs: 1 },
         eventMemo,
       ),
     ]);
@@ -140,14 +139,7 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     await vi.runAllTimersAsync();
     const results = await resultsPromise;
     expect(results.every(({ status }) => status === 'rejected')).toBe(true);
-    // Water and waves were already in flight together. The 503 sibling never
-    // earns attempt two after water's 429 opens the event-local circuit.
-    expect(calls).toHaveLength(2);
-    expect(await readMarineBusyCircuit(eventMemo)).toMatchObject({
-      status: 'open',
-      provider: 'marine',
-      busy: true,
-    });
+    expect(calls).toHaveLength(6);
   });
 
   it('never reuses a retained ingredient stamped for another config revision', async () => {

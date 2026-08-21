@@ -4,7 +4,7 @@
 // beyond the former 15-second cutoff, so use the whole defensible provider
 // window. Cron keeps its separate explicit 50-second timeout.
 export const DEFAULT_FETCH_TIMEOUT_MS = 20_000;
-const DEFAULT_MAX_FETCH_ATTEMPTS = 3;
+const DEFAULT_MAX_FETCH_ATTEMPTS = 1;
 const CRON_FETCH_TIMEOUT_MS = 50_000;
 const CRON_LOCATION_BUDGET_MS = 70_000;
 const CRON_COMPLETION_RESERVE_MS = 10_000;
@@ -18,6 +18,8 @@ export interface ExecutionPolicyInput {
   fetchTimeoutMs?: number;
   maxAttempts?: number;
   completionReserveMs?: number;
+  retryDelayMs?: number;
+  retryBusyDelayMs?: number;
 }
 
 export interface ExecutionPolicy {
@@ -26,6 +28,8 @@ export interface ExecutionPolicy {
   fetchTimeoutMs: number;
   maxAttempts: number;
   completionReserveMs: number;
+  retryDelayMs?: number;
+  retryBusyDelayMs?: number;
 }
 
 export type ExecutionDeadlineError = Error & { deadlineKind: DeadlineKind };
@@ -37,6 +41,8 @@ export function executionPolicy(policy: ExecutionPolicyInput = {}): ExecutionPol
     fetchTimeoutMs: policy.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS,
     maxAttempts: policy.maxAttempts ?? DEFAULT_MAX_FETCH_ATTEMPTS,
     completionReserveMs: Math.max(0, policy.completionReserveMs ?? 0),
+    retryDelayMs: policy.retryDelayMs,
+    retryBusyDelayMs: policy.retryBusyDelayMs,
   };
 }
 
@@ -67,7 +73,7 @@ export function cronExecutionPolicy(
   return executionPolicy({
     deadlineAt: Math.min(tickDeadlineAt, nowMs + locationBudgetMs),
     fetchTimeoutMs: Math.min(CRON_FETCH_TIMEOUT_MS, locationBudgetMs),
-    maxAttempts: 1,
+    maxAttempts: Math.max(1, Math.floor(locationBudgetMs / 5_000)),
     completionReserveMs: Math.min(
       CRON_COMPLETION_RESERVE_MS,
       Math.floor(locationBudgetMs / 4),
