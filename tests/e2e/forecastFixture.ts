@@ -215,13 +215,43 @@ export async function mockForecastWorker(page: Page): Promise<ForecastMock> {
     });
   };
 
+  const healthHandler = async (route: Route) => {
+    const available = locations.map(({ id }) => id);
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json; charset=utf-8',
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+      },
+      body: JSON.stringify({
+        service: 'frank-forecast',
+        checkedAt: FIXTURE_NOW_ISO,
+        release: {
+          target: { ...CURRENT_RELEASE },
+          allLocationsReady: true,
+          ready: available,
+          available,
+          fallback: [],
+          missing: [],
+        },
+      }),
+    });
+  };
+
   // Match the resource path rather than one hostname. A developer's local
   // VITE_FORECAST_WORKER_BASE must never make this deterministic suite escape
   // to a live Worker or provider.
   const routePattern = '**/forecast/**';
+  const healthRoutePattern = '**/health';
   await page.route(routePattern, handler);
+  await page.route(healthRoutePattern, healthHandler);
   return {
     requests,
-    stop: () => page.unroute(routePattern, handler),
+    stop: async () => {
+      await page.unroute(routePattern, handler);
+      await page.unroute(healthRoutePattern, healthHandler);
+    },
   };
 }
