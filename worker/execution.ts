@@ -8,8 +8,8 @@ const DEFAULT_MAX_FETCH_ATTEMPTS = 1;
 const CRON_FETCH_TIMEOUT_MS = 15_000;
 const CRON_LOCATION_MIN_BUDGET_MS = 15_000;
 const CRON_COMPLETION_RESERVE_MS = 8_000;
-export const CRON_TICK_BUDGET_MS = 5 * 60_000;
-export const CRON_TOTAL_ATTEMPTS_BUDGET = 200;
+export const CRON_TICK_BUDGET_MS = 4 * 60_000;
+export const CRON_TOTAL_ATTEMPTS_BUDGET = 45;
 export const DMI_BUSY_RETRY_DELAY_MS = 1_200;
 
 export type DeadlineKind = 'hard' | 'provider';

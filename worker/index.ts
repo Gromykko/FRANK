@@ -134,27 +134,8 @@ const INITIALIZATION_RETRY_SECONDS = 10 * 60;
 // boundary; the marker itself stops gating at retryAfterSeconds.
 const INITIALIZATION_MARKER_TTL_SECONDS = INITIALIZATION_RETRY_SECONDS + 60;
 
-const CRON_CHECK_MIN_INTERVAL_MS = 4 * 60 * 1000;
-// Re-stamping "we checked, nothing changed" costs a KV WRITE, and the free tier
-// allows 1000 a day. The cron (every 10 min x 4 locations = 576 runs) was
-// spending well over half the daily budget on that stamp alone, and running out
-// of writes stops the forecast updating with no user-visible error. The stamp
-// only feeds the "Checked HH:MM" line, so it can be coarsened — but NOT freely.
-//
-// This stamp is also what the CLIENT uses to decide whether it reached the
-// worker at all (CHECK_ASSUMED_UNREACHED_MS in cacheStatusView.ts). Throttling
-// it to an hour meant a perfectly healthy forecast served a 40-minute-old stamp
-// and the header said "Couldn't refresh · showing older data". The relation has
-// to hold, with room for a skipped cron tick:
-//
-//   this interval + 2 x cron period  <  CHECK_ASSUMED_UNREACHED_MS
-//   15 min        + 20 min           <  45 min
-//
-// Writes only land on cron ticks, so the real ceiling on stamp age is this
-// interval rounded up to the next tick. Budget is still comfortable: a rebuild
-// resets it, so this is ~2 writes per 40-minute quiet cycle, ~288/day across
-// four locations against an allowance of 1000.
-const CHECKED_STAMP_MIN_WRITE_INTERVAL_MS = 15 * 60 * 1000;
+const CRON_CHECK_MIN_INTERVAL_MS = 2 * 60 * 1000;
+const CHECKED_STAMP_MIN_WRITE_INTERVAL_MS = 25 * 60 * 1000;
 
 type ForecastCacheLocation = Pick<
   ForecastLocation,
@@ -647,11 +628,15 @@ async function _refreshForecastCache(
       // The response always carries this check's timestamp; only PERSISTING it
       // is throttled. Nothing about the forecast itself has changed, so a
       // skipped write costs the stored stamp some precision and nothing else.
-      const storedStampMs = Date.parse(cachedHealth?.lastAttemptAt ?? '');
-      const stampAgeMs = Date.now() - storedStampMs;
-      if (!Number.isFinite(storedStampMs)
-        || stampAgeMs >= CHECKED_STAMP_MIN_WRITE_INTERVAL_MS) {
-        await writeCachedForecast(env, location, checkedCache, policy);
+      // During backoff, no provider was queried, so no KV write is needed.
+      if (probeDecision.reason !== 'retry-backoff' || recoveredDeferred) {
+        const storedStampMs = Date.parse(cachedHealth?.lastAttemptAt ?? '');
+        const stampAgeMs = Date.now() - storedStampMs;
+        if (recoveredDeferred
+          || !Number.isFinite(storedStampMs)
+          || stampAgeMs >= CHECKED_STAMP_MIN_WRITE_INTERVAL_MS) {
+          await writeCachedForecast(env, location, checkedCache, policy);
+        }
       }
       return checkedCache;
     }

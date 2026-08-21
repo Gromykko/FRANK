@@ -11,7 +11,7 @@ import { shouldPersistFailureState } from '../../worker/index';
 // is the only signal /status and the client get, so throttling that would hide
 // an outage instead of an idle repeat.
 
-const FIFTEEN_MIN = 15 * 60 * 1000;
+const THROTTLE_WINDOW_MS = 25 * 60 * 1000;
 const NOW = Date.parse('2026-08-08T12:00:00Z');
 const stampedAgo = (ms: number) => new Date(NOW - ms).toISOString();
 
@@ -43,7 +43,7 @@ describe('shouldPersistFailureState', () => {
   });
 
   it('writes an identical repeat once the window has passed', () => {
-    const prev = failure({ lastAttemptAt: stampedAgo(FIFTEEN_MIN + 1000) });
+    const prev = failure({ lastAttemptAt: stampedAgo(THROTTLE_WINDOW_MS + 1000) });
     expect(shouldPersistFailureState(prev, failure(), NOW)).toBe(true);
   });
 

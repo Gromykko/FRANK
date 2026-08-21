@@ -17,10 +17,10 @@ describe('release generation identity and storage isolation', () => {
   it('keeps the independent release identities explicit', () => {
     expect(RELEASE_IDENTITY).toMatchObject({
       apiSchemaVersion: 1,
-      modelRevision: 10,
+      modelRevision: 11,
       assembledCacheSchema: 1,
       marineCacheSchema: 1,
-      dataGenerationId: 'api1-model10',
+      dataGenerationId: 'api1-model11',
       payloadVersion: 7,
       metRawCacheSchemaVersion: 1,
       initializationStateSchemaVersion: 2,
@@ -37,7 +37,7 @@ describe('release generation identity and storage isolation', () => {
     expect(derivedKeys.every((key) => key.startsWith(`${generationKeyPrefix(CURRENT_RELEASE)}:`)))
       .toBe(true);
     expect(generationKeyPrefix(CURRENT_RELEASE)).toBe(
-      'frank:forecast-release:api:v1:model:v10:generation:api1-model10:payload:v7:assembled-cache:v1:marine-cache:v1',
+      'frank:forecast-release:api:v1:model:v11:generation:api1-model11:payload:v7:assembled-cache:v1:marine-cache:v1',
     );
   });
 

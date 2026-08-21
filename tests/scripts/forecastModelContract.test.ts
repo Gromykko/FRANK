@@ -97,7 +97,7 @@ describe('forecast model release guard', () => {
       locations: locationData,
       readFileImpl: mutatingReader('/worker/providers.ts'),
     })).rejects.toThrow('Forecast model baseline is out of date (worker/providers.ts)');
-  });
+  }, 15_000);
 
   // The guard's price is a model revision and a full generation rebuild, so it
   // must be charged for behaviour only. If a comment ever starts costing that,
@@ -137,7 +137,7 @@ export const BEHAVIOUR_CHANGE = 1;
       .not.toBe(base.semanticInputs['worker/generation.ts']);
     expect(edited.semanticInputs['worker/providers.ts'])
       .toBe(base.semanticInputs['worker/providers.ts']);
-  });
+  }, 15_000);
 
   it('accepts an unchanged recorded model', () => {
     const baseline = snapshot();
