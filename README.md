@@ -64,10 +64,24 @@ FRANK is engineered to operate 100% within Cloudflare's Free Tier with wide safe
 | Metric | Free Tier Allowance | FRANK Usage | Utilization |
 |---|---|---|---|
 | **Worker Invocations** | 100,000 / day | 288 cron ticks + visitors | < 1% |
-| **KV Storage Reads** | 100,000 / day | ~2,300 reads / day | ~2.3% |
-| **KV Storage Writes** | 1,000 / day | ~112 writes / day (Write-on-Change) | ~11.2% |
+| **KV Storage Reads** | 100,000 / day | ~2,600 reads / day | ~2.6% |
+| **KV Storage Writes** | 1,000 / day | ~400 writes / day | ~40% |
 | **External Subrequests** | Max 50 per invocation | Hard-capped at **45** | Safe (< 50 limit) |
 | **Edge Cache Reads** | Unlimited | Unlimited | 0 KV cost |
+
+The write figure breaks down as **288 cron heartbeats** (one per tick, fixed) plus
+**~112 write-on-change forecast rebuilds** (variable, four cities). The heartbeat is
+deliberately unconditional: it is the only evidence that the schedule is still running,
+and a change-detected heartbeat would prove nothing.
+
+It replaced a per-city timestamp write that fired every 25 minutes whether or not
+anything had changed — roughly 228 writes/day that this table never counted. So the
+honest comparison is ~340/day before, ~400/day now, in exchange for a "last checked"
+figure that is accurate to five minutes instead of twenty-five.
+
+The important property is the shape rather than the number: heartbeat cost is **flat in
+the number of cities**, so a fifth city adds only its own rebuild writes instead of
+another ~57/day. Headroom is roughly 10–15 cities.
 
 ## Privacy
 

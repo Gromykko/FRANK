@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { shouldPersistFailureState, withCronAttempt } from '../../worker/index';
+import { healthChanged, shouldPersistFailureState, withCronAttempt } from '../../worker/index';
 
 // The KV write budget is 1,000/day for the whole app. This predicate is what
 // stands between a provider outage and an emptied allowance: a stale cache
@@ -128,8 +128,57 @@ describe('withCronAttempt', () => {
     expect(attemptOf(result)).toBe(stale);
   });
 
+  // A clock fault must not blank the label this whole mechanism exists to fill:
+  // a negative age renders as an empty string in the header.
+  it('refuses a stamp from the future', () => {
+    const stale = at(THROTTLE_WINDOW_MS);
+    const result = withCronAttempt(
+      payload(stale),
+      'horsens',
+      beat({ horsens: new Date(NOW + 60 * 60 * 1000).toISOString() }),
+      NOW,
+    );
+    expect(attemptOf(result)).toBe(stale);
+  });
+
   it('leaves the payload alone when there is no heartbeat at all', () => {
     const stale = at(THROTTLE_WINDOW_MS);
     expect(attemptOf(withCronAttempt(payload(stale), 'horsens', null))).toBe(stale);
+  });
+});
+
+// This predicate replaced an age-based write ("restamp every 25 minutes"), so
+// it is now the only thing standing between the cron and ~57 wasted writes per
+// city per day. Too eager and the heartbeat's own 288/day stops paying for
+// itself; too lax and a real change to what the health says never reaches
+// storage at all.
+describe('healthChanged', () => {
+  const base = {
+    status: 'current' as const,
+    lastAttemptAt: '2026-08-08T12:00:00.000Z',
+    degradedSources: ['weather', 'water'],
+  };
+
+  it('ignores the timestamp, which the heartbeat carries instead', () => {
+    expect(healthChanged(base, { ...base, lastAttemptAt: '2026-08-08T12:25:00.000Z' }))
+      .toBe(false);
+  });
+
+  it('still spends a write when the health actually says something new', () => {
+    expect(healthChanged(base, { ...base, status: 'stale' })).toBe(true);
+    expect(healthChanged(base, { ...base, message: 'DMI is busy' })).toBe(true);
+    expect(healthChanged(base, { ...base, degradedSources: ['weather'] })).toBe(true);
+  });
+
+  // degradedSources is assembled per provider, so its order carries no meaning.
+  it('does not pay for a reshuffle that says nothing', () => {
+    expect(healthChanged(base, { ...base, degradedSources: ['water', 'weather'] }))
+      .toBe(false);
+  });
+
+  it('treats appearing and disappearing as a change', () => {
+    expect(healthChanged(null, base)).toBe(true);
+    expect(healthChanged(base, null)).toBe(true);
+    expect(healthChanged(null, null)).toBe(false);
   });
 });

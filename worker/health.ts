@@ -1,3 +1,4 @@
+import { CRON_PERIOD_MS } from './execution';
 import type {
   CronHeartbeat,
   HealthLocationEntry,
@@ -971,19 +972,23 @@ export function statusResponse(health: HealthPayload): Response {
     <summary>How to read this instrument</summary>
     <div class="notes-content">
       <p>Last check is the most recent scheduled or authenticated release attempt for the
-      required forecast sources. The schedule runs every 10 minutes, but the timestamp is
-      only written to storage once it is 15 minutes old, because each write comes out of a
-      daily quota. A figure of 15 or 20 minutes therefore does not mean a check was missed.</p>
+      required forecast sources. Every tick records which cities it reached into one shared
+      heartbeat object, so this figure now tracks the ${escapeHtml(Math.round(CRON_PERIOD_MS / 60_000))}-minute
+      schedule closely instead of trailing a storage write that only happened occasionally.</p>
 
-      <p>Each location also runs that cycle independently, so the four rows are normally out
-      of step with each other. One city reading 2 minutes while another reads 11 is the
-      expected picture, not a fault: a location's stamp is also rewritten whenever that
-      location rebuilds, which follows its own MET validity window. Ordinary visits, page
-      reloads and the in-app refresh button only read prepared KV snapshots; they do not
-      contact providers or alter this clock. The cards only line up right after a deploy,
-      when all four are built at once. The alarm sits at
-      ${escapeHtml(health.checkStaleAfterMin)} minutes, well clear of the whole cycle.
+      <p>A city can still read older than the others, and that is the useful signal rather
+      than a fault: a tick that runs out of budget stops before the end of its rotation, and
+      a city in the marine retry-backoff window is deliberately not contacted at all. Both
+      keep their previous timestamp rather than inheriting the tick's, so a row that lags is
+      telling you something real. Ordinary visits, page reloads and the in-app refresh button
+      only read prepared storage snapshots; they do not contact providers or alter this clock.
+      The alarm sits at ${escapeHtml(health.checkStaleAfterMin)} minutes.
       Worst right now: ${escapeHtml(health.oldestCheckAgeMin ?? '?')} minutes.</p>
+
+      <p>Cron heartbeat is the separate question of whether the schedule is running at all.
+      Without it a stalled scheduler is invisible, because every city keeps serving its last
+      good forecast and nothing looks wrong. Last tick:
+      ${escapeHtml(health.cronHeartbeat?.ageMin ?? '?')} minutes ago.</p>
 
       <p>Data age counts from the last successful rebuild, and a figure that sits still is
       normal here. MET declares each forecast valid for about 30 minutes through its
@@ -994,7 +999,7 @@ export function statusResponse(health: HealthPayload): Response {
       ${escapeHtml(health.oldestAgeMin ?? '?')} minutes.</p>
 
       <p>The word under Last check names what triggered it. <code>cron</code> is the
-      10-minute schedule. <code>release-candidate</code> is an authenticated shadow warm-up
+      ${escapeHtml(Math.round(CRON_PERIOD_MS / 60_000))}-minute schedule. <code>release-candidate</code> is an authenticated shadow warm-up
       for this immutable data generation. Only those operational paths may start provider
       work.</p>
 

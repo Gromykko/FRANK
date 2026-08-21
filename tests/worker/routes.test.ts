@@ -230,7 +230,9 @@ describe('Worker route HTTP contract', () => {
     expect(response.headers.get('Referrer-Policy')).toBe('no-referrer');
     expect(response.headers.get('X-Frame-Options')).toBe('DENY');
     const body = await response.text();
-    expect(body).toContain('only read prepared KV snapshots');
+    // Anchored to the section, not a sentence: this test is about the security
+    // headers, and it should not fail because the operator notes were reworded.
+    expect(body).toContain('How to read this instrument');
     expect(body).toContain('Only those operational paths may start provider');
     expect(body).not.toContain("visitor's request prompts a check");
     expect(body).toContain('EXACT GENERATION READY');

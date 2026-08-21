@@ -147,6 +147,9 @@ const CHECKED_STAMP_MIN_WRITE_INTERVAL_MS = 25 * 60 * 1000;
 // honest five-minute claim affordable - and what keeps adding a fifth city
 // free instead of costing another ~57 writes a day.
 const CRON_HEARTBEAT_SCHEMA_VERSION = 1;
+// Enough for a read and a write of one small object; short enough that a KV
+// brownout cannot hold the invocation open past the runtime's patience.
+const HEARTBEAT_WRITE_BUDGET_MS = 3_000;
 export const CRON_HEARTBEAT_KEY = 'frank:system:cron-heartbeat';
 
 function isCronHeartbeat(value: unknown): value is CronHeartbeat {
@@ -157,7 +160,7 @@ function isCronHeartbeat(value: unknown): value is CronHeartbeat {
     && isRecord(value.locations);
 }
 
-async function readCronHeartbeat(
+async function fetchCronHeartbeat(
   env: Env,
   policyInput?: ExecutionPolicyInput,
 ): Promise<CronHeartbeat | null> {
@@ -175,22 +178,50 @@ async function readCronHeartbeat(
   }
 }
 
+// The public forecast route reads this on every request, which would double the
+// app's KV read volume against a 100,000/day tier. One isolate-local copy, held
+// for a fraction of the cron period, removes nearly all of it: the value only
+// changes once per tick, so a request served seconds behind the newest heartbeat
+// reads the same number it would have paid for. It holds a timestamp and a
+// plain object, never a request or an in-flight promise.
+const HEARTBEAT_MEMO_TTL_MS = 30_000;
+let heartbeatMemo: { at: number; value: CronHeartbeat | null } | null = null;
+
+async function readCronHeartbeat(
+  env: Env,
+  policyInput?: ExecutionPolicyInput,
+  nowMs = Date.now(),
+): Promise<CronHeartbeat | null> {
+  if (heartbeatMemo && nowMs - heartbeatMemo.at < HEARTBEAT_MEMO_TTL_MS) {
+    return heartbeatMemo.value;
+  }
+  const value = await fetchCronHeartbeat(env, policyInput);
+  heartbeatMemo = { at: nowMs, value };
+  return value;
+}
+
 async function writeCronHeartbeat(
   env: Env,
   attemptedAt: Record<string, string>,
+  policyInput?: ExecutionPolicyInput,
 ): Promise<void> {
   try {
-    const previous = await readCronHeartbeat(env);
+    // Deliberately unmemoised. This merge is the only thing preserving the
+    // stamps of cities this tick did not reach, so it has to read what is
+    // actually stored, not what this isolate happened to serve a moment ago.
+    const previous = await fetchCronHeartbeat(env, policyInput);
     const known = new Set(FORECAST_LOCATIONS.map((location) => location.id));
     const locations = Object.fromEntries(
       Object.entries({ ...previous?.locations, ...attemptedAt })
         .filter(([id]) => known.has(id)),
     );
-    await env.FRANK_FORECAST_CACHE.put(CRON_HEARTBEAT_KEY, JSON.stringify({
+    const heartbeat: CronHeartbeat = {
       schemaVersion: CRON_HEARTBEAT_SCHEMA_VERSION,
       lastTickAt: new Date().toISOString(),
       locations,
-    } satisfies CronHeartbeat));
+    };
+    await env.FRANK_FORECAST_CACHE.put(CRON_HEARTBEAT_KEY, JSON.stringify(heartbeat));
+    heartbeatMemo = { at: Date.now(), value: heartbeat };
   } catch (error) {
     console.error('Cron heartbeat write failed:', error);
   }
@@ -207,11 +238,16 @@ export function withCronAttempt<T extends ForecastData>(
   data: T,
   locationId: string,
   heartbeat: CronHeartbeat | null,
+  nowMs = Date.now(),
 ): T {
   const cacheHealth = data.sources.cacheHealth;
   const attemptedAt = heartbeat?.locations?.[locationId];
   const attemptedMs = Date.parse(attemptedAt ?? '');
   if (!cacheHealth || !attemptedAt || !Number.isFinite(attemptedMs)) return data;
+  // A stamp from the future is a clock fault, not freshness. Left alone it
+  // yields a negative age, and formatRelativeAge renders that as an empty
+  // string - blanking the very label this mechanism exists to fill.
+  if (attemptedMs > nowMs) return data;
   if (Date.parse(cacheHealth.lastAttemptAt) >= attemptedMs) return data;
   return {
     ...data,
@@ -474,6 +510,34 @@ function forecastInitializingResponse(
 // writes/min/location on the path a hammering user reaches (see the caller), so
 // a provider outage plus a refresh-tapping crowd emptied the day's allowance in
 // about 90 minutes. Leading with !Number.isFinite mirrors the cacheAlreadyCurrent
+// Everything the stored health says EXCEPT when we last looked. The heartbeat
+// carries the timestamp now, and persisting a whole forecast just to move it
+// costs the write budget this change exists to free. Keys are sorted and
+// arrays compared in place, because `degradedSources` is assembled per-provider
+// and its order is not meaningful - an order-sensitive compare would spend a
+// write on a reshuffle that says nothing.
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${[...value].map(stableJson).sort().join(',')}]`;
+  if (isRecord(value)) {
+    return `{${Object.keys(value).sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+export function healthChanged(
+  previous: Partial<WorkerCacheHealth> | null | undefined,
+  next: Partial<WorkerCacheHealth> | null | undefined,
+): boolean {
+  const withoutStamp = (health: Partial<WorkerCacheHealth> | null | undefined): unknown => {
+    if (!health) return null;
+    const { lastAttemptAt: _lastAttemptAt, ...rest } = health;
+    return rest;
+  };
+  return stableJson(withoutStamp(previous)) !== stableJson(withoutStamp(next));
+}
+
 // guard: a payload with no stamp yet would otherwise compare NaN and never get one.
 export function shouldPersistFailureState(
   prev: Partial<WorkerCacheHealth> | null | undefined,
@@ -710,16 +774,14 @@ async function _refreshForecastCache(
           : cachedHealth?.busyProvider,
         message: recoveredDeferred ? undefined : cachedHealth?.message,
       });
-      // The response always carries this check's timestamp; only PERSISTING it
-      // is throttled. Nothing about the forecast itself has changed, so a
-      // skipped write costs the stored stamp some precision and nothing else.
-      // During backoff, no provider was queried, so no KV write is needed.
+      // The heartbeat now carries "we checked" for every city in one object,
+      // so re-writing this whole forecast just to advance a timestamp is pure
+      // cost: it was ~57 writes/city/day against an allowance of 1,000, and the
+      // heartbeat's own 288/day only pays for itself once this stops. What
+      // still earns a write is a CHANGE in what the health says - a recovered
+      // deferral clearing amber flags, a new message, a different status.
       if (probeDecision.reason !== 'retry-backoff' || recoveredDeferred) {
-        const storedStampMs = Date.parse(cachedHealth?.lastAttemptAt ?? '');
-        const stampAgeMs = Date.now() - storedStampMs;
-        if (recoveredDeferred
-          || !Number.isFinite(storedStampMs)
-          || stampAgeMs >= CHECKED_STAMP_MIN_WRITE_INTERVAL_MS) {
+        if (recoveredDeferred || healthChanged(cachedHealth, checkedCache.sources.cacheHealth)) {
           await writeCachedForecast(env, location, checkedCache, policy);
         }
       }
@@ -1017,11 +1079,18 @@ async function loadHealthPayload(env: Env): Promise<HealthPayload> {
   const policy = responseKvReadPolicy();
   let entries: HealthLocationEntry[];
   let storageUnavailable = false;
-  const heartbeat = await readCronHeartbeat(env, policy);
+  // Started, not awaited: /status refreshes itself every 30 seconds and external
+  // monitors poll /health hard, so this must overlap the per-location reads the
+  // way the forecast route already does rather than adding a round-trip in front
+  // of them.
+  const heartbeatRead = readCronHeartbeat(env, policy);
   try {
     entries = await Promise.all(
       FORECAST_LOCATIONS.map(async (location) => {
-        const currentRaw = await readCachedForecast(env, location, policy);
+        const [currentRaw, heartbeat] = await Promise.all([
+          readCachedForecast(env, location, policy),
+          heartbeatRead,
+        ]);
         const current = currentRaw && withCronAttempt(currentRaw, location.id, heartbeat);
         const marker = current
           ? null
@@ -1060,7 +1129,7 @@ async function loadHealthPayload(env: Env): Promise<HealthPayload> {
       availabilitySource: 'none',
     }));
   }
-  return buildHealthPayload(entries, storageUnavailable, Date.now(), heartbeat);
+  return buildHealthPayload(entries, storageUnavailable, Date.now(), await heartbeatRead);
 }
 
 async function handleHealthRequest(env: Env): Promise<Response> {
@@ -1189,22 +1258,35 @@ const worker = {
           break;
         }
         try {
-          await refreshForecastCache(env, location, {
+          const refreshed = await refreshForecastCache(env, location, {
             reason: 'cron',
             minIntervalMs: CRON_CHECK_MIN_INTERVAL_MS,
             executionPolicy: policy,
             eventMemo,
           });
+          // Copy the stamp the refresh itself decided on rather than clocking
+          // the loop. Reaching a city is not the same as contacting a provider:
+          // a recent-check short-circuit and the marine retry-backoff window
+          // both deliberately preserve the older attempt time, and clocking the
+          // loop here would overwrite exactly the pauses they encode. This
+          // keeps the heartbeat a cheaper carrier of the payload's own fact
+          // instead of a second, looser fact that quietly outranks it.
+          const attempt = refreshed.sources.cacheHealth?.lastAttemptAt;
+          if (attempt) attemptedAt[location.id] = attempt;
         } catch (error) {
           console.error(`Cron refresh failed for ${location.id}:`, error);
         }
-        // Recorded after the attempt, and for a throw too: the city was
-        // reached and upstream was asked. Cities the loop broke before never
-        // land here, so they keep their own older stamp.
-        attemptedAt[location.id] = new Date().toISOString();
       }
     } finally {
-      await writeCronHeartbeat(env, attemptedAt);
+      // Bounded, and deliberately outside the tick budget the loop just spent:
+      // this is the record that the tick happened at all, so it must still get
+      // a bounded chance to land when the loop ran long. Unbounded, a KV stall
+      // here would let the runtime kill the invocation and lose the heartbeat
+      // exactly when the system is under stress and liveness matters most.
+      await writeCronHeartbeat(env, attemptedAt, {
+        deadlineAt: Date.now() + HEARTBEAT_WRITE_BUDGET_MS,
+        maxAttempts: 1,
+      });
       console.log(`cron tick done in ${Date.now() - tickStartedAt}ms`);
     }
   },
