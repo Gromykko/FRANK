@@ -4,8 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { loadReleaseContract } from './warm-worker.mjs';
-import { decodeReleaseAttestation } from './worker-release-attestation.mjs';
+import { loadReleaseContract } from './load-release-contract.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = path.resolve(SCRIPT_DIR, '..');
@@ -348,34 +347,12 @@ export async function gcWorkerKv({
 
 function cliApplyPolicy(argv) {
   if (argv.includes('--help')) {
-    return { help: true, apply: false, releaseAttestation: null };
+    return { help: true, apply: false };
   }
-  let releaseAttestation = null;
-  const flags = new Set();
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index];
-    if (argument === '--apply' || argument === '--dry-run') {
-      flags.add(argument);
-      continue;
-    }
-    if (argument === '--attested-active-release') {
-      const value = argv[index + 1];
-      if (!value || value.startsWith('--') || releaseAttestation !== null) {
-        throw new Error('Usage: node scripts/gc-worker-kv.mjs [--dry-run|--apply] [--attested-active-release <token>]');
-      }
-      releaseAttestation = value;
-      index += 1;
-      continue;
-    }
-    throw new Error('Usage: node scripts/gc-worker-kv.mjs [--dry-run|--apply] [--attested-active-release <token>]');
-  }
-  if (flags.has('--apply') && flags.has('--dry-run')) {
-    throw new Error('Usage: node scripts/gc-worker-kv.mjs [--dry-run|--apply] [--attested-active-release <token>]');
-  }
+  const apply = !argv.includes('--dry-run');
   return {
     help: false,
-    apply: flags.has('--apply'),
-    releaseAttestation,
+    apply,
   };
 }
 
@@ -383,16 +360,15 @@ async function runCli(argv = process.argv.slice(2)) {
   const policy = cliApplyPolicy(argv);
   if (policy.help) {
     process.stdout.write(
-      'Usage: node scripts/gc-worker-kv.mjs [--dry-run|--apply] '
-      + '[--attested-active-release <token>]\n',
+      'Usage: node scripts/gc-worker-kv.mjs [--dry-run|--apply]\n',
     );
     return;
   }
+  const contract = await loadReleaseContract();
   await gcWorkerKv({
     apply: policy.apply,
-    attestedActiveRelease: policy.releaseAttestation
-      ? decodeReleaseAttestation(policy.releaseAttestation)
-      : undefined,
+    attestedActiveRelease: contract.release,
+    contract,
   });
 }
 

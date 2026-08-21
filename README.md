@@ -49,21 +49,13 @@ Cloudflare KV holds prepared forecasts and last-good provider ingredients. Brows
 
 The safety engine runs entirely in the browser. It applies every enabled rule independently and only raises a rating; one passing rule cannot cancel a failing one. A missing enabled safety input produces at least an amber result. Missing optional planner data blocks only the preference that requires it; it is never converted to a safe-looking zero.
 
-## Releases without half-built updates
+## Production Deployment
 
-Production is controlled by [`.github/workflows/deploy-worker.yml`](.github/workflows/deploy-worker.yml). Validation and production writes are deliberately separate.
+Production is deployed automatically via [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml).
 
-- A UI-only change can publish the tested Pages build without rebuilding forecast data.
-- A Worker-only operational change is staged at 0% traffic and checked against the existing generation.
-- A new location prepares only its own cold cache; existing locations remain reusable.
-- A forecast-model change prepares an isolated generation for every public location.
-- A breaking API change is refused until an explicit compatibility implementation exists.
-
-Worker-bearing releases are blue-green: the old Worker remains at 100% while the candidate is prepared at 0%. Promotion happens only after the required target caches and health contract pass. Pages publishes last. If a provider is busy, the candidate stays at 0%, completed cache work is retained, and a later scheduled GitHub run resumes it.
-
-There is one deliberate bootstrap exception: until the first coordinated baseline marker and journal exist, even an otherwise UI-only change follows the full all-location shadow path. That one-time release establishes the trusted Worker/Pages identity from which impact-aware releases can safely become selective.
-
-Installed/open tabs keep a complete old shell until a clean handover. The service worker validates the full replacement build before activation and retains one previous shell. Worker KV retains the current forecast generation plus the single explicitly audited compatible N−1 descriptor when one is declared (the first baseline declares none). Proven N−2 data becomes eligible for garbage collection only after an established coordinated journal and a later successful Worker-bearing release; the first coordinated release skips destructive cleanup.
+- All pushes and pull requests run the full validation suite (lint, typechecks, unit tests, worker runtime tests, release contract verification, and Playwright end-to-end tests).
+- When merged to `main`, the workflow deploys the Cloudflare Worker directly to 100% production and publishes the frontend artifact to GitHub Pages.
+- Cloudflare crons run every 10 minutes to populate and maintain the shared raw provider data (`frank:raw:...`) and generation-scoped forecasts (`frank:forecast-release:...`).
 
 ## Privacy
 
