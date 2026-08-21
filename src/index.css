@@ -947,8 +947,15 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .error-screen {
+  position: relative;
   text-align: center;
   padding: 40px;
+}
+
+.error-screen-top-bar {
+  position: absolute;
+  top: 16px;
+  right: 16px;
 }
 
 .error-screen-icon {
@@ -1032,9 +1039,16 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .initialization-card {
+  position: relative;
   width: min(100%, 580px);
   text-align: center;
   padding: clamp(28px, 6vw, 48px);
+}
+
+.initialization-top-bar {
+  position: absolute;
+  top: 16px;
+  right: 16px;
 }
 
 .initialization-progress {

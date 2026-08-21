@@ -1,6 +1,7 @@
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { CURRENT_LOCATION } from '../config/locations';
 import { useLang } from '../i18n';
+import { FlagDK, FlagUK } from './FlagIcons';
 import LocationSwitcher from './LocationSwitcher';
 import PrivacyNotice from './PrivacyNotice';
 
@@ -13,10 +14,20 @@ interface ForecastErrorScreenProps {
 // particular, an offline user who chose a location without a saved forecast
 // must still be able to return to one whose cache is available.
 export default function ForecastErrorScreen({ message, onRetry }: ForecastErrorScreenProps) {
-  const { t } = useLang();
+  const { lang, setLang, t } = useLang();
 
   return (
     <div className="loader-container error-screen">
+      <div className="error-screen-top-bar">
+        <button
+          type="button"
+          className="header-icon-btn"
+          onClick={() => setLang(lang === 'da' ? 'en' : 'da')}
+          aria-label={t('Switch to Danish')}
+        >
+          {lang === 'da' ? <FlagDK /> : <FlagUK />}
+        </button>
+      </div>
       <div role="alert">
         <AlertTriangle size={48} className="error-screen-icon" />
         <h2 className="error-screen-title">{t("Can't reach the forecast right now")}</h2>

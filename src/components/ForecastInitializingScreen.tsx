@@ -4,6 +4,7 @@ import { AVAILABLE_LOCATIONS, CURRENT_LOCATION, setLocation } from '../config/lo
 import { useForecastAvailability } from '../features/forecast/useForecastAvailability';
 import type { ForecastInitializationState } from '../features/forecast/useForecast';
 import { useLang } from '../i18n';
+import { FlagDK, FlagUK } from './FlagIcons';
 import PrivacyNotice from './PrivacyNotice';
 
 interface ForecastInitializingScreenProps {
@@ -21,7 +22,7 @@ export default function ForecastInitializingScreen({
   attemptMessage,
   onRetry,
 }: ForecastInitializingScreenProps) {
-  const { t } = useLang();
+  const { lang, setLang, t } = useLang();
   const { availability, settled } = useForecastAvailability(initialization.nextRetryAtMs);
   const [locationSwitchFailed, setLocationSwitchFailed] = useState(false);
   const attemptedCurrentOpenRef = useRef(false);
@@ -55,6 +56,17 @@ export default function ForecastInitializingScreen({
   return (
     <main className="container app-main initialization-page" aria-labelledby="initialization-title">
       <section className="panel initialization-card" aria-busy={refreshing || !settled}>
+        <div className="initialization-top-bar">
+          <button
+            type="button"
+            className="header-icon-btn"
+            onClick={() => setLang(lang === 'da' ? 'en' : 'da')}
+            aria-label={t('Switch to Danish')}
+          >
+            {lang === 'da' ? <FlagDK /> : <FlagUK />}
+          </button>
+        </div>
+
         <div className="initialization-progress" aria-hidden="true">
           <Waves size={20} strokeWidth={1.8} />
           <span>{t(refreshing || !settled ? 'Checking forecast availability…' : 'Preparation in progress')}</span>
