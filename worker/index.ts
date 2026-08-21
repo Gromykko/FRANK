@@ -86,6 +86,7 @@ export {
   degradedSourcesAfterProbe,
   deriveMarineSeedsFromPayload,
   fetchLatestInstanceForCollections,
+  fetchLatestMarineInstances,
   fetchMarineSeriesWithFallback,
   isMarineRunWithinFallbackAge,
   marineProbeDecision,
@@ -689,7 +690,7 @@ async function _refreshForecastCache(
         return deferredCache;
       }
       try {
-        latestMarine = await fetchLatestMarineInstances(location, policy, options.eventMemo);
+        latestMarine = await fetchLatestMarineInstances(location, policy, options.eventMemo, knownMarine);
       } catch (probeError) {
         rethrowIfDeadlineReached(probeError, policy, `marine probe failure handling for ${location.id}`);
         if (!knownMarine?.water?.id || !knownMarine?.waves?.id) throw probeError;

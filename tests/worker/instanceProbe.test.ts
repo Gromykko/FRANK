@@ -4,6 +4,7 @@ import { CRON_PERIOD_MS, DEFAULT_FETCH_TIMEOUT_MS } from '../../worker/execution
 import {
   cronExecutionPolicy,
   fetchLatestInstanceForCollections,
+  fetchLatestMarineInstances,
   tickOrder,
 } from '../../worker/index';
 
@@ -163,6 +164,91 @@ describe('fetchLatestInstanceForCollections memo', () => {
     await vi.advanceTimersByTimeAsync(1_000);
     await assertion;
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe('fetchLatestMarineInstances (split resolution)', () => {
+  const location = {
+    id: 'horsens',
+    forecastConfigRevision: 1,
+    name: 'Horsens',
+    areaName: 'Horsens Fjord',
+    coordinate: { longitude: 9.85, latitude: 55.86 },
+    dmiCollections: {
+      water: ['dkss_idw'],
+      waves: ['wam_nsb'],
+    },
+  };
+
+  const fallback = {
+    water: { collection: 'dkss_idw', id: '2026-08-08T060000Z' },
+    waves: { collection: 'wam_nsb', id: '2026-08-08T060000Z' },
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime('2026-08-08T13:00:00Z');
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('resolves both water and waves when both endpoints succeed', async () => {
+    globalThis.fetch = (async (url: string) => {
+      if (String(url).includes('dkss_idw')) {
+        return { ok: true, status: 200, json: async () => instancesBody(['2026-08-08T120000Z']) };
+      }
+      return { ok: true, status: 200, json: async () => instancesBody(['2026-08-08T120000Z']) };
+    }) as unknown as typeof fetch;
+
+    const result = await fetchLatestMarineInstances(location, undefined, eventMemo, fallback);
+    expect(result).toEqual({
+      water: { collection: 'dkss_idw', id: '2026-08-08T120000Z' },
+      waves: { collection: 'wam_nsb', id: '2026-08-08T120000Z' },
+    });
+  });
+
+  it('adopts fresh water and falls back to cached waves when waves probe is busy', async () => {
+    globalThis.fetch = (async (url: string) => {
+      if (String(url).includes('dkss_idw')) {
+        return { ok: true, status: 200, json: async () => instancesBody(['2026-08-08T120000Z']) };
+      }
+      return { ok: false, status: 429, text: async () => 'Server is busy' };
+    }) as unknown as typeof fetch;
+
+    const result = await fetchLatestMarineInstances(location, undefined, eventMemo, fallback);
+    expect(result).toEqual({
+      water: { collection: 'dkss_idw', id: '2026-08-08T120000Z' },
+      waves: fallback.waves,
+    });
+  });
+
+  it('adopts fresh waves and falls back to cached water when water probe is busy', async () => {
+    globalThis.fetch = (async (url: string) => {
+      if (String(url).includes('dkss_idw')) {
+        return { ok: false, status: 429, text: async () => 'Server is busy' };
+      }
+      return { ok: true, status: 200, json: async () => instancesBody(['2026-08-08T120000Z']) };
+    }) as unknown as typeof fetch;
+
+    const result = await fetchLatestMarineInstances(location, undefined, eventMemo, fallback);
+    expect(result).toEqual({
+      water: fallback.water,
+      waves: { collection: 'wam_nsb', id: '2026-08-08T120000Z' },
+    });
+  });
+
+  it('throws provider unavailable when both endpoints fail and no fallback is available', async () => {
+    globalThis.fetch = (async () => ({
+      ok: false,
+      status: 429,
+      text: async () => 'Server is busy',
+    })) as unknown as typeof fetch;
+
+    await expect(fetchLatestMarineInstances(location, undefined, eventMemo, undefined))
+      .rejects
+      .toThrow(/temporarily unavailable/i);
   });
 });
 

@@ -191,9 +191,11 @@ async function probeLatestInstanceForCollections(
 
 export async function fetchLatestMarineInstances(
   location: ForecastLocation,
-  policy: ExecutionPolicy,
+  policyInput?: ExecutionPolicyInput,
   eventMemo?: EventMemo,
+  fallbackInstances?: MarineInstances,
 ): Promise<MarineInstances> {
+  const policy = executionPolicy(policyInput);
   assertBeforeDeadline(policy, `marine instance probes for ${location.id}`);
   const results = await Promise.allSettled([
     fetchLatestInstanceForCollections(location.dmiCollections.water, policy, eventMemo),
@@ -201,8 +203,15 @@ export async function fetchLatestMarineInstances(
   ]);
   assertBeforeDeadline(policy, `marine instance probe results for ${location.id}`);
 
-  const water = results[0].status === 'fulfilled' ? results[0].value : undefined;
-  const waves = results[1].status === 'fulfilled' ? results[1].value : undefined;
+  let water = results[0].status === 'fulfilled' ? results[0].value : undefined;
+  let waves = results[1].status === 'fulfilled' ? results[1].value : undefined;
+
+  if (!water && fallbackInstances?.water && isMarineRunWithinFallbackAge(fallbackInstances.water)) {
+    water = fallbackInstances.water;
+  }
+  if (!waves && fallbackInstances?.waves && isMarineRunWithinFallbackAge(fallbackInstances.waves)) {
+    waves = fallbackInstances.waves;
+  }
 
   if (!water || !waves) {
     const errors = results
