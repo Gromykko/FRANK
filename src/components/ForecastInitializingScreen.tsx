@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Waves } from 'lucide-react';
+import { RefreshCw, Waves } from 'lucide-react';
 import { AVAILABLE_LOCATIONS, CURRENT_LOCATION, setLocation } from '../config/locations';
 import { useForecastAvailability } from '../features/forecast/useForecastAvailability';
 import type { ForecastInitializationState } from '../features/forecast/useForecast';
@@ -25,6 +25,7 @@ export default function ForecastInitializingScreen({
   const { lang, setLang, t } = useLang();
   const { availability, settled } = useForecastAvailability(initialization.nextRetryAtMs);
   const [locationSwitchFailed, setLocationSwitchFailed] = useState(false);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
   const attemptedCurrentOpenRef = useRef(false);
   const availableIds = new Set(availability?.availableLocationIds ?? []);
   const readyLocations = AVAILABLE_LOCATIONS.filter(({ id }) => availableIds.has(id));
@@ -33,6 +34,20 @@ export default function ForecastInitializingScreen({
   const hasPartialAvailability = Boolean(
     availability && readyLocations.length > 0 && !currentIsAvailable,
   );
+
+  useEffect(() => {
+    if (cooldownSeconds <= 0) return;
+    const interval = window.setInterval(() => {
+      setCooldownSeconds((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [cooldownSeconds]);
+
+  const handleRetry = () => {
+    if (refreshing || cooldownSeconds > 0) return;
+    setCooldownSeconds(5);
+    onRetry();
+  };
 
   // /health may notice that the selected location recovered before its next
   // scheduled forecast read. Open it once immediately; the ordinary lifecycle
@@ -52,6 +67,8 @@ export default function ForecastInitializingScreen({
     : hasPartialAvailability || (settled && !availability)
       ? t('The forecast for {0} is being prepared', initialization.location.areaName)
       : t('Opening the forecast for {0}', initialization.location.areaName);
+
+  const retryButtonDisabled = refreshing || cooldownSeconds > 0;
 
   return (
     <main className="container app-main initialization-page" aria-labelledby="initialization-title">
@@ -110,10 +127,17 @@ export default function ForecastInitializingScreen({
         <button
           type="button"
           className="initialization-retry"
-          onClick={onRetry}
-          disabled={refreshing}
+          onClick={handleRetry}
+          disabled={retryButtonDisabled}
         >
-          {t(refreshing ? 'Checking…' : 'Check again')}
+          <RefreshCw size={15} className={refreshing ? 'spin' : ''} aria-hidden="true" />
+          <span>
+            {refreshing
+              ? t('Checking…')
+              : cooldownSeconds > 0
+                ? t('Check again ({0}s)', cooldownSeconds)
+                : t('Check again')}
+          </span>
         </button>
 
         {hasPartialAvailability && (

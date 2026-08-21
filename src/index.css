@@ -1118,6 +1118,7 @@ h1, h2, h3, h4, h5, h6 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   border: 1px solid color-mix(in srgb, var(--primary) 34%, var(--control-border));
   border-radius: var(--radius-sm);
   background: var(--primary-bg);
@@ -1126,7 +1127,7 @@ h1, h2, h3, h4, h5, h6 {
   font-size: var(--text-ui);
   font-weight: 750;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
 }
 
 .initialization-retry:hover:not(:disabled) {
@@ -1141,8 +1142,11 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .initialization-retry:disabled {
-  cursor: wait;
-  opacity: 0.72;
+  cursor: not-allowed;
+  opacity: 0.65;
+  border-color: color-mix(in srgb, var(--control-border) 80%, transparent);
+  background: color-mix(in srgb, var(--text-muted) 10%, transparent);
+  color: var(--text-muted);
 }
 
 .initialization-ready {
