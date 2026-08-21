@@ -1,8 +1,9 @@
 import {
-  assertBeforeProviderDeadline,
+  deadlineError,
   delayWithinDeadline,
   executionPolicy,
   fetchWithTimeout,
+  remainingProviderMs,
 } from './execution';
 import type { ExecutionPolicy } from './execution';
 import type {
@@ -132,7 +133,10 @@ export async function fetchJsonWithRetries(
       const circuit = await readMarineBusyCircuit(eventMemo);
       if (circuit) throw marineCircuitError(circuit);
     }
-    assertBeforeProviderDeadline(policy, `${label} attempt ${attempt + 1}`);
+    if (remainingProviderMs(policy) <= 0) {
+      if (lastError) throw lastError;
+      throw deadlineError(`${label} attempt ${attempt + 1} (completion reserve reached)`, 'provider');
+    }
     const startedAt = Date.now();
     let response: Response;
     try {
@@ -155,7 +159,12 @@ export async function fetchJsonWithRetries(
         String(normalized.message ?? '').slice(0, 120),
       );
       if (attempt < policy.maxAttempts - 1) {
-        await delayWithinDeadline(retryDelay(attempt, false, policy), policy, `${label} retry`);
+        try {
+          await delayWithinDeadline(retryDelay(attempt, false, policy), policy, `${label} retry`);
+        } catch (delayErr) {
+          if (lastError) throw lastError;
+          throw delayErr;
+        }
       }
       continue;
     }
@@ -198,7 +207,7 @@ export async function fetchJsonWithRetries(
         });
       }
       // Non-429 4xx responses (e.g. 400, 404) are terminal.
-      // 429 responses retry with a 5-second backoff within the execution policy deadline.
+      // 429 responses retry with a 3-second backoff within the execution policy deadline.
       if (response.status !== 429 && response.status < 500) break;
     } catch (error) {
       // A reached 2xx response that cannot be parsed is a hard contract failure.
@@ -213,7 +222,12 @@ export async function fetchJsonWithRetries(
 
     if (attempt < policy.maxAttempts - 1) {
       const isBusy = response?.status === 429;
-      await delayWithinDeadline(retryDelay(attempt, isBusy, policy), policy, `${label} retry`);
+      try {
+        await delayWithinDeadline(retryDelay(attempt, isBusy, policy), policy, `${label} retry`);
+      } catch (delayErr) {
+        if (lastError) throw lastError;
+        throw delayErr;
+      }
     }
   }
 
