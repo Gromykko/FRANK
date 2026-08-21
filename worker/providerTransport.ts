@@ -22,17 +22,22 @@ const RETRY_BUSY_DELAY_MS = 3_000;
 const MARINE_BUSY_CIRCUIT_KEY = 'provider-circuit:marine-busy';
 export const MARINE_BUSY_DEFAULT_RETRY_SECONDS = 10 * 60;
 
+function isTestEnvironment(): boolean {
+  const nodeProcess = (globalThis as { process?: { env?: Record<string, string> } }).process;
+  return typeof nodeProcess === 'object' && nodeProcess !== null && nodeProcess.env?.NODE_ENV === 'test';
+}
+
 function retryDelay(attempt: number, isBusy = false, policy?: ExecutionPolicy): number {
   if (isBusy) {
     if (policy?.retryBusyDelayMs !== undefined) return policy.retryBusyDelayMs;
     if (policy?.retryDelayMs !== undefined) return policy.retryDelayMs;
-    if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'test') return 1;
+    if (isTestEnvironment()) return 1;
     return RETRY_BUSY_DELAY_MS + Math.floor(Math.random() * 500);
   }
   if (policy?.retryDelayMs !== undefined) {
     return policy.retryDelayMs;
   }
-  if (typeof process !== 'undefined' && process.env?.NODE_ENV === 'test') return 1;
+  if (isTestEnvironment()) return 1;
   return RETRY_BASE_DELAY_MS * 2 ** attempt + Math.floor(Math.random() * 500);
 }
 
