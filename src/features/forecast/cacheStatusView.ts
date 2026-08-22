@@ -39,6 +39,11 @@ export interface CacheStatusInput {
 // read calmly, never as a red "Refresh failed", and never lead with an
 // alarming "hours old"). Kept out of App.tsx, which can't be driven into these
 // states in a test (the build embeds a static forecast cache).
+// How far ahead of this browser's clock a worker timestamp may sit before we
+// stop believing it. Comfortably over ordinary clock drift and request latency,
+// far under any staleness window.
+const CLOCK_LEAD_TOLERANCE_MS = 5 * 60 * 1000;
+
 export function getCacheStatusView({
   refreshing,
   cacheHealth,
@@ -51,25 +56,6 @@ export function getCacheStatusView({
 }: CacheStatusInput, translate: Translate = interpolate): CacheStatusView {
   const status = cacheHealth?.status;
   const isStale = status === 'stale' || status === 'fallback';
-  // Offline takes precedence: a green "Checked" would be dishonest with no
-  // connection (nothing was just checked). But offline isn't a data problem —
-  // the saved forecast may be perfectly recent — so that case reads as calm
-  // neutral. If the cache underneath is already stale/fallback, keep its amber
-  // warning: losing the connection must not visually improve old data.
-  if (offline) {
-    return {
-      label: translate('Offline'),
-      detail: isStale
-        ? (savedAtLabel ? translate('Showing your older saved forecast from {0}', savedAtLabel) : translate('Showing your older saved forecast'))
-        : (savedAtLabel ? translate('Showing your saved forecast from {0}', savedAtLabel) : translate('Showing your saved forecast')),
-      tone: isStale ? 'watch' : 'neutral',
-      partiallyDegraded: false,
-      providerBusy: false,
-      busyServiceName: '',
-      degradedLabel: '',
-    };
-  }
-
   const isPending = status === 'pending';
   const providerBusy = Boolean(cacheHealth?.providerBusy);
 
@@ -117,6 +103,41 @@ export function getCacheStatusView({
             : 'services');
   const hasDegraded = degradedLabel !== '';
   const partiallyDegraded = !isStale && !refreshing && !isPending && hasDegraded;
+
+  // Offline takes precedence for the LABEL: a green "Checked" would be
+  // dishonest with no connection, since nothing was just checked. But offline
+  // is not by itself a data problem — the saved forecast may be perfectly
+  // recent — so that case reads as calm neutral.
+  //
+  // Degradation still has to survive the trip. This block used to hard-code
+  // partiallyDegraded/degradedLabel to empty, so a forecast carrying recycled
+  // wave and water data rendered amber with "waves & water from an earlier
+  // update" online, and neutral "Showing your saved forecast" the moment the
+  // signal dropped. Losing connectivity visually IMPROVED the data, at the
+  // fjord, for exactly the two readings that feed the safety verdict.
+  //
+  // providerBusy stays false deliberately: whether a provider is busy is a
+  // statement about right now, and offline we cannot know. What the recycled
+  // sources are is a fact about the bytes in hand, and that we do know.
+  if (offline) {
+    const staleOrDegraded = isStale || hasDegraded;
+    return {
+      label: translate('Offline'),
+      detail: hasDegraded
+        ? (savedAtLabel
+          ? translate('Showing your saved forecast from {0} · {1} from an earlier update', savedAtLabel, degradedLabel)
+          : translate('Showing your saved forecast · {0} from an earlier update', degradedLabel))
+        : isStale
+          ? (savedAtLabel ? translate('Showing your older saved forecast from {0}', savedAtLabel) : translate('Showing your older saved forecast'))
+          : (savedAtLabel ? translate('Showing your saved forecast from {0}', savedAtLabel) : translate('Showing your saved forecast')),
+      tone: staleOrDegraded ? 'watch' : 'neutral',
+      partiallyDegraded: hasDegraded,
+      providerBusy: false,
+      busyServiceName: '',
+      degradedLabel,
+    };
+  }
+
 
   // Checking is not a failure, but genuinely old data does not become less old
   // because a request started. Keep that compact line amber and explicit while
@@ -270,7 +291,22 @@ export function deriveCacheStatus(args: {
   // stamped `status:'current'`, so contact is fresh and nothing looks wrong. The
   // forecast underneath simply stops advancing. MET reissues about every 30
   // minutes, so six hours without a rebuild is never normal.
-  const cacheAgeMs = Number.isFinite(fetchedAtMs) ? nowMs - fetchedAtMs : Infinity;
+  // A timestamp at or ahead of this browser's clock is not evidence of
+  // freshness. Unfloored, `nowMs - fetchedAtMs` goes non-positive and dataStale
+  // is false FOREVER: a phone whose clock is hours slow (manual setting, flat
+  // RTC, wrong-year boot) renders a nine-hour-old forecast as green with no age
+  // banner, and formatRelativeAge clamps the negative to a confident "0 min".
+  // It is also the cheapest hostile-localStorage path on a shared github.io
+  // origin - write a structurally valid payload dated year 3000 and it can
+  // never be judged stale. The worker already refuses future stamps for exactly
+  // this reason; the client had no equivalent.
+  //
+  // A little skew is ordinary, so tolerate a small lead and treat anything
+  // beyond it as unusable rather than as fresh.
+  const clockLeadMs = Number.isFinite(fetchedAtMs) ? fetchedAtMs - nowMs : Number.NaN;
+  const cacheAgeMs = !Number.isFinite(clockLeadMs) || clockLeadMs > CLOCK_LEAD_TOLERANCE_MS
+    ? Infinity
+    : Math.max(0, -clockLeadMs);
   const dataStale = cacheAgeMs > CACHE_REFRESH_WARNING_AGE_MS;
 
   const cacheHealth = completedFailure || dataStale

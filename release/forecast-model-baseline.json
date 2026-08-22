@@ -3,17 +3,17 @@
   "semanticBoundary": "worker-generation-owned-v1",
   "release": {
     "apiSchemaVersion": 1,
-    "modelRevision": 20,
+    "modelRevision": 21,
     "assembledCacheSchema": 1,
     "marineCacheSchema": 1,
-    "dataGenerationId": "api1-model20",
+    "dataGenerationId": "api1-model21",
     "payloadVersion": 7
   },
   "semanticInputs": {
     "src/features/forecast/normalize.ts": "3286f7d932c2b5f9da1ad7e9014c260b70aa1c6e0edd37962903eba2282f94ab",
     "src/features/forecast/parseWarnings.ts": "b1d4804640b9cb14f5acae097ebe9176eef60915e3c402d4ab731628096dbd98",
     "src/features/forecast/providerUrls.ts": "491974f7d92da617466abb68b2bce53640294fb3d2b34530ff989d61b7fa5d58",
-    "src/features/forecast/releaseContract.ts": "d925247b2d0b93ccf5ece87474a181cb94f96046de36b85a78d85454f328640b",
+    "src/features/forecast/releaseContract.ts": "e94ce914fae40e10044c3d52fd46a59106e9a524c9269a31e6b62cc443ebe859",
     "src/features/forecast/sun.ts": "f69dacefb9f43709f63a11a01b66b2cda77b25d7e53bcda62cefae10fd0543e4",
     "src/features/forecast/types.ts": "636fe6fd156fc529134a4d56a26c9e9d9ee91e18aba0cbd19922bc9238cb8f86",
     "src/features/forecast/validatePayload.ts": "77439bbd862c364c49c3de5b9fb21f5931c3849089892082ab9b32ac30d1c7f1",

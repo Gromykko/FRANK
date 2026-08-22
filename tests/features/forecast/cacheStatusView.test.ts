@@ -332,3 +332,77 @@ describe('deriveCacheStatus freshness', () => {
     expect(result.showRefreshWarning).toBe(true);
   });
 });
+
+// Two ways the header could look healthier than the data underneath it.
+describe('honesty under adverse conditions', () => {
+  type Health = NonNullable<Parameters<typeof getCacheStatusView>[0]['cacheHealth']>;
+
+  // Losing signal must not visually improve the forecast in your pocket. Water
+  // and waves are the two readings that feed the safety verdict, so hiding that
+  // they are recycled is the worst place to do it — and it happens at the fjord,
+  // which is exactly where the saved copy gets used.
+  it('still names recycled sources when the connection drops', () => {
+    const health = {
+      status: 'current',
+      lastAttemptAt: '2026-08-22T09:00:00.000Z',
+      degradedSources: ['water', 'waves'],
+      providerBusy: true,
+      busyProvider: 'marine',
+    } as unknown as Health;
+
+    const online = getCacheStatusView({ refreshing: false, cacheHealth: health, checkedAtLabel: '09:00' });
+    const offline = getCacheStatusView({
+      refreshing: false, cacheHealth: health, checkedAtLabel: '09:00',
+      offline: true, savedAtLabel: '09:00',
+    });
+
+    expect(online.partiallyDegraded).toBe(true);
+    expect(offline.partiallyDegraded).toBe(true);
+    expect(offline.degradedLabel).toBe(online.degradedLabel);
+    expect(offline.tone).not.toBe('neutral');
+    // Whether a provider is busy is a claim about now, and offline we cannot
+    // know. What the recycled sources ARE is a fact about the bytes in hand.
+    expect(offline.providerBusy).toBe(false);
+  });
+
+  it('reads calm when offline with nothing degraded', () => {
+    const offline = getCacheStatusView({
+      refreshing: false,
+      cacheHealth: { status: 'current', lastAttemptAt: '2026-08-22T09:00:00.000Z' } as unknown as Health,
+      checkedAtLabel: '09:00', offline: true, savedAtLabel: '09:00',
+    });
+    expect(offline.tone).toBe('neutral');
+    expect(offline.partiallyDegraded).toBe(false);
+  });
+});
+
+// A timestamp at or ahead of the browser's clock is not evidence of freshness.
+// Unfloored it made dataStale false forever, so a phone with a slow clock — or
+// a hand-written localStorage payload dated year 3000 on a shared github.io
+// origin — could never be judged stale.
+describe('deriveCacheStatus clock skew', () => {
+  const NOW = Date.parse('2026-08-22T21:00:00.000Z');
+  const sourcesAt = (fetchedAt: string) => ({
+    fetchedAt,
+    payloadVersion: FORECAST_PAYLOAD_VERSION,
+    cacheHealth: { status: 'current', lastAttemptAt: fetchedAt },
+  }) as unknown as Parameters<typeof deriveCacheStatus>[0]['sources'];
+
+  const status = (fetchedAt: string) => deriveCacheStatus({
+    sources: sourcesAt(fetchedAt),
+    refreshing: false,
+    online: true,
+    nowMs: NOW,
+    lastWorkerContactMs: NOW,
+  });
+
+  it('refuses a timestamp implausibly far ahead of this clock', () => {
+    expect(status(new Date(NOW + 9 * 60 * 60 * 1000).toISOString()).showRefreshWarning).toBe(true);
+    expect(status('3000-01-01T00:00:00.000Z').showRefreshWarning).toBe(true);
+  });
+
+  it('tolerates ordinary skew without crying stale', () => {
+    expect(status(new Date(NOW + 30_000).toISOString()).showRefreshWarning).toBe(false);
+    expect(status(new Date(NOW - 60_000).toISOString()).showRefreshWarning).toBe(false);
+  });
+});
