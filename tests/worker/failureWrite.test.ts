@@ -47,12 +47,31 @@ describe('shouldPersistFailureState', () => {
     expect(shouldPersistFailureState(prev, failure(), NOW)).toBe(true);
   });
 
-  it('writes immediately when the failure itself has changed', () => {
-    // Each of these is something a reader would act on differently.
-    expect(shouldPersistFailureState(failure(), failure({ status: 'current' }), NOW)).toBe(true);
-    expect(shouldPersistFailureState(failure(), failure({ message: 'something else' }), NOW)).toBe(true);
+  // Direction, not mere difference. A provider that alternates 429/200 tick to
+  // tick - DMI's documented behaviour under load - used to write on every
+  // single transition: 288/day/city against a 1,000/day allowance, and the
+  // first thing that breaks when the cap is reached is that the REBUILD write
+  // is swallowed, so the app freezes on an old forecast still labelled current.
+  it('writes immediately when conditions get worse', () => {
+    const healthy = failure({ status: 'current', degradedSources: [], providerBusy: false, message: undefined });
+    expect(shouldPersistFailureState(healthy, failure(), NOW)).toBe(true);
     expect(shouldPersistFailureState(failure(), failure({ needsRebuild: true }), NOW)).toBe(true);
-    expect(shouldPersistFailureState(failure(), failure({ providerBusy: false }), NOW)).toBe(true);
+    expect(shouldPersistFailureState(
+      failure({ degradedSources: ['water'] }),
+      failure({ degradedSources: ['water', 'waves'] }),
+      NOW,
+    )).toBe(true);
+  });
+
+  // A premature all-clear is the dangerous direction; a late one is not. So
+  // recovery waits for the same window an idle repeat does, which is what caps
+  // a flapping provider at one write per window instead of one per tick.
+  it('throttles recovery instead of paying for every flap', () => {
+    expect(shouldPersistFailureState(failure(), failure({ status: 'current' }), NOW)).toBe(false);
+    expect(shouldPersistFailureState(failure(), failure({ providerBusy: false }), NOW)).toBe(false);
+
+    const stale = failure({ lastAttemptAt: stampedAgo(THROTTLE_WINDOW_MS + 1000) });
+    expect(shouldPersistFailureState(stale, failure({ status: 'current' }), NOW)).toBe(true);
   });
 
   it('writes when a new marine run appeared, even mid-failure', () => {

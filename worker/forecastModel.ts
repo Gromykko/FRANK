@@ -47,6 +47,10 @@ export const FORECAST_SOURCE_POLICY = Object.freeze({
   metBaseUrl: 'https://api.met.no/weatherapi/locationforecast/2.0/complete',
   metUserAgent: 'FRANK-kayak-forecast/1.0 (https://github.com/Gromykko/FRANK)',
   metDefaultTtlMs: 30 * 60 * 1000,
+  // Ceiling on a trusted Expires. Comfortably inside the 3-hour data-age alarm,
+  // so a header that would otherwise freeze the weather still forces a refresh
+  // before /health would have to report the freeze.
+  metMaxTtlMs: 90 * 60 * 1000,
   metFallbackMaxAgeMs: 6 * 60 * 60 * 1000,
   marineFallbackMaxAgeMs: 12 * 60 * 60 * 1000,
   dmiRunCycleMs: 6 * 60 * 60 * 1000,
@@ -308,9 +312,21 @@ export function mapMetPayload(
   return {
     weatherSeries: mapMetTimeseries(data),
     blocks: mapMetBlocks(data),
-    weatherExpires: Number.isFinite(expiresMs)
-      ? new Date(expiresMs).toISOString()
-      : new Date(nowMs + FORECAST_SOURCE_POLICY.metDefaultTtlMs).toISOString(),
+    // An Expires we cannot act on is worse than no Expires. Number.isFinite
+    // accepts a timestamp already in the PAST, and one lapsed header then makes
+    // every tick see stale weather, rebuild, and write: 288 writes/city/day
+    // against a 1,000/day allowance, from a single upstream misconfiguration.
+    // Far in the future is the opposite failure - the forecast freezes while
+    // still reading as current. MET reissues roughly every half hour, so clamp
+    // to a window either side of that and let an unusable header fall back.
+    weatherExpires: new Date(
+      Number.isFinite(expiresMs)
+        ? Math.min(
+            Math.max(expiresMs, nowMs + FORECAST_SOURCE_POLICY.metDefaultTtlMs),
+            nowMs + FORECAST_SOURCE_POLICY.metMaxTtlMs,
+          )
+        : nowMs + FORECAST_SOURCE_POLICY.metDefaultTtlMs,
+    ).toISOString(),
     weatherLastModified: lastModified ?? undefined,
   };
 }

@@ -547,23 +547,43 @@ export function healthChanged(
 }
 
 // guard: a payload with no stamp yet would otherwise compare NaN and never get one.
+// How alarming a health block is, so a write can be priced by DIRECTION rather
+// than by mere difference. Only the ordering matters, not the absolute number.
+function healthSeverity(health: Partial<WorkerCacheHealth> | null | undefined): number {
+  if (!health) return 0;
+  const status = health.status === 'stale' ? 3 : health.status === 'fallback' ? 2 : 1;
+  return status
+    + (health.degradedSources?.length ?? 0)
+    + (health.providerBusy ? 1 : 0)
+    + (health.needsRebuild ? 1 : 0);
+}
+
 export function shouldPersistFailureState(
   prev: Partial<WorkerCacheHealth> | null | undefined,
   next: Partial<WorkerCacheHealth> | null | undefined,
   nowMs = Date.now(),
 ): boolean {
-  const sameDegraded = (prev?.degradedSources ?? []).slice().sort().join(',') ===
-    (next?.degradedSources ?? []).slice().sort().join(',');
-  const sameFailure =
-    prev?.status === next?.status &&
-    prev?.message === next?.message &&
-    prev?.busyProvider === next?.busyProvider &&
-    sameDegraded &&
-    Boolean(prev?.needsRebuild) === Boolean(next?.needsRebuild) &&
-    Boolean(prev?.providerBusy) === Boolean(next?.providerBusy) &&
-    marineInstancesEqual(prev?.marineInstances, next?.marineInstances);
-  if (!sameFailure) return true;
+  // Getting WORSE is news, and it is the direction that protects the paddler,
+  // so it is never throttled.
+  if (healthSeverity(next) > healthSeverity(prev)) return true;
 
+  // Marine run ids are provenance, not severity: later ticks compare against
+  // them to decide whether to re-probe DMI, so a throttled copy would make a
+  // matching run look changed. DMI publishes about every six hours, so this
+  // cannot flap and costs nothing to keep exact.
+  if (!marineInstancesEqual(prev?.marineInstances, next?.marineInstances)) return true;
+
+  // Everything else - recovery, a sideways change, an identical repeat - waits
+  // for the throttle. Treating every transition as urgent looked right until
+  // you price a provider that alternates 429/200 tick to tick, which DMI
+  // documents doing under load: stale, current, stale writes on EVERY tick,
+  // 288 a day per city, 1,152 against a 1,000/day allowance. The first casualty
+  // is not the status flag - it is that KV put starts throwing, the rebuild
+  // write is swallowed, and the app serves a frozen forecast still labelled
+  // "current".
+  //
+  // Throttling only the improving direction is also the safer semantics: a
+  // premature all-clear is the dangerous one; a late all-clear is not.
   const prevStampMs = Date.parse(prev?.lastAttemptAt ?? '');
   return !Number.isFinite(prevStampMs) || nowMs - prevStampMs >= CHECKED_STAMP_MIN_WRITE_INTERVAL_MS;
 }

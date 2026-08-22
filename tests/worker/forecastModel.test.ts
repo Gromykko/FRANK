@@ -5,6 +5,7 @@ import {
   FORECAST_SOURCE_POLICY,
   assembleForecastFromSources,
   canUseMetFallback,
+  mapMetPayload,
   degradedSourcesAfterProbe,
   heldMarineFallback,
   isMarineRunWithinFallbackAge,
@@ -202,5 +203,37 @@ describe('generation-owned forecast model', () => {
   it('marks a failed marine catalogue probe without rewriting existing source order', () => {
     expect(degradedSourcesAfterProbe(['weather', 'water'], true))
       .toEqual(['weather', 'water', 'waves']);
+  });
+});
+
+// Expires drives `weatherStale`, which decides whether a tick rebuilds and
+// writes. A header we cannot act on therefore sets the app's whole KV write
+// rate, and Number.isFinite happily accepts a timestamp in the past.
+describe('mapMetPayload expiry clamping', () => {
+  const NOW = Date.parse('2026-08-22T12:00:00.000Z');
+  const body = { properties: { timeseries: [] } } as unknown as Parameters<typeof mapMetPayload>[0];
+  const expiryMs = (expires: number) =>
+    Date.parse(mapMetPayload(body, null, expires, NOW).weatherExpires) - NOW;
+
+  it('refuses an Expires that has already lapsed', () => {
+    // One misconfigured upstream would otherwise mean rebuild + write on every
+    // tick: 288 writes/city/day against a 1,000/day allowance.
+    expect(expiryMs(NOW - 60_000)).toBe(FORECAST_SOURCE_POLICY.metDefaultTtlMs);
+    expect(expiryMs(Date.parse('0'))).toBe(FORECAST_SOURCE_POLICY.metDefaultTtlMs);
+  });
+
+  it('refuses an Expires far enough ahead to freeze the forecast', () => {
+    expect(expiryMs(NOW + 365 * 24 * 60 * 60_000)).toBe(FORECAST_SOURCE_POLICY.metMaxTtlMs);
+    // Inside the 3-hour data-age alarm, so a frozen forecast still refreshes
+    // before /health would have to report the freeze.
+    expect(FORECAST_SOURCE_POLICY.metMaxTtlMs).toBeLessThan(3 * 60 * 60_000);
+  });
+
+  it('honours a plausible Expires unchanged', () => {
+    expect(expiryMs(NOW + 45 * 60_000)).toBe(45 * 60_000);
+  });
+
+  it('falls back to the default when the header is missing or unparseable', () => {
+    expect(expiryMs(Number.NaN)).toBe(FORECAST_SOURCE_POLICY.metDefaultTtlMs);
   });
 });
