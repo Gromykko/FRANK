@@ -4,6 +4,7 @@ import type { SafetySettings } from '../safety/presets';
 import type { HourlyData } from '../forecast/types';
 import { nextHourTideFor } from '../forecast/displayData';
 import { assessBlockDaylight } from '../safety/blockDaylight';
+import { hasActiveSafetyChecks } from '../safety/safetyDisplay';
 import type { SunTimes } from '../safety/blockDaylight';
 
 // What this app calls high or low water: 10 cm either side of mean, in metres
@@ -98,8 +99,15 @@ export function findLaunchWindows(
     }
   };
 
+  // With every personal limit switched off there is nothing left to check, so
+  // there is nothing to recommend. Without this the planner offered a gale as a
+  // launch window while the header said "limits are off, raw forecast only" -
+  // a recommendation is a stronger claim than a rating, so it needs the
+  // stricter gate, not a looser one.
+  const activeSafetyChecks = hasActiveSafetyChecks(settings);
+
   const isSafe = (idx: number): boolean => {
-    if (idx < startIndex) return false;
+    if (idx < startIndex || !activeSafetyChecks) return false;
     return analyzeSafetyConditions(
       data[idx],
       settings,

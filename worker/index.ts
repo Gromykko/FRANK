@@ -221,7 +221,11 @@ async function writeCronHeartbeat(
       lastTickAt: new Date().toISOString(),
       locations,
     };
-    await env.FRANK_FORECAST_CACHE.put(CRON_HEARTBEAT_KEY, JSON.stringify(heartbeat));
+    await awaitWithinDeadline(
+      () => env.FRANK_FORECAST_CACHE.put(CRON_HEARTBEAT_KEY, JSON.stringify(heartbeat)),
+      executionPolicy(policyInput),
+      'cron heartbeat write',
+    );
     heartbeatMemo = { at: Date.now(), value: heartbeat };
   } catch (error) {
     console.error('Cron heartbeat write failed:', error);

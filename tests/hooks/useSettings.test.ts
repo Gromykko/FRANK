@@ -142,6 +142,21 @@ describe('parseStoredSettings hardening', () => {
     expect(analyzeSafetyConditions({ ...baseData, windSpeed: 30 }, parsed).rating).toBe('danger');
   });
 
+  // The mirror image of the 999 case above, and the one that was still open:
+  // a threshold clamped DOWN far enough stops checking too. Water temp was the
+  // only limit whose validated floor reached a value that can never fire, so a
+  // stale or hand-edited profile switched off cold shock - the deadliest hazard
+  // on this coast - while the toggle still read as on and no "limits are off"
+  // disclosure appeared.
+  it('clamps a water-temp floor that would disable the cold-shock check', () => {
+    const parsed = parse({ minWaterTempCaution: 0, minWaterTempSafe: 0 });
+    expect(parsed.minWaterTempCaution).toBeGreaterThanOrEqual(5);
+    expect(parsed.enableWaterTemp).toBe(true);
+    expect(
+      analyzeSafetyConditions({ ...baseData, tempWater: 3.2 }, parsed).rating,
+    ).not.toBe('safe');
+  });
+
   it('derives the wind danger cap from safe + gustMargin so the panel cannot promise a threshold the engine ignores', () => {
     // The settings panel and the manual both state one rule: danger = safe
     // limit + your margin. Storing the danger cap independently let a profile

@@ -106,5 +106,14 @@ export function shouldApplyForecastUpdate(
 
   const currentAttemptMs = Date.parse(currentHealth?.lastAttemptAt ?? current.sources.fetchedAt);
   const incomingAttemptMs = Date.parse(incomingHealth?.lastAttemptAt ?? incoming.sources.fetchedAt);
-  return incomingAttemptMs >= currentAttemptMs;
+  // Strictly later, not "later or equal". The worker stamps this from one
+  // shared cron heartbeat, so two edge replicas of the same build now carry
+  // byte-identical attempt times while differing in degradedSources - and
+  // `>=` made each of them replace the other on every poll. The visible
+  // symptom is a header flipping between green and amber, but the real cost
+  // is that the durable offline copy flips too, so a paddler can go offline
+  // holding the healthy-LOOKING variant of a build whose marine data is
+  // recycled. On a tie we cannot tell which is newer, so we keep what we
+  // have; a genuine update advances the stamp on the next tick anyway.
+  return incomingAttemptMs > currentAttemptMs;
 }

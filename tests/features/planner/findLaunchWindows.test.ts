@@ -445,3 +445,38 @@ describe('outlook blocks under Daylight Only', () => {
     expect(windows[0].duration).toBe(6);
   });
 });
+
+// A rating is a description; a recommendation is advice. When every personal
+// limit is switched off the analyser has nothing left to judge against and the
+// header says so ("limits are off, raw forecast only") - but the planner used
+// the raw rating and went on proposing windows, so the one surface that tells a
+// paddler "go now" was the one surface that had stopped checking.
+describe('findLaunchWindows with every limit disabled', () => {
+  const limitsOff = {
+    ...baseSettings,
+    enableWindSpeed: false,
+    enableWindGust: false,
+    enableWaveHeight: false,
+    enableWaveCaution: false,
+    enableWaterTemp: false,
+    enableCustomWindDirs: false,
+    daylightOnly: false,
+  } as SafetySettings;
+
+  it('recommends nothing rather than recommending a gale', () => {
+    const gale = generateData(6).map((hour) => ({
+      ...hour,
+      windSpeed: 20,
+      windGust: 26,
+      tempWater: 4,
+    }));
+    expect(findLaunchWindows(gale, limitsOff, 0)).toHaveLength(0);
+  });
+
+  it('recommends nothing even when the raw conditions are genuinely calm', () => {
+    // Still correct: with nothing being checked we cannot vouch for any hour,
+    // and silence is the honest output.
+    expect(findLaunchWindows(generateData(6), limitsOff, 0)).toHaveLength(0);
+    expect(findLaunchWindows(generateData(6), baseSettings, 0).length).toBeGreaterThan(0);
+  });
+});

@@ -142,7 +142,13 @@ describe('App safety-analysis consistency', () => {
     const app = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf8');
     expect(app).toContain('const allAnalyses = useMemo');
     expect(app).toContain("{ blockDaylight: { mode: 'whole-period', sun: sunTimes } }");
-    expect(app).toContain('() => allAnalyses.map((analysis) => analysis.rating)');
+    // The contract is that the matrix maps over allAnalyses, not that it does so
+    // with one exact expression: statuses now pass through getSafetyDisplay so a
+    // "limits are off" hour cannot paint green in the timeline while the header
+    // calls it a caution. Pinning the literal made an honest fix look like a
+    // regression, so pin the property instead.
+    expect(app).toContain('allAnalyses.map(');
+    expect(app).not.toMatch(/allStatuses[\s\S]{0,200}analyzeSafetyConditions\(/);
     expect(app).toContain('const safety = allAnalyses[selectedHourIndex] ?? allAnalyses[0]!;');
   });
 });

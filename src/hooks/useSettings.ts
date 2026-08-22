@@ -82,8 +82,14 @@ export function healSectorCautions(s: SafetySettings): SafetySettings {
 const NUMERIC_LIMITS: { key: keyof SafetySettings; decimals: number; min: number; max: number }[] = [
   { key: 'maxWindSpeedSafe', decimals: 1, min: 0.5, max: 25 },
   { key: 'maxWindSpeedCaution', decimals: 1, min: 0, max: 35 },
-  { key: 'minWaterTempSafe', decimals: 1, min: 0, max: 25 },
-  { key: 'minWaterTempCaution', decimals: 1, min: 0, max: 25 },
+  // Floor 5, matching the Stepper, and NOT 0. Every other limit here clamps to
+  // a value that still checks something; a water-temp floor of 0 makes
+  // `temp < 0` unsatisfiable, so a stale or hand-edited profile switches off
+  // cold shock - the deadliest hazard on this coast - while `enableWaterTemp`
+  // stays true and no "limits are off" disclosure fires. Disabling the rule is
+  // what the toggle is for.
+  { key: 'minWaterTempSafe', decimals: 1, min: 5, max: 25 },
+  { key: 'minWaterTempCaution', decimals: 1, min: 5, max: 25 },
   { key: 'maxWaveHeightSafe', decimals: 2, min: 0.1, max: 3.0 },
   { key: 'maxWaveHeightCaution', decimals: 2, min: 0.1, max: 5.0 },
   { key: 'gustMargin', decimals: 1, min: 1, max: 10 },

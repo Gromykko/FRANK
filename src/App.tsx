@@ -121,9 +121,15 @@ export default function App() {
       ));
   }, [displayHourlyData, settings, sunTimes, t]);
 
+  // Through the same transform the header uses. Reading `analysis.rating` raw
+  // here let the timeline paint a green cell, and the planner recommend a
+  // launch window, for an hour the header was calling "limits are off, raw
+  // forecast only" - the disclosure existed but stopped at one row.
   const allStatuses = useMemo(
-    () => allAnalyses.map((analysis) => analysis.rating),
-    [allAnalyses],
+    () => allAnalyses.map(
+      (analysis) => getSafetyDisplay(analysis, hasActiveSafetyChecks(settings), '').rating,
+    ),
+    [allAnalyses, settings],
   );
 
   const launchWindows = useMemo(
