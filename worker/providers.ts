@@ -652,7 +652,10 @@ async function fetchWarnings(
         headers: { Accept: '*/*' },
         cf: { cacheTtl: 300, cacheEverything: true },
       }, policy);
-      if (!response.ok) throw new Error(`MeteoAlarm feed failed: ${response.status}`);
+      if (!response.ok) {
+        response.body?.cancel();
+        throw new Error(`MeteoAlarm feed failed: ${response.status}`);
+      }
       return response.text();
     });
     const warnings = parseMeteoalarmFeed(body, location.emmaId);
@@ -665,7 +668,10 @@ async function fetchWarnings(
           headers: { Accept: '*/*' },
           cf: { cacheTtl: 300, cacheEverything: true },
         }, policy);
-        if (!detail.ok) throw new Error(`CAP detail failed: ${detail.status}`);
+        if (!detail.ok) {
+          detail.body?.cancel();
+          throw new Error(`CAP detail failed: ${detail.status}`);
+        }
         return detail.text();
       }));
   } catch {

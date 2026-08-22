@@ -3,17 +3,17 @@
   "semanticBoundary": "worker-generation-owned-v1",
   "release": {
     "apiSchemaVersion": 1,
-    "modelRevision": 23,
+    "modelRevision": 24,
     "assembledCacheSchema": 1,
     "marineCacheSchema": 1,
-    "dataGenerationId": "api1-model23",
+    "dataGenerationId": "api1-model24",
     "payloadVersion": 7
   },
   "semanticInputs": {
-    "src/features/forecast/normalize.ts": "3286f7d932c2b5f9da1ad7e9014c260b70aa1c6e0edd37962903eba2282f94ab",
+    "src/features/forecast/normalize.ts": "18191f53ee6716fa8807e07e24e6ff8b22ba54fb423e23b33080b18300c3484c",
     "src/features/forecast/parseWarnings.ts": "b1d4804640b9cb14f5acae097ebe9176eef60915e3c402d4ab731628096dbd98",
     "src/features/forecast/providerUrls.ts": "491974f7d92da617466abb68b2bce53640294fb3d2b34530ff989d61b7fa5d58",
-    "src/features/forecast/releaseContract.ts": "14251b1dbcc723767e09ec488fde2091e847709691964b04cbcbdbf60cb14c78",
+    "src/features/forecast/releaseContract.ts": "b1ef31acc57a8279a52e49917f1f693c2818298daff2b15b9d13884020bd4b9c",
     "src/features/forecast/sun.ts": "f69dacefb9f43709f63a11a01b66b2cda77b25d7e53bcda62cefae10fd0543e4",
     "src/features/forecast/types.ts": "350d28dbeeb446a49fa660724c22a9ec2eadd46bead1a8406494f991e0cb964c",
     "src/features/forecast/validatePayload.ts": "77439bbd862c364c49c3de5b9fb21f5931c3849089892082ab9b32ac30d1c7f1",
@@ -24,7 +24,7 @@
     "worker/domain.ts": "88424adfd52e9b33cdcdd642e5d80cf87de5b29afb6d0337c08c24e0d8680852",
     "worker/index.ts": "9d65ef12eaec28abd94472c8627bcb73eb00c0d082a885b05de1d79e1638e252",
     "worker/providerAvailability.ts": "52443e5c5b22fba55d05e10f708263e4fead3a0b7b9691f020611668582a3076",
-    "worker/providers.ts": "2ac558b15d2d64285a6fe18e0f9e5168d9a935d3b2dd09caa7d065bd8cb12fd6",
+    "worker/providers.ts": "579a93dd7362da9a855778c11c616e1ccb40c07eb2b6138c575c2f5aa1914976",
     "worker/validation.ts": "b0a68f89a3347a641a231de7d3d3c36bcc0292a1c7ddd5ec7e7fb325f0e5207f"
   },
   "locations": [

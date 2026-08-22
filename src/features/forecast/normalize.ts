@@ -286,7 +286,7 @@ export function aggregateBlockMarine(
   // field is absent across the WHOLE window there is nothing to aggregate, so
   // the result is NO_READING, not a fabricated 0.
   const definedNums = (arr: (number | undefined)[]): number[] => {
-    const out = arr.filter((v): v is number => v != null);
+    const out = arr.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
     return out.length ? out : [NO_READING];
   };
   const waveHeights = definedNums(waves.map((w) => w.waveHeight));

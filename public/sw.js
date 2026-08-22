@@ -325,6 +325,8 @@ async function matchPrevious(request) {
 
 async function matchVerifiedShell() {
   const cache = await caches.open(CACHE);
+  const metadata = await cache.match(CACHE_METADATA, MATCH);
+  if (!metadata) return undefined;
   return (await cache.match(BASE, MATCH)) ?? cache.match(INDEX, MATCH);
 }
 

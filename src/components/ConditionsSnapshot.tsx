@@ -183,8 +183,8 @@ export default function ConditionsSnapshot({
         <span className="sr-only">{t('Overall rating: {0}.', t(RATING_WORD[rating]))}</span>
         <div className="snapshot-time-anchor">{t('Conditions for {0}:', timeAnchor)}</div>
         <ul className="snapshot-reasons">
-          {reasons.map((reason, i) => (
-            <li key={i} className={`reason-${reason.severity}`}>
+          {reasons.map((reason) => (
+            <li key={`${reason.severity}-${reason.text}`} className={`reason-${reason.severity}`}>
               <span className="sr-only">
                 {reason.severity === 'danger'
                   ? `${t('Danger')}: `
