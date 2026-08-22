@@ -658,13 +658,9 @@ h1, h2, h3, h4, h5, h6 {
 
 /* Footer Section */
 .app-footer {
-  margin-top: auto;
-  border-top: 1px solid var(--housing-edge);
-  padding: 22px 0;
-  /* The footer is the last element, so it carries the home-indicator inset */
-  padding-bottom: max(22px, calc(env(safe-area-inset-bottom) + 14px));
-  background: color-mix(in srgb, var(--housing) 16%, var(--bg-app));
   text-align: center;
+  margin-top: 8px;
+  margin-bottom: max(16px, calc(env(safe-area-inset-bottom) + 8px));
 }
 
 .footer-text {

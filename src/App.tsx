@@ -435,28 +435,25 @@ export default function App() {
               )}
           </div>
 
+          {/* Footer Panel */}
+          <footer className="panel app-footer">
+            <p className="footer-disclaimer">
+              {t('Advisory only — FRANK does not replace official warnings, club rules, or your own look at the water. You are responsible for the decision to launch.')}
+            </p>
+            <p className="footer-text">
+              {t('Weather data by MET Norway')} (<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">CC BY 4.0</a>){t(', waves & water by DMI ({0}) for {1}.', dmiModels, weatherData.sources.location?.areaName ?? CURRENT_LOCATION.areaName)}{weatherData.warnings?.length ? <> {t('Warnings by')} <a href="https://meteoalarm.org" target="_blank" rel="noreferrer">MeteoAlarm</a>/DMI (CC BY 4.0).</> : ''}
+            </p>
+            <details className="footer-details">
+              <summary>{t('Data and version')}</summary>
+              <p className="footer-text footer-technical">
+                {t('Forecast built {0}. Worker checked {1}.', formatDateTime(weatherData.sources.fetchedAt), formatDateTime(cacheCheckedAt))}
+                <span className="footer-build">{appBuildLabel}</span>
+              </p>
+            </details>
+            <PrivacyNotice />
+          </footer>
         </div>
       </main>
-
-      {/* Footer */}
-      <footer className="app-footer">
-        <div className="container">
-          <p className="footer-disclaimer">
-            {t('Advisory only — FRANK does not replace official warnings, club rules, or your own look at the water. You are responsible for the decision to launch.')}
-          </p>
-          <p className="footer-text">
-            {t('Weather data by MET Norway')} (<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">CC BY 4.0</a>){t(', waves & water by DMI ({0}) for {1}.', dmiModels, weatherData.sources.location?.areaName ?? CURRENT_LOCATION.areaName)}{weatherData.warnings?.length ? <> {t('Warnings by')} <a href="https://meteoalarm.org" target="_blank" rel="noreferrer">MeteoAlarm</a>/DMI (CC BY 4.0).</> : ''}
-          </p>
-          <details className="footer-details">
-            <summary>{t('Data and version')}</summary>
-            <p className="footer-text footer-technical">
-              {t('Forecast built {0}. Worker checked {1}.', formatDateTime(weatherData.sources.fetchedAt), formatDateTime(cacheCheckedAt))}
-              <span className="footer-build">{appBuildLabel}</span>
-            </p>
-          </details>
-          <PrivacyNotice />
-        </div>
-      </footer>
     </>
   );
 }
