@@ -328,8 +328,9 @@ export function mapMetPayload(
     blocks: mapMetBlocks(data),
     // An Expires we cannot act on is worse than no Expires. Number.isFinite
     // accepts a timestamp already in the PAST, and one lapsed header then makes
-    // every tick see stale weather, rebuild, and write: 288 writes/city/day
-    // against a 1,000/day allowance, from a single upstream misconfiguration.
+    // every selected tick see stale weather, rebuild, and write: 360 writes per
+    // city/day, 1,440 across four cities, against a 1,000/day allowance from a
+    // single upstream misconfiguration.
     // Far in the future is the opposite failure - the forecast freezes while
     // still reading as current. MET reissues roughly every half hour, so clamp
     // to a window either side of that and let an unusable header fall back.

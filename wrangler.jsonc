@@ -20,7 +20,7 @@
     "required": ["FRANK_WARM_TOKEN"]
   },
   "triggers": {
-    "crons": ["*/5 * * * *"]
+    "crons": ["* * * * *"]
   },
   "kv_namespaces": [
     {

@@ -229,8 +229,8 @@ describe('scheduled DMI retries and location isolation', () => {
       degradedSources: ['water', 'waves'],
     });
 
-    // Kolding's turn is ten minutes later, so this invocation must not mutate
-    // its cached health in response to Vejle's provider failure.
+    // Kolding's turn is the next one-minute tick, so this invocation must not
+    // mutate its cached health in response to Vejle's provider failure.
     expect(forecast(store, kolding).sources.cacheHealth).toMatchObject({
       status: 'current',
     });

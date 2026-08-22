@@ -10,10 +10,16 @@ const DEFAULT_MAX_FETCH_ATTEMPTS = 1;
 const CRON_FETCH_TIMEOUT_MS = 50_000;
 const CRON_LOCATION_MIN_BUDGET_MS = 15_000;
 const CRON_COMPLETION_RESERVE_MS = 8_000;
-export const CRON_TICK_BUDGET_MS = 4 * 60_000;
+// Cadence arithmetic: 50s refresh budget - 8s completion reserve = one
+// shared 42s provider window. The three attempts each carry the 50s fetch cap,
+// but every fetch and retry delay is clamped to that same remaining window;
+// they can never add up to 3 x 50s. The scheduled handler then gives its
+// heartbeat at most 3s, for a designed 53s total and about 7s before the next
+// one-minute tick.
+export const CRON_TICK_BUDGET_MS = 50_000;
 // Retry depth is a provider decision, not a way to spend the invocation-wide
 // subrequest allowance. Three total attempts cover two transient failures; a
-// still-failing stage then yields to this city's next 20-minute turn instead of
+// still-failing stage then yields to this city's next four-minute turn instead of
 // parsing dozens of identical 5xx responses on Workers Free's 10 ms CPU tier.
 export const CRON_PROVIDER_MAX_ATTEMPTS = 3;
 export const DMI_BUSY_RETRY_DELAY_MS = 1_200;
@@ -85,7 +91,7 @@ export function executionPolicy(policy: ExecutionPolicyInput = {}): ExecutionPol
 // a row - exactly when a budget-truncated tick starves the same tail of the
 // list it starved last time. The test reads wrangler.jsonc and fails if these
 // two ever drift apart again.
-export const CRON_PERIOD_MS = 5 * 60_000;
+export const CRON_PERIOD_MS = 60_000;
 
 export function rotateTickOrder<T>(
   scheduledTime: number | undefined,

@@ -76,10 +76,12 @@ function runtime(marineRun = MARINE_RUN) {
   for (const location of LOCATIONS) {
     store.set(assembledForecastKey(location), JSON.stringify(cachedForecast(location, marineRun)));
   }
+  const gets: string[] = [];
   const puts: string[] = [];
   const env = {
     FRANK_FORECAST_CACHE: {
       async get(key: string, type?: string) {
+        gets.push(key);
         const raw = store.get(key);
         if (raw === undefined) return null;
         return type === 'json' ? JSON.parse(raw) : raw;
@@ -90,7 +92,7 @@ function runtime(marineRun = MARINE_RUN) {
       },
     },
   };
-  return { env, store, puts };
+  return { env, store, gets, puts };
 }
 
 beforeEach(() => {
@@ -105,7 +107,7 @@ afterEach(() => {
 
 describe('scheduled city rotation', () => {
   it('refreshes exactly one city per tick and covers all cities in four ticks', async () => {
-    const { env, store, puts } = runtime();
+    const { env, gets } = runtime();
     const provider = vi.spyOn(globalThis, 'fetch').mockRejectedValue(
       new Error('A source fetch is not due in this fixture.'),
     );
@@ -117,10 +119,11 @@ describe('scheduled city rotation', () => {
     });
     expect(new Set(expectedCycle.map(({ id }) => id)).size).toBe(LOCATIONS.length);
 
-    const previousAttempts: Record<string, string> = {};
+    const forecastKeys = new Set(LOCATIONS.map(assembledForecastKey));
     for (const [index, expectedLocation] of expectedCycle.entries()) {
       const scheduledTime = FIRST_TICK_MS + index * CRON_PERIOD_MS;
       vi.setSystemTime(scheduledTime);
+      const readsBeforeTick = gets.length;
 
       await worker.scheduled(
         { scheduledTime } as ScheduledController,
@@ -128,23 +131,60 @@ describe('scheduled city rotation', () => {
         {} as ExecutionContext,
       );
 
-      const rawHeartbeat = store.get(CRON_HEARTBEAT_KEY);
-      expect(rawHeartbeat).toBeDefined();
-      const heartbeat = JSON.parse(rawHeartbeat!) as {
-        lastTickAt: string;
-        locations: Record<string, string>;
-      };
-      const changedThisTick = Object.entries(heartbeat.locations)
-        .filter(([id, attemptedAt]) => previousAttempts[id] !== attemptedAt)
-        .map(([id]) => id);
-
-      expect(changedThisTick).toEqual([expectedLocation.id]);
-      expect(heartbeat.locations[expectedLocation.id]).toBe(new Date(scheduledTime).toISOString());
-      Object.assign(previousAttempts, heartbeat.locations);
+      const locationReads = [...new Set(
+        gets.slice(readsBeforeTick).filter((key) => forecastKeys.has(key)),
+      )];
+      expect(locationReads).toEqual([assembledForecastKey(expectedLocation)]);
     }
 
-    expect(Object.keys(previousAttempts).sort()).toEqual(LOCATIONS.map(({ id }) => id).sort());
-    expect(puts.filter((key) => key === CRON_HEARTBEAT_KEY)).toHaveLength(LOCATIONS.length);
+    expect(provider).not.toHaveBeenCalled();
+  });
+
+  it('skips heartbeat writes inside five minutes and writes once the interval elapses', async () => {
+    const { env, store, puts } = runtime();
+    const provider = vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      new Error('A source fetch is not due in this fixture.'),
+    );
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const startTick = 10;
+    const runTick = async (offset: number) => {
+      const scheduledTime = FIRST_TICK_MS + (startTick + offset) * CRON_PERIOD_MS;
+      vi.setSystemTime(scheduledTime);
+      await worker.scheduled(
+        { scheduledTime } as ScheduledController,
+        env as Env,
+        {} as ExecutionContext,
+      );
+      return scheduledTime;
+    };
+    const heartbeatWrites = () => puts.filter((key) => key === CRON_HEARTBEAT_KEY);
+
+    const firstTick = await runTick(0);
+    const firstHeartbeat = store.get(CRON_HEARTBEAT_KEY);
+    expect(firstHeartbeat).toBeDefined();
+    expect(heartbeatWrites()).toHaveLength(1);
+
+    for (const offset of [1, 2, 3, 4]) await runTick(offset);
+    expect(heartbeatWrites()).toHaveLength(1);
+    expect(store.get(CRON_HEARTBEAT_KEY)).toBe(firstHeartbeat);
+
+    const elapsedTick = await runTick(5);
+    expect(heartbeatWrites()).toHaveLength(2);
+    const heartbeat = JSON.parse(store.get(CRON_HEARTBEAT_KEY)!) as {
+      lastTickAt: string;
+      locations: Record<string, string>;
+    };
+    const firstLocation = tickOrder(firstTick)[0];
+    const elapsedLocation = tickOrder(elapsedTick)[0];
+    expect(heartbeat).toEqual({
+      schemaVersion: 1,
+      lastTickAt: new Date(elapsedTick).toISOString(),
+      locations: {
+        [firstLocation.id]: new Date(firstTick).toISOString(),
+        [elapsedLocation.id]: new Date(elapsedTick).toISOString(),
+      },
+    });
     expect(provider).not.toHaveBeenCalled();
   });
 
@@ -156,9 +196,10 @@ describe('scheduled city rotation', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    // Twenty minutes later the rotation returns to Horsens, and the prior
-    // test's isolate-local gate is outside its two-minute suppression window.
-    const scheduledTime = FIRST_TICK_MS + LOCATIONS.length * CRON_PERIOD_MS;
+    // Twenty minutes after the fixture epoch the rotation is back on Horsens
+    // and any isolate-local two-minute suppression stamp from earlier fixtures
+    // is safely in the past.
+    const scheduledTime = FIRST_TICK_MS + 5 * LOCATIONS.length * CRON_PERIOD_MS;
     vi.setSystemTime(scheduledTime);
     await worker.scheduled(
       { scheduledTime } as ScheduledController,

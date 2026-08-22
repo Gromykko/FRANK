@@ -106,7 +106,7 @@ const FORECAST_LOCATIONS = locationData as ForecastLocation[];
 // DMI's position queries were answering in 22-23s while this sat at 25s, so a
 // merely SLOW provider was 2s from being reported as a broken one.
 //
-//   CRON has ten minutes and nobody waiting -> be patient.
+//   CRON has one bounded city slot and nobody waiting -> be patient.
 //   A release-candidate warm request has a bounded deployment gate waiting for
 //   it -> stop early enough to return a structured result.
 //
@@ -136,15 +136,15 @@ const INITIALIZATION_MARKER_TTL_SECONDS = INITIALIZATION_RETRY_SECONDS + 60;
 const CRON_CHECK_MIN_INTERVAL_MS = 2 * 60 * 1000;
 const CHECKED_STAMP_MIN_WRITE_INTERVAL_MS = 25 * 60 * 1000;
 
-// Proof that the cron is still firing, and which cities each tick actually got
-// to. Stamping "we checked" into every city's forecast payload would be one KV
-// write per city per tick; against a 1,000-write day that is what forced the
-// coarse CHECKED_STAMP_MIN_WRITE_INTERVAL_MS throttle, and with it a "checked"
-// time that could be 25 minutes behind the truth. One shared object costs one
-// write per tick no matter how many cities exist, which is what makes an
-// honest five-minute claim affordable - and what keeps adding a fifth city
-// free instead of costing another ~57 writes a day.
+// Proof that the cron is still firing, and which city each persisted sample
+// actually got to. Stamping "we checked" into every city's forecast payload
+// would be one KV write per city per tick. Against a 1,000-write day, that is
+// what forced the coarse CHECKED_STAMP_MIN_WRITE_INTERVAL_MS throttle and a "checked"
+// time that could be 25 minutes behind the truth. One shared object targeting a
+// write about every five scheduled minutes keeps the liveness evidence
+// affordable even when the scheduler itself fires every minute.
 const CRON_HEARTBEAT_SCHEMA_VERSION = 1;
+const CRON_HEARTBEAT_MIN_WRITE_INTERVAL_MS = 5 * 60_000;
 // Enough for a read and a write of one small object; short enough that a KV
 // brownout cannot hold the invocation open past the runtime's patience.
 const HEARTBEAT_WRITE_BUDGET_MS = 3_000;
@@ -178,10 +178,10 @@ async function fetchCronHeartbeat(
 
 // The public forecast route reads this on every request, which would double the
 // app's KV read volume against a 100,000/day tier. One isolate-local copy, held
-// for a fraction of the cron period, removes nearly all of it: the value only
-// changes once per tick, so a request served seconds behind the newest heartbeat
-// reads the same number it would have paid for. It holds a timestamp and a
-// plain object, never a request or an in-flight promise.
+// for a fraction of the heartbeat write interval removes nearly all of it: the
+// value changes only about every five minutes, so a request served seconds
+// behind the newest heartbeat reads the same number it would have paid for. It
+// holds a timestamp and a plain object, never a request or an in-flight promise.
 const HEARTBEAT_MEMO_TTL_MS = 30_000;
 let heartbeatMemo: { at: number; value: CronHeartbeat | null } | null = null;
 
@@ -213,6 +213,18 @@ async function writeCronHeartbeat(
     // stamps of cities this tick did not reach, so it has to read what is
     // actually stored, not what this isolate happened to serve a moment ago.
     const previous = await fetchCronHeartbeat(env, policyInput);
+    const nowMs = Date.now();
+    const previousTickMs = Date.parse(previous?.lastTickAt ?? '');
+    const previousAgeMs = nowMs - previousTickMs;
+    if (Number.isFinite(previousTickMs)
+      && previousAgeMs >= 0
+      && previousAgeMs < CRON_HEARTBEAT_MIN_WRITE_INTERVAL_MS) {
+      // Attempts made during skipped ticks are deliberately not accumulated in
+      // module scope: isolates are neither shared nor durable. With four cities
+      // and a five-tick write interval, a city's persisted sample can therefore
+      // be up to about 20 minutes old, still inside the 60-minute health alarm.
+      return;
+    }
     const known = new Set(FORECAST_LOCATIONS.map((location) => location.id));
     const locations = Object.fromEntries(
       Object.entries({ ...previous?.locations, ...attemptedAt })
@@ -220,7 +232,7 @@ async function writeCronHeartbeat(
     );
     const heartbeat: CronHeartbeat = {
       schemaVersion: CRON_HEARTBEAT_SCHEMA_VERSION,
-      lastTickAt: new Date().toISOString(),
+      lastTickAt: new Date(nowMs).toISOString(),
       locations,
     };
     await awaitWithinDeadline(
@@ -228,7 +240,7 @@ async function writeCronHeartbeat(
       executionPolicy(policyInput),
       'cron heartbeat write',
     );
-    heartbeatMemo = { at: Date.now(), value: heartbeat };
+    heartbeatMemo = { at: nowMs, value: heartbeat };
   } catch (error) {
     console.error('Cron heartbeat write failed:', error);
   }
@@ -646,8 +658,9 @@ export function shouldPersistFailureState(
   // Everything else - recovery, a sideways change, an identical repeat - waits
   // for the throttle. Treating every transition as urgent looked right until
   // you price a provider that alternates 429/200 tick to tick, which DMI
-  // documents doing under load: stale, current, stale writes on EVERY tick,
-  // 288 a day per city, 1,152 against a 1,000/day allowance. The first casualty
+  // documents doing under load: stale, current, stale writes on EVERY selected
+  // turn, 360 a day per city and 1,440 across four cities against a 1,000/day
+  // allowance. The first casualty
   // is not the status flag - it is that KV put starts throwing, the rebuild
   // write is swallowed, and the app serves a frozen forecast still labelled
   // "current".
@@ -723,8 +736,8 @@ async function _refreshForecastCache(
   // Past the gate: we are genuinely about to contact upstream, so this is the
   // moment to record the check. Setting it in the refreshForecastCache wrapper
   // instead — BEFORE the gate above reads it — made the gate see "checked 0 ms
-  // ago" on every single call and short-circuit forever: the 10-minute cron
-  // became a no-op and nothing rebuilt for as long as the isolate lived.
+  // ago" on every single call and short-circuit forever: each selected cron
+  // turn became a no-op and nothing rebuilt for as long as the isolate lived.
   lastCheckAt.set(cacheKey(location), Date.now());
 
   let latestMarine: MarineInstances | undefined;
@@ -866,7 +879,7 @@ async function _refreshForecastCache(
         marineInstances: latestMarine,
         // During the 20-minute post-due retry window no provider was checked.
         // Preserve the attempt that established the backoff, or restamping
-        // every ten-minute cron would slide that window forward indefinitely.
+        // every selected cron turn would slide that window forward indefinitely.
         preserveAttemptAt: probeDecision.reason === 'retry-backoff',
         checkedBy: options.reason ?? 'check',
         degradedSources: degradedNow.length > 0 ? degradedNow : undefined,
@@ -1360,10 +1373,12 @@ const worker = {
     const eventMemo: EventMemo = new Map();
     const attemptedAt: Record<string, string> = {};
     try {
-      // Workers Free allows only 10 ms CPU per scheduled invocation. Refresh
-      // one rotated city per five-minute tick instead of parsing and assembling
-      // all four in one event; every city is still reached once per 20 minutes,
-      // inside MET's 30-minute minimum TTL and the 60-minute health threshold.
+      // Workers Free allows only 10 ms active CPU per scheduled invocation;
+      // network/KV waits are wall time, but still must not overlap later ticks.
+      // Refresh one rotated city per one-minute tick instead of parsing and
+      // assembling all four in one event. Every city is reached once per four
+      // minutes, inside MET's 30-minute minimum TTL and the 60-minute health
+      // threshold.
       // Authenticated deployment warming remains per-location and unchanged.
       const scheduledLocations = tickOrder(event?.scheduledTime).slice(0, 1);
       for (const location of scheduledLocations) {
@@ -1393,11 +1408,9 @@ const worker = {
         }
       }
     } finally {
-      // Bounded, and deliberately outside the tick budget the loop just spent:
-      // this is the record that the tick happened at all, so it must still get
-      // a bounded chance to land when the loop ran long. Unbounded, a KV stall
-      // here would let the runtime kill the invocation and lose the heartbeat
-      // exactly when the system is under stress and liveness matters most.
+      // Bounded outside the refresh budget so a due heartbeat still gets a
+      // chance to land when provider work runs long. Most ticks return after
+      // the read because the write itself is throttled to about five minutes.
       await writeCronHeartbeat(env, attemptedAt, {
         deadlineAt: Date.now() + HEARTBEAT_WRITE_BUDGET_MS,
         maxAttempts: 1,

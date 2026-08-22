@@ -321,9 +321,8 @@ describe('fetchLatestMarineInstances (split resolution)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// A slow upstream can spend the 5-minute tick budget before the loop reaches
-// the last locations. With a fixed order that starved the same fjords every
-// tick for as long as the provider stayed slow.
+// A slow upstream can consume one city's tick. Rotating the selected city keeps
+// that failure from delaying the same fjord on every subsequent tick.
 // ---------------------------------------------------------------------------
 describe('tickOrder', () => {
   const fjords = ['horsens', 'vejle', 'kolding', 'aarhus'];
@@ -336,10 +335,25 @@ describe('tickOrder', () => {
   it('derives its tick counter from the deployed cron schedule', async () => {
     const config = await readFile('wrangler.jsonc', 'utf8');
     const cron = config.match(/"crons"\s*:\s*\[\s*"([^"]+)"/)?.[1];
-    const everyMinutes = Number(cron?.match(/^\*\/(\d+) \* \* \* \*$/)?.[1]);
+    const minuteField = cron?.match(/^(\*|\*\/[1-9]\d*) \* \* \* \*$/)?.[1];
+    const everyMinutes = minuteField === '*'
+      ? 1
+      : Number(minuteField?.slice(2));
 
     expect(Number.isFinite(everyMinutes)).toBe(true);
     expect(CRON_PERIOD_MS).toBe(everyMinutes * 60_000);
+  });
+
+  it('reaches every fjord within four one-minute ticks from any starting tick', () => {
+    const cycleStart = '2026-08-08T15:40:00Z';
+    expect(CRON_PERIOD_MS).toBe(60_000);
+    expect(fjords.length * CRON_PERIOD_MS).toBe(4 * 60_000);
+
+    for (let startingTick = 0; startingTick < fjords.length; startingTick++) {
+      const reached = Array.from({ length: fjords.length }, (_, offset) =>
+        tickOrder(tick(cycleStart, startingTick + offset), fjords)[0]);
+      expect(new Set(reached)).toEqual(new Set(fjords));
+    }
   });
 
   it('advances the starting fjord by one every tick', () => {
@@ -388,9 +402,12 @@ describe('cronExecutionPolicy', () => {
       retryDelayMs: undefined,
       retryBusyDelayMs: undefined,
     });
+    expect(CRON_TICK_BUDGET_MS).toBe(50_000);
     // Unclamped case: the policy returns CRON_FETCH_TIMEOUT_MS verbatim, so
     // this pins the constant itself. The next test deliberately clamps lower;
-    // the location's remaining share must always win.
+    // the location's remaining share must always win. At runtime the 8-second
+    // completion reserve makes all three attempts share at most 42 seconds;
+    // their three 50-second caps are not additive.
     expect(policy!.fetchTimeoutMs).toBeGreaterThanOrEqual(DEFAULT_FETCH_TIMEOUT_MS);
   });
 

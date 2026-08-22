@@ -38,14 +38,14 @@ Browser / Installed PWA
         │
         └── Versioned forecast GET ──── Cloudflare Worker ─── Cloudflare KV
                                                 │
-                                       5-minute cron / warm-up
+                                       1-minute cron / warm-up
                                                 │
                                  MET Norway · DMI · MeteoAlarm
 ```
 
 * **Zero-Upstream Public Traffic**: Visitors only read pre-built snapshots from the Worker and KV. Browser requests never trigger MET, DMI, or MeteoAlarm calls.
-* **Rotating Ingestion Cron**: A Cloudflare cron wakes every 5 minutes (`*/5 * * * *`) and refreshes one rotating location. Every location is reached once per 20 minutes, inside the forecast freshness and health thresholds while keeping one Free-plan invocation small.
-* **Write-on-Change Storage Optimization**: Forecast data is only re-written to Cloudflare KV when upstream weather models actually change, preserving daily KV write quotas while keeping status timestamps fresh.
+* **Rotating Ingestion Cron**: A Cloudflare cron wakes every minute (`* * * * *`) and refreshes one rotating location. Every location is reached once per 4 minutes while each Free-plan invocation still processes only one city.
+* **Write-Aware Storage Optimization**: Timestamp-only forecast rewrites are suppressed, provider ingredients are reused where possible, and the shared heartbeat is throttled to protect the daily KV write allowance.
 * **Resilient Multi-Tier Fallbacks**: If DMI or MET experiences a temporary rate limit or outage, FRANK automatically falls back to held previous simulations and retained raw ingredients, keeping forecasts live with clear degradation indicators.
 * **Client-Side Safety Engine**: Risk assessment calculations (wind, gusts, water level, waves, daylight, water temperature) run 100% locally in the paddler's browser against their own chosen safety profile.
 
@@ -55,7 +55,7 @@ Production is continuously validated and deployed via [`.github/workflows/deploy
 
 - **Automated Validation**: Every commit runs full typechecking, linting (`oxlint`), 500+ Vitest unit/integration tests, Miniflare Cloudflare Worker runtime tests, model contract verification, and 28 Playwright cross-browser/PWA end-to-end tests.
 - **Ordered Candidate Deployment**: When merged to `main`, a zero-traffic Worker candidate is warmed through its version preview URL and promoted to 100% only after all four locations are ready. Pages is published only after promotion succeeds.
-- **5-Minute Cron Maintenance**: Scheduled edge crons maintain shared raw provider ingredients (`frank:raw:...`) and immutable generation forecasts (`frank:forecast-release:...`).
+- **1-Minute Cron Maintenance**: Scheduled edge crons rotate across the four cities while maintaining shared raw provider ingredients (`frank:raw:...`) and immutable generation forecasts (`frank:forecast-release:...`).
 
 ## Cloudflare Free Tier Quotas & Guardrails
 
@@ -65,16 +65,20 @@ guardrails are:
 
 | Metric | Free allowance | FRANK guardrail / baseline |
 |---|---:|---|
-| **Worker requests** | 100,000 / day | 288 cron ticks/day plus public API and health/status requests |
+| **Worker requests** | 100,000 / day | 1,440 cron ticks/day plus public API and health/status requests |
 | **CPU** | 10 ms / Free invocation | One rotating location per cron tick; verify real deployed CPU analytics before adding locations or heavier parsing |
 | **KV reads** | 100,000 / day | Variable with visitors and ingestion. Public JSON is `no-store`, so there is no claimed zero-cost CDN-read layer |
-| **KV writes** | 1,000 / day | 288 heartbeat writes plus changed assembled/raw data; unchanged recovery state is throttled |
+| **KV writes** | 1,000 / day | Nominally about 288 heartbeat writes plus a healthy-operation planning estimate of about 432 forecast/raw writes: about 720/day before failures, initialization, deploys, or manual work |
 | **External subrequests** | 50 / invocation | One event-wide counter stops before 46; a DMI 429 opens a same-event circuit |
 
-The heartbeat is deliberately unconditional: it is the evidence that the
-schedule itself still runs. Every other write is variable, so production should
-alert on actual Cloudflare usage rather than rely on a fixed estimate in this
-README. See Cloudflare's current [Workers limits](https://developers.cloudflare.com/workers/platform/limits/), [KV limits](https://developers.cloudflare.com/kv/platform/limits/), and [pricing](https://developers.cloudflare.com/workers/platform/pricing/).
+The heartbeat is read every tick and its previous timestamp throttles writes
+toward one every five scheduled minutes. An attempt made on a skipped tick is
+not accumulated across Worker isolates; with four rotating cities, the nominal
+sampling interval for one city's persisted stamp is about 20 minutes, inside
+the 60-minute health alarm. Workers KV is eventually consistent, so an isolate
+can occasionally read an older heartbeat and make an extra write; production
+must alert on actual ages and usage rather than treat either estimate as a hard
+cap. See Cloudflare's current [Workers limits](https://developers.cloudflare.com/workers/platform/limits/), [KV limits](https://developers.cloudflare.com/kv/platform/limits/), and [pricing](https://developers.cloudflare.com/workers/platform/pricing/).
 
 ## Privacy
 

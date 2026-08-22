@@ -231,7 +231,8 @@ describe('mapMetPayload expiry clamping', () => {
 
   it('refuses an Expires that has already lapsed', () => {
     // One misconfigured upstream would otherwise mean rebuild + write on every
-    // tick: 288 writes/city/day against a 1,000/day allowance.
+    // selected tick: 360 writes/city/day and 1,440/day across four cities,
+    // against a 1,000/day allowance.
     expect(expiryMs(NOW - 60_000)).toBe(FORECAST_SOURCE_POLICY.metDefaultTtlMs);
     expect(expiryMs(Date.parse('0'))).toBe(FORECAST_SOURCE_POLICY.metDefaultTtlMs);
   });

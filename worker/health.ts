@@ -1015,17 +1015,19 @@ export function statusResponse(health: HealthPayload): Response {
   <details class="notes">
     <summary>How to read this instrument</summary>
     <div class="notes-content">
-      <p>Last check is the most recent scheduled or authenticated release attempt for the
-      required forecast sources. Every tick records which cities it reached into one shared
-      heartbeat object, so this figure now tracks the ${escapeHtml(Math.round(CRON_PERIOD_MS / 60_000))}-minute
-      schedule closely instead of trailing a storage write that only happened occasionally.</p>
+      <p>Last check is the most recent persisted scheduled or authenticated release attempt
+      for the required forecast sources. The scheduler attempts one rotated city every
+      ${escapeHtml(Math.round(CRON_PERIOD_MS / 60_000))} minute, while the shared heartbeat
+      is written about every five minutes to protect the KV allowance. Attempts on skipped
+      heartbeat ticks are not accumulated; with four rotating cities, each persisted
+      per-city stamp is nominally sampled about once every 20 minutes.</p>
 
       <p>A city can still read older than the others, and that is the useful signal rather
-      than a fault: a tick that runs out of budget stops before the end of its rotation, and
-      a city in the marine retry-backoff window is deliberately not contacted at all. Both
-      keep their previous timestamp rather than inheriting the tick's, so a row that lags is
-      telling you something real. Ordinary visits, page reloads and the in-app refresh button
-      only read prepared storage snapshots; they do not contact providers or alter this clock.
+      than a fault: its selected tick can run out of budget, its heartbeat write can be
+      throttled, or a marine retry-backoff can deliberately avoid provider contact. Those
+      cases keep the previous persisted timestamp rather than inventing a newer one. Ordinary
+      visits, page reloads and the in-app refresh button only read prepared storage snapshots;
+      they do not contact providers or alter this clock.
       The alarm sits at ${escapeHtml(health.checkStaleAfterMin)} minutes.
       Worst right now: ${escapeHtml(health.oldestCheckAgeMin ?? '?')} minutes.</p>
 

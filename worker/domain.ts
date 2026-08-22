@@ -201,16 +201,17 @@ export interface HealthAge {
   checkAgeMs: number;
 }
 
-// One KV object recording that the cron ran, and which cities it actually got
-// to. A per-city "we checked" stamp inside each forecast payload costs one KV
-// write per city per tick; this costs one write for all of them, which is what
-// makes an honest five-minute freshness claim affordable at all.
+// One KV object recording that the cron ran, and which city the persisted tick
+// actually reached. The previous timestamp targets about one write every five
+// scheduled minutes; attempts from skipped one-minute ticks are intentionally
+// not accumulated across isolates. With four rotating cities, the nominal
+// persisted sampling interval for one city's stamp is therefore about 20
+// minutes while lastTickAt still proves the schedule is alive.
 export interface CronHeartbeat {
   schemaVersion: number;
   lastTickAt: string;
-  // Only cities this tick actually attempted. A tick that runs out of budget
-  // breaks early, and the cities it never reached must keep their own older
-  // stamp instead of inheriting the tick's.
+  // Only cities from persisted ticks. Skipped heartbeat writes and a tick that
+  // runs out of budget leave the other cities' older stamps untouched.
   locations: Record<string, string>;
 }
 
