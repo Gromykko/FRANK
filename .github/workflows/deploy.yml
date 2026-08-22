@@ -72,15 +72,17 @@ jobs:
         with:
           path: dist
 
-  deploy_worker:
-    name: Deploy Worker
+  upload_candidate:
+    name: Upload Worker candidate
     needs: validate
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      version_id: ${{ steps.candidate.outputs.version_id }}
+      preview_url: ${{ steps.candidate.outputs.preview_url }}
     environment:
       name: worker-production
-      url: https://frank-forecast.alswatchs.workers.dev
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -94,26 +96,190 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Deploy to Cloudflare Worker
-        run: npx wrangler deploy --message "Deploy ${{ github.sha }}"
+      - name: Capture current Worker deployment
+        run: npx wrangler deployments status --json > "$RUNNER_TEMP/frank-current-deployment.json"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      # The Worker is already live at this point. Cleanup is maintenance, not a
-      # release gate: failing here must not strand the compatible new Worker in
-      # front of the old Pages client. The failed step remains visible in the
-      # run summary and the next deployment retries it.
-      - name: Clean stale KV generations (best effort)
-        continue-on-error: true
-        run: npm run worker:gc-kv
+      # Preview URLs are a persistent Worker-level setting. Manual dispatch is
+      # the explicit bootstrap/recovery path; normal pushes never sync triggers.
+      - name: Enable Worker version preview URLs (manual bootstrap)
+        if: github.event_name == 'workflow_dispatch'
+        run: npx wrangler triggers deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-  warm_worker:
-    name: Warm Worker
-    needs: deploy_worker
+      - name: Upload zero-traffic Worker candidate
+        run: npx wrangler versions upload --message "Candidate ${{ github.sha }}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/frank-version-upload.ndjson
+
+      - name: Validate and expose candidate metadata
+        id: candidate
+        env:
+          CURRENT_DEPLOYMENT_PATH: ${{ runner.temp }}/frank-current-deployment.json
+          FRANK_WORKER_BASE_URL: ${{ vars.FRANK_WORKER_BASE_URL }}
+          VERSION_UPLOAD_PATH: ${{ runner.temp }}/frank-version-upload.ndjson
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+
+          const fail = (message) => {
+            throw new Error('[candidate-metadata] ' + message);
+          };
+          const uuidPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+          const productionHostPattern =
+            /^frank-forecast\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.workers\.dev$/;
+
+          let currentDeployment;
+          try {
+            currentDeployment = JSON.parse(
+              readFileSync(process.env.CURRENT_DEPLOYMENT_PATH, 'utf8'),
+            );
+          } catch {
+            fail('current deployment output is missing or invalid JSON');
+          }
+
+          const currentVersions = currentDeployment?.versions;
+          if (
+            currentDeployment?.strategy !== 'percentage'
+            || !Array.isArray(currentVersions)
+            || currentVersions.length !== 1
+            || currentVersions[0]?.percentage !== 100
+            || !uuidPattern.test(currentVersions[0]?.version_id ?? '')
+          ) {
+            fail('expected exactly one valid version at 100% traffic');
+          }
+          const previousVersionId = currentVersions[0].version_id;
+
+          let uploadRecords;
+          try {
+            uploadRecords = readFileSync(process.env.VERSION_UPLOAD_PATH, 'utf8')
+              .split(/\r?\n/)
+              .filter((line) => line.trim() !== '')
+              .map((line) => JSON.parse(line));
+          } catch {
+            fail('Wrangler upload output is missing or invalid NDJSON');
+          }
+
+          if (uploadRecords.some((record) => record?.type === 'command-failed')) {
+            fail('Wrangler recorded a failed upload command');
+          }
+          const sessionRecords = uploadRecords.filter(
+            (record) => record?.type === 'wrangler-session',
+          );
+          const candidateRecords = uploadRecords.filter(
+            (record) => record?.type === 'version-upload',
+          );
+          if (
+            sessionRecords.length !== 1
+            || sessionRecords[0]?.version !== 1
+            || candidateRecords.length !== 1
+            || candidateRecords[0]?.version !== 1
+          ) {
+            fail('expected exactly one Wrangler session and one version-upload record');
+          }
+
+          const candidateVersionId = candidateRecords[0].version_id;
+          const candidatePreviewUrl = candidateRecords[0].preview_url;
+          if (
+            candidateRecords[0].worker_name !== 'frank-forecast'
+            || candidateRecords[0].worker_name_overridden !== false
+            || !uuidPattern.test(candidateVersionId ?? '')
+            || candidateVersionId === previousVersionId
+          ) {
+            fail('candidate version ID is missing or invalid');
+          }
+          if (
+            typeof candidatePreviewUrl !== 'string'
+            || candidatePreviewUrl.trim() !== candidatePreviewUrl
+            || /[\r\n]/.test(candidatePreviewUrl)
+          ) {
+            fail('candidate preview URL is missing or invalid');
+          }
+
+          let parsedPreviewUrl;
+          try {
+            parsedPreviewUrl = new URL(candidatePreviewUrl);
+          } catch {
+            fail('candidate preview URL is not a URL');
+          }
+          if (
+            parsedPreviewUrl.protocol !== 'https:'
+            || parsedPreviewUrl.username
+            || parsedPreviewUrl.password
+            || parsedPreviewUrl.search
+            || parsedPreviewUrl.hash
+          ) {
+            fail('candidate preview URL must be credential-free HTTPS without query or fragment');
+          }
+
+          const configuredWorkerBaseUrl = process.env.FRANK_WORKER_BASE_URL;
+          if (
+            typeof configuredWorkerBaseUrl !== 'string'
+            || configuredWorkerBaseUrl.trim() === ''
+            || configuredWorkerBaseUrl.trim() !== configuredWorkerBaseUrl
+            || /[\r\n]/.test(configuredWorkerBaseUrl)
+          ) {
+            fail('FRANK_WORKER_BASE_URL is missing or invalid');
+          }
+
+          let productionUrl;
+          try {
+            productionUrl = new URL(configuredWorkerBaseUrl);
+          } catch {
+            fail('FRANK_WORKER_BASE_URL is not a valid URL');
+          }
+          if (productionUrl.protocol !== 'https:') {
+            fail('FRANK_WORKER_BASE_URL must use https');
+          }
+          if (
+            productionUrl.username
+            || productionUrl.password
+            || productionUrl.port
+            || productionUrl.pathname !== '/'
+            || productionUrl.search
+            || productionUrl.hash
+            || !productionHostPattern.test(productionUrl.hostname)
+          ) {
+            fail('FRANK_WORKER_BASE_URL must be the root production workers.dev URL');
+          }
+
+          const expectedPreviewOrigin =
+            'https://' + candidateVersionId.slice(0, 8) + '-' + productionUrl.hostname;
+          if (
+            parsedPreviewUrl.origin !== expectedPreviewOrigin
+            || parsedPreviewUrl.pathname !== '/'
+          ) {
+            fail('candidate preview URL does not match the uploaded Worker version');
+          }
+
+          appendFileSync(process.env.GITHUB_OUTPUT, [
+            'version_id=' + candidateVersionId,
+            'preview_url=' + candidatePreviewUrl,
+            '',
+          ].join('\n'));
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, [
+            '### Worker candidate',
+            '',
+            'Candidate version ID: ' + candidateVersionId,
+            '',
+            'Previous live version ID: ' + previousVersionId,
+            '',
+            'Manual rollback after promotion:',
+            '',
+            '    wrangler versions deploy ' + previousVersionId + '@100%',
+            '',
+          ].join('\n'));
+          NODE
+
+  warm_candidate:
+    name: Warm Worker candidate
+    needs: upload_candidate
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -130,13 +296,52 @@ jobs:
         run: node scripts/warm-worker.mjs
         env:
           FRANK_WARM_TOKEN: ${{ secrets.FRANK_WARM_TOKEN }}
-          FRANK_WORKER_BASE_URL: ${{ vars.FRANK_WORKER_BASE_URL }}
+          FRANK_WORKER_BASE_URL: ${{ needs.upload_candidate.outputs.preview_url }}
+
+  promote_worker:
+    name: Promote Worker candidate
+    needs: [upload_candidate, warm_candidate]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: worker-production
+      url: ${{ vars.FRANK_WORKER_BASE_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Promote candidate to 100% traffic
+        run: npx wrangler versions deploy "${CANDIDATE_VERSION_ID}@100%" --yes --message "Promote ${{ github.sha }}"
+        env:
+          CANDIDATE_VERSION_ID: ${{ needs.upload_candidate.outputs.version_id }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      # Promotion has succeeded before cleanup starts. Cleanup is maintenance,
+      # not a release gate: a failure remains visible and the next deployment
+      # retries it without blocking the compatible Pages release.
+      - name: Clean stale KV generations (best effort)
+        continue-on-error: true
+        run: npm run worker:gc-kv
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
   deploy_pages:
     name: Deploy GitHub Pages
-    # Publish only after the backward-compatible Worker is live and every
-    # location is ready. Either failed gate keeps the old Pages release live.
-    needs: [validate, deploy_worker, warm_worker]
+    # Publish only after all candidate locations are ready and that exact Worker
+    # version has been promoted. Any failed gate keeps the old Pages release live.
+    needs: [validate, upload_candidate, warm_candidate, promote_worker]
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 10

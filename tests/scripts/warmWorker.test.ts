@@ -172,23 +172,109 @@ describe('deployment Worker warm-up', () => {
     expect(failure).not.toContain('Authorization');
   });
 
-  it('orders deploy, warm, and Pages as three fail-closed workflow gates', async () => {
+  it('orders candidate upload, warm, promotion, and Pages as fail-closed workflow gates', async () => {
     const workflow = await readFile('.github/workflows/deploy.yml', 'utf8');
-    const deployCommand = workflow.indexOf('npx wrangler deploy');
-    const warmJob = workflow.indexOf('  warm_worker:');
+    const validateJob = workflow.indexOf('  validate:');
+    const uploadJob = workflow.indexOf('  upload_candidate:');
+    const previewSettingsStepStart = workflow.indexOf(
+      '- name: Enable Worker version preview URLs (manual bootstrap)',
+    );
+    const previewSettingsCommand = workflow.indexOf('npx wrangler triggers deploy');
+    const uploadCommand = workflow.indexOf('npx wrangler versions upload');
+    const warmJob = workflow.indexOf('  warm_candidate:');
     const warmCommand = workflow.indexOf('node scripts/warm-worker.mjs');
+    const promoteJob = workflow.indexOf('  promote_worker:');
+    const promoteCommand = workflow.indexOf('npx wrangler versions deploy');
+    const cleanupStep = workflow.indexOf('- name: Clean stale KV generations (best effort)');
+    const cleanupCommand = workflow.indexOf('npm run worker:gc-kv');
     const pagesJob = workflow.indexOf('  deploy_pages:');
-    const warmJobBody = workflow.slice(warmJob, pagesJob);
+    const uploadJobBody = workflow.slice(uploadJob, warmJob);
+    const previewSettingsStep = workflow.slice(previewSettingsStepStart, uploadCommand);
+    const warmJobBody = workflow.slice(warmJob, promoteJob);
+    const promoteJobBody = workflow.slice(promoteJob, pagesJob);
+    const promotionGateBody = workflow.slice(promoteJob, cleanupStep);
+    const cleanupStepBody = workflow.slice(cleanupStep, cleanupCommand);
     const pagesJobBody = workflow.slice(pagesJob);
 
-    expect(deployCommand).toBeGreaterThan(-1);
-    expect(deployCommand).toBeLessThan(warmJob);
+    expect(validateJob).toBeGreaterThan(-1);
+    expect(validateJob).toBeLessThan(uploadJob);
+    expect(uploadJob).toBeLessThan(previewSettingsStepStart);
+    expect(previewSettingsStepStart).toBeLessThan(previewSettingsCommand);
+    expect(previewSettingsCommand).toBeLessThan(uploadCommand);
+    expect(uploadCommand).toBeLessThan(warmJob);
     expect(warmJob).toBeLessThan(warmCommand);
-    expect(warmCommand).toBeLessThan(pagesJob);
-    expect(warmJobBody).toContain('needs: deploy_worker');
+    expect(warmCommand).toBeLessThan(promoteJob);
+    expect(promoteJob).toBeLessThan(promoteCommand);
+    expect(promoteCommand).toBeLessThan(cleanupStep);
+    expect(cleanupStep).toBeLessThan(cleanupCommand);
+    expect(cleanupCommand).toBeLessThan(pagesJob);
+
+    expect(uploadJobBody).toContain('needs: validate');
+    expect(uploadJobBody).toContain('version_id: ${{ steps.candidate.outputs.version_id }}');
+    expect(uploadJobBody).toContain('preview_url: ${{ steps.candidate.outputs.preview_url }}');
+    expect(uploadJobBody).toContain('npx wrangler deployments status --json');
+    expect(uploadJobBody).toContain('npx wrangler triggers deploy');
+    expect(previewSettingsStep).toContain("if: github.event_name == 'workflow_dispatch'");
+    expect(uploadJobBody).toContain('WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/frank-version-upload.ndjson');
+    expect(uploadJobBody).toContain("record?.type === 'version-upload'");
+    expect(uploadJobBody).toContain('sessionRecords.length !== 1');
+    expect(uploadJobBody).toContain('sessionRecords[0]?.version !== 1');
+    expect(uploadJobBody).toContain('candidateRecords.length !== 1');
+    expect(uploadJobBody).toContain('candidateRecords[0]?.version !== 1');
+    expect(uploadJobBody).not.toContain('uploadRecords.length !== 2');
+    expect(uploadJobBody).toContain('candidateRecords[0].version_id');
+    expect(uploadJobBody).toContain('candidateRecords[0].preview_url');
+    expect(uploadJobBody).toContain(
+      'FRANK_WORKER_BASE_URL: ${{ vars.FRANK_WORKER_BASE_URL }}',
+    );
+    expect(uploadJobBody).toContain('process.env.FRANK_WORKER_BASE_URL');
+    expect(uploadJobBody).toContain("productionUrl.protocol !== 'https:'");
+    expect(uploadJobBody).toContain(
+      "'https://' + candidateVersionId.slice(0, 8) + '-' + productionUrl.hostname",
+    );
+    expect(uploadJobBody).toContain('parsedPreviewUrl.origin !== expectedPreviewOrigin');
+    expect(uploadJobBody).toContain("parsedPreviewUrl.pathname !== '/'");
+    expect(workflow).not.toContain('alswatchs.workers.dev');
+    expect(uploadJobBody).toContain('appendFileSync(process.env.GITHUB_OUTPUT');
+    expect(uploadJobBody).toContain("'version_id=' + candidateVersionId");
+    expect(uploadJobBody).toContain("'preview_url=' + candidatePreviewUrl");
+    expect(uploadJobBody).toContain('GITHUB_STEP_SUMMARY');
+    expect(uploadJobBody).toContain("'Candidate version ID: ' + candidateVersionId");
+    expect(uploadJobBody).toContain("'    wrangler versions deploy ' + previousVersionId + '@100%'");
+    expect(uploadJobBody).not.toContain('continue-on-error');
+
+    expect(warmJobBody).toContain('needs: upload_candidate');
     expect(warmJobBody).toContain('FRANK_WARM_TOKEN: ${{ secrets.FRANK_WARM_TOKEN }}');
-    expect(warmJobBody).toContain('FRANK_WORKER_BASE_URL: ${{ vars.FRANK_WORKER_BASE_URL }}');
+    expect(warmJobBody).toContain(
+      'FRANK_WORKER_BASE_URL: ${{ needs.upload_candidate.outputs.preview_url }}',
+    );
     expect(warmJobBody).not.toContain('continue-on-error');
-    expect(pagesJobBody).toContain('needs: [validate, deploy_worker, warm_worker]');
+
+    expect(promoteJobBody).toContain('needs: [upload_candidate, warm_candidate]');
+    expect(promoteJobBody).toContain(
+      'CANDIDATE_VERSION_ID: ${{ needs.upload_candidate.outputs.version_id }}',
+    );
+    expect(promoteJobBody).toContain(
+      'npx wrangler versions deploy "${CANDIDATE_VERSION_ID}@100%" --yes',
+    );
+    expect(promotionGateBody).not.toContain('continue-on-error');
+    expect(promoteJobBody.match(/npm run worker:gc-kv/g)).toHaveLength(1);
+    expect(cleanupStepBody).toContain('continue-on-error: true');
+
+    expect(pagesJobBody).toContain(
+      'needs: [validate, upload_candidate, warm_candidate, promote_worker]',
+    );
+  });
+
+  it('does not use direct wrangler deploy', async () => {
+    const workflow = await readFile('.github/workflows/deploy.yml', 'utf8');
+    expect(workflow).not.toMatch(/\bwrangler\s+deploy(?:\s|$)/);
+  });
+
+  it('enables Wrangler version preview URLs for candidate warming', async () => {
+    const wranglerConfig = JSON.parse(
+      await readFile('wrangler.jsonc', 'utf8'),
+    ) as { preview_urls?: unknown };
+    expect(wranglerConfig.preview_urls).toBe(true);
   });
 });

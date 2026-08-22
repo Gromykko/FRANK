@@ -54,7 +54,7 @@ Browser / Installed PWA
 Production is continuously validated and deployed via [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml):
 
 - **Automated Validation**: Every commit runs full typechecking, linting (`oxlint`), 500+ Vitest unit/integration tests, Miniflare Cloudflare Worker runtime tests, model contract verification, and 28 Playwright cross-browser/PWA end-to-end tests.
-- **Ordered Compatible Deployment**: When merged to `main`, the backward-compatible Worker deploys first; Pages is published only after that succeeds. The two hosts do not provide a single atomic transaction, so release-contract validation and this ordering are the current safety boundary.
+- **Ordered Candidate Deployment**: When merged to `main`, a zero-traffic Worker candidate is warmed through its version preview URL and promoted to 100% only after all four locations are ready. Pages is published only after promotion succeeds.
 - **5-Minute Cron Maintenance**: Scheduled edge crons maintain shared raw provider ingredients (`frank:raw:...`) and immutable generation forecasts (`frank:forecast-release:...`).
 
 ## Cloudflare Free Tier Quotas & Guardrails
@@ -123,15 +123,27 @@ Do not regenerate `package-lock.json` casually across operating systems. CI depe
 1. Make a focused change and run the relevant local checks.
 2. Push or merge it to `main`.
 3. The `validate` job runs the complete checks and uploads the exact tested Pages artifact.
-4. The same workflow deploys the Worker, runs best-effort KV generation cleanup, then authenticates and warms all four forecast locations before publishing that artifact to Pages. If even one location cannot become ready within the bounded warm window, the warm job fails and Pages keeps the previous release.
-5. Watch the Actions summary, then verify the live app, `/health`, and `/status`.
+4. The workflow uploads a zero-traffic Worker candidate, authenticates and warms all four forecast locations through its version preview URL, promotes that exact version to 100%, runs best-effort KV generation cleanup, and only then publishes the tested artifact to Pages. Any failed gate leaves Pages on the previous release.
+5. Watch the Actions summary for the candidate and previous version IDs plus the manual rollback command, then verify the live app, `/health`, and `/status`.
 
 The `worker-production` GitHub environment needs `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID`. The warm gate needs repository secret
 `FRANK_WARM_TOKEN`, matching the Worker secret of the same name, and repository
-variable `FRANK_WORKER_BASE_URL`. There is no `deploy-worker.yml`, hidden
-0%-traffic candidate controller, or `FRANK_AUTO_RELEASE_ENABLED` gate in this
-checkout.
+variable `FRANK_WORKER_BASE_URL`, set to the canonical root production URL
+`https://frank-forecast.<account-subdomain>.workers.dev`. The workflow derives
+the exact candidate hostname from that trusted value before sending the warm
+token.
+
+Preview URLs need one Worker-level bootstrap. Manually dispatch the `CI / CD`
+workflow from `main` before relying on normal push deployments, and use another
+manual dispatch if previews are later disabled. A manual dispatch continues
+through the complete candidate deployment after the bootstrap. Only
+`workflow_dispatch` runs `wrangler triggers deploy`; normal pushes do not.
+Cloudflare documents that command as applying
+[routes, domains, and Cron Triggers](https://developers.cloudflare.com/workers/wrangler/commands/workers/#triggers-deploy)
+when using version uploads. The manual bootstrap therefore also reapplies the
+unchanged configured cron. There is no separate `deploy-worker.yml` or
+`FRANK_AUTO_RELEASE_ENABLED` gate.
 
 A visual dislike should normally be reverted with a new commit through `main`.
 Cloudflare rollback changes only the Worker version; it does not restore Pages,
