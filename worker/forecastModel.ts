@@ -524,9 +524,14 @@ export function assembleForecastFromSources(
 export function degradedSourcesAfterProbe(
   degradedSources: string[] = [],
   marineProbeFailed = false,
+  // Sources whose run id was carried over because their own probe failed while
+  // the other's succeeded. Split from the boolean because a whole-probe failure
+  // degrades both, whereas a substitution degrades only what it substituted.
+  substituted: readonly string[] = [],
 ): string[] {
   return [...new Set([
     ...degradedSources,
     ...(marineProbeFailed ? ['water', 'waves'] : []),
+    ...substituted,
   ])];
 }

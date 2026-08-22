@@ -2,7 +2,6 @@ import type {
   CacheHealthOptions,
   CacheHealthStatus,
   ForecastData,
-  MarineInstances,
   WorkerCacheHealth,
 } from './domain';
 
@@ -51,29 +50,3 @@ export function withCacheHealth(
   };
 }
 
-export function withDeferredMarineCheck(
-  data: ForecastData,
-  options: {
-    checkedBy: string;
-    marineInstances?: MarineInstances;
-    degradedSources: string[];
-  },
-): ForecastData {
-  return withCacheHealth(data, 'stale', {
-    marineInstances: options.marineInstances,
-    preserveAttemptAt: true,
-    checkedBy: `${options.checkedBy}-deferred`,
-    providerBusy: true,
-    busyProvider: 'marine',
-    degradedSources: options.degradedSources,
-    message: 'Marine check deferred after the provider became busy earlier in this refresh cycle; keeping the last completed forecast.',
-  });
-}
-
-export function recoveredDeferredMarineCheck(
-  health: WorkerCacheHealth | undefined,
-): boolean {
-  return health?.status === 'stale'
-    && health.checkedBy?.endsWith('-deferred') === true
-    && health.busyProvider === 'marine';
-}

@@ -75,7 +75,6 @@ import {
   MARINE_BUSY_DEFAULT_RETRY_SECONDS,
   fetchJsonWithRetries,
   logUpstream,
-  readMarineBusyCircuit,
 } from './providerTransport';
 import { marineIngredientKey, metRawKey } from './generation';
 const WARNING_EXECUTION_BUDGET_MS = 5_000;
@@ -90,7 +89,6 @@ export {
   marineInstancesEqual,
   marineInstancesWithinFallbackAge,
   marineProbeDecision,
-  readMarineBusyCircuit,
 };
 
 function assertMarineRunWithinFallbackAge(
@@ -189,12 +187,20 @@ async function probeLatestInstanceForCollections(
   throw lastError ?? new Error(`No DMI instances found for ${collections.join(', ')}`);
 }
 
+export interface MarineInstanceProbe {
+  instances: MarineInstances;
+  // Kinds whose own probe failed and whose run id was carried over from the
+  // last known one. The data behind them is real, but nothing verified this
+  // tick that it is still the newest, so it must be reported as degraded.
+  substituted: MarineKind[];
+}
+
 export async function fetchLatestMarineInstances(
   location: ForecastLocation,
   policyInput?: ExecutionPolicyInput,
   eventMemo?: EventMemo,
   fallbackInstances?: MarineInstances,
-): Promise<MarineInstances> {
+): Promise<MarineInstanceProbe> {
   const policy = executionPolicy(policyInput);
   assertBeforeDeadline(policy, `marine instance probes for ${location.id}`);
   const results = await Promise.allSettled([
@@ -206,11 +212,20 @@ export async function fetchLatestMarineInstances(
   let water = results[0].status === 'fulfilled' ? results[0].value : undefined;
   let waves = results[1].status === 'fulfilled' ? results[1].value : undefined;
 
+  // Substituting a still-valid id keeps one source's outage from blanking the
+  // other, but it is NOT a successful probe and the caller has to know the
+  // difference. Returning it silently meant a DMI catalogue outage read as a
+  // fully current forecast: ids unchanged, so the tick took the
+  // already-current path, restamped lastAttemptAt to now, cleared nothing, and
+  // if MET's Expires lapsed it stamped fetchedAt onto hours-old tide data.
+  const substituted: MarineKind[] = [];
   if (!water && fallbackInstances?.water && isMarineRunWithinFallbackAge(fallbackInstances.water)) {
     water = fallbackInstances.water;
+    substituted.push('water');
   }
   if (!waves && fallbackInstances?.waves && isMarineRunWithinFallbackAge(fallbackInstances.waves)) {
     waves = fallbackInstances.waves;
+    substituted.push('waves');
   }
 
   if (!water || !waves) {
@@ -235,7 +250,7 @@ export async function fetchLatestMarineInstances(
     throw new Error(`Failed to fetch DMI marine instances: ${errors.join(', ')}`);
   }
 
-  return { water, waves };
+  return { instances: { water, waves }, substituted };
 }
 
 async function fetchDmiGeoJson<TFeature>(

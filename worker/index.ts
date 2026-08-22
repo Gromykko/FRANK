@@ -48,9 +48,7 @@ import type {
   WorkerCacheHealth,
 } from './domain';
 import {
-  recoveredDeferredMarineCheck,
   withCacheHealth,
-  withDeferredMarineCheck,
 } from './cacheHealth';
 import {
   isProviderUnavailableError,
@@ -66,7 +64,6 @@ import {
   marineProbeDecision,
   marineInstancesEqual,
   marineInstancesWithinFallbackAge,
-  readMarineBusyCircuit,
   readRetainedMarineInstances,
 } from './providers';
 import { isRecord } from './validation';
@@ -90,7 +87,6 @@ export {
   fetchMarineSeriesWithFallback,
   isMarineRunWithinFallbackAge,
   marineProbeDecision,
-  readMarineBusyCircuit,
 };
 export { cronExecutionPolicy };
 // Re-exported so tests/worker/math.test.ts keeps importing them from the worker.
@@ -667,6 +663,7 @@ async function _refreshForecastCache(
     // down, keep the previously assembled forecast and mark its marine inputs
     // degraded rather than re-dating unverified water/wave data.
     let marineProbeFailed = false;
+    let marineSubstituted: readonly string[] = [];
     let marineProbeBusy = false;
     const knownMarine = cachedHealth?.marineInstances
       ?? await readRetainedMarineInstances(env, location, policy);
@@ -689,32 +686,27 @@ async function _refreshForecastCache(
     if (canSkipProbe) {
       latestMarine = knownMarine;
     } else {
-      // A DMI 429 is provider-wide, not specific to the fjord that happened to
-      // receive it. Once a due location opens the event-local circuit, another
-      // due location must not make more DMI calls in the same cron batch. Keep
-      // its last completed snapshot and say that this check was deferred. A
-      // schedule-valid location never reaches this branch and stays green.
-      const marineBusyCircuit = await readMarineBusyCircuit(options.eventMemo);
-      if (marineBusyCircuit && cached) {
-        const deferredCache = withDeferredMarineCheck(cached, {
-          marineInstances: knownMarine,
-          checkedBy: options.reason ?? 'check',
-          degradedSources: degradedSourcesAfterProbe(
-            cachedHealth?.degradedSources,
-            true,
-          ),
-        });
-        if (shouldPersistFailureState(cachedHealth, deferredCache.sources.cacheHealth)) {
-          try {
-            await writeCachedForecast(env, location, deferredCache, policy);
-          } catch (writeError) {
-            console.error(`Could not persist deferred marine check for ${location.id}:`, writeError);
-          }
-        }
-        return deferredCache;
-      }
+      // A DMI 429 is provider-wide rather than specific to the fjord that
+      // received it, and there used to be an event-local circuit here so a
+      // second due location would not make more DMI calls in the same batch.
+      // readMarineBusyCircuit was a stub returning null, so none of it ever
+      // ran. Honouring Retry-After now does the same job more directly: the
+      // city that meets the 429 stops immediately instead of retrying thirty
+      // times, and the ones behind it each cost a single refused request.
       try {
-        latestMarine = await fetchLatestMarineInstances(location, policy, options.eventMemo, knownMarine);
+        const probe = await fetchLatestMarineInstances(location, policy, options.eventMemo, knownMarine);
+        latestMarine = probe.instances;
+        // A carried-over run id is not a verified one. Reporting it as a clean
+        // probe let a DMI catalogue outage read as a fully current forecast for
+        // as long as the ids stayed within their fallback age.
+        marineSubstituted = probe.substituted;
+        if (probe.substituted.length > 0) {
+          console.warn(JSON.stringify({
+            event: 'marine_instance_substituted',
+            locationId: location.id,
+            substituted: probe.substituted,
+          }));
+        }
       } catch (probeError) {
         rethrowIfDeadlineReached(probeError, policy, `marine probe failure handling for ${location.id}`);
         if (!knownMarine?.water?.id || !knownMarine?.waves?.id) throw probeError;
@@ -783,7 +775,24 @@ async function _refreshForecastCache(
     if (cacheAlreadyCurrent) {
       // MET data is still within its Expires window and marine ids are
       // unchanged: keep the forecast, just record that we checked.
-      const recoveredDeferred = recoveredDeferredMarineCheck(cachedHealth);
+      //
+      // Marine flags are recomputed from THIS tick rather than carried forward.
+      // Carrying them meant the only thing that could ever clear an amber
+      // marker was a deferral recovery - and readMarineBusyCircuit is a stub
+      // returning null, so that never happened. A 429 on one tick left "marine
+      // service unavailable" on the payload until MET's Expires happened to
+      // force a rebuild, long after DMI had recovered.
+      //
+      // A verified probe means these ids are the newest DMI has, which is not
+      // degraded even when the run itself is hours old - DMI publishes about
+      // every six hours. A SUBSTITUTED id is the opposite: real data whose
+      // currency nothing checked this tick, so it is named as degraded.
+      // Non-marine degradation is untouched; only marine is ours to judge here.
+      const nonMarineDegraded = (cachedHealth?.degradedSources ?? [])
+        .filter((source) => source !== 'water' && source !== 'waves');
+      const degradedNow = degradedSourcesAfterProbe(nonMarineDegraded, false, marineSubstituted);
+      const marineVerified = marineSubstituted.length === 0;
+
       const checkedCache = withCacheHealth(cached, 'current', {
         marineInstances: latestMarine,
         // During the 20-minute post-due retry window no provider was checked.
@@ -791,29 +800,18 @@ async function _refreshForecastCache(
         // every ten-minute cron would slide that window forward indefinitely.
         preserveAttemptAt: probeDecision.reason === 'retry-backoff',
         checkedBy: options.reason ?? 'check',
-        // Ordinary fallback metadata still describes unchanged payload bytes.
-        // A circuit deferral is different: this successful catalogue check is
-        // the work that was skipped, and the held run is confirmed current, so
-        // its temporary amber marker must not stick indefinitely.
-        degradedSources: recoveredDeferred
-          ? undefined
-          : cachedHealth?.degradedSources,
-        providerBusy: recoveredDeferred
-          ? undefined
-          : cachedHealth?.providerBusy,
-        busyProvider: recoveredDeferred
-          ? undefined
-          : cachedHealth?.busyProvider,
-        message: recoveredDeferred ? undefined : cachedHealth?.message,
+        degradedSources: degradedNow.length > 0 ? degradedNow : undefined,
+        providerBusy: marineVerified ? undefined : cachedHealth?.providerBusy,
+        busyProvider: marineVerified ? undefined : cachedHealth?.busyProvider,
+        message: marineVerified ? undefined : cachedHealth?.message,
       });
       // The heartbeat now carries "we checked" for every city in one object,
       // so re-writing this whole forecast just to advance a timestamp is pure
       // cost: it was ~57 writes/city/day against an allowance of 1,000, and the
       // heartbeat's own 288/day only pays for itself once this stops. What
-      // still earns a write is a CHANGE in what the health says - a recovered
-      // deferral clearing amber flags, a new message, a different status.
-      if (probeDecision.reason !== 'retry-backoff' || recoveredDeferred) {
-        if (recoveredDeferred || healthChanged(cachedHealth, checkedCache.sources.cacheHealth)) {
+      // still earns a write is a CHANGE in what the health says.
+      if (probeDecision.reason !== 'retry-backoff') {
+        if (healthChanged(cachedHealth, checkedCache.sources.cacheHealth)) {
           await writeCachedForecast(env, location, checkedCache, policy);
         }
       }
@@ -832,7 +830,7 @@ async function _refreshForecastCache(
     // The build can succeed on last-good ingredients while a provider is
     // down; the payload is then still the freshest combination obtainable,
     // so it ships as 'current' with the degradation named in the message.
-    const degradedSources = degradedSourcesAfterProbe(built.degradedSources, marineProbeFailed);
+    const degradedSources = degradedSourcesAfterProbe(built.degradedSources, marineProbeFailed, marineSubstituted);
     const fallbackNotes: string[] = [
       ...degradedSources,
       ...(marineProbeFailed ? ['marine run schedule'] : []),

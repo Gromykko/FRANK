@@ -10,7 +10,6 @@ import type { ExecutionPolicy } from './execution';
 import type {
   BusyProvider,
   EventMemo,
-  MarineBusyCircuit,
 } from './domain';
 import { transientProviderError } from './providerAvailability';
 import { errorWithStatus } from './validation';
@@ -62,13 +61,6 @@ export function logUpstream(
 ): void {
   const ms = Date.now() - startedAt;
   console.log(`upstream ${source} ${outcome} ${ms}ms${extra ? ' ' + extra : ''}`);
-}
-
-export async function readMarineBusyCircuit(
-  eventMemo?: EventMemo,
-): Promise<MarineBusyCircuit | null> {
-  void eventMemo;
-  return null;
 }
 
 function retryAfterSeconds(response: Response): number | undefined {

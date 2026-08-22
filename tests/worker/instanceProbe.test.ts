@@ -224,10 +224,13 @@ describe('fetchLatestMarineInstances (split resolution)', () => {
     }) as unknown as typeof fetch;
 
     const result = await fetchLatestMarineInstances(location, undefined, eventMemo, fallback);
-    expect(result).toEqual({
+    expect(result.instances).toEqual({
       water: { collection: 'dkss_idw', id: '2026-08-08T120000Z' },
       waves: { collection: 'wam_nsb', id: '2026-08-08T120000Z' },
     });
+    // Both verified, so nothing is degraded - an unchanged id is normal, DMI
+    // publishes about every six hours.
+    expect(result.substituted).toEqual([]);
   });
 
   it('adopts fresh water and falls back to cached waves when waves probe is busy', async () => {
@@ -239,10 +242,13 @@ describe('fetchLatestMarineInstances (split resolution)', () => {
     }) as unknown as typeof fetch;
 
     const result = await fetchLatestMarineInstances(location, undefined, eventMemo, fallback);
-    expect(result).toEqual({
+    expect(result.instances).toEqual({
       water: { collection: 'dkss_idw', id: '2026-08-08T120000Z' },
       waves: fallback.waves,
     });
+    // The carried-over id must be NAMED. Returning it silently is what let a
+    // DMI catalogue outage read as a fully current forecast.
+    expect(result.substituted).toEqual(['waves']);
   });
 
   it('adopts fresh waves and falls back to cached water when water probe is busy', async () => {
@@ -254,10 +260,11 @@ describe('fetchLatestMarineInstances (split resolution)', () => {
     }) as unknown as typeof fetch;
 
     const result = await fetchLatestMarineInstances(location, undefined, eventMemo, fallback);
-    expect(result).toEqual({
+    expect(result.instances).toEqual({
       water: fallback.water,
       waves: { collection: 'wam_nsb', id: '2026-08-08T120000Z' },
     });
+    expect(result.substituted).toEqual(['water']);
   });
 
   it('throws provider unavailable when both endpoints fail and no fallback is available', async () => {
