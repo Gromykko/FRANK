@@ -82,6 +82,12 @@ describe('getCacheStatusView', () => {
     expect(busy).toMatchObject({ label: 'Checked · 20:07', tone: 'watch', partiallyDegraded: true });
     expect(busy.detail).toBe('waves & water from an earlier update · marine service busy');
 
+    const wavesOnlyBusy = view({ status: 'current', degradedSources: ['waves'], providerBusy: true, lastAttemptAt: '' });
+    expect(wavesOnlyBusy.detail).toBe('waves from an earlier update · wave service busy');
+
+    const waterOnlyBusy = view({ status: 'current', degradedSources: ['water'], providerBusy: true, lastAttemptAt: '' });
+    expect(waterOnlyBusy.detail).toBe('water from an earlier update · water level service busy');
+
     const weatherBusy = view({ status: 'current', degradedSources: ['weather'], providerBusy: true, lastAttemptAt: '' });
     expect(weatherBusy.detail).toBe('weather from an earlier update · weather service busy');
 
@@ -92,6 +98,12 @@ describe('getCacheStatusView', () => {
   it('a partial build from a non-busy error says "couldn’t refresh just now", not "busy"', () => {
     const v = view({ status: 'current', degradedSources: ['water', 'waves'], providerBusy: false, lastAttemptAt: '' });
     expect(v.detail).toBe('waves & water from an earlier update · couldn’t refresh just now');
+
+    const wavesOnly = view({ status: 'current', degradedSources: ['waves'], providerBusy: false, lastAttemptAt: '' });
+    expect(wavesOnly.detail).toBe('waves from an earlier update · couldn’t refresh just now');
+
+    const waterOnly = view({ status: 'current', degradedSources: ['water'], providerBusy: false, lastAttemptAt: '' });
+    expect(waterOnly.detail).toBe('water from an earlier update · couldn’t refresh just now');
   });
 
   it('a routine refresh is a neutral one-liner - "Refreshing…", no second line, no amber', () => {

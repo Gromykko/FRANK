@@ -73,25 +73,48 @@ export function getCacheStatusView({
   const isPending = status === 'pending';
   const providerBusy = Boolean(cacheHealth?.providerBusy);
 
+  const degraded = cacheHealth?.degradedSources ?? [];
+  const hasWater = degraded.includes('water');
+  const hasWaves = degraded.includes('waves');
+  const hasWeather = degraded.includes('weather');
+
   const busyServiceName = translate(cacheHealth?.busyProvider === 'weather'
     ? 'Weather service'
     : cacheHealth?.busyProvider === 'marine'
-      ? 'Waves & water service'
+      ? (hasWaves && !hasWater
+        ? 'Wave service'
+        : hasWater && !hasWaves
+          ? 'Water level service'
+          : 'Waves & water service')
       : 'Forecast services');
 
-  const degraded = cacheHealth?.degradedSources ?? [];
-  const marineDegraded = degraded.includes('water') || degraded.includes('waves');
-  const weatherDegraded = degraded.includes('weather');
-  const degradedLabel = weatherDegraded && marineDegraded
+  const degradedLabel = hasWeather && hasWaves && hasWater
     ? translate('weather, waves & water')
-    : weatherDegraded ? translate('weather')
-      : marineDegraded ? translate('waves & water')
-        : '';
+    : hasWeather && hasWaves
+      ? translate('weather & waves')
+      : hasWeather && hasWater
+        ? translate('weather & water')
+        : hasWaves && hasWater
+          ? translate('waves & water')
+          : hasWeather
+            ? translate('weather')
+            : hasWaves
+              ? translate('waves')
+              : hasWater
+                ? translate('water')
+                : '';
   // The named cause on the partial line ("· marine service busy" etc.).
-  const causeService = translate(weatherDegraded && marineDegraded
+  const causeService = translate(hasWeather && (hasWaves || hasWater)
     ? 'services'
-    : weatherDegraded ? 'weather service'
-      : 'marine service');
+    : hasWeather
+      ? 'weather service'
+      : hasWaves && hasWater
+        ? 'marine service'
+        : hasWaves
+          ? 'wave service'
+          : hasWater
+            ? 'water level service'
+            : 'services');
   const hasDegraded = degradedLabel !== '';
   const partiallyDegraded = !isStale && !refreshing && !isPending && hasDegraded;
 
