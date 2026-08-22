@@ -68,6 +68,13 @@ export interface RefreshOptions {
   executionPolicy?: ExecutionPolicyInput;
   eventMemo?: EventMemo;
   cached?: ForecastData | null;
+  // Event-local output used only by scheduled refreshes. It distinguishes an
+  // actual provider contact from a healthy policy skip and a failed/skipped
+  // attempt without retaining cross-event state in module scope.
+  cronOutcome?: {
+    status: 'unreachable' | 'healthy-no-probe' | 'contacted';
+    attemptedAt?: string;
+  };
 }
 
 // Event-local provider work uses disjoint namespaces (`instance-probe:`,
@@ -201,18 +208,18 @@ export interface HealthAge {
   checkAgeMs: number;
 }
 
-// One KV object recording that the cron ran, and which city the persisted tick
-// actually reached. The previous timestamp targets about one write every five
-// scheduled minutes; attempts from skipped one-minute ticks are intentionally
-// not accumulated across isolates. With four rotating cities, the nominal
-// persisted sampling interval for one city's stamp is therefore about 20
-// minutes while lastTickAt still proves the schedule is alive.
+// One KV object recording that the cron ran and the latest persisted successful
+// and unsuccessful outcome for each city. Healthy writes are sampled about
+// every five scheduled ticks; anomalies and their recoveries bypass that
+// throttle so an app-wide lastTickAt can never hide a city-specific failure.
 export interface CronHeartbeat {
-  schemaVersion: number;
+  schemaVersion: 2;
   lastTickAt: string;
-  // Only cities from persisted ticks. Skipped heartbeat writes and a tick that
-  // runs out of budget leave the other cities' older stamps untouched.
+  // Latest persisted successful provider contact for this city.
   locations: Record<string, string>;
+  // Latest persisted budget-skipped or failed city attempt. A value at least as recent
+  // as locations[id] blocks that city from inheriting the app-wide lastTickAt.
+  unreachable: Record<string, string>;
 }
 
 export interface HealthPayload {

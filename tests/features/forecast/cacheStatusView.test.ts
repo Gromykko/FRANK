@@ -131,8 +131,9 @@ describe('getCacheStatusView', () => {
 // ---------------------------------------------------------------------------
 // Whether the header may claim freshness is decided by OUR OWN record of
 // reaching the worker, not by the worker's `lastAttemptAt` stamp. That stamp is
-// deliberately coarse (persisted at most every 15 min to save KV writes, drifts
-// to ~20), and deriving client honesty from it produced three separate bugs: a
+// operational and can now include a safe, anomaly-aware heartbeat overlay, but
+// it still does not prove this browser's request succeeded. Deriving browser
+// contact from it produced three separate bugs: a
 // healthy forecast reported as "Couldn't refresh", a false "Could not reach the
 // forecast service" banner on cold boot, and a misleading /status column.
 // ---------------------------------------------------------------------------

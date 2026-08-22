@@ -130,10 +130,10 @@ export interface WeatherData {
       // When the Worker last checked upstream — but COARSE, and safe to display
       // rather than to compute with.
       //
-      // The Worker persists this at most every 15 minutes while nothing changes,
-      // because each KV write comes out of a 1000/day budget. It therefore drifts
-      // up to ~20 minutes behind reality and then snaps back, and a reading of 20
-      // minutes does not mean 20 minutes passed without a check.
+      // The assembled forecast is not rewritten for timestamp-only changes.
+      // Responses instead overlay the shared, five-tick heartbeat when this city
+      // has a recorded success and no newer unsuccessful outcome. A skip or
+      // failure deliberately keeps the city's older successful stamp visible.
       //
       // Three separate bugs came from treating it as precise: a healthy forecast
       // reported as "Couldn't refresh", a false "Could not reach the forecast
@@ -141,7 +141,7 @@ export interface WeatherData {
       // looked like a missed cron tick. For "did WE reach the Worker?" use
       // getWorkerContactMs() from cache.ts, which is exact and ours. For "is the
       // Worker alive?" the Worker's own /health owns that, with a threshold set
-      // well above this drift.
+      // well above the heartbeat throttle.
       lastAttemptAt: string;
       message?: string;
       // MET Norway cache headers from the run the cache was built against.

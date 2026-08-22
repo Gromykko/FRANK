@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
+import locationData from '../../src/config/locations.json';
 import {
+  CRON_HEARTBEAT_THROTTLE_TICKS,
+  assertHeartbeatThrottleCoprime,
   healthChanged,
+  isCronRebuildHeartbeatSuccess,
+  isCronHeartbeat,
   isHeartbeatMemoFresh,
   shouldPersistFailureState,
   withCronAttempt,
@@ -142,6 +147,48 @@ describe('heartbeat memo freshness', () => {
   });
 });
 
+describe('heartbeat schema and cadence guard', () => {
+  it('rejects an unrecognised heartbeat schema instead of partially reading it', () => {
+    expect(isCronHeartbeat({
+      schemaVersion: 3,
+      lastTickAt: new Date(NOW).toISOString(),
+      locations: { horsens: stampedAgo(60_000) },
+      unreachable: {},
+    })).toBe(false);
+  });
+
+  it('keeps the heartbeat throttle coprime with the location rotation', () => {
+    expect(() => assertHeartbeatThrottleCoprime(
+      CRON_HEARTBEAT_THROTTLE_TICKS,
+      locationData.length,
+    )).not.toThrow();
+    expect(() => assertHeartbeatThrottleCoprime(
+      CRON_HEARTBEAT_THROTTLE_TICKS,
+      5,
+    )).toThrow(/must be coprime/);
+  });
+});
+
+describe('cron rebuild heartbeat outcome', () => {
+  const cleanRebuild = {
+    degradedSources: [],
+    marineSubstituted: [],
+    degradedBusy: false,
+    marineProbeFailed: false,
+  } as const;
+
+  it('keeps retry-backoff unsuccessful even when the rebuild is otherwise clean', () => {
+    expect(isCronRebuildHeartbeatSuccess({
+      ...cleanRebuild,
+      probeReason: 'retry-backoff',
+    })).toBe(false);
+    expect(isCronRebuildHeartbeatSuccess({
+      ...cleanRebuild,
+      probeReason: 'due',
+    })).toBe(true);
+  });
+});
+
 // The other half of the same budget problem. Because the stamp above is
 // deliberately throttled, the payload's "we checked" time can trail reality by
 // the whole throttle window, which is why the app used to have no honest way to
@@ -158,28 +205,88 @@ describe('withCronAttempt', () => {
   const payload = (lastAttemptAt: string) => ({
     sources: { cacheHealth: { status: 'current', lastAttemptAt } },
   } as unknown as Parameters<typeof withCronAttempt>[0]);
-  const beat = (locations: Record<string, string>) => ({
-    schemaVersion: 1,
-    lastTickAt: at(0),
+  const beat = (
+    locations: Record<string, string>,
+    unreachable: Record<string, string> = {},
+    lastTickAt = at(0),
+  ) => ({
+    schemaVersion: 2 as const,
+    lastTickAt,
     locations,
+    unreachable,
   });
 
   const attemptOf = (data: unknown) =>
     (data as { sources: { cacheHealth: { lastAttemptAt: string } } })
       .sources.cacheHealth.lastAttemptAt;
 
-  it('serves the heartbeat time when the throttled payload stamp is older', () => {
+  it('uses the fresh app-wide tick when this city has a recorded healthy success', () => {
     const result = withCronAttempt(
       payload(at(THROTTLE_WINDOW_MS)),
       'horsens',
-      beat({ horsens: at(3 * 60 * 1000) }),
+      beat({ horsens: at(15 * 60 * 1000) }, {}, at(60 * 1000)),
     );
-    expect(attemptOf(result)).toBe(at(3 * 60 * 1000));
+    expect(attemptOf(result)).toBe(at(60 * 1000));
+    expect(result.sources.cronHeartbeat?.lastTickAt).toBe(at(60 * 1000));
+  });
+
+  it('keeps the older city success visible after a more recent unsuccessful tick', () => {
+    const result = withCronAttempt(
+      payload(at(THROTTLE_WINDOW_MS)),
+      'horsens',
+      beat(
+        { horsens: at(15 * 60 * 1000) },
+        { horsens: at(4 * 60 * 1000) },
+        at(60 * 1000),
+      ),
+    );
+    expect(attemptOf(result)).toBe(at(15 * 60 * 1000));
+    expect(result.sources.cronHeartbeat).toBeUndefined();
+  });
+
+  it('pins an anomalous city to its last success even if failure state was stamped later', () => {
+    const result = withCronAttempt(
+      payload(at(2 * 60 * 1000)),
+      'horsens',
+      beat(
+        { horsens: at(15 * 60 * 1000) },
+        { horsens: at(4 * 60 * 1000) },
+        at(60 * 1000),
+      ),
+    );
+    expect(attemptOf(result)).toBe(at(15 * 60 * 1000));
+    expect(result.sources.cronHeartbeat).toBeUndefined();
+  });
+
+  it('fails closed when success and failure have the same timestamp', () => {
+    const sameTick = at(4 * 60 * 1000);
+    const result = withCronAttempt(
+      payload(at(THROTTLE_WINDOW_MS)),
+      'horsens',
+      beat({ horsens: sameTick }, { horsens: sameTick }, at(60 * 1000)),
+    );
+    expect(attemptOf(result)).toBe(sameTick);
+    expect(result.sources.cronHeartbeat).toBeUndefined();
+  });
+
+  it('allows a later successful city tick to supersede an older failure', () => {
+    const result = withCronAttempt(
+      payload(at(THROTTLE_WINDOW_MS)),
+      'horsens',
+      beat(
+        { horsens: at(3 * 60 * 1000) },
+        { horsens: at(8 * 60 * 1000) },
+        at(60 * 1000),
+      ),
+    );
+    expect(attemptOf(result)).toBe(at(60 * 1000));
+    expect(result.sources.cronHeartbeat?.lastTickAt).toBe(at(60 * 1000));
   });
 
   it('never moves a stamp backwards', () => {
     const fresh = at(60 * 1000);
-    const result = withCronAttempt(payload(fresh), 'horsens', beat({ horsens: at(9 * 60 * 1000) }));
+    const older = at(9 * 60 * 1000);
+    const result = withCronAttempt(payload(fresh), 'horsens', beat({ horsens: older }, {}, older));
     expect(attemptOf(result)).toBe(fresh);
   });
 
@@ -189,6 +296,7 @@ describe('withCronAttempt', () => {
     const stale = at(THROTTLE_WINDOW_MS);
     const result = withCronAttempt(payload(stale), 'aarhus', beat({ horsens: at(0) }));
     expect(attemptOf(result)).toBe(stale);
+    expect(result.sources.cronHeartbeat).toBeUndefined();
   });
 
   // A clock fault must not blank the label this whole mechanism exists to fill:

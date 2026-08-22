@@ -1018,14 +1018,14 @@ export function statusResponse(health: HealthPayload): Response {
       <p>Last check is the most recent persisted scheduled or authenticated release attempt
       for the required forecast sources. The scheduler attempts one rotated city every
       ${escapeHtml(Math.round(CRON_PERIOD_MS / 60_000))} minute, while the shared heartbeat
-      is written about every five minutes to protect the KV allowance. Attempts on skipped
-      heartbeat ticks are not accumulated; with four rotating cities, each persisted
-      per-city stamp is nominally sampled about once every 20 minutes.</p>
+      normally samples one successful tick every five minutes to protect the KV allowance.
+      Once a city has a recorded success, a healthy city can use that app-wide sample, so
+      its displayed check remains accurate to roughly the five-minute throttle.</p>
 
-      <p>A city can still read older than the others, and that is the useful signal rather
-      than a fault: its selected tick can run out of budget, its heartbeat write can be
-      throttled, or a marine retry-backoff can deliberately avoid provider contact. Those
-      cases keep the previous persisted timestamp rather than inventing a newer one. Ordinary
+      <p>A city reads older than the others when its selected tick runs out of budget, a
+      marine retry-backoff declines to probe, or a provider refresh fails. Those outcomes
+      are recorded immediately and block that city from inheriting the healthy app-wide
+      tick; the first later success is also recorded immediately. Ordinary
       visits, page reloads and the in-app refresh button only read prepared storage snapshots;
       they do not contact providers or alter this clock.
       The alarm sits at ${escapeHtml(health.checkStaleAfterMin)} minutes.

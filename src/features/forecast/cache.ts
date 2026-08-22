@@ -737,8 +737,9 @@ export interface LoadCacheOptions {
 // This is reported rather than inferred on purpose. Callers used to answer "did
 // we reach the worker?" by reading the worker's OWN `lastAttemptAt` stamp out of
 // the payload and comparing it to the clock — but that stamp is deliberately
-// coarse (the worker persists it at most every 15 minutes to save KV writes, so
-// it drifts to ~20), and the check tripped at 12. The result was an amber
+// operational rather than a record of this browser's request. The Worker now
+// overlays an anomaly-aware heartbeat when safe, but that still cannot prove
+// this browser reached it. The old age check produced an amber
 // "Could not reach the forecast service" banner shown immediately after a
 // perfectly successful fetch. The fetch layer knows the answer exactly; nothing
 // downstream should be deducing it from someone else's throttled bookkeeping.

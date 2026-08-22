@@ -23,6 +23,7 @@ import {
   statusResponse,
 } from './health';
 import {
+  CRON_PERIOD_MS,
   CRON_TICK_BUDGET_MS,
   DEFAULT_FETCH_TIMEOUT_MS as FETCH_TIMEOUT_MS,
   assertBeforeDeadline,
@@ -143,19 +144,57 @@ const CHECKED_STAMP_MIN_WRITE_INTERVAL_MS = 25 * 60 * 1000;
 // time that could be 25 minutes behind the truth. One shared object targeting a
 // write about every five scheduled minutes keeps the liveness evidence
 // affordable even when the scheduler itself fires every minute.
-const CRON_HEARTBEAT_SCHEMA_VERSION = 1;
-const CRON_HEARTBEAT_MIN_WRITE_INTERVAL_MS = 5 * 60_000;
+const CRON_HEARTBEAT_SCHEMA_VERSION = 2;
+export const CRON_HEARTBEAT_THROTTLE_TICKS = 5;
 // Enough for a read and a write of one small object; short enough that a KV
 // brownout cannot hold the invocation open past the runtime's patience.
 const HEARTBEAT_WRITE_BUDGET_MS = 3_000;
 export const CRON_HEARTBEAT_KEY = 'frank:system:cron-heartbeat';
 
-function isCronHeartbeat(value: unknown): value is CronHeartbeat {
+function greatestCommonDivisor(left: number, right: number): number {
+  let a = Math.abs(left);
+  let b = Math.abs(right);
+  while (b !== 0) {
+    [a, b] = [b, a % b];
+  }
+  return a;
+}
+
+export function assertHeartbeatThrottleCoprime(
+  throttleTicks: number,
+  cityCount: number,
+): void {
+  if (!Number.isInteger(throttleTicks)
+    || throttleTicks <= 0
+    || !Number.isInteger(cityCount)
+    || cityCount <= 0
+    || greatestCommonDivisor(throttleTicks, cityCount) !== 1) {
+    throw new Error(
+      `Cron heartbeat throttle (${throttleTicks} ticks) must be coprime with the location count (${cityCount}).`,
+    );
+  }
+}
+
+assertHeartbeatThrottleCoprime(CRON_HEARTBEAT_THROTTLE_TICKS, FORECAST_LOCATIONS.length);
+
+const KNOWN_FORECAST_LOCATION_IDS = new Set(
+  FORECAST_LOCATIONS.map((location) => location.id),
+);
+
+function isHeartbeatLocationMap(value: unknown): value is Record<string, string> {
+  return isRecord(value) && Object.entries(value).every(([id, stamp]) =>
+    KNOWN_FORECAST_LOCATION_IDS.has(id)
+    && typeof stamp === 'string'
+    && Number.isFinite(Date.parse(stamp)));
+}
+
+export function isCronHeartbeat(value: unknown): value is CronHeartbeat {
   return isRecord(value)
     && value.schemaVersion === CRON_HEARTBEAT_SCHEMA_VERSION
     && typeof value.lastTickAt === 'string'
     && Number.isFinite(Date.parse(value.lastTickAt))
-    && isRecord(value.locations);
+    && isHeartbeatLocationMap(value.locations)
+    && isHeartbeatLocationMap(value.unreachable);
 }
 
 async function fetchCronHeartbeat(
@@ -178,10 +217,10 @@ async function fetchCronHeartbeat(
 
 // The public forecast route reads this on every request, which would double the
 // app's KV read volume against a 100,000/day tier. One isolate-local copy, held
-// for a fraction of the heartbeat write interval removes nearly all of it: the
-// value changes only about every five minutes, so a request served seconds
-// behind the newest heartbeat reads the same number it would have paid for. It
-// holds a timestamp and a plain object, never a request or an in-flight promise.
+// for a fraction of the normal heartbeat write interval removes nearly all of
+// it. Healthy state changes about every five minutes; anomaly and recovery
+// writes can change it sooner. The memo holds a timestamp and a plain object,
+// never a request or an in-flight promise.
 const HEARTBEAT_MEMO_TTL_MS = 30_000;
 let heartbeatMemo: { at: number; value: CronHeartbeat | null } | null = null;
 
@@ -203,9 +242,28 @@ export function isHeartbeatMemoFresh(memoAtMs: number, nowMs: number): boolean {
   return Number.isFinite(ageMs) && ageMs >= 0 && ageMs < HEARTBEAT_MEMO_TTL_MS;
 }
 
+export function isCronRebuildHeartbeatSuccess(args: {
+  probeReason: ReturnType<typeof marineProbeDecision>['reason'];
+  degradedSources: readonly string[];
+  marineSubstituted: readonly string[];
+  degradedBusy: boolean;
+  marineProbeFailed: boolean;
+}): boolean {
+  return args.probeReason !== 'retry-backoff'
+    && args.degradedSources.length === 0
+    && args.marineSubstituted.length === 0
+    && !args.degradedBusy
+    && !args.marineProbeFailed;
+}
+
+type CronHeartbeatAttempt =
+  | { locationId: string; status: 'healthy-no-probe' }
+  | { locationId: string; status: 'contacted' | 'unreachable'; attemptedAt: string };
+
 async function writeCronHeartbeat(
   env: Env,
-  attemptedAt: Record<string, string>,
+  tickAtMs: number,
+  attempt: CronHeartbeatAttempt | null,
   policyInput?: ExecutionPolicyInput,
 ): Promise<void> {
   try {
@@ -213,42 +271,99 @@ async function writeCronHeartbeat(
     // stamps of cities this tick did not reach, so it has to read what is
     // actually stored, not what this isolate happened to serve a moment ago.
     const previous = await fetchCronHeartbeat(env, policyInput);
-    const nowMs = Date.now();
     const previousTickMs = Date.parse(previous?.lastTickAt ?? '');
-    const previousAgeMs = nowMs - previousTickMs;
-    if (Number.isFinite(previousTickMs)
-      && previousAgeMs >= 0
-      && previousAgeMs < CRON_HEARTBEAT_MIN_WRITE_INTERVAL_MS) {
-      // Attempts made during skipped ticks are deliberately not accumulated in
-      // module scope: isolates are neither shared nor durable. With four cities
-      // and a five-tick write interval, a city's persisted sample can therefore
-      // be up to about 20 minutes old, still inside the 60-minute health alarm.
+    if (!Number.isFinite(tickAtMs)) {
+      throw new Error('Cron heartbeat tick time is invalid.');
+    }
+    // This read/compare prevents a late older invocation from overwriting a
+    // newer value visible at this edge. Workers KV is eventually consistent,
+    // so this is deliberately not described as an atomic global compare-and-set.
+    if (Number.isFinite(previousTickMs) && tickAtMs < previousTickMs) {
       return;
     }
-    const known = new Set(FORECAST_LOCATIONS.map((location) => location.id));
-    const locations = Object.fromEntries(
-      Object.entries({ ...previous?.locations, ...attemptedAt })
-        .filter(([id]) => known.has(id)),
+
+    const previousSuccessMs = Date.parse(
+      attempt ? previous?.locations[attempt.locationId] ?? '' : '',
     );
+    const previousFailureMs = Date.parse(
+      attempt ? previous?.unreachable[attempt.locationId] ?? '' : '',
+    );
+    const attemptAtMs = Date.parse(
+      attempt && attempt.status !== 'healthy-no-probe' ? attempt.attemptedAt : '',
+    );
+    if (attempt && attempt.status !== 'healthy-no-probe' && !Number.isFinite(attemptAtMs)) {
+      throw new Error(`Cron heartbeat attempt time is invalid for ${attempt.locationId}.`);
+    }
+    if (tickAtMs === previousTickMs) {
+      // Equal-tick failures must still be mergeable so a concurrent success
+      // cannot hide them. A duplicate outcome is free to skip, and an equal
+      // success never outranks an already-recorded failure.
+      const outcomeAlreadyStored = attempt?.status === 'contacted'
+        ? previousSuccessMs >= attemptAtMs
+        : attempt?.status === 'unreachable'
+          ? previousFailureMs >= attemptAtMs
+          : true;
+      if (!attempt
+        || outcomeAlreadyStored
+        || (attempt.status === 'contacted' && previousFailureMs >= tickAtMs)) {
+        return;
+      }
+    }
+    const recovering = Boolean(
+      attempt?.status === 'contacted'
+      && Number.isFinite(previousFailureMs)
+      && (!Number.isFinite(previousSuccessMs) || previousFailureMs >= previousSuccessMs),
+    );
+    const firstRecordedContact = attempt?.status === 'contacted'
+      && !Number.isFinite(previousSuccessMs);
+    const forceWrite = Boolean(
+      attempt && (attempt.status === 'unreachable' || recovering || firstRecordedContact),
+    );
+    const elapsedTicks = Number.isFinite(previousTickMs)
+      ? Math.floor((tickAtMs - previousTickMs) / CRON_PERIOD_MS)
+      : Number.POSITIVE_INFINITY;
+    if (!forceWrite && elapsedTicks < CRON_HEARTBEAT_THROTTLE_TICKS) {
+      // Skipped healthy samples are intentionally not accumulated in module
+      // scope: isolates are neither shared nor durable.
+      return;
+    }
+
+    const locations = { ...previous?.locations };
+    const unreachable = { ...previous?.unreachable };
+    const tickAt = new Date(tickAtMs).toISOString();
+    if (attempt) {
+      if (!KNOWN_FORECAST_LOCATION_IDS.has(attempt.locationId)) {
+        throw new Error(`Unknown heartbeat location: ${attempt.locationId}`);
+      }
+      if (attempt.status === 'contacted'
+        && (!Number.isFinite(previousSuccessMs) || attemptAtMs > previousSuccessMs)) {
+        locations[attempt.locationId] = new Date(attemptAtMs).toISOString();
+      } else if (attempt.status === 'unreachable'
+        && (!Number.isFinite(previousFailureMs) || attemptAtMs > previousFailureMs)) {
+        unreachable[attempt.locationId] = new Date(attemptAtMs).toISOString();
+      }
+    }
     const heartbeat: CronHeartbeat = {
       schemaVersion: CRON_HEARTBEAT_SCHEMA_VERSION,
-      lastTickAt: new Date(nowMs).toISOString(),
+      lastTickAt: tickAt,
       locations,
+      unreachable,
     };
     await awaitWithinDeadline(
       () => env.FRANK_FORECAST_CACHE.put(CRON_HEARTBEAT_KEY, JSON.stringify(heartbeat)),
       executionPolicy(policyInput),
       'cron heartbeat write',
     );
-    heartbeatMemo = { at: nowMs, value: heartbeat };
+    heartbeatMemo = { at: Date.now(), value: heartbeat };
   } catch (error) {
     console.error('Cron heartbeat write failed:', error);
   }
 }
 
 // A city's own payload is only rewritten when something about it changed, so
-// its "we checked" stamp lags by design. The heartbeat carries the same fact
-// more cheaply and more often, so serve whichever of the two is later.
+// its "we checked" stamp lags by design. A healthy city may inherit the shared
+// lastTickAt; a city with no successful record or a newer unsuccessful record
+// keeps its own older stamp so app-wide liveness cannot hide local failure.
 //
 // Both are RECORDED times. Never substitute Date.now() here: on a Worker whose
 // cron has stopped firing that reads as "checked just now" forever, which is
@@ -260,17 +375,35 @@ export function withCronAttempt<T extends ForecastData>(
   nowMs = Date.now(),
 ): T {
   const cacheHealth = data.sources.cacheHealth;
-  const attemptedAt = heartbeat?.locations?.[locationId];
-  const attemptedMs = Date.parse(attemptedAt ?? '');
+  const successfulAt = heartbeat?.locations?.[locationId];
+  const successfulMs = Date.parse(successfulAt ?? '');
+  const unsuccessfulAt = heartbeat?.unreachable?.[locationId];
+  const unsuccessfulMs = Date.parse(unsuccessfulAt ?? '');
   const heartbeatTickMs = Date.parse(heartbeat?.lastTickAt ?? '');
-  const cronHeartbeat = heartbeat && Number.isFinite(heartbeatTickMs) && heartbeatTickMs <= nowMs
+  const hasUsableSuccess = Number.isFinite(successfulMs) && successfulMs <= nowMs;
+  // Equality fails closed: same-tick/concurrent records must not allow a global
+  // success claim to outrank an equally recent failure.
+  const hasActiveFailure = Number.isFinite(unsuccessfulMs)
+    && (unsuccessfulMs > nowMs || !hasUsableSuccess || unsuccessfulMs >= successfulMs);
+  const mayUseGlobalTick = hasUsableSuccess
+    && !hasActiveFailure
+    && Number.isFinite(heartbeatTickMs)
+    && heartbeatTickMs >= successfulMs
+    && heartbeatTickMs <= nowMs;
+  const cronHeartbeat = heartbeat && mayUseGlobalTick
     ? {
         lastTickAt: new Date(heartbeatTickMs).toISOString(),
         ageMin: Math.round((nowMs - heartbeatTickMs) / 60_000),
       }
     : undefined;
 
-  let nextSources = data.sources;
+  // cronHeartbeat is app-wide storage, but it is exposed on a city payload only
+  // when that city is eligible to inherit it. Otherwise cacheStatusView would
+  // let the global tick hide this city's older successful stamp.
+  const { cronHeartbeat: _previousCronHeartbeat, ...sourcesWithoutHeartbeat } = data.sources;
+  let nextSources: ForecastData['sources'] = _previousCronHeartbeat
+    ? sourcesWithoutHeartbeat
+    : data.sources;
   if (cronHeartbeat) {
     nextSources = {
       ...nextSources,
@@ -278,15 +411,29 @@ export function withCronAttempt<T extends ForecastData>(
     };
   }
 
-  if (!cacheHealth || !attemptedAt || !Number.isFinite(attemptedMs)) {
+  if (!cacheHealth || !hasUsableSuccess || !successfulAt) {
     return nextSources === data.sources ? data : { ...data, sources: nextSources };
   }
 
-  if (attemptedMs > nowMs) {
-    return nextSources === data.sources ? data : { ...data, sources: nextSources };
+  if (hasActiveFailure) {
+    // An unsuccessful tick is newer than the last successful city contact.
+    // Pin the displayed check to that older success even if a failure-state
+    // payload happened to stamp its own attempted-at time more recently.
+    return {
+      ...data,
+      sources: {
+        ...nextSources,
+        cacheHealth: { ...cacheHealth, lastAttemptAt: successfulAt },
+      },
+    };
   }
 
-  if (Date.parse(cacheHealth.lastAttemptAt) >= attemptedMs) {
+  const effectiveAttemptAt = mayUseGlobalTick
+    ? new Date(heartbeatTickMs).toISOString()
+    : successfulAt;
+  const effectiveAttemptMs = mayUseGlobalTick ? heartbeatTickMs : successfulMs;
+
+  if (Date.parse(cacheHealth.lastAttemptAt) >= effectiveAttemptMs) {
     return nextSources === data.sources ? data : { ...data, sources: nextSources };
   }
 
@@ -294,7 +441,7 @@ export function withCronAttempt<T extends ForecastData>(
     ...data,
     sources: {
       ...nextSources,
-      cacheHealth: { ...cacheHealth, lastAttemptAt: attemptedAt },
+      cacheHealth: { ...cacheHealth, lastAttemptAt: effectiveAttemptAt },
     },
   };
 }
@@ -702,6 +849,10 @@ async function _refreshForecastCache(
   location: ForecastLocation,
   options: RefreshOptions = {},
 ): Promise<ForecastData> {
+  if (options.cronOutcome) {
+    options.cronOutcome.status = 'unreachable';
+    delete options.cronOutcome.attemptedAt;
+  }
   const policy = executionPolicy(options.executionPolicy);
   assertBeforeDeadline(policy, `refresh start for ${location.id}`);
   // A candidate warm operation may already have read this payload before
@@ -722,6 +873,7 @@ async function _refreshForecastCache(
   const minIntervalMs = options.minIntervalMs ?? CRON_CHECK_MIN_INTERVAL_MS;
 
   if (cached && !shouldCheckInBackground(location, cached, minIntervalMs)) {
+    if (options.cronOutcome) options.cronOutcome.status = 'healthy-no-probe';
     if (options.force && !cachedNeedsRecovery) {
       // No provider was contacted here, so lastAttemptAt keeps its old value.
       return withCacheHealth(cached, 'current', {
@@ -733,11 +885,12 @@ async function _refreshForecastCache(
     return cached;
   }
 
-  // Past the gate: we are genuinely about to contact upstream, so this is the
-  // moment to record the check. Setting it in the refreshForecastCache wrapper
-  // instead — BEFORE the gate above reads it — made the gate see "checked 0 ms
-  // ago" on every single call and short-circuit forever: each selected cron
-  // turn became a no-op and nothing rebuilt for as long as the isolate lived.
+  // Past the gate: begin the upstream policy decision. A publication window or
+  // retry-backoff may still decline a network probe; otherwise provider work
+  // starts here. Setting this in the refreshForecastCache wrapper instead —
+  // BEFORE the gate above reads it — made the gate see "checked 0 ms ago" on
+  // every call and short-circuit forever: each selected cron turn became a
+  // no-op and nothing rebuilt for as long as the isolate lived.
   lastCheckAt.set(cacheKey(location), Date.now());
 
   let latestMarine: MarineInstances | undefined;
@@ -752,6 +905,7 @@ async function _refreshForecastCache(
     let marineProbeFailed = false;
     let marineSubstituted: readonly string[] = [];
     let marineProbeBusy = false;
+    let marineProbeSucceeded = false;
     const knownMarine = cachedHealth?.marineInstances
       ?? await readRetainedMarineInstances(env, location, policy);
     // DMI's official completion windows determine when a newer marine run can
@@ -780,6 +934,7 @@ async function _refreshForecastCache(
       try {
         const probe = await fetchLatestMarineInstances(location, policy, options.eventMemo, knownMarine);
         latestMarine = probe.instances;
+        marineProbeSucceeded = probe.substituted.length === 0;
         // A carried-over run id is not a verified one. Reporting it as a clean
         // probe let a DMI catalogue outage read as a fully current forecast for
         // as long as the ids stayed within their fallback age.
@@ -877,17 +1032,17 @@ async function _refreshForecastCache(
 
       const checkedCache = withCacheHealth(cached, 'current', {
         marineInstances: latestMarine,
-        // During the 20-minute post-due retry window no provider was checked.
-        // Preserve the attempt that established the backoff, or restamping
-        // every selected cron turn would slide that window forward indefinitely.
-        preserveAttemptAt: probeDecision.reason === 'retry-backoff',
+        // Neither a normal publication-window skip nor retry-backoff contacted
+        // a provider. Preserve the actual contact stamp; in the backoff case,
+        // restamping would also slide that window forward indefinitely.
+        preserveAttemptAt: canSkipProbe,
         checkedBy: options.reason ?? 'check',
         degradedSources: degradedNow.length > 0 ? degradedNow : undefined,
         providerBusy: marineVerified ? undefined : cachedHealth?.providerBusy,
         busyProvider: marineVerified ? undefined : cachedHealth?.busyProvider,
         message: marineVerified ? undefined : cachedHealth?.message,
       });
-      // The heartbeat now carries "we checked" for every city in one object,
+      // The heartbeat now carries eligible scheduled-check freshness in one object,
       // so re-writing this whole forecast just to advance a timestamp is pure
       // cost: it was ~57 writes/city/day against an allowance of 1,000, and the
       // heartbeat's own 288/day only pays for itself once this stops. What
@@ -907,6 +1062,20 @@ async function _refreshForecastCache(
         } catch (writeError) {
           console.error(`Could not persist checked forecast for ${location.id}:`, writeError);
         }
+      }
+      if (options.cronOutcome) {
+        const clean = marineVerified && degradedNow.length === 0;
+        if (clean && marineProbeSucceeded) {
+          options.cronOutcome.status = 'contacted';
+          options.cronOutcome.attemptedAt = checkedCache.sources.cacheHealth?.lastAttemptAt;
+        } else if (clean && canSkipProbe && probeDecision.reason === 'publication-window') {
+          // DMI's documented publication window proves there is nothing to ask
+          // for yet. This is healthy but is not a provider contact, so it must
+          // mutate neither per-city success nor failure history.
+          options.cronOutcome.status = 'healthy-no-probe';
+        }
+        // Retry-backoff, substitution, and degradation retain the default
+        // unreachable outcome and therefore remain visible immediately.
       }
       return checkedCache;
     }
@@ -956,6 +1125,19 @@ async function _refreshForecastCache(
       await writeCachedForecast(env, location, fresh, policy);
     } catch (writeError) {
       console.error(`Could not persist rebuilt forecast for ${location.id}:`, writeError);
+    }
+    if (options.cronOutcome) {
+      const contactedCleanly = isCronRebuildHeartbeatSuccess({
+        probeReason: probeDecision.reason,
+        degradedSources,
+        marineSubstituted,
+        degradedBusy: built.degradedBusy,
+        marineProbeFailed,
+      });
+      if (contactedCleanly) {
+        options.cronOutcome.status = 'contacted';
+        options.cronOutcome.attemptedAt = fresh.sources.cacheHealth?.lastAttemptAt;
+      }
     }
     return fresh;
   } catch (error) {
@@ -1370,48 +1552,72 @@ const worker = {
     // provider rather than call it broken (see CRON_FETCH_TIMEOUT_MS).
     const tickStartedAt = Date.now();
     const tickDeadlineAt = tickStartedAt + CRON_TICK_BUDGET_MS;
+    const heartbeatTickAt = Number.isFinite(event?.scheduledTime)
+      ? event.scheduledTime
+      : tickStartedAt;
     const eventMemo: EventMemo = new Map();
-    const attemptedAt: Record<string, string> = {};
+    let heartbeatAttempt: CronHeartbeatAttempt | null = null;
     try {
       // Workers Free allows only 10 ms active CPU per scheduled invocation;
       // network/KV waits are wall time, but still must not overlap later ticks.
       // Refresh one rotated city per one-minute tick instead of parsing and
-      // assembling all four in one event. Every city is reached once per four
+      // assembling all four in one event. Every city is selected once per four
       // minutes, inside MET's 30-minute minimum TTL and the 60-minute health
       // threshold.
       // Authenticated deployment warming remains per-location and unchanged.
       const scheduledLocations = tickOrder(event?.scheduledTime).slice(0, 1);
       for (const location of scheduledLocations) {
+        // Default to unsuccessful before any operation that can throw or run
+        // out of budget. Only explicit healthy completion flips this outcome.
+        heartbeatAttempt = {
+          locationId: location.id,
+          status: 'unreachable',
+          attemptedAt: new Date(Date.now()).toISOString(),
+        };
         const policy = cronExecutionPolicy(Date.now(), tickDeadlineAt, 1);
         if (!policy) {
           console.error(`Cron tick deadline reached; skipping ${location.id} until the next tick`);
           break;
         }
         try {
+          const cronOutcome: NonNullable<RefreshOptions['cronOutcome']> = {
+            status: 'unreachable',
+          };
           const refreshed = await refreshForecastCache(env, location, {
             reason: 'cron',
             minIntervalMs: CRON_CHECK_MIN_INTERVAL_MS,
             executionPolicy: policy,
             eventMemo,
+            cronOutcome,
           });
-          // Copy the stamp the refresh itself decided on rather than clocking
-          // the loop. Reaching a city is not the same as contacting a provider:
-          // a recent-check short-circuit and the marine retry-backoff window
-          // both deliberately preserve the older attempt time, and clocking the
-          // loop here would overwrite exactly the pauses they encode. This
-          // keeps the heartbeat a cheaper carrier of the payload's own fact
-          // instead of a second, looser fact that quietly outranks it.
-          const attempt = refreshed.sources.cacheHealth?.lastAttemptAt;
-          if (attempt) attemptedAt[location.id] = attempt;
+          const attemptedAt = cronOutcome.attemptedAt
+            ?? refreshed.sources.cacheHealth?.lastAttemptAt;
+          heartbeatAttempt = cronOutcome.status === 'contacted'
+            && typeof attemptedAt === 'string'
+            && Number.isFinite(Date.parse(attemptedAt))
+            ? { locationId: location.id, status: 'contacted', attemptedAt }
+            : cronOutcome.status === 'healthy-no-probe'
+              ? { locationId: location.id, status: 'healthy-no-probe' }
+              : {
+                  locationId: location.id,
+                  status: 'unreachable',
+                  attemptedAt: new Date(Date.now()).toISOString(),
+                };
         } catch (error) {
+          heartbeatAttempt = {
+            locationId: location.id,
+            status: 'unreachable',
+            attemptedAt: new Date(Date.now()).toISOString(),
+          };
           console.error(`Cron refresh failed for ${location.id}:`, error);
         }
       }
     } finally {
       // Bounded outside the refresh budget so a due heartbeat still gets a
-      // chance to land when provider work runs long. Most ticks return after
-      // the read because the write itself is throttled to about five minutes.
-      await writeCronHeartbeat(env, attemptedAt, {
+      // chance to land when provider work runs long. Healthy ticks usually
+      // return after the read; failures and recoveries deliberately bypass the
+      // five-tick throttle.
+      await writeCronHeartbeat(env, heartbeatTickAt, heartbeatAttempt, {
         deadlineAt: Date.now() + HEARTBEAT_WRITE_BUDGET_MS,
         maxAttempts: 1,
       });

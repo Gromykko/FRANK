@@ -160,7 +160,7 @@ describe('scheduled city rotation', () => {
     };
     const heartbeatWrites = () => puts.filter((key) => key === CRON_HEARTBEAT_KEY);
 
-    const firstTick = await runTick(0);
+    await runTick(0);
     const firstHeartbeat = store.get(CRON_HEARTBEAT_KEY);
     expect(firstHeartbeat).toBeDefined();
     expect(heartbeatWrites()).toHaveLength(1);
@@ -174,18 +174,44 @@ describe('scheduled city rotation', () => {
     const heartbeat = JSON.parse(store.get(CRON_HEARTBEAT_KEY)!) as {
       lastTickAt: string;
       locations: Record<string, string>;
+      unreachable: Record<string, string>;
     };
-    const firstLocation = tickOrder(firstTick)[0];
-    const elapsedLocation = tickOrder(elapsedTick)[0];
     expect(heartbeat).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       lastTickAt: new Date(elapsedTick).toISOString(),
-      locations: {
-        [firstLocation.id]: new Date(firstTick).toISOString(),
-        [elapsedLocation.id]: new Date(elapsedTick).toISOString(),
-      },
+      // Publication-window ticks are healthy but contact no provider, so they
+      // advance only app-wide liveness—not per-city contact history.
+      locations: {},
+      unreachable: {},
     });
     expect(provider).not.toHaveBeenCalled();
+  });
+
+  it('treats a duplicate recent check as neutral instead of inventing an anomaly', async () => {
+    const { env, store, puts } = runtime();
+    const scheduledTime = FIRST_TICK_MS + 2 * LOCATIONS.length * CRON_PERIOD_MS;
+    const provider = vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      new Error('A source fetch is not due in this fixture.'),
+    );
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.setSystemTime(scheduledTime);
+
+    for (let duplicate = 0; duplicate < 2; duplicate += 1) {
+      await worker.scheduled(
+        { scheduledTime } as ScheduledController,
+        env as Env,
+        {} as ExecutionContext,
+      );
+    }
+
+    expect(provider).not.toHaveBeenCalled();
+    expect(puts.filter((key) => key === CRON_HEARTBEAT_KEY)).toHaveLength(1);
+    expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
+      schemaVersion: 2,
+      lastTickAt: new Date(scheduledTime).toISOString(),
+      locations: {},
+      unreachable: {},
+    });
   });
 
   it('limits a selected city to three attempts per failing 5xx provider stage', async () => {
@@ -212,9 +238,184 @@ describe('scheduled city rotation', () => {
     expect(provider).toHaveBeenCalledTimes(6);
     const heartbeat = JSON.parse(store.get(CRON_HEARTBEAT_KEY)!) as {
       locations: Record<string, string>;
+      unreachable: Record<string, string>;
     };
-    expect(heartbeat.locations).toEqual({
+    expect(heartbeat.locations).toEqual({});
+    expect(heartbeat.unreachable).toEqual({
       horsens: new Date(scheduledTime).toISOString(),
     });
+  });
+
+  it('writes an unsuccessful city immediately even inside the five-tick throttle', async () => {
+    const { env, store, puts } = runtime(DUE_MARINE_RUN);
+    const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      new Response('temporary provider failure', { status: 503 }));
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const scheduledTime = FIRST_TICK_MS + 10 * LOCATIONS.length * CRON_PERIOD_MS;
+    const previousTick = scheduledTime - CRON_PERIOD_MS;
+    const previousSuccess = scheduledTime - LOCATIONS.length * CRON_PERIOD_MS;
+    store.set(CRON_HEARTBEAT_KEY, JSON.stringify({
+      schemaVersion: 2,
+      lastTickAt: new Date(previousTick).toISOString(),
+      locations: { horsens: new Date(previousSuccess).toISOString() },
+      unreachable: {},
+    }));
+
+    vi.setSystemTime(scheduledTime);
+    await worker.scheduled(
+      { scheduledTime } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    expect(provider).toHaveBeenCalledTimes(6);
+    expect(puts.filter((key) => key === CRON_HEARTBEAT_KEY)).toHaveLength(1);
+    expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
+      schemaVersion: 2,
+      lastTickAt: new Date(scheduledTime).toISOString(),
+      locations: { horsens: new Date(previousSuccess).toISOString() },
+      unreachable: { horsens: new Date(scheduledTime).toISOString() },
+    });
+  });
+
+  it('does not let a healthy no-probe tick clear an active anomaly', async () => {
+    const { env, store, puts } = runtime();
+    const scheduledTime = FIRST_TICK_MS + (10 * LOCATIONS.length + 1) * CRON_PERIOD_MS;
+    const location = tickOrder(scheduledTime)[0];
+    const previousTick = scheduledTime - 5 * CRON_PERIOD_MS;
+    const previousFailure = scheduledTime - 6 * CRON_PERIOD_MS;
+    const previousSuccess = scheduledTime - 8 * CRON_PERIOD_MS;
+    store.set(CRON_HEARTBEAT_KEY, JSON.stringify({
+      schemaVersion: 2,
+      lastTickAt: new Date(previousTick).toISOString(),
+      locations: { [location.id]: new Date(previousSuccess).toISOString() },
+      unreachable: { [location.id]: new Date(previousFailure).toISOString() },
+    }));
+    const provider = vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      new Error('A source fetch is not due in this fixture.'),
+    );
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    vi.setSystemTime(scheduledTime);
+    await worker.scheduled(
+      { scheduledTime } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    expect(provider).not.toHaveBeenCalled();
+    expect(puts.filter((key) => key === CRON_HEARTBEAT_KEY)).toHaveLength(1);
+    expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
+      schemaVersion: 2,
+      lastTickAt: new Date(scheduledTime).toISOString(),
+      locations: { [location.id]: new Date(previousSuccess).toISOString() },
+      unreachable: { [location.id]: new Date(previousFailure).toISOString() },
+    });
+  });
+
+  it('writes the first contacted recovery immediately instead of leaving an anomaly active', async () => {
+    const { env, store, puts } = runtime(DUE_MARINE_RUN);
+    const scheduledTime = FIRST_TICK_MS + 11 * LOCATIONS.length * CRON_PERIOD_MS;
+    const location = tickOrder(scheduledTime)[0];
+    const previousTick = scheduledTime - CRON_PERIOD_MS;
+    const previousFailure = scheduledTime - 2 * CRON_PERIOD_MS;
+    const previousSuccess = scheduledTime - 5 * CRON_PERIOD_MS;
+    store.set(CRON_HEARTBEAT_KEY, JSON.stringify({
+      schemaVersion: 2,
+      lastTickAt: new Date(previousTick).toISOString(),
+      locations: { [location.id]: new Date(previousSuccess).toISOString() },
+      unreachable: { [location.id]: new Date(previousFailure).toISOString() },
+    }));
+    const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/instances')) {
+        return Response.json({ instances: [{ id: DUE_MARINE_RUN }] });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    vi.setSystemTime(scheduledTime);
+    await worker.scheduled(
+      { scheduledTime } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    expect(provider).toHaveBeenCalledTimes(2);
+    expect(puts.filter((key) => key === CRON_HEARTBEAT_KEY)).toHaveLength(1);
+    expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
+      schemaVersion: 2,
+      lastTickAt: new Date(scheduledTime).toISOString(),
+      locations: { [location.id]: new Date(scheduledTime).toISOString() },
+      unreachable: { [location.id]: new Date(previousFailure).toISOString() },
+    });
+  });
+
+  it('records a city\'s first actual provider contact inside the normal throttle', async () => {
+    const { env, store, puts } = runtime(DUE_MARINE_RUN);
+    const scheduledTime = FIRST_TICK_MS + 12 * LOCATIONS.length * CRON_PERIOD_MS;
+    const location = tickOrder(scheduledTime)[0];
+    store.set(CRON_HEARTBEAT_KEY, JSON.stringify({
+      schemaVersion: 2,
+      lastTickAt: new Date(scheduledTime - CRON_PERIOD_MS).toISOString(),
+      locations: {},
+      unreachable: {},
+    }));
+    const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/instances')) {
+        return Response.json({ instances: [{ id: DUE_MARINE_RUN }] });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    vi.setSystemTime(scheduledTime);
+    await worker.scheduled(
+      { scheduledTime } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    expect(provider).toHaveBeenCalledTimes(2);
+    expect(puts.filter((key) => key === CRON_HEARTBEAT_KEY)).toHaveLength(1);
+    expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
+      schemaVersion: 2,
+      lastTickAt: new Date(scheduledTime).toISOString(),
+      locations: { [location.id]: new Date(scheduledTime).toISOString() },
+      unreachable: {},
+    });
+  });
+
+  it('rejects a late heartbeat write from an older scheduled tick', async () => {
+    const { env, store, puts } = runtime();
+    const scheduledTime = FIRST_TICK_MS + 15 * LOCATIONS.length * CRON_PERIOD_MS;
+    const storedTick = scheduledTime + 5 * CRON_PERIOD_MS;
+    const storedHeartbeat = JSON.stringify({
+      schemaVersion: 2,
+      lastTickAt: new Date(storedTick).toISOString(),
+      locations: { horsens: new Date(storedTick - CRON_PERIOD_MS).toISOString() },
+      unreachable: {},
+    });
+    store.set(CRON_HEARTBEAT_KEY, storedHeartbeat);
+    vi.setSystemTime(storedTick + 5 * CRON_PERIOD_MS);
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      new Error('A source fetch is not due in this fixture.'),
+    );
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await worker.scheduled(
+      { scheduledTime } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    expect(puts.filter((key) => key === CRON_HEARTBEAT_KEY)).toHaveLength(0);
+    expect(store.get(CRON_HEARTBEAT_KEY)).toBe(storedHeartbeat);
   });
 });

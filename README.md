@@ -68,16 +68,24 @@ guardrails are:
 | **Worker requests** | 100,000 / day | 1,440 cron ticks/day plus public API and health/status requests |
 | **CPU** | 10 ms / Free invocation | One rotating location per cron tick; verify real deployed CPU analytics before adding locations or heavier parsing |
 | **KV reads** | 100,000 / day | Variable with visitors and ingestion. Public JSON is `no-store`, so there is no claimed zero-cost CDN-read layer |
-| **KV writes** | 1,000 / day | Nominally about 288 heartbeat writes plus a healthy-operation planning estimate of about 432 forecast/raw writes: about 720/day before failures, initialization, deploys, or manual work |
+| **KV writes** | 1,000 / day | Normal-day estimate: about 288 throttled heartbeat writes + 0 expected anomaly/recovery writes + about 432 forecast/raw writes = about 720/day, leaving about 280 writes of nominal headroom |
 | **External subrequests** | 50 / invocation | One event-wide counter stops before 46; a DMI 429 opens a same-event circuit |
 
-The heartbeat is read every tick and its previous timestamp throttles writes
-toward one every five scheduled minutes. An attempt made on a skipped tick is
-not accumulated across Worker isolates; with four rotating cities, the nominal
-sampling interval for one city's persisted stamp is about 20 minutes, inside
-the 60-minute health alarm. Workers KV is eventually consistent, so an isolate
-can occasionally read an older heartbeat and make an extra write; production
-must alert on actual ages and usage rather than treat either estimate as a hard
+The heartbeat is read every tick and normal successful writes are sampled once
+every five scheduled ticks. A city with a recorded success and no newer failure
+may use the app-wide `lastTickAt`, keeping its displayed check time within about
+five minutes without increasing the normal 288-write heartbeat budget. A budget
+skip, retry-backoff, or failed refresh writes a distinct city anomaly immediately;
+the first later success also writes immediately so the failure cannot remain
+visible for a full sparse sampling cycle. On a normal day both extra counts are
+expected to be zero. One anomalous tick followed by recovery would make the
+planning total about 722. A schema rollout can also spend up to four one-time
+writes to establish each city's first actual provider contact. A prolonged
+all-city outage can exceed the free write
+allowance and must be monitored rather than hidden. Workers KV is eventually
+consistent, so the read/compare/write monotonic guard is best-effort and an edge
+can occasionally read an older heartbeat and make an extra write. Production
+must alert on actual ages and usage rather than treat the estimate as a hard
 cap. See Cloudflare's current [Workers limits](https://developers.cloudflare.com/workers/platform/limits/), [KV limits](https://developers.cloudflare.com/kv/platform/limits/), and [pricing](https://developers.cloudflare.com/workers/platform/pricing/).
 
 ## Privacy

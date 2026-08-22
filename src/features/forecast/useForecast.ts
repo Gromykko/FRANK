@@ -332,11 +332,11 @@ export function useForecast(daylightOnly: boolean) {
       // (worker unreachable) still "succeeds" above, so say so.
       //
       // This asks the fetch layer, which KNOWS. It used to compare the worker's
-      // own `lastAttemptAt` stamp against a 12-minute bound — but that stamp is
-      // persisted at most every 15 minutes to save KV writes and drifts to ~20,
-      // so an ordinary cold boot could show "Could not reach the forecast
-      // service" seconds after reaching it perfectly well. Never re-derive a
-      // fact from someone else's throttled bookkeeping when the caller has it.
+      // own operational `lastAttemptAt` stamp against a 12-minute bound. Even
+      // with the newer anomaly-aware heartbeat overlay, that is not evidence of
+      // this browser's request, so an ordinary cold boot could show "Could not
+      // reach the forecast service" seconds after reaching it perfectly well.
+      // Never re-derive a fact the fetch layer already knows exactly.
       if (forceRemoteRefresh && loaded.from === 'local') {
         settledError = loaded.failureKind === 'network'
           ? 'Could not reach the forecast service — showing the last saved forecast.'
