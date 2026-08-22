@@ -388,6 +388,9 @@ describe('cronExecutionPolicy', () => {
       retryDelayMs: undefined,
       retryBusyDelayMs: undefined,
     });
+    // Unclamped case: the policy returns CRON_FETCH_TIMEOUT_MS verbatim, so
+    // this pins the constant itself. The next test deliberately clamps lower;
+    // the location's remaining share must always win.
     expect(policy!.fetchTimeoutMs).toBeGreaterThanOrEqual(DEFAULT_FETCH_TIMEOUT_MS);
   });
 
