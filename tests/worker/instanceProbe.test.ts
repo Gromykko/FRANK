@@ -398,6 +398,7 @@ describe('cronExecutionPolicy', () => {
       hardDeadlineAt: tickDeadline,
       fetchTimeoutMs: 50_000,
       maxAttempts: 3,
+      marinePositionMaxAttempts: 10,
       completionReserveMs: 8_000,
       retryDelayMs: undefined,
       retryBusyDelayMs: undefined,
@@ -406,8 +407,8 @@ describe('cronExecutionPolicy', () => {
     // Unclamped case: the policy returns CRON_FETCH_TIMEOUT_MS verbatim, so
     // this pins the constant itself. The next test deliberately clamps lower;
     // the location's remaining share must always win. At runtime the 8-second
-    // completion reserve makes all three attempts share at most 42 seconds;
-    // their three 50-second caps are not additive.
+    // completion reserve makes every attempt share at most 42 seconds; their
+    // individual 50-second caps are not additive.
     expect(policy!.fetchTimeoutMs).toBeGreaterThanOrEqual(DEFAULT_FETCH_TIMEOUT_MS);
   });
 
@@ -419,9 +420,23 @@ describe('cronExecutionPolicy', () => {
       deadlineAt: now + 20_000,
       fetchTimeoutMs: 20_000,
       maxAttempts: 3,
+      marinePositionMaxAttempts: 10,
       completionReserveMs: 4_000,
       retryDelayMs: undefined,
       retryBusyDelayMs: undefined,
+    });
+  });
+
+  it('lets the location time budget bind the marine position cap', () => {
+    const now = Date.parse('2026-08-20T12:00:00Z');
+    const policy = cronExecutionPolicy(now, now + 15_000, 1);
+
+    expect(policy).toMatchObject({
+      deadlineAt: now + 15_000,
+      fetchTimeoutMs: 15_000,
+      maxAttempts: 3,
+      marinePositionMaxAttempts: 8,
+      completionReserveMs: 3_000,
     });
   });
 

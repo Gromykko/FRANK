@@ -11,21 +11,45 @@ const CRON_FETCH_TIMEOUT_MS = 50_000;
 const CRON_LOCATION_MIN_BUDGET_MS = 15_000;
 const CRON_COMPLETION_RESERVE_MS = 8_000;
 // Cadence arithmetic: 50s refresh budget - 8s completion reserve = one
-// shared 42s provider window. The three attempts each carry the 50s fetch cap,
-// but every fetch and retry delay is clamped to that same remaining window;
-// they can never add up to 3 x 50s. The scheduled handler then gives its
+// shared 42s provider window. Every attempt carries the 50s fetch cap, but
+// every fetch and retry delay is clamped to that same remaining window; those
+// individual caps are never additive. The scheduled handler then gives its
 // heartbeat at most 3s, for a designed 53s total and about 7s before the next
 // one-minute tick.
 export const CRON_TICK_BUDGET_MS = 50_000;
-// Retry depth is a provider decision, not a way to spend the invocation-wide
-// subrequest allowance. Three total attempts cover two transient failures; a
-// still-failing stage then yields to this city's next four-minute turn instead of
-// parsing dozens of identical 5xx responses on Workers Free's 10 ms CPU tier.
+// Retry depth is a provider-stage decision, not a way to spend the
+// invocation-wide subrequest allowance. Catalogue probes keep the ordinary
+// cap, while MET and warnings keep their existing single-pass behavior. Only
+// a DMI marine position leg can use the larger cap below, where production has
+// shown seven quick 429s followed by a success.
 export const CRON_PROVIDER_MAX_ATTEMPTS = 3;
+export const CRON_MARINE_POSITION_MAX_ATTEMPTS = 10;
 export const DMI_BUSY_RETRY_DELAY_MS = 1_200;
 // Workers Free permits 50 external subrequests per invocation. Keep five in
 // reserve for platform/provider behavior outside the explicit retry loops.
 export const EVENT_EXTERNAL_SUBREQUEST_BUDGET = 45;
+
+export const CRON_SUBREQUEST_CALL_GRAPH = Object.freeze({
+  marineKinds: 2,
+  instanceCollectionsPerKind: 2,
+  metForecasts: 1,
+  warningFeeds: 1,
+  warningDetails: 6,
+});
+
+// Actual one-city call graph in providers.ts:
+// 2 marine kinds x 2 instance collections x 3 catalogue attempts
+// + 2 position legs x 10 attempts + 1 MET + 1 warning feed + 6 CAP details
+// = 40 app-started external requests, at most 45 and below the hard 50.
+export const CRON_WORST_CASE_EXTERNAL_SUBREQUESTS =
+  CRON_SUBREQUEST_CALL_GRAPH.marineKinds
+    * CRON_SUBREQUEST_CALL_GRAPH.instanceCollectionsPerKind
+    * CRON_PROVIDER_MAX_ATTEMPTS
+  + CRON_SUBREQUEST_CALL_GRAPH.marineKinds
+    * CRON_MARINE_POSITION_MAX_ATTEMPTS
+  + CRON_SUBREQUEST_CALL_GRAPH.metForecasts
+  + CRON_SUBREQUEST_CALL_GRAPH.warningFeeds
+  + CRON_SUBREQUEST_CALL_GRAPH.warningDetails;
 
 export class ExternalSubrequestBudgetError extends Error {
   constructor() {
@@ -47,6 +71,7 @@ export interface ExecutionPolicyInput {
   hardDeadlineAt?: number;
   fetchTimeoutMs?: number;
   maxAttempts?: number;
+  marinePositionMaxAttempts?: number;
   completionReserveMs?: number;
   retryDelayMs?: number;
   retryBusyDelayMs?: number;
@@ -57,6 +82,7 @@ export interface ExecutionPolicy {
   hardDeadlineAt: number;
   fetchTimeoutMs: number;
   maxAttempts: number;
+  marinePositionMaxAttempts: number;
   completionReserveMs: number;
   retryDelayMs?: number;
   retryBusyDelayMs?: number;
@@ -71,14 +97,18 @@ export function executionPolicy(policy: ExecutionPolicyInput = {}): ExecutionPol
   const dynamicAttempts = availableMs >= 6_000
     ? Math.max(1, Math.floor(availableMs / 3_000))
     : DEFAULT_MAX_FETCH_ATTEMPTS;
+  const maxAttempts = policy.maxAttempts !== undefined
+    ? Math.max(1, policy.maxAttempts)
+    : dynamicAttempts;
 
   return {
     deadlineAt: deadline,
     hardDeadlineAt: policy.hardDeadlineAt ?? policy.deadlineAt ?? Number.POSITIVE_INFINITY,
     fetchTimeoutMs: policy.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS,
-    maxAttempts: policy.maxAttempts !== undefined
-      ? Math.max(1, policy.maxAttempts)
-      : dynamicAttempts,
+    maxAttempts,
+    marinePositionMaxAttempts: policy.marinePositionMaxAttempts !== undefined
+      ? Math.max(1, policy.marinePositionMaxAttempts)
+      : maxAttempts,
     completionReserveMs: reserve,
     retryDelayMs: policy.retryDelayMs,
     retryBusyDelayMs: policy.retryBusyDelayMs,
@@ -124,10 +154,15 @@ export function cronExecutionPolicy(
     CRON_PROVIDER_MAX_ATTEMPTS,
     Math.max(1, Math.floor(locationBudgetMs / 1_800)),
   );
+  const marinePositionMaxAttempts = Math.min(
+    CRON_MARINE_POSITION_MAX_ATTEMPTS,
+    Math.max(1, Math.floor(locationBudgetMs / 1_800)),
+  );
   return executionPolicy({
     deadlineAt: Math.min(tickDeadlineAt, nowMs + locationBudgetMs),
     fetchTimeoutMs: Math.min(CRON_FETCH_TIMEOUT_MS, locationBudgetMs),
     maxAttempts,
+    marinePositionMaxAttempts,
     completionReserveMs: Math.min(
       CRON_COMPLETION_RESERVE_MS,
       Math.floor(locationBudgetMs / 5),

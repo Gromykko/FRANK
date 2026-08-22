@@ -121,6 +121,21 @@ function retryAfterSeconds(response: Response): number | undefined {
   return Math.max(1, Math.ceil((atMs - Date.now()) / 1000));
 }
 
+function requestMaxAttempts(
+  url: string,
+  provider: BusyProvider,
+  policy: ExecutionPolicy,
+): number {
+  if (provider !== 'marine') return policy.maxAttempts;
+  try {
+    const pathname = new URL(url).pathname;
+    const isPositionStage = /\/collections\/[^/]+\/instances\/[^/]+\/position$/.test(pathname);
+    return isPositionStage ? policy.marinePositionMaxAttempts : policy.maxAttempts;
+  } catch {
+    return policy.maxAttempts;
+  }
+}
+
 export async function fetchJsonWithRetries(
   url: string,
   label: string,
@@ -131,8 +146,9 @@ export async function fetchJsonWithRetries(
   let lastError: Error | undefined;
   let serverRetryAfterMs: number | undefined;
   let sawBusyRefusal = false;
+  const maxAttempts = requestMaxAttempts(url, provider, policy);
 
-  for (let attempt = 0; attempt < policy.maxAttempts; attempt++) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (provider === 'marine') {
       const circuit = await readMarineBusyCircuit(eventMemo);
       if (circuit) {
@@ -172,7 +188,7 @@ export async function fetchJsonWithRetries(
         normalized.name === 'TimeoutError' ? 'timeout' : 'error',
         String(normalized.message ?? '').slice(0, 120),
       );
-      if (attempt < policy.maxAttempts - 1) {
+      if (attempt < maxAttempts - 1) {
         try {
           await delayWithinDeadline(retryDelay(attempt, false, policy), policy, `${label} retry`);
         } catch (delayErr) {
@@ -248,7 +264,7 @@ export async function fetchJsonWithRetries(
       if (response.ok) break;
     }
 
-    if (attempt < policy.maxAttempts - 1) {
+    if (attempt < maxAttempts - 1) {
       const isBusy = response?.status === 429;
       // Honour what the provider actually asked for. We already parse
       // Retry-After, attach it to the error and forward it to the browser - and

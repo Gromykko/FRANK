@@ -218,7 +218,7 @@ describe('scheduled city rotation', () => {
     });
   });
 
-  it('limits a selected city to three attempts per failing 5xx provider stage', async () => {
+  it('limits a selected city to three attempts per failing 5xx catalogue stage', async () => {
     const { env, store } = runtime(DUE_MARINE_RUN);
     const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
       new Response('temporary provider failure', { status: 503 }));
