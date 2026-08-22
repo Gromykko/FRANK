@@ -433,14 +433,40 @@ export function analyzeSafetyConditions(
       : data.waveHeight <= 1.25 ? 'choppy water'
       : data.waveHeight <= 2.5 ? 'rough water'
       : 'very rough water');
-    addReason('safe', translate(
-      data.blockSpanHours
-        ? 'The outlook is within your limits — {0}, {1}, {2}.'
-        : "Everything's within your limits — {0}, {1}, {2}.",
-      translate(getWindSpeedLabel(data.windSpeed)).toLowerCase(),
-      seaState,
-      weatherDesc.toLowerCase(),
-    ));
+
+    // Silence from a rule that is switched off is not evidence of safety, and
+    // this sentence cannot tell the two apart on its own: with Max Wind
+    // disabled it printed "Everything's within your limits — gale, small
+    // ripples, clear sky", asserting in a green badge that a gale was inside
+    // limits the user had turned off. hasActiveSafetyChecks does not catch it
+    // either, because that only fires when EVERY personal limit is off.
+    //
+    // Keep describing the conditions - that part is useful and true - but stop
+    // claiming they were measured against anything, and name what was not.
+    const unchecked = [
+      settings.enableWindSpeed ? '' : translate('wind'),
+      settings.enableWaveHeight ? '' : translate('waves'),
+      settings.enableWaterTemp ? '' : translate('water temperature'),
+    ].filter(Boolean);
+
+    addReason('safe', unchecked.length > 0
+      ? translate(
+          data.blockSpanHours
+            ? 'Nothing you are still checking flagged the outlook — {0}, {1}, {2}. Not checked: {3}.'
+            : 'Nothing you are still checking flagged this — {0}, {1}, {2}. Not checked: {3}.',
+          translate(getWindSpeedLabel(data.windSpeed)).toLowerCase(),
+          seaState,
+          weatherDesc.toLowerCase(),
+          unchecked.join(', '),
+        )
+      : translate(
+          data.blockSpanHours
+            ? 'The outlook is within your limits — {0}, {1}, {2}.'
+            : "Everything's within your limits — {0}, {1}, {2}.",
+          translate(getWindSpeedLabel(data.windSpeed)).toLowerCase(),
+          seaState,
+          weatherDesc.toLowerCase(),
+        ));
   }
 
   return { rating, reasons };

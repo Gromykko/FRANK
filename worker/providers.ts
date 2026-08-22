@@ -137,12 +137,25 @@ export function fetchLatestInstanceForCollections(
   // the first response lands, and all four would still hit DMI. Sharing the
   // in-flight promise is what actually collapses them into one request.
   //
-  // A rejection is cached on the same terms, deliberately: a 429 means "stop
-  // asking", and re-probing once per location is exactly the hammering that
-  // earned it. The first caller always awaits, so the stored rejection is never
-  // an unhandled one.
+  // A PROVIDER rejection is cached on the same terms, deliberately: a 429 means
+  // "stop asking", and re-probing once per location is exactly the hammering
+  // that earned it. The first caller always awaits, so the stored rejection is
+  // never an unhandled one.
+  //
+  // A rejection that is about US is not shared. The promise carries the FIRST
+  // location's ExecutionPolicy, so if that location simply ran out of its own
+  // provider window the rejection is a deadline error, not a statement about
+  // DMI - and serving it to the other three marked all four cities stale with
+  // "Marine service unavailable" (and, since it is not a busy error, the wrong
+  // alarming copy) because one request was slow while DMI was perfectly fine.
+  // Those callers have their own budgets and deserve their own attempt.
   const promise = probeLatestInstanceForCollections(collections, policy, eventMemo);
   eventMemo?.set(key, promise);
+  promise.catch((error: unknown) => {
+    if (!isProviderUnavailableError(error) && eventMemo?.get(key) === promise) {
+      eventMemo.delete(key);
+    }
+  });
   return promise;
 }
 

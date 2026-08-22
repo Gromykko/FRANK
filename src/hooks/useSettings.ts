@@ -302,6 +302,8 @@ export function useSettings() {
     }
     return DEFAULT_SETTINGS;
   });
+  const [saveFailed, setSaveFailed] = useState(false);
+
   const activeModeRef = useRef(settings.tripMode);
   activeModeRef.current = settings.tripMode;
 
@@ -316,7 +318,16 @@ export function useSettings() {
 
     const write = () => {
       if (canWriteActive) {
-        if (persistStoredSettings(SETTINGS_STORAGE_KEY, settings, activeLoadFailedRef.current)) {
+        const saved = persistStoredSettings(SETTINGS_STORAGE_KEY, settings, activeLoadFailedRef.current);
+        // A silent failure here is the dangerous kind. The panel and the verdict
+        // both use the new value immediately, so a user who lowers their wind
+        // cap at the launch site sees it take effect - and next session reads
+        // the old record back and paddles under a LOOSER limit than they believe
+        // is active. localStorage being full, or Safari private mode throwing on
+        // first write, is enough to cause it. The read side already degrades
+        // honestly; the write side said nothing at all.
+        setSaveFailed(!saved);
+        if (saved) {
           activeLoadFailedRef.current = null;
           activeWriteNeededRef.current = false;
         }
@@ -399,5 +410,5 @@ export function useSettings() {
     }
   }, []);
 
-  return { settings, saveSettings, setTripMode };
+  return { settings, saveSettings, setTripMode, saveFailed };
 }

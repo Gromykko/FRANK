@@ -851,6 +851,19 @@
   flex-direction: column;
 }
 
+/* Sits above the accordion header rather than inside it: the limits on screen
+   are live but will not survive a reload, and that has to be visible without
+   opening the panel. */
+.settings-save-warning {
+  margin: 0 0 var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--color-caution);
+  background: var(--module-bg);
+  color: var(--text-main);
+  font-size: var(--text-caption);
+  line-height: 1.4;
+}
+
 .settings-copy {
   display: flex;
   flex-direction: column;

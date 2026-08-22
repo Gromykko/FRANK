@@ -408,16 +408,37 @@ async function readInitializationMarker(
   );
   if (!raw) return null;
 
+  // An unreadable marker means "no marker", not "storage is broken". Throwing
+  // here escaped the Promise.all in loadHealthPayload and set storageUnavailable
+  // for the WHOLE payload, so one bad record reported all four cities as
+  // cacheless and ok:false - a paging-grade alarm for three perfectly cached
+  // fjords. On the forecast route the same throw reached the generic 503, so
+  // the client lost the FORECAST_INITIALIZING contract and its retry hint.
+  //
+  // isInitializationMarker also rejects any lastAttemptAt in the future, which a
+  // PoP whose clock is milliseconds ahead can produce, so this is reachable
+  // without anything actually being wrong.
+  //
+  // The marker only says how long to wait before retrying. Treating a bad one
+  // as absent costs at most an earlier retry; it can never surface wrong data.
+  // Still logged loudly, because a genuine contract break is worth seeing.
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    throw new Error(`Forecast initialization marker is invalid for ${location.id}.`, {
-      cause: error,
-    });
+    console.error(JSON.stringify({
+      event: 'initialization_marker_unparseable',
+      locationId: location.id,
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    return null;
   }
   if (!isInitializationMarker(parsed, location)) {
-    throw new Error(`Forecast initialization marker contract is invalid for ${location.id}.`);
+    console.error(JSON.stringify({
+      event: 'initialization_marker_contract_invalid',
+      locationId: location.id,
+    }));
+    return null;
   }
   return parsed;
 }
@@ -810,9 +831,19 @@ async function _refreshForecastCache(
       // cost: it was ~57 writes/city/day against an allowance of 1,000, and the
       // heartbeat's own 288/day only pays for itself once this stops. What
       // still earns a write is a CHANGE in what the health says.
-      if (probeDecision.reason !== 'retry-backoff') {
-        if (healthChanged(cachedHealth, checkedCache.sources.cacheHealth)) {
+      if (probeDecision.reason !== 'retry-backoff'
+        && healthChanged(cachedHealth, checkedCache.sources.cacheHealth)) {
+        // Best-effort, like the rebuild write below. This is the one path that
+        // has already CONFIRMED the forecast is current, so letting a failed
+        // write escape would fall into the catch below and rebuild the response
+        // as 'stale' with "Forecast refresh failed" - turning a verified-healthy
+        // forecast into an outage banner because a KV put was rejected. An
+        // exhausted write budget is the realistic cause, and that is exactly
+        // when the last thing we should do is start reporting false failures.
+        try {
           await writeCachedForecast(env, location, checkedCache, policy);
+        } catch (writeError) {
+          console.error(`Could not persist checked forecast for ${location.id}:`, writeError);
         }
       }
       return checkedCache;

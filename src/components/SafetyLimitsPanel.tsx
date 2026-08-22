@@ -21,6 +21,9 @@ const EXPOSURE_LABEL: Record<WindSector['exposure'], string> = {
 interface SafetyLimitsPanelProps {
   settings: SafetySettings;
   updateSettings: (settings: SafetySettings) => void;
+  // The last write to this device's storage failed, so what is on screen will
+  // not survive a reload.
+  saveFailed: boolean;
 }
 
 interface ToggleSwitchProps {
@@ -132,7 +135,7 @@ function ZoneBar({ min, max, cautionStart, cautionEnd, invert = false, leftLabel
   );
 }
 
-export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLimitsPanelProps) {
+export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed }: SafetyLimitsPanelProps) {
   const { t } = useLang();
   const [isOpen, setIsOpen] = useState(false);
   const [showInfoModal, setShowInfoModal] = useState(false);
@@ -173,8 +176,19 @@ export default function SafetyLimitsPanel({ settings, updateSettings }: SafetyLi
     settings.minWaterTempCaution >= 15 ? 'Safe / Comfortable' :
     settings.minWaterTempCaution >= 10 ? 'Caution / Cold Water' : 'Danger / Cold Shock');
 
+  // Silence here is the dangerous kind: the panel and the verdict both use the
+  // new value straight away, so a failed write is invisible until the next
+  // session quietly restores the OLD - and looser - limit. Full storage, or
+  // Safari private mode throwing on first write, is enough to cause it.
+  const saveWarning = saveFailed ? (
+    <p className="settings-save-warning" role="alert">
+      {t('This device would not save your limits, so they will go back to the previous values next time you open FRANK. They are active for now.')}
+    </p>
+  ) : null;
+
   const settingsPanel = (
     <div className="panel planner-settings-panel">
+      {saveWarning}
       {/* APG accordion header: the toggle is a real button inside the
           heading (a focusable "?" nested in a role="button" div was an
           invalid control-in-control). The row's onClick is a pointer-only

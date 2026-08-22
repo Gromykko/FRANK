@@ -309,8 +309,28 @@ export function deriveCacheStatus(args: {
     : Math.max(0, -clockLeadMs);
   const dataStale = cacheAgeMs > CACHE_REFRESH_WARNING_AGE_MS;
 
+  // Data being old and a refresh having FAILED are different facts, and the
+  // heartbeat can now disprove the second one. Cron firing every five minutes
+  // while the build pipeline stopped advancing fetchedAt eight hours ago used
+  // to render "Couldn't refresh · last try 03:35" - naming a check that
+  // happened minutes ago, and succeeded, as the one that failed. Worse, the
+  // payload's providerBusy from an unrelated 429 hours earlier was carried
+  // through, so it could read "Weather service busy": a present-tense claim
+  // about a provider, asserted from stale bookkeeping, pointing an operator at
+  // the wrong subsystem.
+  //
+  // Age alone still forces the amber and the banner - that part was right. It
+  // just stops borrowing a cause it cannot support.
+  const staleFromAgeOnly = dataStale && !completedFailure;
   const cacheHealth = completedFailure || dataStale
-    ? { ...sources.cacheHealth, status: 'stale' as const, lastAttemptAt: checkedAt }
+    ? {
+        ...sources.cacheHealth,
+        status: 'stale' as const,
+        lastAttemptAt: checkedAt,
+        ...(staleFromAgeOnly
+          ? { providerBusy: false, busyProvider: undefined, message: undefined }
+          : {}),
+      }
     : sources.cacheHealth;
 
   const status = cacheHealth?.status;

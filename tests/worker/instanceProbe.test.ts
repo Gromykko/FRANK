@@ -103,6 +103,30 @@ describe('fetchLatestInstanceForCollections memo', () => {
     expect(calls).toHaveLength(1);
   });
 
+  // The memo key is the collection list, identical for all four cities, but the
+  // cached promise carries the FIRST city's ExecutionPolicy. Sharing a 429 is
+  // the point; sharing "this city ran out of its own window" is not - it marked
+  // all four stale with "Marine service unavailable" (and, not being a busy
+  // error, the wrong alarming copy) because one request was slow while DMI was
+  // fine.
+  it('shares a provider refusal but not one location running out of budget', async () => {
+    let attempts = 0;
+    globalThis.fetch = (async (url: string) => {
+      calls.push(String(url));
+      attempts += 1;
+      if (attempts === 1) throw new Error('deadline reached for aarhus');
+      return { ok: true, status: 200, json: async () => instancesBody(['2026-08-08T120000Z']) };
+    }) as unknown as typeof fetch;
+
+    await expect(
+      fetchLatestInstanceForCollections(WATER, { maxAttempts: 1 }, eventMemo),
+    ).rejects.toThrow();
+    // The next city gets its own attempt rather than inheriting the first's.
+    await expect(
+      fetchLatestInstanceForCollections(WATER, { maxAttempts: 1 }, eventMemo),
+    ).resolves.toEqual({ collection: 'dkss_idw', id: '2026-08-08T120000Z' });
+  });
+
   it('memoises in-flight probe across multiple calls in the same event', async () => {
     stubOk(['2026-08-08T120000Z']);
     const first = fetchLatestInstanceForCollections(WATER, undefined, eventMemo);

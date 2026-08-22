@@ -169,6 +169,33 @@ describe('resolveSectors', () => {
 // Enable toggles: each toggle must silence exactly its own rule.
 // ---------------------------------------------------------------------------
 describe('safety rule enable toggles', () => {
+  // Silence from a switched-off rule is not evidence of safety. With Max Wind
+  // off, the all-clear used to read "Everything's within your limits — gale,
+  // small ripples, clear sky": a green badge asserting that a 20 m/s gale sat
+  // inside limits the user had explicitly turned off. hasActiveSafetyChecks
+  // does not catch this, because it only fires when EVERY personal limit is off
+  // — here five others are still on.
+  it('does not claim a gale is within limits the user switched off', () => {
+    const settings = { ...baseSettings, enableWindSpeed: false } as SafetySettings;
+    const result = analyzeSafetyConditions({ ...baseData, windSpeed: 20 }, settings);
+    const text = result.reasons.map((r) => r.text).join(' ');
+
+    expect(result.reasons).toHaveLength(1);
+    expect(text).not.toContain('within your limits');
+    // Still describes the conditions - that part is useful and true - and says
+    // plainly which reading nothing was measured against.
+    expect(text).toContain('gale');
+    expect(text).toContain('Not checked');
+    expect(text).toContain('wind');
+  });
+
+  it('keeps the plain all-clear when every rule is actually doing its job', () => {
+    const result = analyzeSafetyConditions(baseData, baseSettings);
+    const text = result.reasons.map((r) => r.text).join(' ');
+    expect(text).toContain('within your limits');
+    expect(text).not.toContain('Not checked');
+  });
+
   it('enableWindSpeed off silences wind reasons even at storm speeds', () => {
     const settings = { ...baseSettings, enableWindSpeed: false } as SafetySettings;
     const data = { ...baseData, windSpeed: 30 }; // Storm on the Beaufort scale

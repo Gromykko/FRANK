@@ -168,6 +168,7 @@ export const da: Record<string, string> = {
   'Water level service': 'Vandstandstjenesten',
   'Forecast services': 'Prognosetjenesterne',
   'weather': 'vejr',
+  'wind': 'vind',
   'waves': 'bølger',
   'water': 'vandstand',
   'waves & water': 'bølger & vandstand',
@@ -423,6 +424,12 @@ export const da: Record<string, string> = {
     'Viser din gemte prognose fra {0} · {1} er fra en tidligere opdatering',
   'Showing your saved forecast · {0} from an earlier update':
     'Viser din gemte prognose · {0} er fra en tidligere opdatering',
+  'Nothing you are still checking flagged this — {0}, {1}, {2}. Not checked: {3}.':
+    'Intet af det, du stadig tjekker, gav udslag — {0}, {1}, {2}. Ikke tjekket: {3}.',
+  'Nothing you are still checking flagged the outlook — {0}, {1}, {2}. Not checked: {3}.':
+    'Intet af det, du stadig tjekker, gav udslag i udsigten — {0}, {1}, {2}. Ikke tjekket: {3}.',
+  'This device would not save your limits, so they will go back to the previous values next time you open FRANK. They are active for now.':
+    'Denne enhed ville ikke gemme dine grænser, så de vender tilbage til de forrige værdier, næste gang du åbner FRANK. De er aktive nu.',
   '{0} hr': '{0} time',
   '{0} hrs': '{0} timer',
   'outlook': 'udsigt',

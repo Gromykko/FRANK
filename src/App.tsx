@@ -45,7 +45,7 @@ const WeatherCharts = lazy(() => import('./components/WeatherCharts'));
 export default function App() {
   const [showDetailedCharts, setShowDetailedCharts] = useState(false);
 
-  const { settings, saveSettings, setTripMode } = useSettings();
+  const { settings, saveSettings, setTripMode, saveFailed } = useSettings();
   const { themeMode, cycleThemeMode } = useTheme();
   const { t, lang } = useLang();
   const online = useOnline();
@@ -392,6 +392,7 @@ export default function App() {
           <SafetyLimitsPanel
             settings={settings}
             updateSettings={handleUpdateSettings}
+            saveFailed={saveFailed}
           />
 
           {/* ⑥ Detailed charts — power-user graphs (collapsed) */}

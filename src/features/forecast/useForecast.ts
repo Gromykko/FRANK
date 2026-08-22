@@ -59,6 +59,11 @@ export function hourIndexForNow(hourly: WeatherData['hourly'], nowMs: number): n
 
 // Owns the forecast lifecycle: boot from cache, background refreshes,
 // clock ticks, and the selected/now hour indices. Layout stays in App.
+// While offline and hidden, nothing else will wake the initialization retry:
+// every listener is behind a visibility gate. Slow enough to cost nothing in a
+// pocket, fast enough that a returning signal is noticed without the user.
+const OFFLINE_RETRY_POLL_MS = 60_000;
+
 export function useForecast(daylightOnly: boolean) {
   const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -367,7 +372,23 @@ export function useForecast(daylightOnly: boolean) {
       // in the past so the online/focus listener below can retry immediately
       // when connectivity returns instead of making the user wait another full
       // provider interval.
-      if (navigator.onLine === false) return;
+      //
+      // But do not simply stop. Handing recovery to the listeners assumed one
+      // of them would fire, and all three run through refreshWhenVisible, which
+      // returns unless the tab is visible. Cold start on a location the worker
+      // is still preparing, phone pocketed so the tab is hidden, timer fires
+      // during a signal dropout: connectivity returns seconds later, the online
+      // event is discarded by the visibility gate, and no timer exists any more.
+      // The app then sits on the preparing screen until the user happens to
+      // foreground it. Keep a slow poll alive so it recovers on its own.
+      if (navigator.onLine === false) {
+        initializationRetryTimerRef.current = window.setTimeout(() => {
+          initializationRetryTimerRef.current = null;
+          if (navigator.onLine === false) return;
+          void refreshForecast(false);
+        }, OFFLINE_RETRY_POLL_MS);
+        return;
+      }
       void refreshForecast(false);
     }, delayMs);
 
