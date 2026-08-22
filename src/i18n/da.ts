@@ -417,6 +417,8 @@ export const da: Record<string, string> = {
     'Ingen vinduer matcher dine kriterier — der er sikre timer, men ikke et langt nok forløb til din minimumsvarighed og vandstandspræference. Prøv en anden turprofil, eller løsn de avancerede indstillinger.',
   'No good windows in the forecast yet — conditions stay above your limits for now. Check back as it updates.':
     'Ingen gode vinduer i prognosen endnu — forholdene ligger over dine grænser for nu. Kig tilbage, når den opdateres.',
+  'Your personal limits are switched off, so there is nothing to measure the forecast against and no window can be recommended. Turn a limit back on to see suggested windows.':
+    'Dine personlige grænser er slået fra, så der er intet at måle prognosen op imod, og intet vindue kan anbefales. Slå en grænse til igen for at se foreslåede vinduer.',
   '{0} hr': '{0} time',
   '{0} hrs': '{0} timer',
   'outlook': 'udsigt',

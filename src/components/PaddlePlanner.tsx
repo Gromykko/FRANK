@@ -15,6 +15,9 @@ import { formatDateMedium, formatDateShort, formatTime, formatWeekday, isSameLoc
 interface PaddlePlannerProps {
   data: HourlyData[];
   statuses: SafetyRating[];
+  // No personal limits are switched on, so the empty list below is a refusal to
+  // recommend rather than a report about conditions.
+  limitsOff: boolean;
   windows: LaunchWindow[];
   warnings?: WeatherWarning[];
   sunrises: string[];
@@ -61,7 +64,7 @@ interface CalDay {
 
 // memo: App re-renders on a 60s heartbeat; the planner grid/list gets
 // identity-stable props, so skip the re-render entirely.
-export default memo(function PaddlePlanner({ data, statuses, windows, warnings, sunrises, sunsets, onSelectIndex, startIndex }: PaddlePlannerProps) {
+export default memo(function PaddlePlanner({ data, statuses, windows, warnings, sunrises, sunsets, onSelectIndex, startIndex, limitsOff }: PaddlePlannerProps) {
   // Context consumption inside the memo'd body — a language change re-renders
   // this component even though its props are identity-stable.
   const { lang, t } = useLang();
@@ -333,9 +336,15 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
 
             {renderableWindows.length === 0 ? (
               <div className="launch-empty">
-                {t(statuses.some((s, i) => i >= startIndex && s === 'safe')
-                  ? 'No windows match your criteria — there are safe hours, but not a long enough run for your minimum duration and water-level preference. Try another trip mode or loosen the Advanced settings.'
-                  : 'No good windows in the forecast yet — conditions stay above your limits for now. Check back as it updates.')}
+                {limitsOff
+                  // Both other messages explain the silence in terms of your
+                  // limits. With every limit switched off that reads as a
+                  // contradiction of the header directly above it, and it
+                  // credits a comparison that never happened.
+                  ? t('Your personal limits are switched off, so there is nothing to measure the forecast against and no window can be recommended. Turn a limit back on to see suggested windows.')
+                  : t(statuses.some((s, i) => i >= startIndex && s === 'safe')
+                    ? 'No windows match your criteria — there are safe hours, but not a long enough run for your minimum duration and water-level preference. Try another trip mode or loosen the Advanced settings.'
+                    : 'No good windows in the forecast yet — conditions stay above your limits for now. Check back as it updates.')}
               </div>
             ) : viewMode === 'list' ? (
               /* Tide-table list: day-grouped — the Gantt sibling shows the

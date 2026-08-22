@@ -125,12 +125,10 @@ export default function App() {
   // here let the timeline paint a green cell, and the planner recommend a
   // launch window, for an hour the header was calling "limits are off, raw
   // forecast only" - the disclosure existed but stopped at one row.
-  const allStatuses = useMemo(
-    () => allAnalyses.map(
-      (analysis) => getSafetyDisplay(analysis, hasActiveSafetyChecks(settings), '').rating,
-    ),
-    [allAnalyses, settings],
-  );
+  const allStatuses = useMemo(() => {
+    const active = hasActiveSafetyChecks(settings);
+    return allAnalyses.map((analysis) => getSafetyDisplay(analysis, active, '').rating);
+  }, [allAnalyses, settings]);
 
   const launchWindows = useMemo(
     () =>
@@ -387,6 +385,7 @@ export default function App() {
             sunsets={weatherData.sunset}
             onSelectIndex={setSelectedHourIndex}
             startIndex={nowIndex}
+            limitsOff={!activeSafetyChecks}
           />
 
           {/* ⑤ Safety limits — customize thresholds (collapsed) */}
