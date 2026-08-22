@@ -585,32 +585,61 @@ function advisoryWarningPolicy(parentPolicy: ExecutionPolicy): ExecutionPolicy {
   });
 }
 
+// One HTTP body, shared by every location in this tick, with failures NOT
+// cached so a single unlucky leg cannot poison the others. Distinct from the
+// instance-probe memo above, which deliberately retains a refusal so a 429 is
+// not re-earned per city; a warning feed is advisory and fails open, so
+// retrying it is cheap and hiding a warning is not.
+export async function memoizedText(
+  key: string,
+  eventMemo: EventMemo | undefined,
+  fetchText: () => Promise<string>,
+): Promise<string> {
+  const cached = eventMemo?.get(key);
+  if (cached) return cached as Promise<string>;
+  const promise = fetchText();
+  eventMemo?.set(key, promise);
+  promise.catch(() => eventMemo?.delete(key));
+  return promise;
+}
+
 async function fetchWarnings(
   location: ForecastLocation,
   seedWarnings: WeatherWarning[] | undefined,
   policy: ExecutionPolicy,
+  eventMemo?: EventMemo,
   now = Date.now(),
 ): Promise<WeatherWarning[]> {
   if (!location.emmaId) return [];
   try {
     assertBeforeDeadline(policy, `warning feed for ${location.id}`);
-    const response = await fetchWithTimeout(METEOALARM_DENMARK_FEED, {
-      headers: { Accept: '*/*' },
-      cf: { cacheTtl: 300, cacheEverything: true },
-    }, policy);
-    if (!response.ok) throw new Error(`MeteoAlarm feed failed: ${response.status}`);
-    const warnings = parseMeteoalarmFeed(await response.text(), location.emmaId);
-    // Kommune-coverage soft filter (public CAP detail per warning): may only
-    // QUIET a warning that demonstrably excludes this town — fail-open, so
-    // any detail failure leaves the warning region-level and fully shown.
-    return await enrichWarningCoverage(warnings, location.kommuneAliases, async (url) => {
-      const detail = await fetchWithTimeout(url, {
+    // The feed is country-wide and its URL carries no location, yet it was
+    // fetched once per city, and DK004 covers three of the four. With the CAP
+    // details behind it that was up to 28 of the ~45 usable subrequests spent
+    // re-fetching identical bytes - and spent hardest exactly when warnings are
+    // active, which is when the app matters most. emmaId and kommuneAliases are
+    // both applied after the fetch, so one body serves everyone.
+    const body = await memoizedText('warning-feed', eventMemo, async () => {
+      const response = await fetchWithTimeout(METEOALARM_DENMARK_FEED, {
         headers: { Accept: '*/*' },
         cf: { cacheTtl: 300, cacheEverything: true },
       }, policy);
-      if (!detail.ok) throw new Error(`CAP detail failed: ${detail.status}`);
-      return detail.text();
+      if (!response.ok) throw new Error(`MeteoAlarm feed failed: ${response.status}`);
+      return response.text();
     });
+    const warnings = parseMeteoalarmFeed(body, location.emmaId);
+    // Kommune-coverage soft filter (public CAP detail per warning): may only
+    // QUIET a warning that demonstrably excludes this town — fail-open, so
+    // any detail failure leaves the warning region-level and fully shown.
+    return await enrichWarningCoverage(warnings, location.kommuneAliases, async (url) =>
+      memoizedText(`cap-detail:${url}`, eventMemo, async () => {
+        const detail = await fetchWithTimeout(url, {
+          headers: { Accept: '*/*' },
+          cf: { cacheTtl: 300, cacheEverything: true },
+        }, policy);
+        if (!detail.ok) throw new Error(`CAP detail failed: ${detail.status}`);
+        return detail.text();
+      }));
   } catch {
     // The warning policy has a deliberately short child deadline. Reaching it
     // is an advisory-feed failure, not the parent event's hard deadline: carry
@@ -639,7 +668,7 @@ export async function buildForecastCache(
     fetchMetWeather(env, location, policy),
     fetchMarineSeriesWithFallback(env, location, 'water', marineInstances.water, FORECAST_PROVIDER_PARAMETERS.water, mapWaterFeatures, marineSeeds?.water, seedInstances?.water, policy, eventMemo),
     fetchMarineSeriesWithFallback(env, location, 'waves', marineInstances.waves, FORECAST_PROVIDER_PARAMETERS.waves, mapWaveFeatures, marineSeeds?.waves, seedInstances?.waves, policy, eventMemo),
-    fetchWarnings(location, warningSeed, warningPolicy),
+    fetchWarnings(location, warningSeed, warningPolicy, eventMemo),
   ]);
   assertBeforeDeadline(policy, `forecast assembly for ${location.id}`);
 
