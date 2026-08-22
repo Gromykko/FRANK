@@ -126,6 +126,16 @@ Do not regenerate `package-lock.json` casually across operating systems. CI depe
 4. The workflow uploads a zero-traffic Worker candidate, authenticates and warms all four forecast locations through its version preview URL, promotes that exact version to 100%, runs best-effort KV generation cleanup, and only then publishes the tested artifact to Pages. Any failed gate leaves Pages on the previous release.
 5. Watch the Actions summary for the candidate and previous version IDs plus the manual rollback command, then verify the live app, `/health`, and `/status`.
 
+### Invocation telemetry
+
+Stored invocation records appear in **Cloudflare dashboard → Workers & Pages →
+frank-forecast → Observability → Logs**. For cron investigations, check **CPU
+time**, **wall time**, and **outcome**. On the Workers Free plan, Cloudflare
+retains Workers Logs for **3 days**; see the official [Workers Logs pricing and
+retention table](https://developers.cloudflare.com/workers/observability/logs/workers-logs/#pricing).
+`wrangler tail` is a real-time stream only and stores nothing, so it cannot
+provide history after an unattended cron overrun.
+
 The `worker-production` GitHub environment needs `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID`. The warm gate needs repository secret
 `FRANK_WARM_TOKEN`, matching the Worker secret of the same name, and repository
