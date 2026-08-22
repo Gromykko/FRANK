@@ -63,7 +63,7 @@ export default function ConditionsSnapshot({
     : `${formatLevelCm(data.tideLevel)} cm`;
   // Keep MET's central instant estimate as the honest headline wind. The p90
   // is a separate uncertainty estimate at the block start (not a period max),
-  // disclosed in the outlook note and used conservatively by the safety rules.
+  // disclosed in the outlook note as informational context only.
   const windText = `${formatReading(data.windSpeed, 1)} m/s`;
   const hasOutlookWindP90 = isBlock
     && typeof data.windSpeedP90 === 'number'

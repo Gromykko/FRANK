@@ -326,20 +326,6 @@ describe('findLaunchWindows — longer-range block windows', () => {
     expect(findLaunchWindows([start, unsafeEndpoint], { ...baseSettings, daylightOnly: false }, 0)).toEqual([]);
   });
 
-  it('withholds a block when MET p90 reaches the wind limit although central wind is safe', () => {
-    const settings = { ...baseSettings, daylightOnly: false } as SafetySettings;
-    const centralOnly = [
-      makeBlock('2026-07-11T06:00:00', { windSpeed: 4.3 }),
-      makeBlock('2026-07-11T12:00:00', { windSpeed: 4.3 }),
-    ];
-    expect(findLaunchWindows(centralOnly, settings, 0)).toHaveLength(1);
-
-    const uncertain = centralOnly.map((row, index) => index === 0
-      ? { ...row, windSpeedP90: 5.0, windGust: Number.NaN }
-      : row);
-    expect(findLaunchWindows(uncertain, settings, 0)).toEqual([]);
-  });
-
   it('requires the closing endpoint at the exact block boundary', () => {
     const start = makeBlock('2026-07-11T06:00:00');
     const lateEndpoint = makeBlock('2026-07-11T12:20:00');

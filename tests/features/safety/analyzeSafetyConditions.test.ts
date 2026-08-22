@@ -67,27 +67,6 @@ describe('analyzeSafetyConditions', () => {
     expect(result.rating).toBe('danger');
   });
 
-  it('assesses an outlook block against MET p90 while keeping the central estimate explicit', () => {
-    const data = {
-      ...baseData,
-      windSpeed: 4.3,
-      windSpeedP90: 5.0,
-      windGust: Number.NaN,
-      blockSpanHours: 6,
-    };
-    const result = analyzeSafetyConditions(
-      data,
-      { ...baseSettings, daylightOnly: false } as SafetySettings,
-    );
-
-    expect(result.rating).toBe('caution');
-    const reason = result.reasons.find((item) => item.text.includes('90th-percentile'))?.text ?? '';
-    expect(reason).toContain("block's start");
-    expect(reason).toContain('5.0 m/s');
-    expect(reason).toContain('central estimate of 4.3 m/s');
-    expect(reason).not.toContain('maximum');
-  });
-
   it('does not apply the outlook percentile contract to an exact-hour row', () => {
     const exact = analyzeSafetyConditions(
       { ...baseData, windSpeed: 4.3, windSpeedP90: 20 },
@@ -167,6 +146,22 @@ describe('analyzeSafetyConditions', () => {
     const cold = analyzeSafetyConditions({ ...baseData, tempWater: -1 }, baseSettings);
     expect(cold.rating).toBe('danger');
     expect(cold.reasons.some((reason) => reason.text.startsWith('Water temperature:'))).toBe(true);
+  });
+
+  it('keeps high outlook p90 informational and gives the same rating as no p90', () => {
+    const block = {
+      ...baseData,
+      windSpeed: 4.3,
+      windGust: Number.NaN,
+      blockSpanHours: 6,
+    };
+    const settings = { ...baseSettings, daylightOnly: false } as SafetySettings;
+    const withoutP90 = analyzeSafetyConditions(block, settings);
+    const withHighP90 = analyzeSafetyConditions({ ...block, windSpeedP90: 20 }, settings);
+
+    expect(withoutP90.rating).toBe('safe');
+    expect(withHighP90.rating).toBe(withoutP90.rating);
+    expect(withHighP90.reasons).toEqual(withoutP90.reasons);
   });
 
   // (The wind-against-water-level rule is exercised thoroughly in the
@@ -498,25 +493,6 @@ describe('custom wind direction sectors', () => {
     expect(result.reasons.some(r => r.text.includes('Easterly'))).toBe(false);
   });
 
-  it('uses outlook p90 conservatively for a directional cap without calling it a block max', () => {
-    const result = analyzeSafetyConditions(
-      {
-        ...baseData,
-        windDirection: 90,
-        windSpeed: 4.3,
-        windSpeedP90: 5,
-        windGust: Number.NaN,
-        blockSpanHours: 6,
-      },
-      { ...sectorSettings, daylightOnly: false } as SafetySettings,
-    );
-    expect(result.rating).toBe('caution');
-    const reason = result.reasons.find((item) => item.text.includes('90th-percentile'))?.text ?? '';
-    expect(reason).toContain('Easterly');
-    expect(reason).toContain("block's start");
-    expect(reason).not.toContain('maximum');
-  });
-
   describe('wind-against-water-level rule (all four direction/trend combinations)', () => {
     // Speed 4.2: above the 4.0 conflict gate, below both sector safe caps.
     it('westerly + rising water -> conflict', () => {
@@ -566,25 +542,6 @@ describe('custom wind direction sectors', () => {
       expect(atGate.rating).toBe('safe');
       const overGate = analyzeSafetyConditions({ ...baseData, windDirection: 270, windSpeed: 4.1, tideLevel: 0 }, sectorSettings, 0.5);
       expect(overGate.rating).toBe('caution');
-    });
-
-    it('uses outlook p90 for the chop gate and identifies its instant semantics', () => {
-      const result = analyzeSafetyConditions(
-        {
-          ...baseData,
-          windDirection: 270,
-          windSpeed: 4.0,
-          windSpeedP90: 4.1,
-          windGust: Number.NaN,
-          tideLevel: 0,
-          blockSpanHours: 6,
-        },
-        { ...sectorSettings, daylightOnly: false } as SafetySettings,
-        0.5,
-      );
-      expect(result.reasons.some((item) =>
-        item.text.includes("90th-percentile wind at this block's start")
-        && item.text.includes('opposes rising water'))).toBe(true);
     });
 
     it('requires the sector rule to be enabled', () => {

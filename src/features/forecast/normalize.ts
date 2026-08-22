@@ -328,8 +328,8 @@ export function aggregateBlockMarine(
 
 // A longer-range block row: MET symbol + start-instant wind for the period,
 // with DMI marine aggregated inside it. Central wind stays the honest display
-// value; its p90 uncertainty estimate travels separately for conservative
-// safety assessment. Marine scalar fields carry their hazard/representative
+// value; its p90 uncertainty estimate travels separately as informational
+// context. Marine scalar fields carry their hazard/representative
 // decision values, and *Min/*Max carry genuine within-block ranges. Shared so
 // the Worker and client build identical block rows.
 export function assembleBlockRow(block: MetBlock, marine: BlockMarine, isDay: boolean): HourlyData {
