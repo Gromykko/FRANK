@@ -77,6 +77,7 @@ import {
   logUpstream,
 } from './providerTransport';
 import { marineIngredientKey, metRawKey } from './generation';
+import { putKvWithLog } from './kvWriteLogging';
 const WARNING_EXECUTION_BUDGET_MS = 5_000;
 
 // Compatibility aliases preserve the public Worker test/API surface while the
@@ -373,12 +374,18 @@ async function fetchMetWeather(
     if (lastModified) {
       try {
         await awaitWithinDeadline(
-          () => env.FRANK_FORECAST_CACHE.put(rawKey, JSON.stringify({
-            locationId: location.id,
-            forecastConfigRevision: location.forecastConfigRevision,
-            lastModified,
-            body: data,
-          })),
+          () => putKvWithLog(
+            env.FRANK_FORECAST_CACHE,
+            rawKey,
+            JSON.stringify({
+              locationId: location.id,
+              forecastConfigRevision: location.forecastConfigRevision,
+              lastModified,
+              body: data,
+            }),
+            'raw-met',
+            location.id,
+          ),
           policy,
           `MET retained cache write for ${location.id}`,
         );
@@ -564,14 +571,20 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
   if (series.length > 0) {
     try {
       await awaitWithinDeadline(
-        () => env.FRANK_FORECAST_CACHE.put(key, JSON.stringify({
-          schemaVersion: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
-          locationId: location.id,
-          forecastConfigRevision: location.forecastConfigRevision,
-          collection: instance.collection,
-          id: instance.id,
-          series,
-        })),
+        () => putKvWithLog(
+          env.FRANK_FORECAST_CACHE,
+          key,
+          JSON.stringify({
+            schemaVersion: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
+            locationId: location.id,
+            forecastConfigRevision: location.forecastConfigRevision,
+            collection: instance.collection,
+            id: instance.id,
+            series,
+          }),
+          'raw-marine',
+          location.id,
+        ),
         policy,
         `${kind} retained cache write for ${location.id}`,
       );

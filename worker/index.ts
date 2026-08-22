@@ -78,6 +78,8 @@ import {
   versionedForecastRoute,
   withReleaseHeaders,
 } from './generation';
+import { putKvWithLog } from './kvWriteLogging';
+import type { KvWriteCategory } from './kvWriteLogging';
 
 // Preserve the small public test/API surface while provider implementation is
 // owned by its cohesive module.
@@ -317,6 +319,9 @@ async function writeCronHeartbeat(
       && hasActiveUnreachable;
     const firstRecordedContact = attempt?.status === 'contacted'
       && !Number.isFinite(previousSuccessMs);
+    const heartbeatCategory: KvWriteCategory = newlyUnreachable || recovering
+      ? 'heartbeat-anomaly'
+      : 'heartbeat-cadence';
     const forceWrite = Boolean(
       newlyUnreachable || recovering || firstRecordedContact,
     );
@@ -351,7 +356,12 @@ async function writeCronHeartbeat(
       unreachable,
     };
     await awaitWithinDeadline(
-      () => env.FRANK_FORECAST_CACHE.put(CRON_HEARTBEAT_KEY, JSON.stringify(heartbeat)),
+      () => putKvWithLog(
+        env.FRANK_FORECAST_CACHE,
+        CRON_HEARTBEAT_KEY,
+        JSON.stringify(heartbeat),
+        heartbeatCategory,
+      ),
       executionPolicy(policyInput),
       'cron heartbeat write',
     );
@@ -557,11 +567,18 @@ async function writeCachedForecast(
   env: Env,
   location: ForecastCacheLocation,
   data: ForecastData,
+  category: Extract<KvWriteCategory, 'assembled-forecast' | 'failure-state'>,
   policyInput?: ExecutionPolicyInput,
 ): Promise<void> {
   const policy = executionPolicy(policyInput);
   await awaitWithinDeadline(
-    () => env.FRANK_FORECAST_CACHE.put(cacheKey(location), JSON.stringify(data)),
+    () => putKvWithLog(
+      env.FRANK_FORECAST_CACHE,
+      cacheKey(location),
+      JSON.stringify(data),
+      category,
+      location.id,
+    ),
     policy,
     `forecast cache write for ${location.id}`,
   );
@@ -652,9 +669,12 @@ async function writeInitializationMarker(
     busy: providerState.busy,
   };
   await awaitWithinDeadline(
-    () => env.FRANK_FORECAST_CACHE.put(
+    () => putKvWithLog(
+      env.FRANK_FORECAST_CACHE,
       initializationKey(location),
       JSON.stringify(marker),
+      'initialization-marker',
+      location.id,
       { expirationTtl: INITIALIZATION_MARKER_TTL_SECONDS },
     ),
     policy,
@@ -990,7 +1010,7 @@ async function _refreshForecastCache(
       });
       if (shouldPersistFailureState(cachedHealth, heldCache.sources.cacheHealth)) {
         try {
-          await writeCachedForecast(env, location, heldCache, policy);
+          await writeCachedForecast(env, location, heldCache, 'failure-state', policy);
         } catch (writeError) {
           console.error(`Could not persist marine probe failure for ${location.id}:`, writeError);
         }
@@ -1059,7 +1079,7 @@ async function _refreshForecastCache(
         // exhausted write budget is the realistic cause, and that is exactly
         // when the last thing we should do is start reporting false failures.
         try {
-          await writeCachedForecast(env, location, checkedCache, policy);
+          await writeCachedForecast(env, location, checkedCache, 'failure-state', policy);
         } catch (writeError) {
           console.error(`Could not persist checked forecast for ${location.id}:`, writeError);
         }
@@ -1124,7 +1144,7 @@ async function _refreshForecastCache(
     // 'stale' verdict, then try to write THAT too and propagate. So the caller
     // gets the real forecast either way; only the persistence is lost.
     try {
-      await writeCachedForecast(env, location, fresh, policy);
+      await writeCachedForecast(env, location, fresh, 'assembled-forecast', policy);
     } catch (writeError) {
       console.error(`Could not persist rebuilt forecast for ${location.id}:`, writeError);
     }
@@ -1178,7 +1198,7 @@ async function _refreshForecastCache(
       // outage while leaving the in-response health truthful.
       if (shouldPersistFailureState(cached.sources?.cacheHealth, failedCache.sources?.cacheHealth)) {
         try {
-          await writeCachedForecast(env, location, failedCache, policy);
+          await writeCachedForecast(env, location, failedCache, 'failure-state', policy);
         } catch (writeError) {
           console.error(`Could not persist failure state for ${location.id}:`, writeError);
         }

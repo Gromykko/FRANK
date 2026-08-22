@@ -18,6 +18,30 @@ const FIRST_TICK_MS = Date.parse('2026-08-20T16:00:00.000Z');
 const MARINE_RUN = '2026-08-20T160000Z';
 const DUE_MARINE_RUN = '2026-08-20T060000Z';
 
+interface KvWriteEvent {
+  event: 'kv_write';
+  category: string;
+}
+
+function isKvWriteEvent(value: unknown): value is KvWriteEvent {
+  return typeof value === 'object'
+    && value !== null
+    && Reflect.get(value, 'event') === 'kv_write'
+    && typeof Reflect.get(value, 'category') === 'string';
+}
+
+function kvWriteEvents(calls: readonly (readonly unknown[])[]): KvWriteEvent[] {
+  return calls.flatMap(([message]) => {
+    if (typeof message !== 'string' || !message.startsWith('{')) return [];
+    try {
+      const value: unknown = JSON.parse(message);
+      return isKvWriteEvent(value) ? [value] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
 function cachedForecast(location: ForecastLocation, marineRun: string): ForecastData {
   const fetchedAt = new Date(FIRST_TICK_MS - 30 * 60_000).toISOString();
   const hour = new Date(FIRST_TICK_MS + 60 * 60_000).toISOString();
@@ -149,7 +173,7 @@ describe('scheduled city rotation', () => {
     const provider = vi.spyOn(globalThis, 'fetch').mockRejectedValue(
       new Error('A source fetch is not due in this fixture.'),
     );
-    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     const startTick = 10;
     const runTick = async (offset: number) => {
@@ -188,6 +212,10 @@ describe('scheduled city rotation', () => {
       locations: {},
       unreachable: {},
     });
+    expect(kvWriteEvents(log.mock.calls).map(({ category }) => category)).toEqual([
+      'heartbeat-cadence',
+      'heartbeat-cadence',
+    ]);
     expect(provider).not.toHaveBeenCalled();
   });
 
@@ -254,7 +282,7 @@ describe('scheduled city rotation', () => {
     const { env, store, puts } = runtime(DUE_MARINE_RUN);
     const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
       new Response('temporary provider failure', { status: 503 }));
-    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -283,6 +311,9 @@ describe('scheduled city rotation', () => {
       locations: { horsens: new Date(previousSuccess).toISOString() },
       unreachable: { horsens: new Date(scheduledTime).toISOString() },
     });
+    expect(kvWriteEvents(log.mock.calls)
+      .filter(({ category }) => category.startsWith('heartbeat-'))
+      .map(({ category }) => category)).toEqual(['heartbeat-anomaly']);
   });
 
   it('throttles an unchanged anomaly but refreshes it when five ticks have elapsed', async () => {
@@ -389,7 +420,7 @@ describe('scheduled city rotation', () => {
     }));
     const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
       new Response('temporary provider failure', { status: 503 }));
-    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -443,6 +474,12 @@ describe('scheduled city rotation', () => {
         [interveningLocation.id]: new Date(interveningTick).toISOString(),
       },
     });
+    expect(kvWriteEvents(log.mock.calls)
+      .filter(({ category }) => category.startsWith('heartbeat-'))
+      .map(({ category }) => category)).toEqual([
+        'heartbeat-anomaly',
+        'heartbeat-anomaly',
+      ]);
   });
 
   it('records a city\'s first actual provider contact inside the normal throttle', async () => {
@@ -462,7 +499,7 @@ describe('scheduled city rotation', () => {
       }
       throw new Error(`Unexpected provider URL: ${url}`);
     });
-    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     vi.setSystemTime(scheduledTime);
     await worker.scheduled(
@@ -479,6 +516,9 @@ describe('scheduled city rotation', () => {
       locations: { [location.id]: new Date(scheduledTime).toISOString() },
       unreachable: {},
     });
+    expect(kvWriteEvents(log.mock.calls)
+      .filter(({ category }) => category.startsWith('heartbeat-'))
+      .map(({ category }) => category)).toEqual(['heartbeat-cadence']);
   });
 
   it('rejects a late heartbeat write from an older scheduled tick', async () => {

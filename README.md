@@ -158,6 +158,19 @@ retention table](https://developers.cloudflare.com/workers/observability/logs/wo
 `wrangler tail` is a real-time stream only and stores nothing, so it cannot
 provide history after an unattended cron overrun.
 
+#### KV write sampling
+
+To measure actual KV writes, open the Worker's **Observability → Overview**
+Query Builder, select **Count**, filter `event` equal to `kv_write`, and group by
+`category` (optionally also by `locationId` for per-city categories). These are
+console logs only; collecting them performs no KV, D1, or other storage write.
+Workers Free retains the logs for about **3 days**, so this is a sampling
+exercise rather than a permanent dashboard. Use an uninterrupted **24–48 hour**
+window for a representative read that includes MET reissues and at least one
+DMI model run. See Cloudflare's [Workers Logs](https://developers.cloudflare.com/workers/observability/logs/workers-logs/)
+and [Query Builder](https://developers.cloudflare.com/workers/observability/query-builder/)
+documentation.
+
 The `worker-production` GitHub environment needs `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID`. The warm gate needs repository secret
 `FRANK_WARM_TOKEN`, matching the Worker secret of the same name, and repository
