@@ -374,19 +374,21 @@ describe('tickOrder', () => {
 });
 
 describe('cronExecutionPolicy', () => {
-  it('allocates the selected city the tick budget with bounded retry depth', () => {
+  it('gives the selected city a longer cron fetch window with bounded retry depth', () => {
     const now = Date.parse('2026-08-20T12:00:00Z');
     const tickDeadline = now + CRON_TICK_BUDGET_MS;
+    const policy = cronExecutionPolicy(now, tickDeadline, 1);
 
-    expect(cronExecutionPolicy(now, tickDeadline, 1)).toEqual({
+    expect(policy).toEqual({
       deadlineAt: tickDeadline,
       hardDeadlineAt: tickDeadline,
-      fetchTimeoutMs: 15_000,
+      fetchTimeoutMs: 50_000,
       maxAttempts: 3,
       completionReserveMs: 8_000,
       retryDelayMs: undefined,
       retryBusyDelayMs: undefined,
     });
+    expect(policy!.fetchTimeoutMs).toBeGreaterThanOrEqual(DEFAULT_FETCH_TIMEOUT_MS);
   });
 
   it('shrinks both the location and fetch budgets to the remaining fair share', () => {
@@ -395,7 +397,7 @@ describe('cronExecutionPolicy', () => {
 
     expect(policy).toMatchObject({
       deadlineAt: now + 20_000,
-      fetchTimeoutMs: 15_000,
+      fetchTimeoutMs: 20_000,
       maxAttempts: 3,
       completionReserveMs: 4_000,
       retryDelayMs: undefined,

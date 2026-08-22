@@ -111,11 +111,32 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
+  warm_worker:
+    name: Warm Worker
+    needs: deploy_worker
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Warm all forecast locations
+        run: node scripts/warm-worker.mjs
+        env:
+          FRANK_WARM_TOKEN: ${{ secrets.FRANK_WARM_TOKEN }}
+          FRANK_WORKER_BASE_URL: ${{ vars.FRANK_WORKER_BASE_URL }}
+
   deploy_pages:
     name: Deploy GitHub Pages
-    # Publish the backward-compatible Worker first. If that deployment fails,
-    # do not release a client that may rely on it.
-    needs: [validate, deploy_worker]
+    # Publish only after the backward-compatible Worker is live and every
+    # location is ready. Either failed gate keeps the old Pages release live.
+    needs: [validate, deploy_worker, warm_worker]
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 10

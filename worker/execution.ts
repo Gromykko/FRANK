@@ -7,7 +7,7 @@ import type { EventMemo } from './domain';
 // window. Cron keeps its separate explicit 50-second timeout.
 export const DEFAULT_FETCH_TIMEOUT_MS = 20_000;
 const DEFAULT_MAX_FETCH_ATTEMPTS = 1;
-const CRON_FETCH_TIMEOUT_MS = 15_000;
+const CRON_FETCH_TIMEOUT_MS = 50_000;
 const CRON_LOCATION_MIN_BUDGET_MS = 15_000;
 const CRON_COMPLETION_RESERVE_MS = 8_000;
 export const CRON_TICK_BUDGET_MS = 4 * 60_000;

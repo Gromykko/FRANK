@@ -123,13 +123,13 @@ Do not regenerate `package-lock.json` casually across operating systems. CI depe
 1. Make a focused change and run the relevant local checks.
 2. Push or merge it to `main`.
 3. The `validate` job runs the complete checks and uploads the exact tested Pages artifact.
-4. The same workflow deploys the Worker to production, then publishes that artifact to Pages. KV generation cleanup is best-effort maintenance and cannot block Pages after the Worker is live.
+4. The same workflow deploys the Worker, runs best-effort KV generation cleanup, then authenticates and warms all four forecast locations before publishing that artifact to Pages. If even one location cannot become ready within the bounded warm window, the warm job fails and Pages keeps the previous release.
 5. Watch the Actions summary, then verify the live app, `/health`, and `/status`.
 
 The `worker-production` GitHub environment needs `CLOUDFLARE_API_TOKEN` and
-`CLOUDFLARE_ACCOUNT_ID`. The required Worker secret `FRANK_WARM_TOKEN` is
-provisioned in Cloudflare, although the current direct workflow does not run an
-authenticated candidate warm-up. There is no `deploy-worker.yml`, hidden
+`CLOUDFLARE_ACCOUNT_ID`. The warm gate needs repository secret
+`FRANK_WARM_TOKEN`, matching the Worker secret of the same name, and repository
+variable `FRANK_WORKER_BASE_URL`. There is no `deploy-worker.yml`, hidden
 0%-traffic candidate controller, or `FRANK_AUTO_RELEASE_ENABLED` gate in this
 checkout.
 
