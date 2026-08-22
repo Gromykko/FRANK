@@ -686,22 +686,57 @@ h1, h2, h3, h4, h5, h6 {
   font-size: var(--text-caption);
 }
 
+/* This has to LOOK like something you can press. It was centred muted caption
+   text with only the browser's default triangle, sitting directly under two
+   paragraphs of identically styled muted caption text — so it read as more
+   footer prose, and the one control in here that actually does something
+   (delete local data) was invisible behind it. A border and an explicit
+   chevron cost nothing and make the affordance obvious. */
 .footer-details summary {
   width: fit-content;
   min-height: 44px;
   margin: 0 auto;
-  padding: 4px 8px;
+  padding: 4px 12px;
   display: flex;
   align-items: center;
+  gap: 8px;
+  border: 1px solid var(--control-border);
   border-radius: var(--radius-xs);
-  color: var(--text-muted);
+  background: var(--control-bg);
+  color: var(--text-main);
   cursor: pointer;
-  font-weight: 600;
+  font-weight: 650;
+  list-style: none;
+}
+
+/* Own chevron rather than the platform triangle, so it is the same on every
+   browser and can animate with the open state. */
+.footer-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.footer-details summary::after {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg) translate(-2px, -2px);
+  transition: transform 120ms ease;
+}
+
+.footer-details[open] summary::after {
+  transform: rotate(-135deg) translate(-2px, -2px);
 }
 
 .footer-details summary:hover {
-  color: var(--text-main);
+  border-color: var(--primary);
   background: var(--primary-bg);
+}
+
+.privacy-build {
+  margin: 10px 0 0 !important;
+  font-size: var(--text-caption);
 }
 
 .footer-details summary:focus-visible {

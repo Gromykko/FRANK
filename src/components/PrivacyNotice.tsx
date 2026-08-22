@@ -10,7 +10,17 @@ const TECHNICAL_SOURCES = {
   meteoAlarm: 'https://api.meteoalarm.org/privacy',
 } as const;
 
-export default function PrivacyNotice() {
+interface PrivacyNoticeProps {
+  // Absent on the error and preparing screens, which have no forecast to date.
+  buildLabel?: string;
+  builtAt?: string;
+}
+
+// One disclosure, not two. The footer used to stack "Data and version" and
+// "Technical data note" as identical rows of centred muted text, so neither
+// read as a control and nothing distinguished them. Everything a curious or
+// worried user might open belongs behind one clearly-marked door.
+export default function PrivacyNotice({ buildLabel, builtAt }: PrivacyNoticeProps = {}) {
   const { t } = useLang();
   const [deleteState, setDeleteState] = useState<'idle' | 'confirm' | 'error'>('idle');
 
@@ -31,7 +41,7 @@ export default function PrivacyNotice() {
 
   return (
     <details className="footer-details privacy-details">
-      <summary>{t('Technical data note')}</summary>
+      <summary>{t('About FRANK — data, privacy and version')}</summary>
       <div className="privacy-copy">
         <p>
           {t('FRANK has no user accounts, sets no cookies, does not track your GPS, and includes no advertising or analytics trackers. Your chosen location, safety limits, and offline forecasts are stored strictly in this browser.')}
@@ -62,6 +72,12 @@ export default function PrivacyNotice() {
               ? 'Tap again to delete and reload'
               : 'Try deleting local data again')}
         </button>
+        {buildLabel ? (
+          <p className="privacy-build">
+            {builtAt ? `${t('Forecast built {0}.', builtAt)} ` : ''}
+            <span className="footer-build">{buildLabel}</span>
+          </p>
+        ) : null}
         <p className="privacy-delete-note" role="status" aria-live="polite">
           {deleteState === 'confirm'
             ? t('This removes FRANK’s saved settings and offline forecast from this browser, then reloads immediately with the defaults.')

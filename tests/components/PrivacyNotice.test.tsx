@@ -36,7 +36,7 @@ describe('PrivacyNotice', () => {
       root.render(<LanguageProvider><PrivacyNotice /></LanguageProvider>);
     });
 
-    expect(host.querySelector('summary')?.textContent).toBe('Technical data note');
+    expect(host.querySelector('summary')?.textContent).toBe('About FRANK — data, privacy and version');
     expect(host.textContent).toContain('no user accounts, sets no cookies, does not track your GPS');
     expect(host.textContent).toContain('Cloudflare and GitHub Pages');
     expect(host.textContent).toContain('MET Norway, DMI, and MeteoAlarm');
@@ -100,7 +100,7 @@ describe('PrivacyNotice', () => {
       root.render(<LanguageProvider><PrivacyNotice /></LanguageProvider>);
     });
 
-    expect(host.querySelector('summary')?.textContent).toBe('Teknisk datanote');
+    expect(host.querySelector('summary')?.textContent).toBe('Om FRANK — data, privatliv og version');
     expect(host.textContent).toContain('ingen brugerkonti, sætter ingen cookies');
   });
 });

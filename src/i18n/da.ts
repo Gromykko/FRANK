@@ -430,6 +430,8 @@ export const da: Record<string, string> = {
     'Intet af det, du stadig tjekker, gav udslag i udsigten — {0}, {1}, {2}. Ikke tjekket: {3}.',
   'This device would not save your limits, so they will go back to the previous values next time you open FRANK. They are active for now.':
     'Denne enhed ville ikke gemme dine grænser, så de vender tilbage til de forrige værdier, næste gang du åbner FRANK. De er aktive nu.',
+  'About FRANK — data, privacy and version': 'Om FRANK — data, privatliv og version',
+  'Forecast built {0}.': 'Prognose bygget {0}.',
   '{0} hr': '{0} time',
   '{0} hrs': '{0} timer',
   'outlook': 'udsigt',
