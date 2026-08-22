@@ -67,6 +67,28 @@ describe('fetchLatestInstanceForCollections memo', () => {
   });
 
   it('memoises a refusal too, so a 429 is not re-earned per location', async () => {
+    // No Retry-After: the provider gave no instruction, so our own backoff
+    // governs and the policy's attempt budget is spent as before.
+    globalThis.fetch = (async (url: string) => {
+      calls.push(String(url));
+      return {
+        ok: false,
+        status: 429,
+        headers: new Headers(),
+        text: async () => 'Server is busy',
+      };
+    }) as unknown as typeof fetch;
+
+    await expect(fetchLatestInstanceForCollections(WATER, { maxAttempts: 3 }, eventMemo)).rejects.toThrow();
+    expect(calls).toHaveLength(3);
+  });
+
+  // We parse Retry-After, attach it to the error and forward it to the browser.
+  // Retrying anyway told the client to wait twenty minutes while we spent the
+  // location's whole budget hammering the provider that had just asked to be
+  // left alone - the direct route past Cloudflare's 50-subrequest ceiling,
+  // which is not classified as transient and so killed the entire tick.
+  it('stops retrying when the provider asks for longer than the tick is worth', async () => {
     globalThis.fetch = (async (url: string) => {
       calls.push(String(url));
       return {
@@ -78,8 +100,7 @@ describe('fetchLatestInstanceForCollections memo', () => {
     }) as unknown as typeof fetch;
 
     await expect(fetchLatestInstanceForCollections(WATER, { maxAttempts: 3 }, eventMemo)).rejects.toThrow();
-    // Retried 3 times on 429 within policy attempts
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(1);
   });
 
   it('memoises in-flight probe across multiple calls in the same event', async () => {

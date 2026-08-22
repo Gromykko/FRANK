@@ -35,6 +35,11 @@ function isTestEnvironment(): boolean {
   );
 }
 
+// The longest we will sit on a provider's Retry-After inside a single
+// invocation. Beyond this, deferring to the next scheduled tick is strictly
+// better than holding the tick open.
+const MAX_IN_TICK_RETRY_WAIT_MS = 10_000;
+
 function retryDelay(attempt: number, isBusy = false, policy?: ExecutionPolicy): number {
   if (isBusy && policy?.retryBusyDelayMs !== undefined) {
     return policy.retryBusyDelayMs;
@@ -86,6 +91,7 @@ export async function fetchJsonWithRetries(
 ): Promise<unknown> {
   void eventMemo;
   let lastError: Error | undefined;
+  let serverRetryAfterMs: number | undefined;
 
   for (let attempt = 0; attempt < policy.maxAttempts; attempt++) {
     if (remainingProviderMs(policy) <= 0) {
@@ -137,13 +143,24 @@ export async function fetchJsonWithRetries(
         `${label} failed with HTTP ${response.status}`,
         response.status,
       );
+      // Only an EXPLICIT header spaces our own retries. The default below is
+      // what we tell the browser to do when the provider gives no guidance;
+      // borrowing it as an in-tick delay would spend the whole location budget
+      // sleeping on a 429 that carried no instruction at all.
+      const headerRetrySeconds = response.status === 429
+        ? retryAfterSeconds(response)
+        : undefined;
+      serverRetryAfterMs = headerRetrySeconds === undefined
+        ? undefined
+        : headerRetrySeconds * 1000;
+      const askedToWaitSeconds = response.status === 429
+        ? headerRetrySeconds ?? MARINE_BUSY_DEFAULT_RETRY_SECONDS
+        : undefined;
       lastError = transientProviderError(
         statusError,
         provider,
         `${label} is temporarily unavailable.`,
-        response.status === 429
-          ? retryAfterSeconds(response) ?? MARINE_BUSY_DEFAULT_RETRY_SECONDS
-          : undefined,
+        askedToWaitSeconds,
       ) ?? statusError;
       let providerMessage = '';
       try {
@@ -175,8 +192,38 @@ export async function fetchJsonWithRetries(
 
     if (attempt < policy.maxAttempts - 1) {
       const isBusy = response?.status === 429;
+      // Honour what the provider actually asked for. We already parse
+      // Retry-After, attach it to the error and forward it to the browser - and
+      // then ignored it here, retrying on our own ~1.5s backoff. That told the
+      // client to wait ten minutes while hammering DMI another thirty times
+      // inside the same tick, which is what pushed a bad DMI day past
+      // Cloudflare's 50-subrequest ceiling. "Too many subrequests" is not
+      // classified as transient, so it killed the whole invocation - the
+      // remaining cities and the heartbeat with it.
+      //
+      // A wait longer than our budget correctly ENDS the retries instead of
+      // sleeping past the deadline: delayWithinDeadline throws and the catch
+      // below rethrows the typed provider error, so the held run still serves.
+      const backoffMs = retryDelay(attempt, isBusy, policy);
+      // Asked to wait longer than it is worth waiting inside one invocation:
+      // stop, rather than sleep it out and retry anyway. Two ceilings apply -
+      // whatever this tick has left, and a flat cap, because the next cron tick
+      // is only minutes away and holding an invocation open longer than that
+      // buys nothing while risking the subrequest and CPU limits. The flat cap
+      // also matters when the policy carries no deadline at all, where
+      // delayWithinDeadline would otherwise honour a 20-minute header
+      // literally. Ending here surfaces the typed provider error, so the held
+      // run still serves and the client still gets the provider's own
+      // Retry-After.
+      const maxWaitMs = Math.min(remainingProviderMs(policy), MAX_IN_TICK_RETRY_WAIT_MS);
+      if (serverRetryAfterMs !== undefined && serverRetryAfterMs > maxWaitMs && lastError) {
+        throw lastError;
+      }
+      const waitMs = serverRetryAfterMs === undefined
+        ? backoffMs
+        : Math.max(backoffMs, serverRetryAfterMs);
       try {
-        await delayWithinDeadline(retryDelay(attempt, isBusy, policy), policy, `${label} retry`);
+        await delayWithinDeadline(waitMs, policy, `${label} retry`);
       } catch (delayErr) {
         if (lastError) throw lastError;
         throw delayErr;
