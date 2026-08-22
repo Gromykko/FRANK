@@ -130,6 +130,7 @@ export async function fetchJsonWithRetries(
 ): Promise<unknown> {
   let lastError: Error | undefined;
   let serverRetryAfterMs: number | undefined;
+  let sawBusyRefusal = false;
 
   for (let attempt = 0; attempt < policy.maxAttempts; attempt++) {
     if (provider === 'marine') {
@@ -198,6 +199,7 @@ export async function fetchJsonWithRetries(
       // what we tell the browser to do when the provider gives no guidance;
       // borrowing it as an in-tick delay would spend the whole location budget
       // sleeping on a 429 that carried no instruction at all.
+      if (response.status === 429) sawBusyRefusal = true;
       const headerRetrySeconds = response.status === 429
         ? retryAfterSeconds(response)
         : undefined;
@@ -226,22 +228,6 @@ export async function fetchJsonWithRetries(
           status: response.status,
           providerMessage,
         });
-      }
-      // DMI documents one host-wide fair-use limit. Once either of the two
-      // already-parallel marine legs receives 429, do not let retries or later
-      // locations in this same event re-earn the refusal. The response body is
-      // consumed above before the circuit opens.
-      if (response.status === 429
-        && provider === 'marine'
-        && eventMemo
-        && lastError) {
-        openMarineBusyCircuit(
-          eventMemo,
-          lastError instanceof ProviderUnavailableError
-            ? lastError.retryAfterSeconds ?? MARINE_BUSY_DEFAULT_RETRY_SECONDS
-            : MARINE_BUSY_DEFAULT_RETRY_SECONDS,
-        );
-        break;
       }
       // Non-429 4xx responses (e.g. 400, 404) are terminal.
       // 429 and 5xx responses retry within the execution policy budget and deadline.
@@ -301,6 +287,27 @@ export async function fetchJsonWithRetries(
         throw delayErr;
       }
     }
+  }
+
+  // DMI documents one host-wide fair-use limit, so once a marine stage has
+  // genuinely exhausted its attempts against a 429 there is no point letting
+  // the other leg, or later cities in this same event, re-earn the refusal.
+  //
+  // But only THEN. This used to open on the first 429 and break immediately,
+  // which meant marine got zero retries: the break sat above the retry block,
+  // so the Retry-After handling below was unreachable for the one provider
+  // that actually sends Retry-After. Observed behaviour contradicts that
+  // design - the same DMI position request has returned seven 429s and
+  // succeeded on the eighth - so a single refusal is evidence of nothing, and
+  // treating it as provider-wide failure threw away recoverable data and left
+  // cities on stale marine for a 20-minute backoff.
+  if (sawBusyRefusal && provider === 'marine' && eventMemo) {
+    openMarineBusyCircuit(
+      eventMemo,
+      lastError instanceof ProviderUnavailableError
+        ? lastError.retryAfterSeconds ?? MARINE_BUSY_DEFAULT_RETRY_SECONDS
+        : MARINE_BUSY_DEFAULT_RETRY_SECONDS,
+    );
   }
 
   if (!lastError) throw new Error(`${label} failed`);

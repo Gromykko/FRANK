@@ -95,7 +95,7 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     expect(result.series).toEqual(retained);
   });
 
-  it('lets in-flight marine calls settle but starts no retries after a 429', async () => {
+  it('retries a busy marine leg before declaring DMI provider-wide busy', async () => {
     const env = makeEnv();
     const eventMemo = new Map<string, Promise<unknown>>();
     const calls: string[] = [];
@@ -139,7 +139,12 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     await vi.runAllTimersAsync();
     const results = await resultsPromise;
     expect(results.every(({ status }) => status === 'rejected')).toBe(true);
-    expect(calls).toHaveLength(2);
+    // More than one call per leg: a single 429 no longer ends marine for the
+    // whole event. Bounded by maxAttempts across the two parallel legs, and the
+    // exact count depends on which leg exhausts first and opens the circuit, so
+    // assert the property rather than an interleaving-dependent number.
+    expect(calls.length).toBeGreaterThan(2);
+    expect(calls.length).toBeLessThanOrEqual(6);
   });
 
   it('never reuses a retained ingredient stamped for another config revision', async () => {

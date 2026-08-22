@@ -85,11 +85,18 @@ describe('fetchLatestInstanceForCollections memo', () => {
       };
     }) as unknown as typeof fetch;
 
+    // A single 429 is evidence of nothing. The same DMI position request has
+    // been observed returning seven 429s and succeeding on the eighth, so this
+    // stage spends its own attempt budget first. Affordable: with one city per
+    // tick that is six marine calls against a ceiling of 45, and retries are
+    // network wait, which costs no CPU.
     await expect(fetchLatestInstanceForCollections(WATER, { maxAttempts: 3 }, eventMemo)).rejects.toThrow();
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(3);
 
+    // Once a stage has genuinely exhausted itself against a 429, the refusal is
+    // treated as provider-wide and the sibling collection does not re-earn it.
     await expect(fetchLatestInstanceForCollections(WAVES, { maxAttempts: 3 }, eventMemo)).rejects.toThrow();
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(3);
   });
 
   // We parse Retry-After, attach it to the error and forward it to the browser.
