@@ -37,13 +37,9 @@ describe('PrivacyNotice', () => {
     });
 
     expect(host.querySelector('summary')?.textContent).toBe('Technical data note');
-    expect(host.textContent).toContain('not a complete legal privacy notice');
-    expect(host.textContent).toContain('GitHub Pages serves the app files');
-    expect(host.textContent).toContain('Cloudflare serves the forecast API');
+    expect(host.textContent).toContain('no user accounts, sets no cookies, does not track your GPS');
+    expect(host.textContent).toContain('Cloudflare and GitHub Pages');
     expect(host.textContent).toContain('MET Norway, DMI, and MeteoAlarm');
-    expect(host.textContent).toContain('not by a visitor request or the refresh button');
-    expect(host.textContent).toContain('automatic request-and-response invocation logs are disabled');
-    expect(host.textContent).toContain('3 days on Free plans and 7 days on paid plans');
   });
 
   it('links only to relevant platform technical and privacy sources', async () => {
@@ -105,6 +101,6 @@ describe('PrivacyNotice', () => {
     });
 
     expect(host.querySelector('summary')?.textContent).toBe('Teknisk datanote');
-    expect(host.textContent).toContain('ikke en fuldstændig juridisk privatlivsmeddelelse');
+    expect(host.textContent).toContain('ingen brugerkonti, sætter ingen cookies');
   });
 });

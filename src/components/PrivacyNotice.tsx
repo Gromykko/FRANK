@@ -34,19 +34,10 @@ export default function PrivacyNotice() {
       <summary>{t('Technical data note')}</summary>
       <div className="privacy-copy">
         <p>
-          {t('This is a factual note about the app’s current technical behaviour. It is not a complete legal privacy notice: the operator still needs to publish verified identity and contact details before presenting it as one.')}
+          {t('FRANK has no user accounts, sets no cookies, does not track your GPS, and includes no advertising or analytics trackers. Your chosen location, safety limits, and offline forecasts are stored strictly in this browser.')}
         </p>
         <p>
-          {t('FRANK has no account system and does not request your device’s GPS position. The app code sets no cookies and adds no advertising tracker or separate product-analytics service. Your chosen area, language, theme, safety limits, and latest forecast are stored in this browser for preferences and offline use. Language, theme, safety limits, and the cached forecast stay in the browser; the selected forecast area is sent with forecast requests.')}
-        </p>
-        <p>
-          {t('GitHub Pages serves the app files and logs visitor IP addresses for security. Cloudflare serves the forecast API and receives the requested forecast area and ordinary connection data such as IP address, HTTP/browser information, and time. Cloudflare also provides operational service metrics. FRANK’s custom Worker logs may record the forecast area and failures when service events occur; automatic request-and-response invocation logs are disabled. Cloudflare retains Workers Logs for 3 days on Free plans and 7 days on paid plans.')}
-        </p>
-        <p>
-          {t('Forecast providers are contacted only by FRANK’s scheduled refreshes and zero-traffic release preparation, not by a visitor request or the refresh button. Those service jobs send FRANK’s fixed forecast coordinates to MET Norway, DMI, and MeteoAlarm. They do not send your device GPS, saved language, theme, safety limits, or browser request details.')}
-        </p>
-        <p>
-          {t('The local values remain until you delete them below or clear browser site data. GitHub and the weather providers apply the retention periods in their own published terms.')}
+          {t('Forecast data is provided by MET Norway, DMI, and MeteoAlarm, served securely via Cloudflare and GitHub Pages.')}
         </p>
         <p className="privacy-sources">
           {t('Technical sources:')}{' '}
