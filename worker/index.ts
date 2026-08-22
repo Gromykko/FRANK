@@ -309,15 +309,16 @@ async function writeCronHeartbeat(
         return;
       }
     }
-    const recovering = Boolean(
-      attempt?.status === 'contacted'
-      && Number.isFinite(previousFailureMs)
-      && (!Number.isFinite(previousSuccessMs) || previousFailureMs >= previousSuccessMs),
-    );
+    const hasActiveUnreachable = Number.isFinite(previousFailureMs)
+      && (!Number.isFinite(previousSuccessMs) || previousFailureMs >= previousSuccessMs);
+    const newlyUnreachable = attempt?.status === 'unreachable'
+      && !hasActiveUnreachable;
+    const recovering = attempt?.status === 'contacted'
+      && hasActiveUnreachable;
     const firstRecordedContact = attempt?.status === 'contacted'
       && !Number.isFinite(previousSuccessMs);
     const forceWrite = Boolean(
-      attempt && (attempt.status === 'unreachable' || recovering || firstRecordedContact),
+      newlyUnreachable || recovering || firstRecordedContact,
     );
     const elapsedTicks = Number.isFinite(previousTickMs)
       ? Math.floor((tickAtMs - previousTickMs) / CRON_PERIOD_MS)
@@ -1075,7 +1076,8 @@ async function _refreshForecastCache(
           options.cronOutcome.status = 'healthy-no-probe';
         }
         // Retry-backoff, substitution, and degradation retain the default
-        // unreachable outcome and therefore remain visible immediately.
+        // unreachable outcome. Its first transition persists immediately;
+        // unchanged repeats follow the shared five-tick write throttle.
       }
       return checkedCache;
     }
@@ -1614,9 +1616,9 @@ const worker = {
       }
     } finally {
       // Bounded outside the refresh budget so a due heartbeat still gets a
-      // chance to land when provider work runs long. Healthy ticks usually
-      // return after the read; failures and recoveries deliberately bypass the
-      // five-tick throttle.
+      // chance to land when provider work runs long. Healthy ticks and repeated
+      // failures usually return after the read; failure transitions and
+      // recoveries deliberately bypass the five-tick throttle.
       await writeCronHeartbeat(env, heartbeatTickAt, heartbeatAttempt, {
         deadlineAt: Date.now() + HEARTBEAT_WRITE_BUDGET_MS,
         maxAttempts: 1,

@@ -75,18 +75,28 @@ The heartbeat is read every tick and normal successful writes are sampled once
 every five scheduled ticks. A city with a recorded success and no newer failure
 may use the app-wide `lastTickAt`, keeping its displayed check time within about
 five minutes without increasing the normal 288-write heartbeat budget. A budget
-skip, retry-backoff, or failed refresh writes a distinct city anomaly immediately;
-the first later success also writes immediately so the failure cannot remain
-visible for a full sparse sampling cycle. On a normal day both extra counts are
-expected to be zero. One anomalous tick followed by recovery would make the
-planning total about 722. A schema rollout can also spend up to four one-time
-writes to establish each city's first actual provider contact. A prolonged
-all-city outage can exceed the free write
-allowance and must be monitored rather than hidden. Workers KV is eventually
-consistent, so the read/compare/write monotonic guard is best-effort and an edge
-can occasionally read an older heartbeat and make an extra write. Production
-must alert on actual ages and usage rather than treat the estimate as a hard
-cap. See Cloudflare's current [Workers limits](https://developers.cloudflare.com/workers/platform/limits/), [KV limits](https://developers.cloudflare.com/kv/platform/limits/), and [pricing](https://developers.cloudflare.com/workers/platform/pricing/).
+skip, retry-backoff, or failed refresh writes the first transition to a distinct
+city anomaly immediately; an unchanged repeat follows the same five-tick
+throttle. The first later success also writes immediately so the failure cannot
+remain visible for a full sparse sampling cycle. On a normal day both extra
+transition counts are expected to be zero. One anomalous tick followed by
+recovery would make the planning total about 722. A schema rollout can also spend
+up to four one-time writes to establish each city's first actual provider
+contact.
+
+For a stable outage affecting all four cities, the conservative heartbeat bound
+is 292 writes/day: up to four immediate first-failure signals plus 288
+normal-cadence writes, against the 1,000-write Free allowance. Adding the normal
+estimate of
+about 432 forecast/raw writes gives about 724/day and about 276 writes of nominal
+headroom. Changed failure states, recovery flapping, and forecast failure-state
+writes can consume more, so production must monitor actual usage rather than
+treat the estimate as a hard cap. Workers KV is eventually consistent, so the
+read/compare/write monotonic guard is best-effort and an edge can occasionally
+read an older heartbeat and make an extra write. See Cloudflare's current
+[Workers limits](https://developers.cloudflare.com/workers/platform/limits/),
+[KV limits](https://developers.cloudflare.com/kv/platform/limits/), and
+[pricing](https://developers.cloudflare.com/workers/platform/pricing/).
 
 ## Privacy
 

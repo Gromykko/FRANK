@@ -7,7 +7,11 @@ import { FORECAST_PAYLOAD_VERSION } from '../../src/features/forecast/types';
 import type { ForecastData } from '../../worker/domain';
 import { CRON_PERIOD_MS } from '../../worker/execution';
 import { assembledForecastKey } from '../../worker/generation';
-import worker, { CRON_HEARTBEAT_KEY, tickOrder } from '../../worker/index';
+import worker, {
+  CRON_HEARTBEAT_KEY,
+  CRON_HEARTBEAT_THROTTLE_TICKS,
+  tickOrder,
+} from '../../worker/index';
 
 const LOCATIONS = locationData as ForecastLocation[];
 const FIRST_TICK_MS = Date.parse('2026-08-20T16:00:00.000Z');
@@ -246,7 +250,7 @@ describe('scheduled city rotation', () => {
     });
   });
 
-  it('writes an unsuccessful city immediately even inside the five-tick throttle', async () => {
+  it('writes the first unsuccessful transition immediately inside the five-tick throttle', async () => {
     const { env, store, puts } = runtime(DUE_MARINE_RUN);
     const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
       new Response('temporary provider failure', { status: 503 }));
@@ -278,6 +282,60 @@ describe('scheduled city rotation', () => {
       lastTickAt: new Date(scheduledTime).toISOString(),
       locations: { horsens: new Date(previousSuccess).toISOString() },
       unreachable: { horsens: new Date(scheduledTime).toISOString() },
+    });
+  });
+
+  it('throttles an unchanged anomaly but refreshes it when five ticks have elapsed', async () => {
+    const { env, store, puts } = runtime(DUE_MARINE_RUN);
+    const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      new Response('temporary provider failure', { status: 503 }));
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const repeatedTick = FIRST_TICK_MS + 11 * LOCATIONS.length * CRON_PERIOD_MS;
+    const location = tickOrder(repeatedTick)[0];
+    const previousTick = repeatedTick - CRON_PERIOD_MS;
+    const previousFailure = repeatedTick - LOCATIONS.length * CRON_PERIOD_MS;
+    const previousSuccess = repeatedTick - 2 * LOCATIONS.length * CRON_PERIOD_MS;
+    const storedHeartbeat = JSON.stringify({
+      schemaVersion: 2,
+      lastTickAt: new Date(previousTick).toISOString(),
+      locations: { [location.id]: new Date(previousSuccess).toISOString() },
+      unreachable: { [location.id]: new Date(previousFailure).toISOString() },
+    });
+    store.set(CRON_HEARTBEAT_KEY, storedHeartbeat);
+
+    vi.setSystemTime(repeatedTick);
+    await worker.scheduled(
+      { scheduledTime: repeatedTick } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    expect(provider).toHaveBeenCalledTimes(6);
+    expect(puts.filter((key) => key === CRON_HEARTBEAT_KEY)).toHaveLength(0);
+    expect(store.get(CRON_HEARTBEAT_KEY)).toBe(storedHeartbeat);
+
+    const elapsedTick = repeatedTick
+      + (CRON_HEARTBEAT_THROTTLE_TICKS - 1) * CRON_PERIOD_MS;
+    expect(tickOrder(elapsedTick)[0].id).toBe(location.id);
+    vi.setSystemTime(elapsedTick);
+    await worker.scheduled(
+      { scheduledTime: elapsedTick } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    // The first 503 established provider retry-backoff. That no-probe repeat is
+    // still an unchanged unreachable outcome, without another upstream burst.
+    expect(provider).toHaveBeenCalledTimes(6);
+    expect(puts.filter((key) => key === CRON_HEARTBEAT_KEY)).toHaveLength(1);
+    expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
+      schemaVersion: 2,
+      lastTickAt: new Date(elapsedTick).toISOString(),
+      locations: { [location.id]: new Date(previousSuccess).toISOString() },
+      unreachable: { [location.id]: new Date(elapsedTick).toISOString() },
     });
   });
 
@@ -316,9 +374,9 @@ describe('scheduled city rotation', () => {
     });
   });
 
-  it('writes the first contacted recovery immediately instead of leaving an anomaly active', async () => {
+  it('writes a contacted recovery immediately after throttling an unchanged failure', async () => {
     const { env, store, puts } = runtime(DUE_MARINE_RUN);
-    const scheduledTime = FIRST_TICK_MS + 11 * LOCATIONS.length * CRON_PERIOD_MS;
+    const scheduledTime = FIRST_TICK_MS + 12 * LOCATIONS.length * CRON_PERIOD_MS;
     const location = tickOrder(scheduledTime)[0];
     const previousTick = scheduledTime - CRON_PERIOD_MS;
     const previousFailure = scheduledTime - 2 * CRON_PERIOD_MS;
@@ -329,14 +387,11 @@ describe('scheduled city rotation', () => {
       locations: { [location.id]: new Date(previousSuccess).toISOString() },
       unreachable: { [location.id]: new Date(previousFailure).toISOString() },
     }));
-    const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.endsWith('/instances')) {
-        return Response.json({ instances: [{ id: DUE_MARINE_RUN }] });
-      }
-      throw new Error(`Unexpected provider URL: ${url}`);
-    });
+    const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      new Response('temporary provider failure', { status: 503 }));
     vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
 
     vi.setSystemTime(scheduledTime);
     await worker.scheduled(
@@ -345,13 +400,48 @@ describe('scheduled city rotation', () => {
       {} as ExecutionContext,
     );
 
-    expect(provider).toHaveBeenCalledTimes(2);
+    expect(puts.filter((key) => key === CRON_HEARTBEAT_KEY)).toHaveLength(0);
+
+    const interveningTick = scheduledTime + CRON_PERIOD_MS;
+    const interveningLocation = tickOrder(interveningTick)[0];
+    expect(interveningLocation.id).not.toBe(location.id);
+    vi.setSystemTime(interveningTick);
+    await worker.scheduled(
+      { scheduledTime: interveningTick } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
     expect(puts.filter((key) => key === CRON_HEARTBEAT_KEY)).toHaveLength(1);
+
+    provider.mockClear();
+    provider.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/instances')) {
+        return Response.json({ instances: [{ id: DUE_MARINE_RUN }] });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    });
+
+    const recoveryTick = scheduledTime + LOCATIONS.length * CRON_PERIOD_MS;
+    expect(tickOrder(recoveryTick)[0].id).toBe(location.id);
+    vi.setSystemTime(recoveryTick);
+    await worker.scheduled(
+      { scheduledTime: recoveryTick } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    expect(provider).toHaveBeenCalledTimes(2);
+    expect(puts.filter((key) => key === CRON_HEARTBEAT_KEY)).toHaveLength(2);
     expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
       schemaVersion: 2,
-      lastTickAt: new Date(scheduledTime).toISOString(),
-      locations: { [location.id]: new Date(scheduledTime).toISOString() },
-      unreachable: { [location.id]: new Date(previousFailure).toISOString() },
+      lastTickAt: new Date(recoveryTick).toISOString(),
+      locations: { [location.id]: new Date(recoveryTick).toISOString() },
+      unreachable: {
+        [location.id]: new Date(previousFailure).toISOString(),
+        [interveningLocation.id]: new Date(interveningTick).toISOString(),
+      },
     });
   });
 
