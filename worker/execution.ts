@@ -166,6 +166,9 @@ export async function awaitWithinDeadline<T>(
 ): Promise<T> {
   assertBeforeDeadline(policy, stage);
   const promise = start();
+  // Prevent unhandled rejections in edge runtime if the deadline expires first
+  // and the background promise rejects later.
+  promise.catch(() => {});
   const remainingMs = remainingExecutionMs(policy);
   if (!Number.isFinite(remainingMs)) return promise;
 

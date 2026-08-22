@@ -78,6 +78,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
   const scrollRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
   const startXRef = useRef(0);
+  const offsetLeftRef = useRef(0);
   const scrollLeftRef = useRef(0);
   const hasDraggedRef = useRef(false);
 
@@ -85,6 +86,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
   const tabsRef = useRef<HTMLDivElement>(null);
   const tabsIsDraggingRef = useRef(false);
   const tabsStartXRef = useRef(0);
+  const tabsOffsetLeftRef = useRef(0);
   const tabsScrollLeftRef = useRef(0);
   const tabsHasDraggedRef = useRef(false);
   // Target of an in-flight programmatic smooth scroll. While set, incoming
@@ -145,7 +147,9 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
     programmaticTargetRef.current = null;
     isDraggingRef.current = true;
     hasDraggedRef.current = false;
-    startXRef.current = e.pageX - el.offsetLeft;
+    const offsetLeft = el.offsetLeft;
+    offsetLeftRef.current = offsetLeft;
+    startXRef.current = e.pageX - offsetLeft;
     scrollLeftRef.current = el.scrollLeft;
     el.style.cursor = 'grabbing';
     el.style.userSelect = 'none';
@@ -185,7 +189,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
     if (!isDraggingRef.current) return;
     const el = scrollRef.current;
     if (!el) return;
-    const x = e.pageX - el.offsetLeft;
+    const x = e.pageX - offsetLeftRef.current;
     const walk = (x - startXRef.current) * 1.5; // Scroll speed multiplier
     
     if (Math.abs(walk) > 3) {
@@ -201,7 +205,9 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
     if (!el) return;
     tabsIsDraggingRef.current = true;
     tabsHasDraggedRef.current = false;
-    tabsStartXRef.current = e.pageX - el.offsetLeft;
+    const offsetLeft = el.offsetLeft;
+    tabsOffsetLeftRef.current = offsetLeft;
+    tabsStartXRef.current = e.pageX - offsetLeft;
     tabsScrollLeftRef.current = el.scrollLeft;
     el.style.cursor = 'grabbing';
     el.style.userSelect = 'none';
@@ -223,7 +229,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
     if (!tabsIsDraggingRef.current) return;
     const el = tabsRef.current;
     if (!el) return;
-    const x = e.pageX - el.offsetLeft;
+    const x = e.pageX - tabsOffsetLeftRef.current;
     const walk = (x - tabsStartXRef.current) * 1.5;
     if (Math.abs(walk) > 3) {
       tabsHasDraggedRef.current = true;

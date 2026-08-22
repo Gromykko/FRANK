@@ -152,6 +152,7 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
   const isDraggingRef = useRef(false);
   const hasDraggedRef = useRef(false);
   const startXRef = useRef(0);
+  const offsetLeftRef = useRef(0);
   const scrollLeftRef = useRef(0);
   const chartSelectedIndexRef = useRef<number | null>(null);
 
@@ -163,7 +164,9 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
     if (e.clientY - el.getBoundingClientRect().top >= el.clientHeight) return;
     isDraggingRef.current = true;
     hasDraggedRef.current = false;
-    startXRef.current = e.pageX - el.offsetLeft;
+    const offsetLeft = el.offsetLeft;
+    offsetLeftRef.current = offsetLeft;
+    startXRef.current = e.pageX - offsetLeft;
     scrollLeftRef.current = el.scrollLeft;
     el.style.cursor = 'grabbing';
     el.style.userSelect = 'none';
@@ -173,7 +176,7 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
     const el = scrollRef.current;
     if (!isDraggingRef.current || !el) return;
     e.preventDefault();
-    const x = e.pageX - el.offsetLeft;
+    const x = e.pageX - offsetLeftRef.current;
     if (Math.abs(x - startXRef.current) > 3) hasDraggedRef.current = true;
     el.scrollLeft = scrollLeftRef.current - (x - startXRef.current) * 1.5;
   };
