@@ -21,8 +21,8 @@
     "worker/cacheHealth.ts": "8e46afc47f43ef1e0e5596f2b09e618e4e26a221017ea9b577a5b3e57e588ea8",
     "worker/forecastModel.ts": "d8ec64afd29dc3b5e628585db580564a711f0c3ddb4f28793507c5610f8c02be",
     "worker/generation.ts": "471cae837f55a6b108ddf451ca3ccb8f2a2af006d2b552bc784b2ed99c6ef2a6",
-    "worker/domain.ts": "2638d3cdf91c4bededc4f5b084af9e67b69897a84cf70819339a357e1d483298",
-    "worker/index.ts": "23ff51c2a96a2391b528b2fc87d10bf244d43a9fdaba78079ea802a82e7803cb",
+    "worker/domain.ts": "88424adfd52e9b33cdcdd642e5d80cf87de5b29afb6d0337c08c24e0d8680852",
+    "worker/index.ts": "48af224d2295951dd023a8bb73031129d94670374e0d4b04682ff9d5b0d93d5f",
     "worker/providerAvailability.ts": "52443e5c5b22fba55d05e10f708263e4fead3a0b7b9691f020611668582a3076",
     "worker/providers.ts": "120bb941a2e8dd61ee0f10fab7da5bba13f201856573a11093ed22515312b057",
     "worker/validation.ts": "b0a68f89a3347a641a231de7d3d3c36bcc0292a1c7ddd5ec7e7fb325f0e5207f"

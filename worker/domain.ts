@@ -152,6 +152,8 @@ export interface HealthLocationEntry {
   fetchedAt?: string;
   cacheHealth?: WorkerCacheHealth;
   initialization?: ForecastInitializationMarker;
+  warningCount?: number;
+  warningsSummary?: string;
 }
 
 export interface HealthReleaseReadiness {

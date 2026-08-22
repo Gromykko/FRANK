@@ -1109,6 +1109,12 @@ async function loadHealthPayload(env: Env): Promise<HealthPayload> {
           && markerAttemptMs + marker.retryAfterSeconds * 1000 > Date.now()
           ? marker
           : null;
+        const warningCount = Array.isArray(current?.warnings) ? current.warnings.length : undefined;
+        const activeWarning = current?.warnings?.[0];
+        const warningsSummary = activeWarning
+          ? `${activeWarning.event}${activeWarning.severity ? ` (${activeWarning.severity})` : ''}`
+          : undefined;
+
         return {
           id: location.id,
           areaName: location.areaName,
@@ -1117,6 +1123,8 @@ async function loadHealthPayload(env: Env): Promise<HealthPayload> {
           availabilitySource: current ? 'generation' : 'none',
           fetchedAt: current?.sources.fetchedAt,
           cacheHealth: current?.sources.cacheHealth,
+          warningCount,
+          warningsSummary,
           ...(initialization ? { initialization } : {}),
         };
       }),

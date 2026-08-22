@@ -347,9 +347,17 @@ export function statusResponse(health: HealthPayload): Response {
               detail: 'Warnings arrive with the first forecast snapshot.',
             }
           : {
-              key: 'warnings', label: 'Warnings', provider: 'MeteoAlarm', tone: 'neutral',
-              state: 'Advisory source', value: `${formatAge(age.ageMs)} snapshot`,
-              detail: 'Separate feed health is not stored; no false green is shown.',
+              key: 'warnings',
+              label: 'Warnings',
+              provider: 'MeteoAlarm',
+              tone: location.warningCount && location.warningCount > 0 ? 'warn' : 'neutral',
+              state: location.warningCount && location.warningCount > 0 ? 'Alert active' : 'Advisory source',
+              value: location.warningCount && location.warningCount > 0
+                ? `${location.warningCount} active ${location.warningCount === 1 ? 'warning' : 'warnings'}`
+                : `${formatAge(age.ageMs)} snapshot`,
+              detail: location.warningsSummary
+                ? escapeHtml(location.warningsSummary)
+                : 'No active warnings · polled with forecast',
             },
     ];
     const sourceCards = sources.map((source) => `<section class="source-card tone-${source.tone}" data-source="${source.key}" role="listitem">

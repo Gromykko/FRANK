@@ -272,7 +272,7 @@ describe('Worker route HTTP contract', () => {
     expect(body).toContain('<div><h4>Water level</h4><span>DMI DKSS</span></div>');
     expect(body).toContain('<div><h4>Waves</h4><span>DMI WAM</span></div>');
     expect(body).toContain('<div><h4>Warnings</h4><span>MeteoAlarm</span></div>');
-    expect(body).toContain('Separate feed health is not stored; no false green is shown.');
+    expect(body).toContain('No active warnings · polled with forecast');
     expect(body).not.toContain('<table');
     expect(body).not.toContain('F · R · A · N · K');
     expect(body).not.toContain('backdrop-filter');
