@@ -111,6 +111,7 @@ export interface SafetyAnalysisContext {
 
 import type { SafetySettings } from './presets';
 import { floorCaution } from './presets';
+import { READING_DECIMALS, formatReading, roundToDecimals } from '../../utils/number';
 import { interpolate } from '../../i18n/interpolate';
 import type { Translate } from '../../i18n/interpolate';
 
@@ -224,15 +225,23 @@ export function analyzeSafetyConditions(
     && isNonnegativeReading(data.windSpeedP90)
     ? data.windSpeedP90
     : undefined;
-  const windSpeedForSafety = centralWindSpeed !== undefined
-    ? Math.max(centralWindSpeed, outlookWindP90 ?? centralWindSpeed)
-    : (outlookWindP90 ?? data.windSpeed);
+  // Judged at the precision it is DISPLAYED at, so the app can never assert a
+  // verdict the numbers on screen contradict. See READING_DECIMALS.
+  const windSpeedForSafety = roundToDecimals(
+    centralWindSpeed !== undefined
+      ? Math.max(centralWindSpeed, outlookWindP90 ?? centralWindSpeed)
+      : (outlookWindP90 ?? data.windSpeed),
+    READING_DECIMALS.windSpeed,
+  );
+  const gustForSafety = roundToDecimals(data.windGust, READING_DECIMALS.windGust);
+  const waveForSafety = roundToDecimals(data.waveHeight, READING_DECIMALS.waveHeight);
+  const waterTempForSafety = roundToDecimals(data.tempWater, READING_DECIMALS.tempWater);
   const hasWindSpeed = isNonnegativeReading(windSpeedForSafety);
   const usesOutlookWindP90 = outlookWindP90 !== undefined
     && hasWindSpeed
     && (centralWindSpeed === undefined || outlookWindP90 > centralWindSpeed);
   const centralWindText = centralWindSpeed !== undefined
-    ? `${centralWindSpeed.toFixed(1)} m/s`
+    ? `${formatReading(centralWindSpeed, READING_DECIMALS.windSpeed)} m/s`
     : translate('Unknown');
 
   // Wind speed feeds both the general limit and the per-sector caps, so it is
@@ -275,21 +284,21 @@ export function analyzeSafetyConditions(
   const enableWindGust = enableWindSpeed && (settings.enableWindGust ?? true);
   // MET issues no gust forecast for the longer-range blocks, so an absent gust
   // there is a known limit of the source, not a hole in this hour's data.
-  const hasWindGust = isNonnegativeReading(data.windGust);
-  if (enableWindGust && !hasWindGust && (!data.blockSpanHours || isReading(data.windGust))) missing.push('wind gusts');
+  const hasWindGust = isNonnegativeReading(gustForSafety);
+  if (enableWindGust && !hasWindGust && (!data.blockSpanHours || isReading(gustForSafety))) missing.push('wind gusts');
   if (enableWindGust && hasWindGust) {
-    const gustLabel = translate(getWindSpeedLabel(data.windGust));
+    const gustLabel = translate(getWindSpeedLabel(gustForSafety));
     const gustDangerLimit = settings.maxWindSpeedSafe + (settings.gustMargin ?? 2.5);
-    if (data.windGust >= gustDangerLimit) {
-      addReason('danger', limitReason(data.windGust, gustDangerLimit, 1,
+    if (gustForSafety >= gustDangerLimit) {
+      addReason('danger', limitReason(gustForSafety, gustDangerLimit, 1,
         'Wind gusts: {0} m/s ({1}). At your gust ceiling of {2} m/s.',
         'Wind gusts: {0} m/s ({1}). Above your gust ceiling of {2} m/s.',
-        data.windGust.toFixed(1), gustLabel, gustDangerLimit.toFixed(1)));
-    } else if (data.windGust >= settings.maxWindSpeedSafe) {
-      addReason('caution', limitReason(data.windGust, settings.maxWindSpeedSafe, 1,
+        gustForSafety.toFixed(1), gustLabel, gustDangerLimit.toFixed(1)));
+    } else if (gustForSafety >= settings.maxWindSpeedSafe) {
+      addReason('caution', limitReason(gustForSafety, settings.maxWindSpeedSafe, 1,
         'Wind gusts: {0} m/s ({1}). At your safe limit of {2} m/s.',
         'Wind gusts: {0} m/s ({1}). Exceeds your safe limit of {2} m/s.',
-        data.windGust.toFixed(1), gustLabel, settings.maxWindSpeedSafe.toFixed(1)));
+        gustForSafety.toFixed(1), gustLabel, settings.maxWindSpeedSafe.toFixed(1)));
     }
   }
 
@@ -305,9 +314,15 @@ export function analyzeSafetyConditions(
   let windIsOnshore = false;
   let windIsOffshore = false;
   // 359.6° rounds to 360, which is not a bearing — wrap it back to 0.
+  // Rounded and wrapped once, then used for BOTH the sector test and the text.
+  // Testing the raw bearing meant 44.6 deg printed as "45 deg NE" - the manual's
+  // Easterly zone, with its tighter cap - while the rule read 44.6, missed the
+  // sector, and applied the looser general cap instead. Rounding pulls a
+  // borderline bearing INTO the sector, and a sector cap is never looser than
+  // the flat one, so this can only ever tighten a verdict.
   const windDir = ((Math.round(data.windDirection) % 360) + 360) % 360;
   for (const sector of sectors) {
-    if (!inSector(data.windDirection, sector.min, sector.max)) continue;
+    if (!inSector(windDir, sector.min, sector.max)) continue;
     if (sector.exposure === 'onshore') windIsOnshore = true;
     else if (sector.exposure === 'offshore') windIsOffshore = true;
     // In user copy the upper boundary is always the DANGER cap — calling it a
@@ -360,37 +375,37 @@ export function analyzeSafetyConditions(
   }
 
   const enableWaterTemp = settings.enableWaterTemp ?? true;
-  if (enableWaterTemp && !isReading(data.tempWater)) missing.push('water temperature');
-  if (enableWaterTemp && isReading(data.tempWater)) {
-    if (data.tempWater < settings.minWaterTempCaution) {
+  if (enableWaterTemp && !isReading(waterTempForSafety)) missing.push('water temperature');
+  if (enableWaterTemp && isReading(waterTempForSafety)) {
+    if (waterTempForSafety < settings.minWaterTempCaution) {
       rating = 'danger';
-      addReason('danger', translate("Water temperature: {0}°C — colder than your danger limit of {1}°C. You'd really want a drysuit or heavy thermals for this.", data.tempWater.toFixed(1), settings.minWaterTempCaution.toFixed(1)));
-    } else if (data.tempWater < settings.minWaterTempSafe) {
+      addReason('danger', translate("Water temperature: {0}°C — colder than your danger limit of {1}°C. You'd really want a drysuit or heavy thermals for this.", waterTempForSafety.toFixed(1), settings.minWaterTempCaution.toFixed(1)));
+    } else if (waterTempForSafety < settings.minWaterTempSafe) {
       if (rating !== 'danger') rating = 'caution';
-      addReason('caution', translate('Water temperature: {0}°C — under your safe limit of {1}°C. Worth layering up.', data.tempWater.toFixed(1), settings.minWaterTempSafe.toFixed(1)));
+      addReason('caution', translate('Water temperature: {0}°C — under your safe limit of {1}°C. Worth layering up.', waterTempForSafety.toFixed(1), settings.minWaterTempSafe.toFixed(1)));
     }
   }
 
   const enableWaveHeight = settings.enableWaveHeight ?? true;
   const enableWaveCaution = settings.enableWaveCaution ?? true;
-  const hasWaveHeight = isNonnegativeReading(data.waveHeight);
+  const hasWaveHeight = isNonnegativeReading(waveForSafety);
   if (enableWaveHeight && !hasWaveHeight) missing.push('wave height');
   if (enableWaveHeight && hasWaveHeight) {
-    const waveLabel = translate(getWaveHeightLabel(data.waveHeight));
+    const waveLabel = translate(getWaveHeightLabel(waveForSafety));
     // The danger ceiling always applies when wave height is enabled; the
     // "wave caution margin" toggle only controls the intermediate caution band.
-    if (data.waveHeight >= settings.maxWaveHeightCaution) {
+    if (waveForSafety >= settings.maxWaveHeightCaution) {
       rating = 'danger';
-      addReason('danger', limitReason(data.waveHeight, settings.maxWaveHeightCaution, 2,
+      addReason('danger', limitReason(waveForSafety, settings.maxWaveHeightCaution, 2,
         'Wave height: {0} m ({1}). At your danger limit of {2} m.',
         'Wave height: {0} m ({1}). Exceeds your danger limit of {2} m.',
-        data.waveHeight.toFixed(2), waveLabel, settings.maxWaveHeightCaution.toFixed(2)));
-    } else if (enableWaveCaution && data.waveHeight >= settings.maxWaveHeightSafe) {
+        waveForSafety.toFixed(2), waveLabel, settings.maxWaveHeightCaution.toFixed(2)));
+    } else if (enableWaveCaution && waveForSafety >= settings.maxWaveHeightSafe) {
       if (rating !== 'danger') rating = 'caution';
-      addReason('caution', limitReason(data.waveHeight, settings.maxWaveHeightSafe, 2,
+      addReason('caution', limitReason(waveForSafety, settings.maxWaveHeightSafe, 2,
         'Wave height: {0} m ({1}). At your safe limit of {2} m.',
         'Wave height: {0} m ({1}). Exceeds your safe limit of {2} m.',
-        data.waveHeight.toFixed(2), waveLabel, settings.maxWaveHeightSafe.toFixed(2)));
+        waveForSafety.toFixed(2), waveLabel, settings.maxWaveHeightSafe.toFixed(2)));
     }
   }
 
@@ -475,11 +490,11 @@ export function analyzeSafetyConditions(
     // Describe the conditions in the standard terms (Beaufort wind, sea state,
     // MET weather label) instead of repeating the numbers shown above. The
     // bands match getWaveHeightLabel, phrased for prose.
-    const seaState = translate(!isNonnegativeReading(data.waveHeight) ? 'sea state unknown'
-      : data.waveHeight <= 0.1 ? 'calm water'
-      : data.waveHeight <= 0.5 ? 'small ripples'
-      : data.waveHeight <= 1.25 ? 'choppy water'
-      : data.waveHeight <= 2.5 ? 'rough water'
+    const seaState = translate(!isNonnegativeReading(waveForSafety) ? 'sea state unknown'
+      : waveForSafety <= 0.1 ? 'calm water'
+      : waveForSafety <= 0.5 ? 'small ripples'
+      : waveForSafety <= 1.25 ? 'choppy water'
+      : waveForSafety <= 2.5 ? 'rough water'
       : 'very rough water');
 
     // Silence from a rule that is switched off is not evidence of safety, and

@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { formatReading } from '../../../src/utils/number';
 import {
   analyzeSafetyConditions,
   getWaveHeightLabel,
@@ -306,7 +307,11 @@ describe('gust margin math', () => {
   });
 
   it('uses >= semantics at both gust boundaries', () => {
-    expect(analyzeSafetyConditions({ ...baseData, windGust: 4.99 }, baseSettings).rating).toBe('safe');
+    // Judged at the precision it is shown at, so 4.94 reads "4.9" and clears
+    // while 4.99 reads "5.0" and does not. Previously 4.99 printed "5.0" beside
+    // a limit of 5 and still rated safe, so the screen contradicted the verdict.
+    expect(analyzeSafetyConditions({ ...baseData, windGust: 4.94 }, baseSettings).rating).toBe('safe');
+    expect(analyzeSafetyConditions({ ...baseData, windGust: 4.99 }, baseSettings).rating).toBe('caution');
     expect(analyzeSafetyConditions({ ...baseData, windGust: 5.0 }, baseSettings).rating).toBe('caution');
     expect(analyzeSafetyConditions({ ...baseData, windGust: 8.0 }, baseSettings).rating).toBe('danger');
   });
@@ -454,8 +459,15 @@ describe('custom wind direction sectors', () => {
     const at = (dir: number) => analyzeSafetyConditions({ ...baseData, windDirection: dir, windSpeed: 5 }, sectorSettings);
     expect(at(45).rating).toBe('caution');   // easterly min inclusive
     expect(at(135).rating).toBe('caution');  // easterly max inclusive
-    expect(at(44.9).rating).toBe('safe');    // just outside
-    expect(at(135.1).rating).toBe('safe');   // just outside
+    // "Outside" now means outside the bearing the app DISPLAYS. 44.9 renders as
+    // "45 deg NE" - the manual's Easterly zone - so treating it as outside made
+    // the app disagree with its own compass reading. Rounding pulls a borderline
+    // bearing into the sector, and a sector cap is never looser than the flat
+    // cap, so this can only tighten a verdict.
+    expect(at(44.9).rating).toBe('caution');  // displays as 45, so judged as 45
+    expect(at(135.1).rating).toBe('caution'); // displays as 135
+    expect(at(44.4).rating).toBe('safe');     // displays as 44, genuinely outside
+    expect(at(135.6).rating).toBe('safe');    // displays as 136
   });
 
   it('easterly caps: caution at safe cap, danger at caution cap (>= semantics)', () => {
@@ -700,5 +712,42 @@ describe('weather severity (additional symbol_code cases)', () => {
   // WMO 80 fallback and the manual (only steady light rain is no-warning).
   it('rates lightrainshowers consistently with its WMO 80 fallback (caution)', () => {
     expect(analyzeSafetyConditions({ ...baseData, symbolCode: 'lightrainshowers' }, baseSettings).rating).toBe('caution');
+  });
+});
+
+// The screen and the verdict must never describe the same weather differently.
+// They used to: display rounded, rules compared the raw float, so any reading
+// within half a step of a limit disagreed with itself — always permissively.
+describe('what is shown is what is judged', () => {
+  const shown = (v: number, decimals: number) => formatReading(v, decimals);
+
+  it('does not clear a wind speed that prints as the limit', () => {
+    const settings = { ...baseSettings, maxWindSpeedSafe: 5.5 } as SafetySettings;
+    expect(shown(5.46, 1)).toBe('5.5');
+    expect(analyzeSafetyConditions({ ...baseData, windSpeed: 5.46 }, settings).rating)
+      .not.toBe('safe');
+    // And still clears when the shown value is genuinely under.
+    expect(shown(5.44, 1)).toBe('5.4');
+    expect(analyzeSafetyConditions({ ...baseData, windSpeed: 5.44 }, settings).rating)
+      .toBe('safe');
+  });
+
+  it('does not clear a wave height that prints as the limit', () => {
+    const settings = { ...baseSettings, maxWaveHeightSafe: 0.3, enableWaveCaution: true } as SafetySettings;
+    expect(shown(0.2996, 2)).toBe('0.30');
+    expect(analyzeSafetyConditions({ ...baseData, waveHeight: 0.2996 }, settings).rating)
+      .not.toBe('safe');
+  });
+
+  // The guard that nearly went missing: null coerces to 0 in JS arithmetic, so
+  // rounding a missing reading would have produced a valid calm measurement.
+  it('never turns a missing reading into a calm one', () => {
+    for (const absent of [NaN, undefined, null]) {
+      const result = analyzeSafetyConditions(
+        { ...baseData, waveHeight: absent as unknown as number },
+        baseSettings,
+      );
+      expect(result.rating, `waveHeight=${String(absent)}`).not.toBe('safe');
+    }
   });
 });

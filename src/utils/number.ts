@@ -4,6 +4,13 @@ export function clampNumber(value: number, min: number, max: number, fallback: n
 }
 
 export function roundToDecimals(value: number, decimals: number): number {
+  // Anything that is not a finite number must stay unreadable. The type says
+  // number, but these values come from provider JSON, and JavaScript coerces
+  // null to 0 in arithmetic: `Math.round(null * 10) / 10` is 0, not NaN. Without
+  // this guard a MISSING reading became a valid calm measurement, sailed past
+  // isNonnegativeReading, and rated the hour "safe" — the precise fail-open
+  // that isReading exists to prevent.
+  if (typeof value !== 'number' || !Number.isFinite(value)) return Number.NaN;
   const factor = 10 ** decimals;
   return Math.round(value * factor) / factor;
 }
@@ -14,11 +21,33 @@ export function roundToDecimals(value: number, decimals: number): number {
 // or a fabricated 0.00 would not do either job.
 export const NO_READING_TEXT = '–';
 
+// The precision at which a reading is both SHOWN and JUDGED. One table, so the
+// screen and the safety rules cannot describe the same weather differently.
+//
+// They used to. The display rounded and the rules compared the raw float, so
+// any reading within half a step of a limit disagreed with itself: 5.46 m/s
+// printed as "5.5" beside a limit of 5.5 and still passed, because 5.46 < 5.5.
+// A user checking the app's arithmetic by hand got a STRICTER answer than the
+// app gave. Small physically (0.05 m/s), total as a credibility failure - and
+// always in the permissive direction.
+export const READING_DECIMALS = {
+  windSpeed: 1,
+  windGust: 1,
+  waveHeight: 2,
+  tempWater: 1,
+} as const;
+
 // The single display formatter for forecast readings. Missing values arrive as
 // NaN by design (see NO_READING in features/forecast/normalize.ts) so they can
 // never be mistaken for a measurement — this is where that becomes visible.
+//
+// Rounds through roundToDecimals before formatting so it lands on exactly the
+// number the safety rules judged. toFixed alone resolves ties off the binary
+// representation, which is not guaranteed to match Math.round.
 export function formatReading(value: number | undefined, decimals: number): string {
-  return Number.isFinite(value) ? (value as number).toFixed(decimals) : NO_READING_TEXT;
+  return Number.isFinite(value)
+    ? roundToDecimals(value as number, decimals).toFixed(decimals)
+    : NO_READING_TEXT;
 }
 
 // Water level, in centimetres with a sign, e.g. "+26" / "-14".
