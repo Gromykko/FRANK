@@ -107,6 +107,7 @@ export default function LocationSwitcher({
         className="location-switcher-btn"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-controls="location-switcher-menu"
         onClick={handleToggle}
       >
         <MapPin size={12} />
@@ -117,6 +118,7 @@ export default function LocationSwitcher({
 
       {open && (
         <ul
+          id="location-switcher-menu"
           className="location-switcher-menu"
           role="menu"
           aria-label={t('Choose location')}

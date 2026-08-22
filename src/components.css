@@ -2161,11 +2161,22 @@ button.legend-toggle.is-on {
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
+  overflow: visible;
   cursor: pointer;
   font-family: inherit;
   container: launch-bar / inline-size;
   z-index: 1;
+}
+
+/* 44px touch hit area for mobile/tablets */
+.gantt-bar::after {
+  content: '';
+  position: absolute;
+  top: -8px;
+  bottom: -8px;
+  left: 0;
+  right: 0;
+  min-height: 44px;
 }
 
 .gantt-bar:hover {

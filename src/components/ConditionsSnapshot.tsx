@@ -184,7 +184,16 @@ export default function ConditionsSnapshot({
         <div className="snapshot-time-anchor">{t('Conditions for {0}:', timeAnchor)}</div>
         <ul className="snapshot-reasons">
           {reasons.map((reason, i) => (
-            <li key={i} className={`reason-${reason.severity}`}>{reason.text}</li>
+            <li key={i} className={`reason-${reason.severity}`}>
+              <span className="sr-only">
+                {reason.severity === 'danger'
+                  ? `${t('Danger')}: `
+                  : reason.severity === 'caution'
+                    ? `${t('Caution')}: `
+                    : ''}
+              </span>
+              {reason.text}
+            </li>
           ))}
         </ul>
       </div>

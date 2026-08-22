@@ -255,7 +255,7 @@ export function deriveCacheStatus(args: {
   const isInitializing = checkState === 'initializing';
 
   const fetchedAtMs = new Date(sources.fetchedAt).getTime();
-  const checkedAt = sources.cacheHealth?.lastAttemptAt ?? sources.fetchedAt;
+  const checkedAt = sources.cronHeartbeat?.lastTickAt ?? sources.cacheHealth?.lastAttemptAt ?? sources.fetchedAt;
   const checkedAtMs = new Date(checkedAt).getTime();
   const checkDiffersFromData =
     Number.isFinite(checkedAtMs) && Number.isFinite(fetchedAtMs) && Math.abs(checkedAtMs - fetchedAtMs) > 90_000;

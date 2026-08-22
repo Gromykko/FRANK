@@ -649,6 +649,7 @@ export const da: Record<string, string> = {
   'If a clash occurs and wind speed > 4.0 m/s, the hour is automatically marked':
     'Opstår en konflikt, og vindstyrken er > 4,0 m/s, markeres timen automatisk',
   'Caution': 'Pas på',
+  'Danger': 'Fare',
   '4. Local Wind Sectors': '4. Lokale vindsektorer',
   'is enabled. Applies separate, stricter absolute limits for the wind sectors configured for {0}:':
     'er slået til. Anvender separate, strammere absolutte grænser for vindsektorerne for {0}:',

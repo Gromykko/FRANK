@@ -118,6 +118,10 @@ export interface WeatherData {
     };
     // When the Worker last successfully BUILT this payload. Precise.
     fetchedAt: string;
+    cronHeartbeat?: {
+      lastTickAt: string;
+      ageMin?: number;
+    };
     cacheHealth?: {
       status: 'current' | 'pending' | 'stale' | 'fresh' | 'fallback';
       // When the Worker last checked upstream — but COARSE, and safe to display

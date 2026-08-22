@@ -244,16 +244,38 @@ export function withCronAttempt<T extends ForecastData>(
   const cacheHealth = data.sources.cacheHealth;
   const attemptedAt = heartbeat?.locations?.[locationId];
   const attemptedMs = Date.parse(attemptedAt ?? '');
-  if (!cacheHealth || !attemptedAt || !Number.isFinite(attemptedMs)) return data;
-  // A stamp from the future is a clock fault, not freshness. Left alone it
-  // yields a negative age, and formatRelativeAge renders that as an empty
-  // string - blanking the very label this mechanism exists to fill.
-  if (attemptedMs > nowMs) return data;
-  if (Date.parse(cacheHealth.lastAttemptAt) >= attemptedMs) return data;
+  const heartbeatTickMs = Date.parse(heartbeat?.lastTickAt ?? '');
+  const cronHeartbeat = heartbeat && Number.isFinite(heartbeatTickMs) && heartbeatTickMs <= nowMs
+    ? {
+        lastTickAt: new Date(heartbeatTickMs).toISOString(),
+        ageMin: Math.round((nowMs - heartbeatTickMs) / 60_000),
+      }
+    : undefined;
+
+  let nextSources = data.sources;
+  if (cronHeartbeat) {
+    nextSources = {
+      ...nextSources,
+      cronHeartbeat,
+    };
+  }
+
+  if (!cacheHealth || !attemptedAt || !Number.isFinite(attemptedMs)) {
+    return nextSources === data.sources ? data : { ...data, sources: nextSources };
+  }
+
+  if (attemptedMs > nowMs) {
+    return nextSources === data.sources ? data : { ...data, sources: nextSources };
+  }
+
+  if (Date.parse(cacheHealth.lastAttemptAt) >= attemptedMs) {
+    return nextSources === data.sources ? data : { ...data, sources: nextSources };
+  }
+
   return {
     ...data,
     sources: {
-      ...data.sources,
+      ...nextSources,
       cacheHealth: { ...cacheHealth, lastAttemptAt: attemptedAt },
     },
   };

@@ -492,8 +492,10 @@ h1, h2, h3, h4, h5, h6 {
 /* Layout Header */
 /* Round icon buttons shared by the status bar (theme + refresh) */
 .header-icon-btn {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
