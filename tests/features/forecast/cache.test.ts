@@ -10,6 +10,11 @@ import {
 import { FORECAST_PAYLOAD_VERSION } from '../../../src/features/forecast/types';
 import type { HourlyData, WeatherData } from '../../../src/features/forecast/types';
 import { isValidForecastPayload } from '../../../src/features/forecast/validatePayload';
+import { buildSunSchedule } from '../../../src/features/forecast/sun';
+import {
+  FORECAST_CLOCK_LEAD_TOLERANCE_MS,
+  FORECAST_SERVER_CLOCK_LEAD_TOLERANCE_MS,
+} from '../../../src/features/forecast/temporalPolicy';
 import {
   CURRENT_RELEASE,
   FORECAST_API_SCHEMA_VERSION,
@@ -73,6 +78,12 @@ function weatherData(hourly: HourlyData[]): WeatherData {
 
 function apiWeatherData(hourly: HourlyData[]): WeatherData {
   const data = weatherData(hourly);
+  const sun = buildSunSchedule(hourly.map(({ time }) => time), CURRENT_LOCATION);
+  data.sunrise = sun.sunrise;
+  data.sunset = sun.sunset;
+  data.hourly.forEach((row) => {
+    row.isDay = sun.isDayByTime.get(row.time) ?? false;
+  });
   data.sources.release = { ...CURRENT_RELEASE };
   return data;
 }
@@ -123,10 +134,16 @@ describe('forecast payload trust boundary', () => {
     expect(isValidForecastPayload(legacy, CURRENT_LOCATION)).toBe(true);
     expect(isValidForecastPayload(legacy, CURRENT_LOCATION, { requireReleaseMetadata: true })).toBe(false);
 
-    const current = structuredClone(legacy);
-    current.sources.payloadVersion = CURRENT_RELEASE.payloadVersion;
-    current.sources.release = { ...CURRENT_RELEASE };
+    const current = apiWeatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
     expect(isValidForecastPayload(current, CURRENT_LOCATION, { requireReleaseMetadata: true })).toBe(true);
+
+    const emptyCurrentSchedule = structuredClone(current);
+    emptyCurrentSchedule.sunrise = [];
+    emptyCurrentSchedule.sunset = [];
+    expect(isValidForecastPayload(emptyCurrentSchedule, CURRENT_LOCATION)).toBe(false);
+    // Release-less legacy/offline copies retain their documented compatibility
+    // allowance because their historical schema did not guarantee sun arrays.
+    expect(isValidForecastPayload(legacy, CURRENT_LOCATION)).toBe(true);
 
     const wrongApi = structuredClone(current);
     wrongApi.sources.release!.apiSchemaVersion = FORECAST_API_SCHEMA_VERSION + 1;
@@ -178,6 +195,20 @@ describe('forecast payload trust boundary', () => {
     expect(isValidForecastPayload(legitimateNegatives, CURRENT_LOCATION)).toBe(true);
   });
 
+  it('validates the optional outlook p90 as a non-negative reading', () => {
+    const base = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString(), 6)]);
+    base.hourly[0].windSpeedP90 = 5;
+    expect(isValidForecastPayload(base, CURRENT_LOCATION)).toBe(true);
+
+    const negative = structuredClone(base);
+    negative.hourly[0].windSpeedP90 = -1;
+    expect(isValidForecastPayload(negative, CURRENT_LOCATION)).toBe(false);
+
+    const infinite = structuredClone(base);
+    infinite.hourly[0].windSpeedP90 = Number.POSITIVE_INFINITY;
+    expect(isValidForecastPayload(infinite, CURRENT_LOCATION)).toBe(false);
+  });
+
   it('rejects invalid, duplicate, decreasing, and overlapping timestamps', () => {
     const first = new Date(NOW + 60 * 60 * 1000).toISOString();
     const second = new Date(NOW + 2 * 60 * 60 * 1000).toISOString();
@@ -190,6 +221,93 @@ describe('forecast payload trust boundary', () => {
     const invalidSun = weatherData([hour(first)]);
     invalidSun.sunrise = ['not-a-date'];
     expect(isValidForecastPayload(invalidSun, CURRENT_LOCATION)).toBe(false);
+  });
+
+  it('rejects isDay values that contradict the paired local sunrise and sunset', () => {
+    const midnight = apiWeatherData([hour('2026-08-12T00:00:00Z')]);
+    midnight.sunrise = ['2026-08-12T04:00:00Z'];
+    midnight.sunset = ['2026-08-12T18:00:00Z'];
+    midnight.hourly[0].isDay = true;
+
+    // 02:00 in Copenhagen is before the 06:00 local sunrise.
+    expect(isValidForecastPayload(midnight, CURRENT_LOCATION, { nowMs: NOW })).toBe(false);
+    midnight.hourly[0].isDay = false;
+    expect(isValidForecastPayload(midnight, CURRENT_LOCATION, { nowMs: NOW })).toBe(true);
+
+    // A next-day sunset must not create one oversized "daylight" interval
+    // across the night, even if a forged isDay flag agrees with that interval.
+    const overnight = apiWeatherData([hour('2026-08-12T12:00:00Z')]);
+    overnight.sunrise = ['2026-08-12T04:00:00Z'];
+    overnight.sunset = ['2026-08-13T18:00:00Z'];
+    expect(isValidForecastPayload(overnight, CURRENT_LOCATION, { nowMs: NOW })).toBe(false);
+
+    // Sun is assembled before rows missing a nearby marine point are removed,
+    // so a real payload may retain a valid schedule for an unrepresented day.
+    const extraScheduleDay = apiWeatherData([hour('2026-08-12T12:00:00Z')]);
+    extraScheduleDay.sunrise = ['2026-08-12T04:00:00Z', '2026-08-13T04:02:00Z'];
+    extraScheduleDay.sunset = ['2026-08-12T18:00:00Z', '2026-08-13T17:58:00Z'];
+    expect(isValidForecastPayload(extraScheduleDay, CURRENT_LOCATION, { nowMs: NOW })).toBe(true);
+  });
+
+  it('rejects implausibly future source and forecast timestamps', () => {
+    const oneHourAhead = new Date(NOW + 60 * 60 * 1000).toISOString();
+    const payload = apiWeatherData([hour(oneHourAhead)]);
+
+    payload.sources.fetchedAt = new Date(NOW + FORECAST_CLOCK_LEAD_TOLERANCE_MS).toISOString();
+    expect(isValidForecastPayload(payload, CURRENT_LOCATION, { nowMs: NOW })).toBe(true);
+
+    payload.sources.fetchedAt = new Date(NOW + FORECAST_CLOCK_LEAD_TOLERANCE_MS + 1).toISOString();
+    expect(isValidForecastPayload(payload, CURRENT_LOCATION, { nowMs: NOW })).toBe(false);
+
+    const futureHealth = apiWeatherData([hour(oneHourAhead)]);
+    futureHealth.sources.cacheHealth!.lastAttemptAt = new Date(NOW + FORECAST_CLOCK_LEAD_TOLERANCE_MS + 1).toISOString();
+    expect(isValidForecastPayload(futureHealth, CURRENT_LOCATION, { nowMs: NOW })).toBe(false);
+
+    const farFutureForecast = apiWeatherData([
+      hour(new Date(NOW + 7 * 24 * 60 * 60 * 1000 + 1).toISOString()),
+    ]);
+    expect(isValidForecastPayload(farFutureForecast, CURRENT_LOCATION, { nowMs: NOW })).toBe(false);
+
+    const poisonedProviderStamps = apiWeatherData([hour(oneHourAhead)]);
+    poisonedProviderStamps.sources.fetchedAt = new Date(NOW).toISOString();
+    poisonedProviderStamps.sources.cacheHealth!.weatherExpires =
+      new Date(NOW + 90 * 60 * 1000 + 1).toISOString();
+    expect(isValidForecastPayload(poisonedProviderStamps, CURRENT_LOCATION, { nowMs: NOW })).toBe(false);
+
+    poisonedProviderStamps.sources.cacheHealth!.weatherExpires =
+      new Date(NOW + 90 * 60 * 1000).toISOString();
+    poisonedProviderStamps.sources.cacheHealth!.weatherLastModified =
+      new Date(NOW + 5 * 60 * 1000 + 1).toISOString();
+    expect(isValidForecastPayload(poisonedProviderStamps, CURRENT_LOCATION, { nowMs: NOW })).toBe(false);
+
+    poisonedProviderStamps.sources.cacheHealth!.weatherLastModified =
+      new Date(NOW + 5 * 60 * 1000).toISOString();
+    expect(isValidForecastPayload(poisonedProviderStamps, CURRENT_LOCATION, { nowMs: NOW })).toBe(true);
+  });
+
+  it('accepts a genuine payload when the device clock is twelve hours behind', () => {
+    const serverNow = NOW + 12 * 60 * 60 * 1000;
+    const skewed = apiWeatherData([
+      hour(new Date(serverNow + 60 * 60 * 1000).toISOString()),
+    ]);
+    skewed.sources.fetchedAt = new Date(serverNow).toISOString();
+    skewed.sources.cacheHealth!.lastAttemptAt = new Date(serverNow).toISOString();
+
+    expect(isValidForecastPayload(skewed, CURRENT_LOCATION, { nowMs: NOW })).toBe(true);
+  });
+
+  it('uses the stricter source-clock tolerance at the Worker KV boundary', () => {
+    const sixMinutesAhead = apiWeatherData([
+      hour(new Date(NOW + 60 * 60 * 1000).toISOString()),
+    ]);
+    sixMinutesAhead.sources.fetchedAt = new Date(NOW + 6 * 60 * 1000).toISOString();
+
+    expect(isValidForecastPayload(sixMinutesAhead, CURRENT_LOCATION, { nowMs: NOW })).toBe(true);
+    expect(isValidForecastPayload(sixMinutesAhead, CURRENT_LOCATION, {
+      nowMs: NOW,
+      requireReleaseMetadata: true,
+      sourceClockLeadToleranceMs: FORECAST_SERVER_CLOCK_LEAD_TOLERANCE_MS,
+    })).toBe(false);
   });
 
   it('rejects unsupported block spans and non-finite structural numbers', () => {
@@ -317,9 +435,7 @@ describe('browser forecast cache recovery', () => {
 
   it('uses the stable API route and isolates its offline slot from legacy apps', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(NOW);
-    const apiPayload = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
-    apiPayload.sources.payloadVersion = CURRENT_RELEASE.payloadVersion;
-    apiPayload.sources.release = { ...CURRENT_RELEASE };
+    const apiPayload = apiWeatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
     apiPayload.sources.fetchedAt = new Date(NOW).toISOString();
 
     const oldAppCopy = structuredClone(apiPayload);

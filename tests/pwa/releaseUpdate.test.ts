@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  RELEASE_CHECK_TIMEOUT_MS,
   requestPreparedAppReleaseCheck,
   startReleaseUpdateManager,
 } from '../../src/pwa/releaseUpdate'
@@ -49,6 +50,7 @@ function mockReleaseFetch(value: unknown = descriptor()) {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
   Reflect.deleteProperty(navigator, 'serviceWorker')
@@ -97,6 +99,50 @@ describe('release update discovery', () => {
     await requestPreparedAppReleaseCheck()
     manager.stop()
 
+    expect(serviceWorker.register).toHaveBeenCalledWith(
+      `${window.location.origin}${BASE_URL}sw.js?build=${BUILD_B}`,
+      { scope: BASE_URL, updateViaCache: 'none' },
+    )
+  })
+
+  it('times out a stalled descriptor and releases inFlight for the next check', async () => {
+    vi.useFakeTimers()
+    const registration = { active: worker(BUILD_A), waiting: null, installing: null }
+    const serviceWorker = installServiceWorkerMock(registration)
+    let requestCount = 0
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      requestCount += 1
+      if (requestCount === 1) {
+        return new Promise((_resolve, reject) => {
+          const signal = init?.signal
+          if (!signal) {
+            reject(new Error('release fetch had no abort signal'))
+            return
+          }
+          const abort = () => reject(new DOMException('Release check timed out', 'AbortError'))
+          if (signal.aborted) abort()
+          else signal.addEventListener('abort', abort, { once: true })
+        })
+      }
+      return Promise.resolve(new Response(JSON.stringify(descriptor()), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const manager = startReleaseUpdateManager(BASE_URL)
+
+    const stalledCheck = manager.checkNow()
+    await vi.advanceTimersByTimeAsync(RELEASE_CHECK_TIMEOUT_MS)
+    await stalledCheck
+
+    const firstOptions = fetchMock.mock.calls[0]?.[1]
+    expect(firstOptions?.signal?.aborted).toBe(true)
+    await manager.checkNow()
+    manager.stop()
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(serviceWorker.register).toHaveBeenCalledWith(
       `${window.location.origin}${BASE_URL}sw.js?build=${BUILD_B}`,
       { scope: BASE_URL, updateViaCache: 'none' },

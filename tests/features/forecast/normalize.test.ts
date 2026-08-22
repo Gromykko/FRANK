@@ -7,6 +7,7 @@ import {
 import {
   mapMetTimeseries,
   mapMetBlocks,
+  assembleBlockRow,
   aggregateBlockMarine,
   nearestPoint,
   reviveReadings,
@@ -87,7 +88,16 @@ describe('mapMetTimeseries', () => {
           {
             time: '2026-07-08T13:00:00Z',
             data: {
-              instant: { details: { air_temperature: 18, wind_speed: 4, wind_speed_of_gust: 6, wind_from_direction: 370 } },
+              instant: { details: {
+                air_temperature: 18,
+                wind_speed: 4,
+                // The complete product may carry this on exact instants too,
+                // but exact-hour behavior intentionally remains the central
+                // wind + gust contract.
+                wind_speed_percentile_90: 20,
+                wind_speed_of_gust: 6,
+                wind_from_direction: 370,
+              } },
               next_1_hours: { summary: { symbol_code: 'rain' }, details: { precipitation_amount: 1.2 } },
             },
           },
@@ -118,6 +128,7 @@ describe('mapMetTimeseries', () => {
     expect(points[1].tempAir).toBe(18);
     expect(points[1].precipitation).toBe(1.2);
     expect(points[1].windSpeed).toBe(4);
+    expect(points[1].windSpeedP90).toBeUndefined();
     expect(points[1].windGust).toBe(6);
     expect(points[1].windDirection).toBe(10); // 370 normalized
     // Missing precipitation defaults to 0.
@@ -179,6 +190,51 @@ describe('mapMetBlocks', () => {
     expect(blocks[0].spanHours).toBe(12);
     expect(blocks[0].symbolCode).toBe('cloudy');
     expect(blocks[0].precipitation).toBe(1);
+  });
+
+  it('keeps the complete-product p90 as start-instant uncertainty, not a block max', () => {
+    // Live-shaped MET Locationforecast `complete` entry: central wind and p90
+    // share instant.details; no gust is published on this outlook sample.
+    const response: MetForecastResponse = {
+      properties: {
+        timeseries: [{
+          time: '2026-07-13T06:00:00Z',
+          data: {
+            instant: { details: {
+              air_temperature: 16.8,
+              wind_speed: 4.3,
+              wind_speed_percentile_90: 5.0,
+              wind_from_direction: 102.3,
+            } },
+            next_6_hours: {
+              summary: { symbol_code: 'partlycloudy_day' },
+              details: { precipitation_amount: 0.4 },
+            },
+          },
+        }],
+      },
+    };
+
+    const [block] = mapMetBlocks(response);
+    expect(block).toMatchObject({
+      windSpeed: 4.3,
+      windSpeedP90: 5,
+      windGust: undefined,
+      spanHours: 6,
+    });
+
+    const row = assembleBlockRow(block, {
+      waveHeight: 0.2, waveHeightMin: 0.1, waveHeightMax: 0.2,
+      waveDirection: 90, wavePeriod: 3,
+      tideLevel: 0.1, tideLevelMin: 0, tideLevelMax: 0.2,
+      tempWater: 16, tempWaterMin: 16, tempWaterMax: 17,
+      currentSpeed: 0.1, currentDirection: 180,
+    }, true);
+    expect(row.windSpeed).toBe(4.3);       // honest central display value
+    expect(row.windSpeedMin).toBe(4.3);    // no invented within-block range
+    expect(row.windSpeedMax).toBe(4.3);
+    expect(row.windSpeedP90).toBe(5);      // separate uncertainty contract
+    expect(row.windGust).toBeNaN();        // no fabricated gust
   });
 });
 
@@ -298,7 +354,7 @@ describe('reviveReadings', () => {
       'tempAir', 'precipitation', 'weatherCode', 'windSpeed', 'windDirection', 'windGust',
       'waveHeight', 'waveDirection', 'wavePeriod', 'tempWater', 'tideLevel',
       'currentSpeed', 'currentDirection',
-      'windSpeedMin', 'windSpeedMax', 'windGustMax', 'waveHeightMin', 'waveHeightMax',
+      'windSpeedMin', 'windSpeedMax', 'windSpeedP90', 'windGustMax', 'waveHeightMin', 'waveHeightMax',
       'tideLevelMin', 'tideLevelMax', 'tempWaterMin', 'tempWaterMax',
     ];
     for (const f of numericFields) row[f] = NO_READING;

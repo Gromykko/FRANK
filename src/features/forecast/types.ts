@@ -24,14 +24,17 @@ export interface HourlyData {
   isOutlook?: boolean;
   // ── Longer-range period block (MET next_6_hours/next_12_hours, after the
   // hourly range). Absent on normal hourly entries. The scalar fields above
-  // carry the block's decision value — wind is MET's single instant value,
+  // carry the block's display value — wind is MET's central instant estimate,
   // marine values are aggregated across the block — and the *Min/*Max fields
   // below carry ranges where the source genuinely provides the underlying
-  // hourly samples.
+  // hourly samples. MET's optional wind percentile is kept separate because
+  // it describes forecast uncertainty at the block start, not a period max.
   blockSpanHours?: number;
   isLowConfidence?: boolean;
   windSpeedMin?: number;
   windSpeedMax?: number;
+  /** MET complete-product p90 wind at the block start; never a block maximum. */
+  windSpeedP90?: number;
   windGustMax?: number;
   waveHeightMin?: number;
   waveHeightMax?: number;

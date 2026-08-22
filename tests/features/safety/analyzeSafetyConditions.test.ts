@@ -66,6 +66,36 @@ describe('analyzeSafetyConditions', () => {
     expect(result.rating).toBe('danger');
   });
 
+  it('assesses an outlook block against MET p90 while keeping the central estimate explicit', () => {
+    const data = {
+      ...baseData,
+      windSpeed: 4.3,
+      windSpeedP90: 5.0,
+      windGust: Number.NaN,
+      blockSpanHours: 6,
+    };
+    const result = analyzeSafetyConditions(
+      data,
+      { ...baseSettings, daylightOnly: false } as SafetySettings,
+    );
+
+    expect(result.rating).toBe('caution');
+    const reason = result.reasons.find((item) => item.text.includes('90th-percentile'))?.text ?? '';
+    expect(reason).toContain("block's start");
+    expect(reason).toContain('5.0 m/s');
+    expect(reason).toContain('central estimate of 4.3 m/s');
+    expect(reason).not.toContain('maximum');
+  });
+
+  it('does not apply the outlook percentile contract to an exact-hour row', () => {
+    const exact = analyzeSafetyConditions(
+      { ...baseData, windSpeed: 4.3, windSpeedP90: 20 },
+      baseSettings,
+    );
+    expect(exact.rating).toBe('safe');
+    expect(exact.reasons.some((item) => item.text.includes('90th-percentile'))).toBe(false);
+  });
+
   it('rates the weather condition from the MET symbol_code', () => {
     // Mirror normalize.ts: weatherCode is ALWAYS derived from the symbol
     // (NaN when the symbol is unrecognised). A fixture that pairs a symbol
@@ -456,6 +486,25 @@ describe('custom wind direction sectors', () => {
     expect(result.reasons.some(r => r.text.includes('Easterly'))).toBe(false);
   });
 
+  it('uses outlook p90 conservatively for a directional cap without calling it a block max', () => {
+    const result = analyzeSafetyConditions(
+      {
+        ...baseData,
+        windDirection: 90,
+        windSpeed: 4.3,
+        windSpeedP90: 5,
+        windGust: Number.NaN,
+        blockSpanHours: 6,
+      },
+      { ...sectorSettings, daylightOnly: false } as SafetySettings,
+    );
+    expect(result.rating).toBe('caution');
+    const reason = result.reasons.find((item) => item.text.includes('90th-percentile'))?.text ?? '';
+    expect(reason).toContain('Easterly');
+    expect(reason).toContain("block's start");
+    expect(reason).not.toContain('maximum');
+  });
+
   describe('wind-against-water-level rule (all four direction/trend combinations)', () => {
     // Speed 4.2: above the 4.0 conflict gate, below both sector safe caps.
     it('westerly + rising water -> conflict', () => {
@@ -505,6 +554,25 @@ describe('custom wind direction sectors', () => {
       expect(atGate.rating).toBe('safe');
       const overGate = analyzeSafetyConditions({ ...baseData, windDirection: 270, windSpeed: 4.1, tideLevel: 0 }, sectorSettings, 0.5);
       expect(overGate.rating).toBe('caution');
+    });
+
+    it('uses outlook p90 for the chop gate and identifies its instant semantics', () => {
+      const result = analyzeSafetyConditions(
+        {
+          ...baseData,
+          windDirection: 270,
+          windSpeed: 4.0,
+          windSpeedP90: 4.1,
+          windGust: Number.NaN,
+          tideLevel: 0,
+          blockSpanHours: 6,
+        },
+        { ...sectorSettings, daylightOnly: false } as SafetySettings,
+        0.5,
+      );
+      expect(result.reasons.some((item) =>
+        item.text.includes("90th-percentile wind at this block's start")
+        && item.text.includes('opposes rising water'))).toBe(true);
     });
 
     it('requires the sector rule to be enabled', () => {

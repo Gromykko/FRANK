@@ -30,4 +30,35 @@ describe('StatusBar refresh announcements', () => {
     const announcement = document.querySelector('[role="status"][aria-atomic="true"]');
     expect(announcement?.textContent).toBe('Opdaterer prognosen.');
   });
+
+  it('shows the explicit verdict without a marquee or screen-reader-only fallback', () => {
+    const html = renderToStaticMarkup(
+      <LanguageProvider>
+        <StatusBar
+          rating="caution"
+          phrase="Hold øje med vinden"
+          srTitle="Pas på"
+          srSubtitle="Hold ekstra øje"
+          location="Horsens"
+          sourceLabel="Opdateret"
+          cacheDetail=""
+          cacheClass="fresh"
+          cacheAriaLabel="Frisk prognose."
+          refreshing={false}
+          onRefresh={vi.fn()}
+          themeMode="light"
+          themeTitle="Skift til mørkt tema"
+          onToggleTheme={vi.fn()}
+        />
+      </LanguageProvider>,
+    );
+
+    const document = new DOMParser().parseFromString(html, 'text/html');
+    const display = document.querySelector('.frank-display');
+    expect(display?.querySelector('.frank-display-verdict')?.textContent).toBe('Pas på');
+    expect(display?.querySelector('.frank-display-subtitle')?.textContent).toBe('Hold ekstra øje');
+    expect(display?.querySelector('.sr-only')).toBeNull();
+    expect(display?.classList.contains('is-marquee')).toBe(false);
+    expect(display?.querySelector('.frank-display-measure')).toBeNull();
+  });
 });

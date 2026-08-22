@@ -45,4 +45,25 @@ describe('outlook period semantics', () => {
     expect(overlay?.getAttribute('aria-label')).not.toContain('(Night)');
     expect(container.querySelector('.timeline-block')?.classList.contains('is-night')).toBe(false);
   });
+
+  it('exposes one semantic timeline instead of repeating the visual matrix', () => {
+    const container = document.createElement('div');
+    container.innerHTML = renderToStaticMarkup(
+      <TimelineBar
+        data={[outlookBlock]}
+        statuses={['safe']}
+        selectedIndex={0}
+        onSelectIndex={vi.fn()}
+        startIndex={0}
+      />,
+    );
+
+    expect(container.querySelector('.timeline-legend-col')?.getAttribute('aria-hidden')).toBe('true');
+    expect(container.querySelector('.timeline-track')?.getAttribute('aria-hidden')).toBe('true');
+    const visualRows = [...container.querySelectorAll('.meteogram-row')];
+    expect(visualRows).toHaveLength(6);
+    expect(visualRows.every((row) => row.getAttribute('aria-hidden') === 'true')).toBe(true);
+    expect(container.querySelector('.timeline-overlay-grid')?.getAttribute('role')).toBe('listbox');
+    expect(container.querySelector('.timeline-overlay-grid')?.hasAttribute('aria-hidden')).toBe(false);
+  });
 });

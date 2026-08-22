@@ -206,15 +206,16 @@ export function useForecast(daylightOnly: boolean) {
   // hour the app was opened: the timeline's now-marker sat hours in the past
   // and findLaunchWindows kept offering windows that had already closed. The
   // 60s heartbeat is the input, so this now advances on its own.
+  const nowMs = useMemo(() => {
+    // minuteTick is an intentional invalidation signal for the wall clock.
+    void minuteTick;
+    return Date.now();
+  }, [minuteTick]);
   const nowIndex = useMemo(() => {
     const hourly = weatherData?.hourly;
     if (!hourly || hourly.length === 0) return 0;
-    return hourIndexForNow(hourly, Date.now());
-    // minuteTick is not read in the body — it IS the input: the 60s heartbeat
-    // is what makes "now" advance. Without it this memo would never recompute
-    // between refreshes, which is the bug it exists to fix.
-    // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [weatherData, minuteTick]);
+    return hourIndexForNow(hourly, nowMs);
+  }, [weatherData, nowMs]);
 
   // Everything downstream assumes the selection is at or ahead of "now"
   // (WeatherCharts derives a non-negative offset from it). Now that nowIndex
@@ -479,6 +480,7 @@ export function useForecast(daylightOnly: boolean) {
     initialization,
     selectedHourIndex,
     setSelectedHourIndex,
+    nowMs,
     nowIndex,
     refreshForecast,
   };

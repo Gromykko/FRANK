@@ -72,19 +72,36 @@ describe('hourIndexForNow', () => {
 // centre sample as "next hour", which can invert rising/falling.
 // ---------------------------------------------------------------------------
 describe('nextHourTideFor', () => {
-  const row = (tideLevel: number, blockSpanHours?: number) =>
-    ({ time: '2026-08-08T12:00:00Z', tideLevel, ...(blockSpanHours ? { blockSpanHours } : {}) }) as HourlyData;
+  const row = (time: string, tideLevel: number, blockSpanHours?: number) =>
+    ({ time, tideLevel, ...(blockSpanHours ? { blockSpanHours } : {}) }) as HourlyData;
 
   it('returns a true hourly neighbour', () => {
-    expect(nextHourTideFor([row(0.1), row(0.2)], 0)).toBe(0.2);
+    expect(nextHourTideFor([
+      row('2026-08-08T12:00:00Z', 0.1),
+      row('2026-08-08T13:00:00Z', 0.2),
+    ], 0)).toBe(0.2);
   });
 
-  it('refuses a block row: its tide is a centre sample hours away', () => {
-    expect(nextHourTideFor([row(0.1), row(0.2, 6)], 0)).toBeUndefined();
+  it('refuses a timestamp gap even when both rows are nominally hourly', () => {
+    expect(nextHourTideFor([
+      row('2026-08-08T10:00:00Z', 0.1),
+      row('2026-08-08T13:00:00Z', 0.2),
+    ], 0)).toBeUndefined();
+  });
+
+  it('refuses either side of a block: its tide is a centre sample hours away', () => {
+    expect(nextHourTideFor([
+      row('2026-08-08T12:00:00Z', 0.1),
+      row('2026-08-08T13:00:00Z', 0.2, 6),
+    ], 0)).toBeUndefined();
+    expect(nextHourTideFor([
+      row('2026-08-08T12:00:00Z', 0.1, 6),
+      row('2026-08-08T18:00:00Z', 0.2),
+    ], 0)).toBeUndefined();
   });
 
   it('returns undefined at the end of the series', () => {
-    expect(nextHourTideFor([row(0.1)], 0)).toBeUndefined();
+    expect(nextHourTideFor([row('2026-08-08T12:00:00Z', 0.1)], 0)).toBeUndefined();
     expect(nextHourTideFor([], 0)).toBeUndefined();
   });
 });
@@ -104,15 +121,16 @@ describe('block windows with no sun schedule', () => {
     currentSpeed: 0, currentDirection: 0, isDay: true,
     isLowConfidence: true, blockSpanHours: 6,
   } as HourlyData;
+  const closingEndpoint = { ...block, time: '2026-08-08T12:00:00Z' };
 
   it('is refused when Daylight Only is on and no schedule was supplied', () => {
     const settings = { ...DEFAULT_SETTINGS, minDuration: 1, daylightOnly: true } as SafetySettings;
-    expect(findLaunchWindows([block], settings, 0, undefined)).toEqual([]);
+    expect(findLaunchWindows([block, closingEndpoint], settings, 0, undefined)).toEqual([]);
   });
 
   it('is offered when Daylight Only is off, where the schedule is not needed', () => {
     const settings = { ...DEFAULT_SETTINGS, minDuration: 1, daylightOnly: false } as SafetySettings;
-    expect(findLaunchWindows([block], settings, 0, undefined)).toHaveLength(1);
+    expect(findLaunchWindows([block, closingEndpoint], settings, 0, undefined)).toHaveLength(1);
   });
 });
 
@@ -129,6 +147,33 @@ describe('Detailed Graphs disclosure semantics', () => {
     expect(heading).toContain('className={`panel-collapse-header module-head');
     expect(heading).toContain('aria-expanded={showDetailedCharts}');
     expect(heading).not.toContain('<h2');
+  });
+});
+
+describe('Your Limits disclosure semantics', () => {
+  it('does not place its h2 inside an inline span wrapper', () => {
+    const panel = readFileSync(resolve(process.cwd(), 'src/components/SafetyLimitsPanel.tsx'), 'utf8');
+    expect(panel).toContain('<div className="settings-copy">');
+    expect(panel).not.toContain('<span className="settings-copy">');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A saved theme is applied by a blocking, same-origin head script before the
+// React bundle. Because index.html depends on it even offline, the script must
+// stay in the release descriptor and service worker's verified static shell.
+// ---------------------------------------------------------------------------
+describe('pre-paint theme shell contract', () => {
+  it('tracks the external script without weakening script CSP', () => {
+    const index = readFileSync(resolve(process.cwd(), 'index.html'), 'utf8');
+    const serviceWorker = readFileSync(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const vite = readFileSync(resolve(process.cwd(), 'vite.config.ts'), 'utf8');
+
+    expect(index).toContain('<script src="/theme-init.js"></script>');
+    expect(serviceWorker).toContain("'theme-init.js',");
+    expect(vite).toContain('`${APP_BASE}theme-init.js`,');
+    expect(vite).toContain('"script-src \'self\'"');
+    expect(vite).not.toContain('"script-src \'self\' \'unsafe-inline\'"');
   });
 });
 

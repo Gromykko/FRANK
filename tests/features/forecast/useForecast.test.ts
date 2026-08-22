@@ -60,6 +60,23 @@ describe('forecast refresh ordering', () => {
     expect(shouldApplyForecastUpdate(current, newer)).toBe(true);
   });
 
+  it('cannot be poisoned by an implausibly future fetchedAt', () => {
+    const nowMs = Date.parse('2026-08-20T12:00:00.000Z');
+    const poisoned = payload('current', '3000-01-01T00:01:00.000Z', '3000-01-01T00:00:00.000Z');
+    const realWorkerBuild = payload('current', '2026-08-20T11:01:00.000Z', '2026-08-20T11:00:00.000Z');
+
+    expect(shouldApplyForecastUpdate(poisoned, realWorkerBuild, { nowMs })).toBe(true);
+    expect(shouldApplyForecastUpdate(realWorkerBuild, poisoned, { nowMs })).toBe(false);
+  });
+
+  it('still orders genuine builds when the device clock is twelve hours behind', () => {
+    const deviceNowMs = Date.parse('2026-08-19T23:00:00.000Z');
+    const current = payload('current', '2026-08-20T10:01:00.000Z', '2026-08-20T10:00:00.000Z');
+    const newer = payload('current', '2026-08-20T11:01:00.000Z', '2026-08-20T11:00:00.000Z');
+
+    expect(shouldApplyForecastUpdate(current, newer, { nowMs: deviceNowMs })).toBe(true);
+  });
+
   it('treats a model revision as a different authority even when its label is unchanged', () => {
     const previous = payload(
       'current',

@@ -4,6 +4,7 @@ import locationData from '../../src/config/locations.json';
 import type { ForecastLocation } from '../../src/config/locationTypes';
 import { CURRENT_RELEASE } from '../../src/features/forecast/releaseContract';
 import { FORECAST_PAYLOAD_VERSION } from '../../src/features/forecast/types';
+import { buildSunSchedule } from '../../src/features/forecast/sun';
 import type { ForecastData } from '../../worker/domain';
 import { assembledForecastKey } from '../../worker/generation';
 
@@ -15,6 +16,7 @@ const HOUR = '2026-08-20T17:00:00.000Z';
 
 function cachedForecast(location: ForecastLocation, marineRun: string): ForecastData {
   const checkedAt = new Date(NOW - 30 * 60_000).toISOString();
+  const sun = buildSunSchedule([HOUR], location);
   return {
     hourly: [{
       time: HOUR,
@@ -32,12 +34,12 @@ function cachedForecast(location: ForecastLocation, marineRun: string): Forecast
       tideLevel: 0,
       currentSpeed: 0,
       currentDirection: 0,
-      isDay: true,
+      isDay: sun.isDayByTime.get(HOUR) ?? false,
       weatherSource: 'met-locationforecast',
       marineSource: 'dmi-dkss-wam',
     }],
-    sunrise: [],
-    sunset: [],
+    sunrise: sun.sunrise,
+    sunset: sun.sunset,
     warnings: [],
     sources: {
       payloadVersion: FORECAST_PAYLOAD_VERSION,
@@ -71,9 +73,8 @@ function runtime(
 ) {
   const store = new Map<string, string>();
   for (const location of LOCATIONS) {
-    // Horsens and Aarhus already hold the current publication. Vejle is the
-    // first due location in this tick; Kolding is due but remains unvisited
-    // once Vejle receives the provider-wide refusal.
+    // Horsens and Aarhus already hold the current publication. Vejle and
+    // Kolding retain an older run so tests can select either one's rotated tick.
     store.set(
       assembledForecastKey(location),
       JSON.stringify(cachedForecast(
@@ -148,7 +149,7 @@ afterEach(() => {
 });
 
 describe('scheduled DMI retries and location isolation', () => {
-  it('retries in-flight on 429 and allows subsequent locations to independently probe within the tick', async () => {
+  it('opens an event-local circuit on 429 and stops parallel-leg retries', async () => {
     const { env, store } = runtime();
     const calls: string[] = [];
     let vejleAttempts = 0;
@@ -199,18 +200,22 @@ describe('scheduled DMI retries and location isolation', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
+    const vejleTick = NOW + 5 * 60_000;
+    vi.setSystemTime(vejleTick);
     await worker.scheduled(
-      { scheduledTime: NOW } as ScheduledController,
+      { scheduledTime: vejleTick } as ScheduledController,
       env as Env,
       {} as ExecutionContext,
     );
 
     const [horsens, vejle, kolding, aarhus] = LOCATIONS;
     const positionCalls = calls.filter((url) => url.includes('/position?'));
-    // Vejle retried multiple times before falling back, and Kolding was also probed in the same tick!
-    expect(vejleAttempts).toBeGreaterThan(1);
+    // This tick belongs only to Vejle. Water and waves were already in flight
+    // together when the first refusal arrived; the event circuit stops retries.
+    expect(vejleAttempts).toBe(2);
+    expect(positionCalls).toHaveLength(2);
     expect(positionCalls.some((url) =>
-      new URL(url).searchParams.get('coords') === 'POINT(9.659 55.512)')).toBe(true);
+      new URL(url).searchParams.get('coords') === 'POINT(9.659 55.512)')).toBe(false);
 
     expect(forecast(store, horsens).sources.cacheHealth).toMatchObject({
       status: 'current',
@@ -224,7 +229,8 @@ describe('scheduled DMI retries and location isolation', () => {
       degradedSources: ['water', 'waves'],
     });
 
-    // Kolding succeeded and recovered in the very same tick!
+    // Kolding's turn is ten minutes later, so this invocation must not mutate
+    // its cached health in response to Vejle's provider failure.
     expect(forecast(store, kolding).sources.cacheHealth).toMatchObject({
       status: 'current',
     });
@@ -267,7 +273,7 @@ describe('scheduled DMI retries and location isolation', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const nextKoldingFirstTick = NOW + 20 * 60_000;
+    const nextKoldingFirstTick = NOW + 10 * 60_000;
     vi.setSystemTime(nextKoldingFirstTick);
     await worker.scheduled(
       { scheduledTime: nextKoldingFirstTick } as ScheduledController,
@@ -283,5 +289,50 @@ describe('scheduled DMI retries and location isolation', () => {
     expect(recovered).not.toHaveProperty('busyProvider');
     expect(recovered).not.toHaveProperty('degradedSources');
     expect(recovered).not.toHaveProperty('message');
+  });
+
+  it('keeps a recent recovery write throttled on the checked-cache call site', async () => {
+    const allCurrent = new Set(LOCATIONS.map(({ id }) => id));
+    const { env, store, puts } = runtime(allCurrent);
+    const kolding = LOCATIONS.find(({ id }) => id === 'kolding');
+    if (!kolding) throw new Error('Missing Kolding test location');
+
+    const recoveryTick = NOW + 30 * 60_000;
+    const deferred = forecast(store, kolding);
+    deferred.sources.cacheHealth = {
+      ...deferred.sources.cacheHealth,
+      status: 'stale',
+      lastAttemptAt: new Date(recoveryTick - 5 * 60_000).toISOString(),
+      checkedBy: 'cron-deferred',
+      providerBusy: true,
+      busyProvider: 'marine',
+      degradedSources: ['water', 'waves'],
+      message: 'Marine service busy; keeping the last completed forecast.',
+    };
+    store.set(assembledForecastKey(kolding), JSON.stringify(deferred));
+
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/instances')) {
+        return Response.json({ instances: [{ id: NEW_RUN }] });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    }) as typeof fetch;
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    vi.setSystemTime(recoveryTick);
+    await worker.scheduled(
+      { scheduledTime: recoveryTick } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    expect(puts.filter((key) => key === assembledForecastKey(kolding))).toHaveLength(0);
+    expect(forecast(store, kolding).sources.cacheHealth).toMatchObject({
+      status: 'stale',
+      checkedBy: 'cron-deferred',
+    });
   });
 });

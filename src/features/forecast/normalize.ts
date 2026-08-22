@@ -31,6 +31,7 @@ export interface MetTimeseriesEntry {
       details?: {
         air_temperature?: number;
         wind_speed?: number;
+        wind_speed_percentile_90?: number;
         wind_speed_of_gust?: number;
         wind_from_direction?: number;
       };
@@ -64,7 +65,7 @@ const READING_FIELDS = [
   'tempAir', 'precipitation', 'weatherCode', 'windSpeed', 'windDirection', 'windGust',
   'waveHeight', 'waveDirection', 'wavePeriod', 'tempWater', 'tideLevel',
   'currentSpeed', 'currentDirection',
-  'windSpeedMin', 'windSpeedMax', 'windGustMax', 'waveHeightMin', 'waveHeightMax',
+  'windSpeedMin', 'windSpeedMax', 'windSpeedP90', 'windGustMax', 'waveHeightMin', 'waveHeightMax',
   'tideLevelMin', 'tideLevelMax', 'tempWaterMin', 'tempWaterMax',
 ] as const;
 
@@ -211,6 +212,9 @@ export interface MetBlock {
   weatherCode: number;
   tempAir?: number;
   windSpeed?: number;
+  // MET complete-product uncertainty estimate at this instant. It is not a
+  // maximum observed or forecast across spanHours.
+  windSpeedP90?: number;
   windGust?: number;
   windDirection?: number;
   precipitation: number;
@@ -242,6 +246,7 @@ export function mapMetBlocks(data: MetForecastResponse): MetBlock[] {
         weatherCode: metSymbolToWmoCode(symbolCode),
         tempAir: asNumber(instant.air_temperature),
         windSpeed: asNumber(instant.wind_speed),
+        windSpeedP90: asNumber(instant.wind_speed_percentile_90),
         windGust: asNumber(instant.wind_speed_of_gust),
         windDirection: normalizeDegrees(asNumber(instant.wind_from_direction)),
         precipitation: asNumber(period.details?.precipitation_amount) ?? 0,
@@ -321,10 +326,12 @@ export function aggregateBlockMarine(
   };
 }
 
-// A longer-range block row: MET symbol + wind for the period, DMI marine
-// aggregated inside it. Scalar fields carry the decision value (max wind/gust/
-// wave, representative tide, average water temp); *Min/*Max carry the range.
-// Shared so the Worker and client build identical block rows.
+// A longer-range block row: MET symbol + start-instant wind for the period,
+// with DMI marine aggregated inside it. Central wind stays the honest display
+// value; its p90 uncertainty estimate travels separately for conservative
+// safety assessment. Marine scalar fields carry their hazard/representative
+// decision values, and *Min/*Max carry genuine within-block ranges. Shared so
+// the Worker and client build identical block rows.
 export function assembleBlockRow(block: MetBlock, marine: BlockMarine, isDay: boolean): HourlyData {
   const windSpeed = block.windSpeed ?? NO_READING;
   // MET publishes no gust for its 6/12-hourly blocks. Substituting the
@@ -355,6 +362,7 @@ export function assembleBlockRow(block: MetBlock, marine: BlockMarine, isDay: bo
     // Do not present ensemble percentiles as a within-block min–max range.
     windSpeedMin: windSpeed,
     windSpeedMax: windSpeed,
+    windSpeedP90: block.windSpeedP90,
     windGustMax: windGust,
     waveHeightMin: marine.waveHeightMin,
     waveHeightMax: marine.waveHeightMax,

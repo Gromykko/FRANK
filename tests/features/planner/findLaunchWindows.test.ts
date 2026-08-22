@@ -114,7 +114,8 @@ describe('findLaunchWindows', () => {
   });
 
   it('produces a low-confidence window for a safe longer-range block', () => {
-    // 3 safe hourly samples (one exact window), then one safe 6-hour block.
+    // 3 safe hourly samples (one exact window), then a safe 6-hour interval
+    // whose start and closing endpoint are both independently safe.
     const hourly = generateData(3);
     const block: HourlyData = {
       ...baseData,
@@ -122,10 +123,14 @@ describe('findLaunchWindows', () => {
       isLowConfidence: true,
       blockSpanHours: 6,
     };
+    const closingEndpoint: HourlyData = {
+      ...block,
+      time: '2026-07-11T12:00:00Z',
+    };
     // Daylight Only needs a sun schedule to judge a block; give it an all-day
     // one so this test stays about low-confidence flagging.
     const allDaySun = { sunrise: ['2026-07-11T00:00:00Z'], sunset: ['2026-07-11T23:59:00Z'] };
-    const windows = findLaunchWindows([...hourly, block], baseSettings, 0, allDaySun);
+    const windows = findLaunchWindows([...hourly, block, closingEndpoint], baseSettings, 0, allDaySun);
 
     const lowConf = windows.filter((w) => w.lowConfidence);
     expect(lowConf).toHaveLength(1);
@@ -162,10 +167,8 @@ describe('findLaunchWindows', () => {
   });
 });
 
-// Location-clock time strings: the planner splits days at the LOCATION's
-// midnight (isSameLocationDay, Europe/Copenhagen), so fixtures must carry an
-// explicit +02:00 (CEST, July) offset — naive strings parse as machine-local
-// time and shift the day boundary on any machine outside GMT+2 (e.g. UTC CI).
+// Location-clock fixtures carry an explicit +02:00 (CEST, July) offset so a
+// midnight-crossing invariant means the same thing on any CI machine.
 const atLocalTimes = (times: string[], overrides: Partial<HourlyData> = {}): HourlyData[] =>
   times.map((time) => ({ ...baseData, ...overrides, time: `${time}+02:00` }));
 
@@ -185,16 +188,15 @@ describe('findLaunchWindows — endpoint rule and window shaping', () => {
     expect(windows).toMatchObject([{ startIndex: 0, endIndex: 3, duration: 3 }]);
   });
 
-  it('splits windows at local midnight', () => {
+  it('keeps a safe 22:00–02:00 run continuous across local midnight', () => {
     const data = atLocalTimes([
-      '2026-07-08T21:00:00', '2026-07-08T22:00:00', '2026-07-08T23:00:00',
+      '2026-07-08T22:00:00', '2026-07-08T23:00:00',
       '2026-07-09T00:00:00', '2026-07-09T01:00:00', '2026-07-09T02:00:00',
     ]);
-    const settings = { ...baseSettings, minDuration: 1 } as SafetySettings;
+    const settings = { ...baseSettings, minDuration: 4, daylightOnly: false } as SafetySettings;
     const windows = findLaunchWindows(data, settings, 0);
     expect(windows).toMatchObject([
-      { startIndex: 0, endIndex: 2, duration: 2 },
-      { startIndex: 3, endIndex: 5, duration: 2 },
+      { startIndex: 0, endIndex: 4, duration: 4 },
     ]);
   });
 
@@ -202,6 +204,20 @@ describe('findLaunchWindows — endpoint rule and window shaping', () => {
     const settings = { ...baseSettings, minDuration: 1 } as SafetySettings;
     const windows = findLaunchWindows(generateData(5), settings, 2);
     expect(windows).toMatchObject([{ startIndex: 2, endIndex: 4, duration: 2 }]);
+  });
+
+  it('counts only the actual time remaining in the current hour', () => {
+    const nowMs = Date.parse('2026-07-08T12:59:00Z');
+    const settings1h = { ...baseSettings, minDuration: 1 } as SafetySettings;
+    const windows = findLaunchWindows(generateData(3), settings1h, 0, undefined, nowMs);
+
+    expect(windows).toHaveLength(1);
+    expect(windows[0].effectiveStartMs).toBe(nowMs);
+    expect(windows[0].duration).toBeCloseTo(61 / 60, 10);
+
+    // Nominally 12:00-14:00 looked like two hours; at 12:59 only 61 minutes
+    // remain, so it cannot clear a two-hour minimum.
+    expect(findLaunchWindows(generateData(3), baseSettings, 0, undefined, nowMs)).toEqual([]);
   });
 
   it('caps the result at 12 windows', () => {
@@ -255,7 +271,8 @@ describe('findLaunchWindows — tide preference boundaries', () => {
       blockSpanHours: 6,
       tideLevel: -0.2,
     };
-    const windows = findLaunchWindows([block], { ...baseSettings, tidePreference: 'high' } as SafetySettings, 0);
+    const closingEndpoint = { ...block, time: '2026-07-11T12:00:00' };
+    const windows = findLaunchWindows([block, closingEndpoint], { ...baseSettings, tidePreference: 'high' } as SafetySettings, 0);
     expect(windows).toHaveLength(0);
   });
 });
@@ -274,7 +291,11 @@ describe('findLaunchWindows — longer-range block windows', () => {
   const allDaySun = { sunrise: ['2026-07-11T00:00:00'], sunset: ['2026-07-11T23:59:00'] };
 
   it('a run of two safe blocks sums blockSpanHours into the duration', () => {
-    const blocks = [makeBlock('2026-07-11T06:00:00'), makeBlock('2026-07-11T12:00:00')];
+    const blocks = [
+      makeBlock('2026-07-11T06:00:00'),
+      makeBlock('2026-07-11T12:00:00'),
+      makeBlock('2026-07-11T18:00:00'),
+    ];
     const windows = findLaunchWindows(blocks, baseSettings, 0, allDaySun);
     expect(windows).toMatchObject([
       { startIndex: 0, endIndex: 1, duration: 12, lowConfidence: true },
@@ -283,22 +304,108 @@ describe('findLaunchWindows — longer-range block windows', () => {
 
   it('minDuration filters block windows by their summed span', () => {
     const settings6h = { ...baseSettings, minDuration: 6 } as SafetySettings;
-    // A 6-hour block exactly meets a 6-hour minimum.
-    expect(findLaunchWindows([makeBlock('2026-07-11T06:00:00')], settings6h, 0, allDaySun)).toHaveLength(1);
+    // A covered 6-hour interval exactly meets a 6-hour minimum.
+    expect(findLaunchWindows([
+      makeBlock('2026-07-11T06:00:00'),
+      makeBlock('2026-07-11T12:00:00'),
+    ], settings6h, 0, allDaySun)).toHaveLength(1);
     // A shorter span is rejected by the same bar hourly windows clear.
     expect(
-      findLaunchWindows([makeBlock('2026-07-11T06:00:00', { blockSpanHours: 4 })], settings6h, 0, allDaySun)
+      findLaunchWindows([
+        makeBlock('2026-07-11T06:00:00', { blockSpanHours: 4 }),
+        makeBlock('2026-07-11T10:00:00', { blockSpanHours: 4 }),
+      ], settings6h, 0, allDaySun)
     ).toHaveLength(0);
+  });
+
+  it('withholds an unclosed block and a block closed by an unsafe endpoint', () => {
+    const start = makeBlock('2026-07-11T06:00:00');
+    const unsafeEndpoint = makeBlock('2026-07-11T12:00:00', { windSpeed: 12 });
+
+    expect(findLaunchWindows([start], { ...baseSettings, daylightOnly: false }, 0)).toEqual([]);
+    expect(findLaunchWindows([start, unsafeEndpoint], { ...baseSettings, daylightOnly: false }, 0)).toEqual([]);
+  });
+
+  it('withholds a block when MET p90 reaches the wind limit although central wind is safe', () => {
+    const settings = { ...baseSettings, daylightOnly: false } as SafetySettings;
+    const centralOnly = [
+      makeBlock('2026-07-11T06:00:00', { windSpeed: 4.3 }),
+      makeBlock('2026-07-11T12:00:00', { windSpeed: 4.3 }),
+    ];
+    expect(findLaunchWindows(centralOnly, settings, 0)).toHaveLength(1);
+
+    const uncertain = centralOnly.map((row, index) => index === 0
+      ? { ...row, windSpeedP90: 5.0, windGust: Number.NaN }
+      : row);
+    expect(findLaunchWindows(uncertain, settings, 0)).toEqual([]);
+  });
+
+  it('requires the closing endpoint at the exact block boundary', () => {
+    const start = makeBlock('2026-07-11T06:00:00');
+    const lateEndpoint = makeBlock('2026-07-11T12:20:00');
+
+    expect(findLaunchWindows(
+      [start, lateEndpoint],
+      { ...baseSettings, daylightOnly: false },
+      0,
+    )).toEqual([]);
+  });
+
+  it('keeps contiguous outlook intervals continuous across local midnight', () => {
+    const blocks = [
+      makeBlock('2026-07-08T18:00:00+02:00'),
+      makeBlock('2026-07-09T00:00:00+02:00'),
+      makeBlock('2026-07-09T06:00:00+02:00'),
+    ];
+    const settings = { ...baseSettings, minDuration: 12, daylightOnly: false } as SafetySettings;
+
+    expect(findLaunchWindows(blocks, settings, 0)).toMatchObject([
+      { startIndex: 0, endIndex: 1, duration: 12, lowConfidence: true },
+    ]);
+  });
+
+  it('fails closed on missing or invalid tide preference at the block boundary', () => {
+    const blocks = [
+      makeBlock('2026-07-11T06:00:00'),
+      makeBlock('2026-07-11T12:00:00'),
+    ];
+    const missing = { ...baseSettings, daylightOnly: false, tidePreference: undefined } as unknown as SafetySettings;
+    const invalid = { ...baseSettings, daylightOnly: false, tidePreference: 'surging' } as unknown as SafetySettings;
+
+    expect(findLaunchWindows(blocks, missing, 0)).toEqual([]);
+    expect(findLaunchWindows(blocks, invalid, 0)).toEqual([]);
+  });
+
+  it('fails closed on missing long-range tide readings when a preference is active', () => {
+    const blocks = [
+      makeBlock('2026-07-11T06:00:00', { tideLevel: Number.NaN }),
+      makeBlock('2026-07-11T12:00:00', { tideLevel: Number.NaN }),
+    ];
+    for (const tidePreference of ['high', 'low', 'incoming'] as const) {
+      const settings = { ...baseSettings, daylightOnly: false, tidePreference } as SafetySettings;
+      expect(findLaunchWindows(blocks, settings, 0), tidePreference).toEqual([]);
+    }
+    expect(findLaunchWindows(
+      blocks,
+      { ...baseSettings, daylightOnly: false, tidePreference: 'any' },
+      0,
+    )).toHaveLength(1);
   });
 
   it('withholds block windows entirely when Daylight Only is on but no sun schedule is known', () => {
     // Without sunrise/sunset there is no way to tell how much of a 6-hour block
     // is daylight, and a block is never itself marked as night — so offering it
     // could recommend a launch window that is entirely in the dark.
-    expect(findLaunchWindows([makeBlock('2026-07-11T00:00:00')], baseSettings, 0)).toHaveLength(0);
+    expect(findLaunchWindows([
+      makeBlock('2026-07-11T00:00:00'),
+      makeBlock('2026-07-11T06:00:00'),
+    ], baseSettings, 0)).toHaveLength(0);
     // With the rule off, the same block is offered as before.
     const off = { ...baseSettings, daylightOnly: false } as SafetySettings;
-    expect(findLaunchWindows([makeBlock('2026-07-11T00:00:00')], off, 0)).toHaveLength(1);
+    expect(findLaunchWindows([
+      makeBlock('2026-07-11T00:00:00'),
+      makeBlock('2026-07-11T06:00:00'),
+    ], off, 0)).toHaveLength(1);
   });
 
   describe('daylight filtering with a sun schedule', () => {
@@ -309,7 +416,10 @@ describe('findLaunchWindows — longer-range block windows', () => {
 
     it('drops a block run with zero daylight overlap', () => {
       // 00:00-06:00, entirely before the 08:00 sunrise.
-      const windows = findLaunchWindows([makeBlock('2026-07-11T00:00:00')], baseSettings, 0, sun);
+      const windows = findLaunchWindows([
+        makeBlock('2026-07-11T00:00:00'),
+        makeBlock('2026-07-11T06:00:00'),
+      ], baseSettings, 0, sun);
       expect(windows).toHaveLength(0);
     });
 
@@ -322,21 +432,27 @@ describe('findLaunchWindows — longer-range block windows', () => {
       expect(analyzeSafetyConditions(block, baseSettings, undefined, undefined, {
         blockDaylight: { sun },
       }).rating).toBe('caution');
-      const windows = findLaunchWindows([block], baseSettings, 0, sun);
+      const windows = findLaunchWindows([block, makeBlock('2026-07-11T12:00:00')], baseSettings, 0, sun);
       expect(windows).toHaveLength(1);
       expect(windows[0].daylightPartial).toBe(true);
     });
 
     it('a fully-daylit block run carries no daylightPartial flag', () => {
       // 09:00-15:00, entirely inside 08:00-20:00.
-      const windows = findLaunchWindows([makeBlock('2026-07-11T09:00:00')], baseSettings, 0, sun);
+      const windows = findLaunchWindows([
+        makeBlock('2026-07-11T09:00:00'),
+        makeBlock('2026-07-11T15:00:00'),
+      ], baseSettings, 0, sun);
       expect(windows).toHaveLength(1);
       expect(windows[0].daylightPartial).toBeUndefined();
     });
 
     it('daylightOnly off keeps night blocks and never flags them', () => {
       const settings = { ...baseSettings, daylightOnly: false } as SafetySettings;
-      const windows = findLaunchWindows([makeBlock('2026-07-11T00:00:00')], settings, 0, sun);
+      const windows = findLaunchWindows([
+        makeBlock('2026-07-11T00:00:00'),
+        makeBlock('2026-07-11T06:00:00'),
+      ], settings, 0, sun);
       expect(windows).toHaveLength(1);
       expect(windows[0].daylightPartial).toBeUndefined();
     });
@@ -390,13 +506,20 @@ describe('outlook blocks under Daylight Only', () => {
     blockSpanHours: 6,
   };
   const sun = { sunrise: ['2026-10-04T05:28:00Z'], sunset: ['2026-10-04T16:55:00Z'] };
+  const withClosingEndpoint = (block: HourlyData): HourlyData[] => [
+    block,
+    {
+      ...block,
+      time: new Date(Date.parse(block.time) + (block.blockSpanHours ?? 6) * 3_600_000).toISOString(),
+    },
+  ];
 
   it('refuses a block whose daylight is a sliver of its span', () => {
     // Only 07:00-08:00 local is daylight, and 07:00 is before sunrise, so the
     // paddleable slice is empty. Offering 5h20m of darkness under the setting
     // that exists to prevent it is the failure being guarded here.
     const settings = { ...baseSettings, minDuration: 2, daylightOnly: true } as SafetySettings;
-    expect(findLaunchWindows([nightBlock], settings, 0, sun)).toEqual([]);
+    expect(findLaunchWindows(withClosingEndpoint(nightBlock), settings, 0, sun)).toEqual([]);
   });
 
   it('applies minDuration to the paddleable hours, not the nominal span', () => {
@@ -404,14 +527,14 @@ describe('outlook blocks under Daylight Only', () => {
     // marks at all. Even minDuration 1 must not produce a window.
     const eveningBlock = { ...nightBlock, time: '2026-10-04T18:00:00Z' };
     const settings = { ...baseSettings, minDuration: 1, daylightOnly: true } as SafetySettings;
-    expect(findLaunchWindows([eveningBlock], settings, 0, sun)).toEqual([]);
+    expect(findLaunchWindows(withClosingEndpoint(eveningBlock), settings, 0, sun)).toEqual([]);
   });
 
   it('reports a partly-daylit block as its daylight slice, and the slice is what duration counts', () => {
     // The 06Z block covers 08:00-14:00 local, fully inside 07:28-18:55.
     const dayBlock = { ...nightBlock, time: '2026-10-04T06:00:00Z' };
     const settings = { ...baseSettings, minDuration: 2, daylightOnly: true } as SafetySettings;
-    const windows = findLaunchWindows([dayBlock], settings, 0, sun);
+    const windows = findLaunchWindows(withClosingEndpoint(dayBlock), settings, 0, sun);
     expect(windows).toHaveLength(1);
     // Fully daylit: the whole span counts, and no slice is stored.
     expect(windows[0]).toMatchObject({ duration: 6, lowConfidence: true });
@@ -423,7 +546,7 @@ describe('outlook blocks under Daylight Only', () => {
     // hour is NOT wholly daylight, so the display must stop at 18:00.
     const eveningBlock = { ...nightBlock, time: '2026-10-04T12:00:00Z' };
     const settings = { ...baseSettings, minDuration: 2, daylightOnly: true } as SafetySettings;
-    const windows = findLaunchWindows([eveningBlock], settings, 0, sun);
+    const windows = findLaunchWindows(withClosingEndpoint(eveningBlock), settings, 0, sun);
     expect(windows).toHaveLength(1);
     expect(windows[0].daylightPartial).toBe(true);
     // 14:00 through 18:00 local = 4 complete daylight hours out of 6.
@@ -435,12 +558,12 @@ describe('outlook blocks under Daylight Only', () => {
   it('applies minDuration after excluding the hour that crosses sunset', () => {
     const eveningBlock = { ...nightBlock, time: '2026-10-04T12:00:00Z' };
     const settings = { ...baseSettings, minDuration: 5, daylightOnly: true } as SafetySettings;
-    expect(findLaunchWindows([eveningBlock], settings, 0, sun)).toEqual([]);
+    expect(findLaunchWindows(withClosingEndpoint(eveningBlock), settings, 0, sun)).toEqual([]);
   });
 
   it('daylightOnly off still offers the whole block', () => {
     const settings = { ...baseSettings, minDuration: 2, daylightOnly: false } as SafetySettings;
-    const windows = findLaunchWindows([nightBlock], settings, 0, sun);
+    const windows = findLaunchWindows(withClosingEndpoint(nightBlock), settings, 0, sun);
     expect(windows).toHaveLength(1);
     expect(windows[0].duration).toBe(6);
   });

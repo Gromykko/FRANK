@@ -27,6 +27,7 @@ export const FORECAST_SEMANTIC_INPUT_FILES = Object.freeze([
   'src/features/forecast/providerUrls.ts',
   'src/features/forecast/releaseContract.ts',
   'src/features/forecast/sun.ts',
+  'src/features/forecast/temporalPolicy.ts',
   'src/features/forecast/types.ts',
   'src/features/forecast/validatePayload.ts',
   'src/features/forecast/weatherCodes.ts',

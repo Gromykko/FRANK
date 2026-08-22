@@ -122,6 +122,26 @@ describe('warningsOverlapping', () => {
 });
 
 describe('parseMeteoalarmFeed edge cases', () => {
+  it('extracts namespaced CDATA as inert text, including title and literal markup', () => {
+    const xml = `<feed xmlns:wx="urn:test" xmlns:atom="urn:atom"><atom:entry xml:lang="en">
+      <wx:geocode><wx:valueName><![CDATA[EMMA_ID]]></wx:valueName><wx:value><![CDATA[DK004]]></wx:value></wx:geocode>
+      <wx:areaDesc><![CDATA[Østjylland & <coast>]]></wx:areaDesc>
+      <wx:event><![CDATA[red Storm surge <coast>]]></wx:event>
+      <wx:expires><![CDATA[2026-07-12T20:00:00+00:00]]></wx:expires>
+      <wx:effective><![CDATA[2026-07-12T06:00:00+00:00]]></wx:effective>
+      <wx:severity><![CDATA[Extreme]]></wx:severity>
+      <title type="text"><![CDATA[<img src=x onerror=alert(1)> &amp; warning]]></title>
+    </atom:entry></feed>`;
+
+    expect(parseMeteoalarmFeed(xml, 'DK004', NOW)).toMatchObject([{
+      event: 'Storm surge <coast>',
+      colour: 'red',
+      severity: 'Extreme',
+      areaDesc: 'Østjylland & <coast>',
+      title: '<img src=x onerror=alert(1)> &amp; warning',
+    }]);
+  });
+
   it('matches the target region even when it is not the first EMMA_ID in the entry', () => {
     const multi = `<feed xmlns:cap="x"><entry>
       <cap:geocode><valueName>EMMA_ID</valueName><value>DK001</value></cap:geocode>

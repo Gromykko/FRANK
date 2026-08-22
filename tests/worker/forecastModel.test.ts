@@ -8,6 +8,7 @@ import {
   mapMetPayload,
   degradedSourcesAfterProbe,
   heldMarineFallback,
+  isMetRawCache,
   isMarineRunWithinFallbackAge,
   isTransientProviderFailure,
   marineProbeDecision,
@@ -173,6 +174,19 @@ describe('generation-owned forecast model', () => {
     expect(isTransientProviderFailure({ status: 404 })).toBe(false);
     expect(isTransientProviderFailure({ networkTypeError: true })).toBe(true);
     expect(isTransientProviderFailure({ errorName: 'SyntaxError' })).toBe(false);
+  });
+
+  it('rejects a future raw MET Last-Modified before it can drive perpetual 304s', () => {
+    const retained = (lastModified: string) => ({
+      locationId: LOCATION.id,
+      forecastConfigRevision: LOCATION.forecastConfigRevision,
+      lastModified,
+      body: { properties: { timeseries: [] } },
+    });
+
+    expect(isMetRawCache(retained('Thu, 20 Aug 2026 12:35:00 GMT'), LOCATION, NOW)).toBe(true);
+    expect(isMetRawCache(retained('Thu, 20 Aug 2026 12:35:01 GMT'), LOCATION, NOW)).toBe(false);
+    expect(isMetRawCache(retained('Fri, 01 Jan 3000 00:00:00 GMT'), LOCATION, NOW)).toBe(false);
   });
 
   it('uses the official publication window and retains only active warnings', () => {

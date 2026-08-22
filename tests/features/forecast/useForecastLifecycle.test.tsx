@@ -5,6 +5,7 @@ import { CURRENT_LOCATION } from '../../../src/config/locations';
 import { FORECAST_PAYLOAD_VERSION } from '../../../src/features/forecast/types';
 import type { WeatherData } from '../../../src/features/forecast/types';
 import { saveCachedWeatherData } from '../../../src/features/forecast/cache';
+import { buildSunSchedule } from '../../../src/features/forecast/sun';
 import {
   CURRENT_RELEASE,
   FORECAST_RELEASE_HEADERS,
@@ -20,9 +21,11 @@ let latest: ReturnType<typeof useForecast> | undefined;
 function forecast(): WeatherData {
   const now = Date.now();
   const fetchedAt = new Date(now - 60_000).toISOString();
+  const forecastTime = new Date(now + 60 * 60_000).toISOString();
+  const sun = buildSunSchedule([forecastTime], CURRENT_LOCATION);
   return {
     hourly: [{
-      time: new Date(now + 60 * 60_000).toISOString(),
+      time: forecastTime,
       tempAir: 17,
       precipitation: 0,
       symbolCode: 'clearsky_day',
@@ -37,10 +40,10 @@ function forecast(): WeatherData {
       tideLevel: 0,
       currentSpeed: 0,
       currentDirection: 0,
-      isDay: true,
+      isDay: sun.isDayByTime.get(forecastTime) ?? false,
     }],
-    sunrise: [],
-    sunset: [],
+    sunrise: sun.sunrise,
+    sunset: sun.sunset,
     sources: {
       payloadVersion: FORECAST_PAYLOAD_VERSION,
       release: { ...CURRENT_RELEASE },

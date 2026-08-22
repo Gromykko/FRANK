@@ -2659,8 +2659,10 @@ button.legend-toggle.is-on {
   min-width: 0;
   min-height: 58px;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 2px;
   overflow: hidden;
   padding: 8px 12px;
   border-radius: 10px;
@@ -2675,33 +2677,34 @@ button.legend-toggle.is-on {
 }
 
 .frank-display-text {
-  display: inline-block;
-  white-space: nowrap;
+  display: block;
+  max-width: 100%;
+  font-size: 18px;
+  line-height: 1;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  opacity: 0.82;
   text-shadow: 0 0 8px color-mix(in srgb, currentColor 60%, transparent);
 }
 
-/* Hidden twin used to measure the un-padded text width for the marquee */
-.frank-display-measure {
-  position: absolute;
-  visibility: hidden;
-  white-space: nowrap;
+.frank-display-verdict {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 0.9;
+  text-transform: uppercase;
+  text-shadow: 0 0 8px color-mix(in srgb, currentColor 60%, transparent);
 }
 
-/* A phrase that overflows becomes a slow walking line: enters from the right
-   edge (padding-left: 100% of the display) and exits fully left (-100% of its
-   own width). Duration is set inline, proportional to the travel distance. */
-.frank-display.is-marquee {
-  justify-content: flex-start;
-}
-
-.frank-display.is-marquee .frank-display-text {
-  padding-left: 100%;
-  animation: frank-marquee 12s linear infinite;
-  will-change: transform;
-}
-
-@keyframes frank-marquee {
-  to { transform: translateX(-100%); }
+.frank-display-subtitle {
+  max-width: 100%;
+  font-family: var(--font-sans);
+  font-size: var(--text-instrument);
+  line-height: 1.15;
+  letter-spacing: 0.02em;
+  text-align: center;
+  overflow-wrap: anywhere;
+  opacity: 0.9;
 }
 
 /* Button cluster column: centered in the same band as the CRT and display. */
@@ -3117,15 +3120,16 @@ button.legend-toggle.is-on {
   }
 
   .frank-device-columns {
-    column-gap: 12px;
-    /* Pin the left column at the old 72px CRT footprint even though the CRT
-       itself shrank to 64px — otherwise the seams and the phrase display sit
-       visibly left of the header's centre. */
-    grid-template-columns: minmax(72px, auto) minmax(0, 1fr) auto;
+    grid-template-columns: 64px minmax(0, 1fr);
+    grid-template-areas:
+      'display display'
+      'crt     actions'
+      'name    location';
+    column-gap: 16px;
   }
 
-  /* Slightly smaller CRT on phones: every saved pixel goes to the phrase
-     display, which is squeezed between the CRT and the button column. */
+  /* Slightly smaller CRT keeps the second instrument row balanced beneath the
+     full-width verdict display. */
   .frank-crt {
     width: 64px;
     height: 64px;
@@ -3137,14 +3141,29 @@ button.legend-toggle.is-on {
   }
 
   .frank-cell-display {
-    padding-left: 12px;
-    padding-right: 12px;
+    padding: 0 0 10px;
+    border-right: 0;
+    border-bottom: 1px solid var(--frank-housing-edge);
+    border-left: 0;
   }
 
   .frank-display {
-    min-height: 56px;
+    min-height: 76px;
     padding: 6px 10px;
-    font-size: 21px;
+  }
+
+  .frank-actions {
+    justify-self: end;
+    align-self: center;
+  }
+
+  .frank-device .header-btn-cluster {
+    width: auto;
+    flex-wrap: nowrap;
+  }
+
+  .frank-location {
+    justify-self: end;
   }
 
   /* Four uppercase labels across four 1fr tracks: wide tracking made
@@ -3544,39 +3563,7 @@ button.legend-toggle.is-on {
   display: block;
 }
 
-/* The phrase CRT is decorative personality, not the safety assessment. On
-   legacy 320–384px phones it collapsed to a narrow slit, so remove that middle
-   column and let the face/actions remain useful instead of showing fragments. */
 @media (max-width: 384px) {
-  .frank-device-columns {
-    grid-template-columns: 64px minmax(0, 1fr);
-    grid-template-areas:
-      'crt  actions'
-      'name location';
-    column-gap: 16px;
-  }
-
-  .frank-cell-display {
-    display: none;
-  }
-
-  /* The triangular cluster wastes most of the instrument face on a 320px
-     phone. Keep the three 44px touch targets, but arrange them as one compact
-     toolbar opposite the face so both sides share the same visual centre. */
-  .frank-actions {
-    justify-self: end;
-    align-self: center;
-  }
-
-  .frank-device .header-btn-cluster {
-    width: auto;
-    flex-wrap: nowrap;
-  }
-
-  .frank-location {
-    justify-self: end;
-  }
-
   .snapshot-grid {
     gap: 10px;
   }
@@ -3641,19 +3628,4 @@ button.legend-toggle.is-on {
     animation: none !important;
   }
 
-  /* Killing the marquee animation isn't enough: the text is staged at
-     padding-left:100% (off the right edge), so without the walk it would sit
-     invisible. Reset the offset so the phrase's start shows (clipped at the
-     edge, but readable) instead of a blank display. */
-  .frank-display.is-marquee .frank-display-text {
-    animation: none !important;
-    padding-left: 0 !important;
-  }
-}
-
-/* WCAG 2.2.2 Pause/Stop/Hide: the looping marquee can be paused by
-   pointing at it or focusing anything in the display */
-.frank-display.is-marquee:hover .frank-display-text,
-.frank-display.is-marquee:focus-within .frank-display-text {
-  animation-play-state: paused;
 }

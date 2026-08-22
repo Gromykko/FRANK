@@ -96,6 +96,9 @@ describe('ConditionsSnapshot', () => {
         data={{
           ...baseData,
           blockSpanHours: 6,
+          windSpeed: 4.3,
+          windSpeedP90: 5.0,
+          windGust: Number.NaN,
           waveHeightMin: 0.12,
           waveHeightMax: 0.25,
           tempWaterMin: 17.4,
@@ -115,6 +118,12 @@ describe('ConditionsSnapshot', () => {
     expect(container.querySelector('.snapshot-grid')?.textContent).toContain('17.4–18.1°C');
     expect(container.querySelector('.snapshot-grid')?.textContent).toContain('-31 to +39 cm');
     expect(container.querySelector('.snapshot-sun')?.textContent).toContain('05.45');
+    expect(container.querySelector('.snapshot-wind > .sr-only')?.textContent)
+      .toBe('4.3 m/s, gusts –');
+    expect(container.querySelector('.snapshot-lowconf-note')?.textContent)
+      .toContain('90th-percentile wind at start: 5.0 m/s');
+    expect(container.querySelector('.snapshot-lowconf-note')?.textContent)
+      .not.toContain('maximum');
   });
 
   it('does not turn a whole outlook period into night styling from its start mark', () => {
@@ -137,5 +146,20 @@ describe('ConditionsSnapshot', () => {
     const icon = container.querySelector('.weather-widget-icon');
     expect(icon?.classList.contains('sun-spin')).toBe(true);
     expect(icon?.classList.contains('moon-pulse')).toBe(false);
+  });
+
+  it('renders an unknown finite WMO code as unavailable rather than sunny', () => {
+    const container = document.createElement('div');
+    container.innerHTML = renderToStaticMarkup(
+      <ConditionsSnapshot
+        {...props}
+        weatherDesc="Unknown"
+        data={{ ...baseData, weatherCode: 4 }}
+      />,
+    );
+
+    const icon = container.querySelector('.weather-widget-icon');
+    expect(icon?.classList.contains('sun-spin')).toBe(false);
+    expect(icon?.querySelector('.lucide-cloud-off')).not.toBeNull();
   });
 });

@@ -254,6 +254,12 @@ export const da: Record<string, string> = {
     '{0} vind ({1}°) er over dit sikre loft på {2} m/s for denne retning.',
   'Wind-against-water-level conflict: wind opposes {0} water level. Expect steeper chop.':
     'Vind mod vandstand: vinden går imod {0} vandstand. Forvent mere krap sø.',
+  "MET outlook uncertainty: the 90th-percentile wind at this block's start is {0} m/s ({1}), versus the central estimate of {2}. It reaches the applicable {3} m/s wind limit.":
+    'MET-usikkerhed i langtidsudsigten: 90-percentilen for vind ved blokkens start er {0} m/s ({1}) mod det centrale estimat på {2}. Den når den gældende vindgrænse på {3} m/s.',
+  "MET outlook uncertainty for {0} wind ({1}°): the 90th-percentile estimate at this block's start is {2} m/s, versus the central estimate of {3}. It reaches this direction's {4} m/s limit.":
+    'MET-usikkerhed for {0} vind ({1}°): 90-percentilen ved blokkens start er {2} m/s mod det centrale estimat på {3}. Den når denne retnings grænse på {4} m/s.',
+  "Wind-against-water-level conflict: MET's 90th-percentile wind at this block's start opposes {0} water level. Expect steeper chop.":
+    'Vind mod vandstand: METs 90-percentil for vind ved blokkens start går imod {0} vandstand. Forvent mere krap sø.',
   "Water temperature: {0}°C — colder than your danger limit of {1}°C. You'd really want a drysuit or heavy thermals for this.":
     'Vandtemperatur: {0}°C — koldere end din faregrænse på {1}°C. Her vil du virkelig ønske dig en tørdragt eller tykt termotøj.',
   'Water temperature: {0}°C — under your safe limit of {1}°C. Worth layering up.':
@@ -395,6 +401,7 @@ export const da: Record<string, string> = {
   'Wind from {0}. The arrow points downwind (where the wind is heading).':
     'Vind fra {0}. Pilen peger med vinden (derhen hvor vinden blæser).',
   'Long range outlook · more uncertain forecast': 'Langtidsudsigt · mere usikker prognose',
+  '90th-percentile wind at start: {0} m/s': '90-percentil for vind ved start: {0} m/s',
   'Overall rating: {0}.': 'Samlet vurdering: {0}.',
   'Conditions for {0}:': 'Forhold for {0}:',
 
@@ -434,10 +441,13 @@ export const da: Record<string, string> = {
   'Forecast built {0}.': 'Prognose bygget {0}.',
   '{0} hr': '{0} time',
   '{0} hrs': '{0} timer',
+  '{0} hr {1} min': '{0} time {1} min',
+  '{0} hrs {1} min': '{0} timer {1} min',
   'outlook': 'udsigt',
   'Outlook window, approximately {0}:00 to {1}:00 — more uncertain forecast':
     'Udsigtsvindue, cirka {0}:00 til {1}:00 — mere usikker prognose',
   'Launch window {0}:00 to {1}:00, {2}': 'Rovindue {0}:00 til {1}:00, {2}',
+  'Launch window {0} to {1}, {2}': 'Rovindue {0} til {1}, {2}',
   ', partly outside daylight': ', delvist uden for dagslys',
   'no launch windows': 'ingen rovinduer',
   'Copy the launch window details:': 'Kopiér rovinduets detaljer:',

@@ -21,6 +21,10 @@ import {
   MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
 } from '../src/features/forecast/releaseContract';
 import { buildSunSchedule } from '../src/features/forecast/sun';
+import {
+  FORECAST_SERVER_CLOCK_LEAD_TOLERANCE_MS,
+  isPlausibleSourceTimestamp,
+} from '../src/features/forecast/temporalPolicy';
 import type { SeriesPoint, WeatherWarning } from '../src/features/forecast/types';
 import type {
   BusyProvider,
@@ -94,11 +98,21 @@ export function isMetForecastResponse(value: unknown): value is MetForecastRespo
 export function isMetRawCache(
   value: unknown,
   location: Pick<ForecastLocation, 'id' | 'forecastConfigRevision'>,
+  nowMs = Date.now(),
 ): value is MetRawCache {
   return isRecord(value)
     && value.locationId === location.id
     && value.forecastConfigRevision === location.forecastConfigRevision
     && typeof value.lastModified === 'string'
+    // This stamp is copied verbatim into If-Modified-Since. A year-3000 KV
+    // poison could otherwise elicit perpetual 304s and prevent a real MET body
+    // from replacing it. Cloudflare's clock is authoritative, with only a
+    // small distributed-system allowance.
+    && isPlausibleSourceTimestamp(
+      Date.parse(value.lastModified),
+      nowMs,
+      FORECAST_SERVER_CLOCK_LEAD_TOLERANCE_MS,
+    )
     && isMetForecastResponse(value.body);
 }
 

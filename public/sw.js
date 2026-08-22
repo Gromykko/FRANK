@@ -20,6 +20,7 @@ const ACTIVATION_WAIT_MS = 2_000;
 const MATCH = { ignoreVary: true };
 
 const STATIC_SHELL_PATHS = [
+  'theme-init.js',
   'manifest.json',
   'favicon.svg',
   'icon-192.png',
@@ -28,6 +29,38 @@ const STATIC_SHELL_PATHS = [
 ];
 const STATIC_SHELL = STATIC_SHELL_PATHS.map((path) => new URL(path, SCOPE).toString());
 const CACHE_FIRST_URLS = new Set([INDEX, PRECACHE_MANIFEST, ...STATIC_SHELL]);
+
+// A 200 status proves only that a server answered. Static hosts, SPA rewrites,
+// captive portals and misconfigured CDNs can answer a missing hashed module
+// with their HTML fallback; caching that response as "verified" produces an
+// offline white screen when the browser enforces strict module MIME types.
+// Keep the accepted shell formats explicit so a new asset kind must extend the
+// release contract deliberately rather than being blessed by status alone.
+const SHELL_MIME_BY_EXTENSION = new Map([
+  ['.html', new Set(['text/html'])],
+  ['.js', new Set(['text/javascript', 'application/javascript'])],
+  ['.css', new Set(['text/css'])],
+  ['.json', new Set(['application/json', 'application/manifest+json'])],
+  ['.svg', new Set(['image/svg+xml'])],
+  ['.png', new Set(['image/png'])],
+  ['.woff2', new Set(['font/woff2'])],
+]);
+
+function assertExpectedShellMime(response, url) {
+  const pathname = new URL(url).pathname.toLowerCase();
+  const extension = [...SHELL_MIME_BY_EXTENSION.keys()].find((suffix) => pathname.endsWith(suffix));
+  if (!extension) {
+    throw new Error(`Required shell resource has an unsupported file type: ${url}`);
+  }
+
+  const contentType = (response.headers.get('content-type') ?? '')
+    .split(';', 1)[0]
+    .trim()
+    .toLowerCase();
+  if (!SHELL_MIME_BY_EXTENSION.get(extension).has(contentType)) {
+    throw new Error(`Required shell resource has the wrong MIME type (${contentType || 'missing'}): ${url}`);
+  }
+}
 
 function assertSuccessful(response, url) {
   if (!response?.ok || response.status === 206) {
@@ -39,6 +72,8 @@ function assertSuccessful(response, url) {
   if (response.redirected && new URL(response.url).origin !== self.location.origin) {
     throw new Error(`Required shell resource redirected off-origin: ${url}`);
   }
+
+  assertExpectedShellMime(response, url);
 
   return response;
 }

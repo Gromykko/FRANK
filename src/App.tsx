@@ -58,6 +58,7 @@ export default function App() {
     initialization,
     selectedHourIndex,
     setSelectedHourIndex,
+    nowMs,
     nowIndex,
     refreshForecast,
   } = useForecast(settings.daylightOnly);
@@ -136,9 +137,10 @@ export default function App() {
         displayHourlyData,
         settings,
         nowIndex,
-        sunTimes
+        sunTimes,
+        nowMs,
       ),
-    [displayHourlyData, settings, nowIndex, sunTimes]
+    [displayHourlyData, settings, nowIndex, sunTimes, nowMs]
   );
 
   const handleTripModeChange = (mode: SafetySettings['tripMode']) => {

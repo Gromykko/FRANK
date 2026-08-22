@@ -23,6 +23,15 @@ export function getDisplayHourlyData(data: WeatherData): HourlyData[] {
 // did not, so the same hour could rate differently depending on which surface
 // you looked at. One rule, one place, so a fourth caller can't drift again.
 export function nextHourTideFor(rows: HourlyData[], index: number): number | undefined {
+  const current = rows[index];
   const next = rows[index + 1];
-  return next && !next.blockSpanHours ? next.tideLevel : undefined;
+  if (!current || !next || current.blockSpanHours || next.blockSpanHours) return undefined;
+
+  const currentMs = Date.parse(current.time);
+  const nextMs = Date.parse(next.time);
+  return Number.isFinite(currentMs)
+    && Number.isFinite(nextMs)
+    && nextMs - currentMs === 60 * 60 * 1000
+    ? next.tideLevel
+    : undefined;
 }

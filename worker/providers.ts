@@ -288,6 +288,7 @@ async function fetchMetWeather(
   env: Env,
   location: ForecastLocation,
   policy: ExecutionPolicy,
+  eventMemo?: EventMemo,
 ): Promise<MetResult> {
   assertBeforeDeadline(policy, `MET cache read for ${location.id}`);
   const rawKey = metRawKey(location);
@@ -318,7 +319,7 @@ async function fetchMetWeather(
     const metStartedAt = Date.now();
     let response: Response;
     try {
-      response = await fetchWithTimeout(metForecastUrl(location), { headers }, policy);
+      response = await fetchWithTimeout(metForecastUrl(location), { headers }, policy, eventMemo);
     } catch (error) {
       throw transientProviderError(
         error,
@@ -631,6 +632,23 @@ export async function memoizedText(
   return promise;
 }
 
+// A non-OK body still owns one of the Worker's six concurrent outgoing
+// connections until it is consumed or cancelled. Cancellation itself is
+// asynchronous and can reject (for example when the stream is already
+// disturbed), so wait for it but preserve the HTTP error as the useful result.
+export async function warningResponseText(
+  response: Response,
+  label: string,
+): Promise<string> {
+  if (response.ok) return response.text();
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Best-effort connection release; the reached HTTP status owns failure.
+  }
+  throw new Error(`${label} failed: ${response.status}`);
+}
+
 async function fetchWarnings(
   location: ForecastLocation,
   seedWarnings: WeatherWarning[] | undefined,
@@ -651,12 +669,8 @@ async function fetchWarnings(
       const response = await fetchWithTimeout(METEOALARM_DENMARK_FEED, {
         headers: { Accept: '*/*' },
         cf: { cacheTtl: 300, cacheEverything: true },
-      }, policy);
-      if (!response.ok) {
-        response.body?.cancel();
-        throw new Error(`MeteoAlarm feed failed: ${response.status}`);
-      }
-      return response.text();
+      }, policy, eventMemo);
+      return warningResponseText(response, 'MeteoAlarm feed');
     });
     const warnings = parseMeteoalarmFeed(body, location.emmaId);
     // Kommune-coverage soft filter (public CAP detail per warning): may only
@@ -667,12 +681,8 @@ async function fetchWarnings(
         const detail = await fetchWithTimeout(url, {
           headers: { Accept: '*/*' },
           cf: { cacheTtl: 300, cacheEverything: true },
-        }, policy);
-        if (!detail.ok) {
-          detail.body?.cancel();
-          throw new Error(`CAP detail failed: ${detail.status}`);
-        }
-        return detail.text();
+        }, policy, eventMemo);
+        return warningResponseText(detail, 'CAP detail');
       }));
   } catch {
     // The warning policy has a deliberately short child deadline. Reaching it
@@ -699,7 +709,7 @@ export async function buildForecastCache(
   const seedInstances = marineSeeds?.instances;
   const warningPolicy = advisoryWarningPolicy(policy);
   const results = await Promise.allSettled([
-    fetchMetWeather(env, location, policy),
+    fetchMetWeather(env, location, policy, eventMemo),
     fetchMarineSeriesWithFallback(env, location, 'water', marineInstances.water, FORECAST_PROVIDER_PARAMETERS.water, mapWaterFeatures, marineSeeds?.water, seedInstances?.water, policy, eventMemo),
     fetchMarineSeriesWithFallback(env, location, 'waves', marineInstances.waves, FORECAST_PROVIDER_PARAMETERS.waves, mapWaveFeatures, marineSeeds?.waves, seedInstances?.waves, policy, eventMemo),
     fetchWarnings(location, warningSeed, warningPolicy, eventMemo),

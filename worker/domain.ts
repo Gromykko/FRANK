@@ -73,7 +73,13 @@ export interface RefreshOptions {
 // Event-local provider work uses disjoint namespaces (`instance-probe:`,
 // `provider-circuit:`, and `refresh:`). Values are validated at those narrow
 // lookup sites instead of weakening all Worker code with an untyped map.
-export type EventMemo = Map<string, Promise<unknown>>;
+// Event-local coordination shared by every provider stage in one fetch/cron
+// invocation. The Map owns in-flight/result memos; the counter is deliberately
+// a property rather than a module global so concurrent Worker events can never
+// spend one another's external-subrequest allowance.
+export type EventMemo = Map<string, Promise<unknown>> & {
+  externalSubrequestsStarted?: number;
+};
 
 export interface MarineBusyCircuit {
   status: 'open';

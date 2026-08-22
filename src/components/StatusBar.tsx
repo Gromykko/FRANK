@@ -1,13 +1,9 @@
-import { useLayoutEffect, useRef, useState } from 'react';
 import { Moon, RefreshCw, Sun } from 'lucide-react';
 import GertyFace from './GertyFace';
 import LocationSwitcher from './LocationSwitcher';
 import { FlagDK, FlagUK } from './FlagIcons';
 import { useLang } from '../i18n';
 import type { SafetyRating } from '../features/safety/analyzeSafetyConditions';
-
-// How fast the marquee walks when a phrase overflows the display (px/second).
-const MARQUEE_SPEED = 42;
 
 interface StatusBarProps {
   rating: SafetyRating;
@@ -47,45 +43,7 @@ export default function StatusBar({
   themeTitle,
   onToggleTheme,
 }: StatusBarProps) {
-  const displayRef = useRef<HTMLDivElement>(null);
-  const measureRef = useRef<HTMLSpanElement>(null);
-  const [marqueeDuration, setMarqueeDuration] = useState(0);
   const { lang, setLang, t } = useLang();
-
-  // A phrase that fits stays solid; one that overflows becomes a slow walking
-  // line. Measured off a hidden twin span so the marquee padding on the live
-  // text never skews the measurement.
-  useLayoutEffect(() => {
-    const display = displayRef.current;
-    const measureEl = measureRef.current;
-    if (!display || !measureEl) return;
-
-    const measure = () => {
-      const textWidth = measureEl.offsetWidth;
-      const displayWidth = display.clientWidth;
-      if (textWidth > displayWidth) {
-        // The marquee travels its own width plus the display width per loop.
-        setMarqueeDuration((textWidth + displayWidth) / MARQUEE_SPEED);
-      } else {
-        setMarqueeDuration(0);
-      }
-    };
-
-    measure();
-    // Observe BOTH: the display for layout changes, and the measure span
-    // itself — its width changes when the VT323 webfont swaps in (font-display
-    // is swap), and that is the element whose width decides the marquee. With
-    // only the display observed, the first measurement was taken in the wider
-    // fallback mono font and never revisited, so a phrase that now fits kept
-    // scrolling forever (and, the other way, a long Danish phrase measured
-    // narrow was clipped and never scrolled at all).
-    const observer = new ResizeObserver(measure);
-    observer.observe(display);
-    observer.observe(measureEl);
-    return () => observer.disconnect();
-  }, [phrase]);
-
-  const isMarquee = marqueeDuration > 0;
 
   return (
     <header className="frank-device">
@@ -126,28 +84,17 @@ export default function StatusBar({
 
             <div className="frank-cell-display">
               <div
-                ref={displayRef}
-                className={`frank-display ${isMarquee ? 'is-marquee' : ''}`}
+                className="frank-display"
                 role="status"
                 aria-live="polite"
+                aria-atomic="true"
               >
-                {/* Live regions announce CONTENT changes, not aria-label
-                    changes - the announcement must be a real text node. The
-                    verdict words live here for screen readers; on screen the
-                    GertyFace expression and the rating-coloured phosphor carry
-                    the rating, and the reason bullets in the conditions card
-                    below state it in words. */}
-                <span className="sr-only">{t('{0}. {1}. FRANK says: {2}.', srTitle, srSubtitle, phrase)}</span>
-                <span
-                  className="frank-display-text"
-                  style={isMarquee ? { animationDuration: `${marqueeDuration}s` } : undefined}
-                  aria-hidden="true"
-                >
-                  {phrase}
-                </span>
-                <span ref={measureRef} className="frank-display-measure" aria-hidden="true">
-                  {phrase}
-                </span>
+                {/* The explicit safety verdict is the primary visible answer.
+                    The personality line is secondary and never makes a user
+                    wait for a scrolling animation to discover the decision. */}
+                <span className="frank-display-verdict">{srTitle}</span>
+                <span className="frank-display-subtitle">{srSubtitle}</span>
+                <span className="frank-display-text" aria-hidden="true">{phrase}</span>
               </div>
             </div>
 

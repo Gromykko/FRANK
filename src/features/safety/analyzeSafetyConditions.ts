@@ -211,25 +211,59 @@ export function analyzeSafetyConditions(
   const enableWindSpeed = settings.enableWindSpeed ?? true;
   const enableCustom = settings.enableCustomWindDirs ?? false;
 
+  // MET's complete outlook may attach an instant p90 to a 6/12-hour block.
+  // It is forecast-distribution uncertainty at the block START, not a maximum
+  // across the period. Keep the central value on the row for honest display,
+  // but assess the higher of central and p90 so uncertainty can only ratchet a
+  // longer-range verdict toward caution. Exact-hour rows deliberately ignore
+  // the field even if a legacy/additive payload happens to carry it.
+  const centralWindSpeed = isNonnegativeReading(data.windSpeed)
+    ? data.windSpeed
+    : undefined;
+  const outlookWindP90 = Boolean(data.blockSpanHours)
+    && isNonnegativeReading(data.windSpeedP90)
+    ? data.windSpeedP90
+    : undefined;
+  const windSpeedForSafety = centralWindSpeed !== undefined
+    ? Math.max(centralWindSpeed, outlookWindP90 ?? centralWindSpeed)
+    : (outlookWindP90 ?? data.windSpeed);
+  const hasWindSpeed = isNonnegativeReading(windSpeedForSafety);
+  const usesOutlookWindP90 = outlookWindP90 !== undefined
+    && hasWindSpeed
+    && (centralWindSpeed === undefined || outlookWindP90 > centralWindSpeed);
+  const centralWindText = centralWindSpeed !== undefined
+    ? `${centralWindSpeed.toFixed(1)} m/s`
+    : translate('Unknown');
+
   // Wind speed feeds both the general limit and the per-sector caps, so it is
   // required as soon as either is on.
-  const hasWindSpeed = isNonnegativeReading(data.windSpeed);
   if ((enableWindSpeed || enableCustom) && !hasWindSpeed) missing.push('wind speed');
 
   if (enableWindSpeed && hasWindSpeed) {
-    const windLabel = translate(getWindSpeedLabel(data.windSpeed));
-    if (data.windSpeed >= settings.maxWindSpeedCaution) {
+    const windLabel = translate(getWindSpeedLabel(windSpeedForSafety));
+    const outlookLimitReason = (limit: number) => translate(
+      "MET outlook uncertainty: the 90th-percentile wind at this block's start is {0} m/s ({1}), versus the central estimate of {2}. It reaches the applicable {3} m/s wind limit.",
+      windSpeedForSafety.toFixed(1),
+      windLabel,
+      centralWindText,
+      limit.toFixed(1),
+    );
+    if (windSpeedForSafety >= settings.maxWindSpeedCaution) {
       rating = 'danger';
-      addReason('danger', limitReason(data.windSpeed, settings.maxWindSpeedCaution, 1,
-        'Wind speed: {0} m/s ({1}). At your danger limit of {2} m/s.',
-        'Wind speed: {0} m/s ({1}). Exceeds your danger limit of {2} m/s.',
-        data.windSpeed.toFixed(1), windLabel, settings.maxWindSpeedCaution.toFixed(1)));
-    } else if (data.windSpeed >= settings.maxWindSpeedSafe) {
+      addReason('danger', usesOutlookWindP90
+        ? outlookLimitReason(settings.maxWindSpeedCaution)
+        : limitReason(windSpeedForSafety, settings.maxWindSpeedCaution, 1,
+          'Wind speed: {0} m/s ({1}). At your danger limit of {2} m/s.',
+          'Wind speed: {0} m/s ({1}). Exceeds your danger limit of {2} m/s.',
+          windSpeedForSafety.toFixed(1), windLabel, settings.maxWindSpeedCaution.toFixed(1)));
+    } else if (windSpeedForSafety >= settings.maxWindSpeedSafe) {
       rating = 'caution';
-      addReason('caution', limitReason(data.windSpeed, settings.maxWindSpeedSafe, 1,
-        'Wind speed: {0} m/s ({1}). At your safe limit of {2} m/s.',
-        'Wind speed: {0} m/s ({1}). Exceeds your safe limit of {2} m/s.',
-        data.windSpeed.toFixed(1), windLabel, settings.maxWindSpeedSafe.toFixed(1)));
+      addReason('caution', usesOutlookWindP90
+        ? outlookLimitReason(settings.maxWindSpeedSafe)
+        : limitReason(windSpeedForSafety, settings.maxWindSpeedSafe, 1,
+          'Wind speed: {0} m/s ({1}). At your safe limit of {2} m/s.',
+          'Wind speed: {0} m/s ({1}). Exceeds your safe limit of {2} m/s.',
+          windSpeedForSafety.toFixed(1), windLabel, settings.maxWindSpeedSafe.toFixed(1)));
     }
   }
 
@@ -278,17 +312,29 @@ export function analyzeSafetyConditions(
     else if (sector.exposure === 'offshore') windIsOffshore = true;
     // In user copy the upper boundary is always the DANGER cap — calling it a
     // "caution cap" on a red reason read as caution, not Rough.
-    if (data.windSpeed >= sector.cautionLimit) {
-      addReason('danger', limitReason(data.windSpeed, sector.cautionLimit, 1,
-        '{0} wind ({1}°) is at your {2} m/s danger cap for this direction.',
-        '{0} wind ({1}°) is over your {2} m/s danger cap for this direction.',
-        translate(sector.label), windDir, sector.cautionLimit.toFixed(1)));
-    } else if (data.windSpeed >= sector.safeLimit) {
+    const outlookSectorReason = (limit: number) => translate(
+      "MET outlook uncertainty for {0} wind ({1}°): the 90th-percentile estimate at this block's start is {2} m/s, versus the central estimate of {3}. It reaches this direction's {4} m/s limit.",
+      translate(sector.label),
+      windDir,
+      windSpeedForSafety.toFixed(1),
+      centralWindText,
+      limit.toFixed(1),
+    );
+    if (windSpeedForSafety >= sector.cautionLimit) {
+      addReason('danger', usesOutlookWindP90
+        ? outlookSectorReason(sector.cautionLimit)
+        : limitReason(windSpeedForSafety, sector.cautionLimit, 1,
+          '{0} wind ({1}°) is at your {2} m/s danger cap for this direction.',
+          '{0} wind ({1}°) is over your {2} m/s danger cap for this direction.',
+          translate(sector.label), windDir, sector.cautionLimit.toFixed(1)));
+    } else if (windSpeedForSafety >= sector.safeLimit) {
       if (rating !== 'danger') rating = 'caution';
-      addReason('caution', limitReason(data.windSpeed, sector.safeLimit, 1,
-        '{0} wind ({1}°) is at your {2} m/s safe cap for this direction.',
-        '{0} wind ({1}°) is over your {2} m/s safe cap for this direction.',
-        translate(sector.label), windDir, sector.safeLimit.toFixed(1)));
+      addReason('caution', usesOutlookWindP90
+        ? outlookSectorReason(sector.safeLimit)
+        : limitReason(windSpeedForSafety, sector.safeLimit, 1,
+          '{0} wind ({1}°) is at your {2} m/s safe cap for this direction.',
+          '{0} wind ({1}°) is over your {2} m/s safe cap for this direction.',
+          translate(sector.label), windDir, sector.safeLimit.toFixed(1)));
     }
   }
 
@@ -304,9 +350,11 @@ export function analyzeSafetyConditions(
         : 'steady';
     // Offshore wind opposes rising water; onshore wind opposes falling water.
     if ((waterTrend === 'rising' && windIsOffshore) || (waterTrend === 'falling' && windIsOnshore)) {
-      if (data.windSpeed > CHOP_WIND_GATE_MS) {
+      if (windSpeedForSafety > CHOP_WIND_GATE_MS) {
         if (rating !== 'danger') rating = 'caution';
-        addReason('caution', translate('Wind-against-water-level conflict: wind opposes {0} water level. Expect steeper chop.', translate(waterTrend)));
+        addReason('caution', usesOutlookWindP90
+          ? translate("Wind-against-water-level conflict: MET's 90th-percentile wind at this block's start opposes {0} water level. Expect steeper chop.", translate(waterTrend))
+          : translate('Wind-against-water-level conflict: wind opposes {0} water level. Expect steeper chop.', translate(waterTrend)));
       }
     }
   }

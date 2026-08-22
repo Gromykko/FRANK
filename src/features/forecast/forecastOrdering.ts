@@ -1,4 +1,5 @@
 import type { WeatherData } from './types';
+import { isPlausibleSourceTimestamp } from './temporalPolicy';
 
 export interface ForecastOrderingOptions {
   // A completed, validated Worker response is authoritative about which data
@@ -10,6 +11,7 @@ export interface ForecastOrderingOptions {
   // Worker's target release. It may fill an empty screen, but it must not move
   // an already displayed exact generation backwards during KV propagation.
   incomingIsServerFallback?: boolean;
+  nowMs?: number;
 }
 
 function forecastRepresentation(data: WeatherData): string {
@@ -58,6 +60,19 @@ export function shouldApplyForecastUpdate(
 ): boolean {
   if (!current) return true;
 
+  const nowMs = Number.isFinite(options.nowMs) ? options.nowMs as number : Date.now();
+  const currentFetchedMs = Date.parse(current.sources.fetchedAt);
+  const incomingFetchedMs = Date.parse(incoming.sources.fetchedAt);
+  const currentTimestampPlausible = isPlausibleSourceTimestamp(currentFetchedMs, nowMs);
+  const incomingTimestampPlausible = isPlausibleSourceTimestamp(incomingFetchedMs, nowMs);
+
+  // A corrupt saved copy dated far in the future otherwise outranks every real
+  // same-generation Worker response forever. Authority may replace it, while an
+  // implausible incoming copy never displaces a plausible forecast.
+  if (!currentTimestampPlausible && incomingTimestampPlausible) return true;
+  if (currentTimestampPlausible && !incomingTimestampPlausible) return false;
+  if (!currentTimestampPlausible && !incomingTimestampPlausible) return false;
+
   // A rollback is a valid generation change too. Do not infer authority from a
   // larger model number or newer fetchedAt: the Worker version currently at
   // 100% traffic is the source of truth. The browser cache records that choice
@@ -75,8 +90,6 @@ export function shouldApplyForecastUpdate(
     return false;
   }
 
-  const currentFetchedMs = Date.parse(current.sources.fetchedAt);
-  const incomingFetchedMs = Date.parse(incoming.sources.fetchedAt);
   if (incomingFetchedMs > currentFetchedMs) return true;
   if (incomingFetchedMs < currentFetchedMs) return false;
 

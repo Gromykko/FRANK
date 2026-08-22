@@ -48,7 +48,14 @@ interface CalBar {
   aria: string;
 }
 
-const formatDuration = (t: Translate, hours: number) => t(hours === 1 ? '{0} hr' : '{0} hrs', hours);
+const formatDuration = (t: Translate, hours: number) => {
+  const totalMinutes = Math.max(0, Math.floor(hours * 60 + 1e-6));
+  const wholeHours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (minutes === 0) return t(wholeHours === 1 ? '{0} hr' : '{0} hrs', wholeHours);
+  if (wholeHours === 0) return t('{0} min', minutes);
+  return t(wholeHours === 1 ? '{0} hr {1} min' : '{0} hrs {1} min', wholeHours, minutes);
+};
 
 interface CalDay {
   key: string;
@@ -192,32 +199,37 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
       // instead painted every hourly window an hour too long: endIndex is the
       // window's CLOSING endpoint, so an 8-hour window covers 9 rows, and the
       // Gantt announced "9 h" beside a card reading "8 hrs".
-      const fromMs = slot.daylightStartMs ?? new Date(startRow.time).getTime();
+      const fromMs = slot.daylightStartMs
+        ?? slot.effectiveStartMs
+        ?? new Date(startRow.time).getTime();
       const toMs = slot.daylightEndMs
         ?? (slot.lowConfidence
           ? new Date(endRow.time).getTime() + (endRow.blockSpanHours ?? 1) * 3_600_000
-          : new Date(startRow.time).getTime() + slot.duration * 3_600_000);
+          : new Date(endRow.time).getTime());
       if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) continue;
 
-      for (let ms = fromMs; ms < toMs; ms += 3_600_000) {
+      for (let ms = fromMs; ms < toMs;) {
+        const nextHourBoundaryMs = (Math.floor(ms / 3_600_000) + 1) * 3_600_000;
+        const segmentEndMs = Math.min(toMs, nextHourBoundaryMs);
+        const segmentHours = (segmentEndMs - ms) / 3_600_000;
         const day = ensureDay(ms);
-        const startHour = locationHour(ms);
+        const startHour = locationHourFraction(ms);
         // Continuity by absolute time, not by local hour. A DST fall-back
         // repeats local 02:00, which made `run.endFrac === startHour` fail and
         // split one window into two overlapping bars; spring-forward skips
         // 02:00 and left a phantom gap.
         if (run && run.day === day && run.endMs === ms) {
-          run.endFrac = startHour + 1;
-          run.endMs = ms + 3_600_000;
+          run.endFrac = Math.max(run.endFrac, startHour + segmentHours);
+          run.endMs = segmentEndMs;
         } else {
           run = {
             id: `${day.key}-${slot.startIndex}`,
             day,
             firstIdx: slot.startIndex,
             startFrac: startHour,
-            endFrac: startHour + 1,
+            endFrac: startHour + segmentHours,
             startMs: ms,
-            endMs: ms + 3_600_000,
+            endMs: segmentEndMs,
             rangeLabel: '',
             compactLabel: '',
             hours: 0,
@@ -226,22 +238,33 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
           };
           runs.push(run);
         }
+        ms = segmentEndMs;
       }
 
       for (const r of runs) {
-        const hours = Math.round((r.endMs - r.startMs) / 3_600_000);
-        const from = `${String(Math.floor(r.startFrac)).padStart(2, '0')}`;
-        const to = `${String(Math.floor(r.endFrac) % 24 || 24).padStart(2, '0')}`;
+        const hours = (r.endMs - r.startMs) / 3_600_000;
+        const hasPartialHour = r.startMs % 3_600_000 !== 0 || r.endMs % 3_600_000 !== 0;
+        const from = hasPartialHour
+          ? formatTime(r.startMs)
+          : `${String(Math.floor(r.startFrac)).padStart(2, '0')}`;
+        const to = hasPartialHour
+          ? formatTime(r.endMs)
+          : `${String(Math.floor(r.endFrac) % 24 || 24).padStart(2, '0')}`;
         // Both variants are always present. CSS container queries choose the
         // exact range when the rendered bar is wide enough and the compact
         // duration when it is not, so a two-hour bar is useful on desktop and
         // phone without tying content to a fixed duration threshold.
         r.rangeLabel = `${from}–${to}`;
-        r.compactLabel = `${hours}h`;
+        r.compactLabel = formatDuration(t, hours);
         r.hours = hours;
         r.aria = r.lowConfidence
           ? t('Outlook window, approximately {0}:00 to {1}:00 — more uncertain forecast', from, to)
-          : t('Launch window {0}:00 to {1}:00, {2}', from, to, formatDuration(t, hours)) + (slot.daylightPartial ? t(', partly outside daylight') : '');
+          : t(
+            hasPartialHour ? 'Launch window {0} to {1}, {2}' : 'Launch window {0}:00 to {1}:00, {2}',
+            from,
+            to,
+            formatDuration(t, hours),
+          ) + (slot.daylightPartial ? t(', partly outside daylight') : '');
         r.day.bars.push(r);
       }
     }
@@ -390,14 +413,20 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                   const overlapEndMs = windowEndMs;
                   const slotWarning = warningsOverlapping(
                     warnings,
-                    new Date(startHour.time).getTime(),
+                    slot.effectiveStartMs ?? new Date(startHour.time).getTime(),
                     overlapEndMs
                   ).filter((w) => w.coverage !== 'excluded')[0];
 
                   // Share text: place, day, time span, and the range across the
                   // window's actual MET samples. Each outlook block contributes
-                  // its one wind value; legacy percentile fields are ignored.
-                  const slotHours = data.slice(slot.startIndex, slot.endIndex + 1);
+                  // its one wind value; its independently assessed closing
+                  // endpoint also bounds the interval and must be represented.
+                  // Exact-hour windows already store that endpoint in endIndex;
+                  // outlook windows store the last block start and close at +1.
+                  const slotHours = data.slice(
+                    slot.startIndex,
+                    slot.endIndex + (slot.lowConfidence ? 2 : 1),
+                  );
                   // Only real readings: Math.min/max coerce a missing value to
                   // 0, which turned an unknown hour into a "0 m/s, 0.00 m"
                   // flat-calm claim on the card AND in the shared text.
@@ -434,6 +463,8 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                     displayEnd = isSameLocationDay(slot.daylightEndMs, slot.daylightStartMs)
                       ? locationHourLabel(slot.daylightEndMs)
                       : `${formatDateLabel(new Date(slot.daylightEndMs).toISOString())} ${locationHourLabel(slot.daylightEndMs)}`;
+                  } else if (slot.effectiveStartMs !== undefined) {
+                    displayStart = formatTime(slot.effectiveStartMs);
                   }
 
                   const shareText = t('{0}: {1} {2}–{3}. Wind {4} m/s, waves {5} m.', CURRENT_LOCATION.areaName, formatDateLabel(startHour.time), displayStart, displayEnd, windShare, waveShare);

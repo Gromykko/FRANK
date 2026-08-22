@@ -101,11 +101,51 @@ test('the complete dashboard stays inside every supported viewport', async ({ pa
     expect(target.height).toBeGreaterThanOrEqual(44);
   }
 
+  const display = page.locator('.frank-display');
+  await expect(display).toBeVisible();
+  await expect(display.locator('.frank-display-verdict')).toBeVisible();
+  await expect(display.locator('.frank-display-subtitle')).toBeVisible();
+  const displayLayout = await display.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const phrase = element.querySelector<HTMLElement>('.frank-display-text');
+    const phraseStyle = phrase ? getComputedStyle(phrase) : null;
+    return {
+      width: bounds.width,
+      animationName: phraseStyle?.animationName,
+      whiteSpace: phraseStyle?.whiteSpace,
+    };
+  });
+  expect(displayLayout.width).toBeGreaterThanOrEqual(220);
+  expect(displayLayout.animationName).toBe('none');
+  expect(displayLayout.whiteSpace).not.toBe('nowrap');
+
   const overflowPx = await page.evaluate(() => (
     Math.max(document.body.scrollWidth, document.documentElement.scrollWidth)
       - document.documentElement.clientWidth
   ));
   expect(overflowPx).toBeLessThanOrEqual(1);
+});
+
+test('the explicit safety verdict survives every phone breakpoint', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium');
+  await mockForecastWorker(page);
+  await page.goto('./');
+  await expect(page.locator('.app-footer')).toBeVisible();
+  await page.evaluate(async () => { await document.fonts.ready; });
+
+  for (const width of [320, 384, 393, 480]) {
+    await page.setViewportSize({ width, height: 900 });
+    const display = page.locator('.frank-display');
+    await expect(display, `status display at ${width}px`).toBeVisible();
+    await expect(display.locator('.frank-display-verdict')).toBeVisible();
+    await expect(display.locator('.frank-display-subtitle')).toBeVisible();
+    const shape = await display.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      return { width: bounds.width, height: bounds.height };
+    });
+    expect(shape.width).toBeGreaterThanOrEqual(220);
+    expect(shape.height).toBeGreaterThanOrEqual(76);
+  }
 });
 
 test('zero ready locations produce one calm app-wide preparation screen', async ({ page }, testInfo) => {

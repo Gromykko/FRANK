@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { healthChanged, shouldPersistFailureState, withCronAttempt } from '../../worker/index';
+import {
+  healthChanged,
+  isHeartbeatMemoFresh,
+  shouldPersistFailureState,
+  withCronAttempt,
+} from '../../worker/index';
 
 // The KV write budget is 1,000/day for the whole app. This predicate is what
 // stands between a provider outage and an emptied allowance: a stale cache
@@ -63,6 +68,38 @@ describe('shouldPersistFailureState', () => {
     )).toBe(true);
   });
 
+  it('orders status before secondary flags without scalar collisions', () => {
+    const flaggedCurrent = failure({
+      status: 'current',
+      degradedSources: ['weather', 'water', 'waves'],
+      providerBusy: true,
+      message: undefined,
+    });
+    const plainStale = failure({
+      status: 'stale',
+      degradedSources: [],
+      providerBusy: false,
+      message: undefined,
+    });
+
+    // The old additive score ranked current+four flags above plain stale and
+    // throttled this real status degradation.
+    expect(shouldPersistFailureState(flaggedCurrent, plainStale, NOW)).toBe(true);
+  });
+
+  it('orders needsRebuild before lower-priority flag counts at one status', () => {
+    const manyDegraded = failure({
+      needsRebuild: false,
+      degradedSources: ['weather', 'water', 'waves'],
+    });
+    const rebuildRequired = failure({
+      needsRebuild: true,
+      degradedSources: [],
+    });
+
+    expect(shouldPersistFailureState(manyDegraded, rebuildRequired, NOW)).toBe(true);
+  });
+
   // A premature all-clear is the dangerous direction; a late one is not. So
   // recovery waits for the same window an idle repeat does, which is what caps
   // a flapping provider at one write per window instead of one per tick.
@@ -95,6 +132,13 @@ describe('shouldPersistFailureState', () => {
   it('does not treat an unparseable stored stamp as fresh', () => {
     const prev = failure({ lastAttemptAt: 'not a date' });
     expect(shouldPersistFailureState(prev, failure(), NOW)).toBe(true);
+  });
+});
+
+describe('heartbeat memo freshness', () => {
+  it('rejects a memo entry whose insertion time is ahead of the current clock', () => {
+    expect(isHeartbeatMemoFresh(NOW + 1, NOW)).toBe(false);
+    expect(isHeartbeatMemoFresh(NOW, NOW)).toBe(true);
   });
 });
 

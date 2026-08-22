@@ -5,22 +5,16 @@ import {
   FORECAST_RELEASE_HEADERS,
 } from '../../src/features/forecast/releaseContract';
 import { FORECAST_PAYLOAD_VERSION } from '../../src/features/forecast/types';
+import { buildSunSchedule } from '../../src/features/forecast/sun';
+import type { ForecastLocation } from '../../src/config/locationTypes';
 
 const HOUR_MS = 60 * 60 * 1000;
 export const FIXTURE_NOW_ISO = '2026-08-20T10:15:00.000Z';
 const FIXTURE_NOW_MS = Date.parse(FIXTURE_NOW_ISO);
 
-interface FixtureLocation {
-  id: string;
-  forecastConfigRevision: number;
-  name: string;
-  areaName: string;
-  coordinate: { latitude: number; longitude: number };
-}
-
 const locations = JSON.parse(
   readFileSync(new URL('../../src/config/locations.json', import.meta.url), 'utf8'),
-) as FixtureLocation[];
+) as ForecastLocation[];
 
 const locationById = new Map(locations.map((location) => [location.id, location]));
 
@@ -67,11 +61,16 @@ export function buildForecastFixture(locationId: string, nowMs = FIXTURE_NOW_MS)
 
   const startMs = Math.floor(nowMs / HOUR_MS) * HOUR_MS - HOUR_MS;
   const fetchedAt = new Date(nowMs - 2 * 60 * 1000).toISOString();
+  const hourly = buildHourly(startMs);
+  const sun = buildSunSchedule(hourly.map(({ time }) => time), location);
+  hourly.forEach((row) => {
+    row.isDay = sun.isDayByTime.get(row.time) ?? false;
+  });
 
   return {
-    hourly: buildHourly(startMs),
-    sunrise: [],
-    sunset: [],
+    hourly,
+    sunrise: sun.sunrise,
+    sunset: sun.sunset,
     warnings: [],
     sources: {
       payloadVersion: FORECAST_PAYLOAD_VERSION,

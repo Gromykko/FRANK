@@ -1,5 +1,6 @@
 const RELEASE_SCHEMA_VERSION = 1
 const CHECK_THROTTLE_MS = 30_000
+export const RELEASE_CHECK_TIMEOUT_MS = 10_000
 
 interface ReleaseDescriptor {
   schemaVersion: 1
@@ -98,13 +99,22 @@ function cacheBuster() {
 async function fetchCurrentRelease(baseUrl: string) {
   const descriptorUrl = new URL(`${baseUrl}frank-release.json`, window.location.origin)
   descriptorUrl.searchParams.set('check', cacheBuster())
-  const response = await fetch(descriptorUrl, {
-    cache: 'no-store',
-    credentials: 'same-origin',
-    headers: { accept: 'application/json' },
-  })
-  if (!response.ok) throw new Error(`Release check failed with ${response.status}`)
-  return parseReleaseDescriptor(await response.json(), window.location.origin, baseUrl)
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => controller.abort(), RELEASE_CHECK_TIMEOUT_MS)
+  try {
+    const response = await fetch(descriptorUrl, {
+      cache: 'no-store',
+      credentials: 'same-origin',
+      headers: { accept: 'application/json' },
+      signal: controller.signal,
+    })
+    if (!response.ok) throw new Error(`Release check failed with ${response.status}`)
+    return parseReleaseDescriptor(await response.json(), window.location.origin, baseUrl)
+  } finally {
+    // A stalled descriptor must release the manager's single-flight slot so a
+    // later focus/manual check can recover without reloading the whole app.
+    window.clearTimeout(timeoutId)
+  }
 }
 
 function workerBuildId(worker: ServiceWorker | null) {

@@ -105,6 +105,7 @@ function serviceWorkerReleaseArtifacts(): Plugin {
           shellUrl: releaseUrl(`${APP_BASE}index.html`),
           precacheManifestUrl: releaseUrl(`${APP_BASE}frank-precache.json`),
           staticShellUrls: [
+            `${APP_BASE}theme-init.js`,
             `${APP_BASE}manifest.json`,
             `${APP_BASE}favicon.svg`,
             `${APP_BASE}icon-192.png`,

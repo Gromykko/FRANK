@@ -11,6 +11,7 @@ const RELEASE = `${SCOPE}frank-release.json`;
 const MANIFEST = `${SCOPE}frank-precache.json`;
 const METADATA = `${SCOPE}__frank-shell-metadata__`;
 const STATIC_SHELL = [
+  'theme-init.js',
   'manifest.json',
   'favicon.svg',
   'icon-192.png',
@@ -241,6 +242,27 @@ describe('FRANK service-worker lifecycle', () => {
     expect(harness.cacheStorage.stores.has(cacheName(BUILD_A))).toBe(false);
     expect(harness.cacheStorage.stores.has('frank-app-previous')).toBe(true);
     expect(harness.cacheStorage.stores.has('another-app-cache')).toBe(true);
+    expect(harness.skipWaiting).not.toHaveBeenCalled();
+  });
+
+  it('rejects a 200 HTML fallback for a JavaScript asset before opening the candidate cache', async () => {
+    const storage = new MemoryCacheStorage();
+    await storage.open('frank-app-previous');
+    const harness = createHarness({
+      cacheStorage: storage,
+      fetchOverride(request) {
+        const url = requestUrl(request);
+        if (new URL(url).pathname.endsWith(`/assets/index-${BUILD_A}.js`)) {
+          return response('<!doctype html><title>fallback</title>', 'text/html; charset=utf-8');
+        }
+        return shellResponseFor(url, BUILD_A);
+      },
+    });
+
+    await expect(harness.lifecycle('install')).rejects.toThrow('wrong MIME type (text/html)');
+
+    expect(storage.stores.has(cacheName(BUILD_A))).toBe(false);
+    expect(storage.stores.has('frank-app-previous')).toBe(true);
     expect(harness.skipWaiting).not.toHaveBeenCalled();
   });
 

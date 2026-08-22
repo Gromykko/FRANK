@@ -7,6 +7,7 @@ import {
 import type { ReleaseMetadata } from '../src/features/forecast/releaseContract';
 import { reviveReadings } from '../src/features/forecast/normalize';
 import { isValidForecastPayload } from '../src/features/forecast/validatePayload';
+import { FORECAST_SERVER_CLOCK_LEAD_TOLERANCE_MS } from '../src/features/forecast/temporalPolicy';
 import {
   hasValidWarmAuthorization,
   headResponse,
@@ -189,12 +190,17 @@ async function readCronHeartbeat(
   policyInput?: ExecutionPolicyInput,
   nowMs = Date.now(),
 ): Promise<CronHeartbeat | null> {
-  if (heartbeatMemo && nowMs - heartbeatMemo.at < HEARTBEAT_MEMO_TTL_MS) {
+  if (heartbeatMemo && isHeartbeatMemoFresh(heartbeatMemo.at, nowMs)) {
     return heartbeatMemo.value;
   }
   const value = await fetchCronHeartbeat(env, policyInput);
   heartbeatMemo = { at: nowMs, value };
   return value;
+}
+
+export function isHeartbeatMemoFresh(memoAtMs: number, nowMs: number): boolean {
+  const ageMs = nowMs - memoAtMs;
+  return Number.isFinite(ageMs) && ageMs >= 0 && ageMs < HEARTBEAT_MEMO_TTL_MS;
 }
 
 async function writeCronHeartbeat(
@@ -338,7 +344,10 @@ function isUsableCurrentForecastCache(
   // validator and response type here; the release descriptor selects bytes, but
   // cannot make two structurally different contracts safe by itself.
   return hasUsableForecastStructure(value)
-    && isValidForecastPayload(value, location)
+    && isValidForecastPayload(value, location, {
+      requireReleaseMetadata: true,
+      sourceClockLeadToleranceMs: FORECAST_SERVER_CLOCK_LEAD_TOLERANCE_MS,
+    })
     && isForecastForRelease(value, CURRENT_RELEASE)
     && hasCurrentForecastWindow(value);
 }
@@ -585,16 +594,38 @@ export function healthChanged(
   return stableJson(withoutStamp(previous)) !== stableJson(withoutStamp(next));
 }
 
-// guard: a payload with no stamp yet would otherwise compare NaN and never get one.
 // How alarming a health block is, so a write can be priced by DIRECTION rather
-// than by mere difference. Only the ordering matters, not the absolute number.
-function healthSeverity(health: Partial<WorkerCacheHealth> | null | undefined): number {
-  if (!health) return 0;
-  const status = health.status === 'stale' ? 3 : health.status === 'fallback' ? 2 : 1;
-  return status
-    + (health.degradedSources?.length ?? 0)
-    + (health.providerBusy ? 1 : 0)
-    + (health.needsRebuild ? 1 : 0);
+// than mere difference. Compare dimensions lexicographically: a status
+// degradation must not be cancelled out by fewer secondary flags, which the
+// old scalar sum allowed (`current + 3 flags` tied/beat plain `stale`).
+function healthSeverity(
+  health: Partial<WorkerCacheHealth> | null | undefined,
+): readonly number[] {
+  if (!health) return [0, 0, 0, 0];
+  const status = health.status === 'stale'
+    ? 4
+    : health.status === 'fallback'
+      ? 3
+      : health.status === 'pending'
+        ? 2
+        : 1;
+  return [
+    status,
+    health.needsRebuild ? 1 : 0,
+    health.degradedSources?.length ?? 0,
+    health.providerBusy ? 1 : 0,
+  ];
+}
+
+function compareHealthSeverity(
+  left: readonly number[],
+  right: readonly number[],
+): number {
+  for (let index = 0; index < Math.max(left.length, right.length); index++) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
 }
 
 export function shouldPersistFailureState(
@@ -604,7 +635,7 @@ export function shouldPersistFailureState(
 ): boolean {
   // Getting WORSE is news, and it is the direction that protects the paddler,
   // so it is never throttled.
-  if (healthSeverity(next) > healthSeverity(prev)) return true;
+  if (compareHealthSeverity(healthSeverity(next), healthSeverity(prev)) > 0) return true;
 
   // Marine run ids are provenance, not severity: later ticks compare against
   // them to decide whether to re-probe DMI, so a throttled copy would make a
@@ -730,12 +761,9 @@ async function _refreshForecastCache(
       latestMarine = knownMarine;
     } else {
       // A DMI 429 is provider-wide rather than specific to the fjord that
-      // received it, and there used to be an event-local circuit here so a
-      // second due location would not make more DMI calls in the same batch.
-      // readMarineBusyCircuit was a stub returning null, so none of it ever
-      // ran. Honouring Retry-After now does the same job more directly: the
-      // city that meets the 429 stops immediately instead of retrying thirty
-      // times, and the ones behind it each cost a single refused request.
+      // received it. providerTransport opens an event-local circuit on the
+      // first refusal: the two already-parallel water/wave calls may finish,
+      // but retries and later locations fall back without calling DMI again.
       try {
         const probe = await fetchLatestMarineInstances(location, policy, options.eventMemo, knownMarine);
         latestMarine = probe.instances;
@@ -820,11 +848,9 @@ async function _refreshForecastCache(
       // unchanged: keep the forecast, just record that we checked.
       //
       // Marine flags are recomputed from THIS tick rather than carried forward.
-      // Carrying them meant the only thing that could ever clear an amber
-      // marker was a deferral recovery - and readMarineBusyCircuit is a stub
-      // returning null, so that never happened. A 429 on one tick left "marine
-      // service unavailable" on the payload until MET's Expires happened to
-      // force a rebuild, long after DMI had recovered.
+      // Carrying them meant a 429 on one tick left "marine service unavailable"
+      // on the payload until MET's Expires happened to force a rebuild, long
+      // after DMI had recovered.
       //
       // A verified probe means these ids are the newest DMI has, which is not
       // degraded even when the run itself is hours old - DMI publishes about
@@ -854,7 +880,8 @@ async function _refreshForecastCache(
       // heartbeat's own 288/day only pays for itself once this stops. What
       // still earns a write is a CHANGE in what the health says.
       if (probeDecision.reason !== 'retry-backoff'
-        && healthChanged(cachedHealth, checkedCache.sources.cacheHealth)) {
+        && healthChanged(cachedHealth, checkedCache.sources.cacheHealth)
+        && shouldPersistFailureState(cachedHealth, checkedCache.sources.cacheHealth)) {
         // Best-effort, like the rebuild write below. This is the one path that
         // has already CONFIRMED the forecast is current, so letting a failed
         // write escape would fall into the catch below and rebuild the response
@@ -1333,17 +1360,14 @@ const worker = {
     const eventMemo: EventMemo = new Map();
     const attemptedAt: Record<string, string> = {};
     try {
-      // Isolate failures per location: a rebuild throw (no cached payload + a
-      // provider outage) must not starve the remaining locations of their cron
-      // refresh for the whole tick.
-      const orderedLocations = tickOrder(event?.scheduledTime);
-      for (const [index, location] of orderedLocations.entries()) {
-        // ...and neither must a location that merely takes a very long time.
-        // The per-location try/catch below isolates THROWS, not the shared
-        // wall clock, so one hanging upstream could consume the tick and leave
-        // the last locations silently unrefreshed every time.
-        const locationsRemaining = orderedLocations.length - index;
-        const policy = cronExecutionPolicy(Date.now(), tickDeadlineAt, locationsRemaining);
+      // Workers Free allows only 10 ms CPU per scheduled invocation. Refresh
+      // one rotated city per five-minute tick instead of parsing and assembling
+      // all four in one event; every city is still reached once per 20 minutes,
+      // inside MET's 30-minute minimum TTL and the 60-minute health threshold.
+      // Authenticated deployment warming remains per-location and unchanged.
+      const scheduledLocations = tickOrder(event?.scheduledTime).slice(0, 1);
+      for (const location of scheduledLocations) {
+        const policy = cronExecutionPolicy(Date.now(), tickDeadlineAt, 1);
         if (!policy) {
           console.error(`Cron tick deadline reached; skipping ${location.id} until the next tick`);
           break;

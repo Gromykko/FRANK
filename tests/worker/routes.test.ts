@@ -4,6 +4,7 @@ import locationData from '../../src/config/locations.json';
 import type { ForecastLocation } from '../../src/config/locationTypes';
 import { FORECAST_PAYLOAD_VERSION } from '../../src/features/forecast/types';
 import { CURRENT_RELEASE } from '../../src/features/forecast/releaseContract';
+import { buildSunSchedule } from '../../src/features/forecast/sun';
 import type { ForecastData, HealthLocationEntry } from '../../worker/domain';
 import { buildHealthPayload, statusResponse } from '../../worker/health';
 import {
@@ -56,9 +57,11 @@ function locationById(id: string): ForecastLocation {
 
 function cachedForecast(locationId = 'horsens'): ForecastData {
   const location = locationById(locationId);
+  const forecastTime = new Date(Date.now() + 60 * 60_000).toISOString();
+  const sun = buildSunSchedule([forecastTime], location);
   return {
     hourly: [{
-      time: new Date(Date.now() + 60 * 60_000).toISOString(),
+      time: forecastTime,
       tempAir: 15,
       precipitation: 0,
       symbolCode: 'clearsky_day',
@@ -73,12 +76,12 @@ function cachedForecast(locationId = 'horsens'): ForecastData {
       tideLevel: 0,
       currentSpeed: 0,
       currentDirection: 0,
-      isDay: true,
+      isDay: sun.isDayByTime.get(forecastTime) ?? false,
       weatherSource: 'met-locationforecast',
       marineSource: 'dmi-dkss-wam',
     }],
-    sunrise: [],
-    sunset: [],
+    sunrise: sun.sunrise,
+    sunset: sun.sunset,
     warnings: [],
     sources: {
       payloadVersion: FORECAST_PAYLOAD_VERSION,

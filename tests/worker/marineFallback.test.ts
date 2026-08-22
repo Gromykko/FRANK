@@ -95,7 +95,7 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     expect(result.series).toEqual(retained);
   });
 
-  it('retries in-flight when marine calls return 429', async () => {
+  it('lets in-flight marine calls settle but starts no retries after a 429', async () => {
     const env = makeEnv();
     const eventMemo = new Map<string, Promise<unknown>>();
     const calls: string[] = [];
@@ -139,7 +139,7 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     await vi.runAllTimersAsync();
     const results = await resultsPromise;
     expect(results.every(({ status }) => status === 'rejected')).toBe(true);
-    expect(calls).toHaveLength(6);
+    expect(calls).toHaveLength(2);
   });
 
   it('never reuses a retained ingredient stamped for another config revision', async () => {

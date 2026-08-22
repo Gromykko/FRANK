@@ -9,6 +9,17 @@ import { buildForecastFixture } from './forecastFixture'
 interface BuiltRelease {
   buildId: string
   assets: string[]
+  staticShellPaths: string[]
+}
+
+interface ReleaseDescriptor {
+  buildId: string
+  staticShellUrls: string[]
+}
+
+interface PrecacheManifest {
+  buildId: string
+  assets: string[]
 }
 
 interface SwitchableServer {
@@ -27,15 +38,22 @@ const MIME_TYPES: Record<string, string> = {
   '.woff2': 'font/woff2',
 }
 
-async function buildSnapshot(directory: string) {
+async function buildSnapshot(directory: string): Promise<BuiltRelease> {
   const viteCli = resolve(process.cwd(), 'node_modules/vite/bin/vite.js')
   execFileSync(process.execPath, [viteCli, 'build', '--outDir', directory, '--emptyOutDir'], {
     cwd: process.cwd(),
     stdio: 'ignore',
   })
-  const release = JSON.parse(await readFile(join(directory, 'frank-release.json'), 'utf8')) as BuiltRelease
-  const manifest = JSON.parse(await readFile(join(directory, 'frank-precache.json'), 'utf8')) as BuiltRelease
-  return { buildId: release.buildId, assets: manifest.assets }
+  const release = JSON.parse(
+    await readFile(join(directory, 'frank-release.json'), 'utf8'),
+  ) as ReleaseDescriptor
+  const manifest = JSON.parse(
+    await readFile(join(directory, 'frank-precache.json'), 'utf8'),
+  ) as PrecacheManifest
+  const staticShellPaths = release.staticShellUrls.map((url) => (
+    new URL(url, 'https://frank.invalid').pathname.replace('/FRANK/', '')
+  ))
+  return { buildId: release.buildId, assets: manifest.assets, staticShellPaths }
 }
 
 async function startSwitchableServer(initialDirectory: string): Promise<SwitchableServer> {
@@ -183,7 +201,8 @@ test('a complete B waits behind A, then opens as one coherent offline shell', as
         ).pathname.replace('/FRANK/', ''))
       ))
       expect(documentAssets.length).toBeGreaterThan(0)
-      expect(documentAssets.every((asset) => buildB.assets.includes(asset))).toBe(true)
+      const buildBResources = new Set([...buildB.assets, ...buildB.staticShellPaths])
+      expect(documentAssets.every((asset) => buildBResources.has(asset))).toBe(true)
 
       const retainedA = await offlineB.evaluate(async (asset) => (await fetch(asset)).text(), aOnlyAsset!)
       expect(retainedA.length).toBeGreaterThan(0)

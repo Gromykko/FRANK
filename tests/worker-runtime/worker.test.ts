@@ -15,6 +15,7 @@ import locationData from '../../src/config/locations.json';
 import type { ForecastLocation } from '../../src/config/locationTypes';
 import { FORECAST_PAYLOAD_VERSION } from '../../src/features/forecast/types';
 import { CURRENT_RELEASE } from '../../src/features/forecast/releaseContract';
+import { buildSunSchedule } from '../../src/features/forecast/sun';
 import {
   assembledForecastKey,
   initializationStateKey,
@@ -34,9 +35,11 @@ type PublicHealthPayload = Omit<HealthPayload, 'ages' | 'storageUnavailable'>;
 function currentHorsensForecast(nowMs = Date.now()): ForecastData {
   const checkedAt = new Date(nowMs).toISOString();
   const runId = checkedAt;
+  const forecastTime = new Date(nowMs + 60 * 60_000).toISOString();
+  const sun = buildSunSchedule([forecastTime], HORSENS);
   return {
     hourly: [{
-      time: new Date(nowMs + 60 * 60_000).toISOString(),
+      time: forecastTime,
       tempAir: 15,
       precipitation: 0,
       symbolCode: 'clearsky_day',
@@ -51,12 +54,12 @@ function currentHorsensForecast(nowMs = Date.now()): ForecastData {
       tideLevel: 0,
       currentSpeed: 0,
       currentDirection: 0,
-      isDay: true,
+      isDay: sun.isDayByTime.get(forecastTime) ?? false,
       weatherSource: 'met-locationforecast',
       marineSource: 'dmi-dkss-wam',
     }],
-    sunrise: [],
-    sunset: [],
+    sunrise: sun.sunrise,
+    sunset: sun.sunset,
     warnings: [],
     sources: {
       payloadVersion: FORECAST_PAYLOAD_VERSION,

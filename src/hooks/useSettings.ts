@@ -33,6 +33,124 @@ interface SettingsStorageMetadata {
   locationId: string;
 }
 
+type SettingsFieldKey = Exclude<keyof SafetySettings, 'sectorLimits'>;
+
+interface SettingsPatch {
+  fields: Partial<Omit<SafetySettings, 'sectorLimits'>>;
+  // null is an explicit deletion. The current editor only adds/updates sector
+  // caps, but retaining deletion semantics keeps a future "reset this sector"
+  // control from reviving a value written by another tab.
+  sectorLimits: Record<string, SafetySettings['sectorLimits'][string] | null>;
+}
+
+interface PendingSettingsMutation {
+  // Preset/mode changes intentionally replace the whole profile. Ordinary
+  // limit edits stay field-level so two tabs changing independent controls can
+  // converge instead of the last whole-record write silently winning.
+  replacement: SafetySettings | null;
+  patch: SettingsPatch;
+}
+
+const SETTINGS_FIELD_KEYS: SettingsFieldKey[] = [
+  'maxWindSpeedSafe',
+  'maxWindSpeedCaution',
+  'minWaterTempSafe',
+  'minWaterTempCaution',
+  'maxWaveHeightSafe',
+  'maxWaveHeightCaution',
+  'enableCustomWindDirs',
+  'tripMode',
+  'daylightOnly',
+  'minDuration',
+  'tidePreference',
+  'gustMargin',
+  'waveCautionMargin',
+  'enableWindSpeed',
+  'enableWindGust',
+  'enableWaveHeight',
+  'enableWaveCaution',
+  'enableWaterTemp',
+];
+
+function emptySettingsPatch(): SettingsPatch {
+  return { fields: {}, sectorLimits: {} };
+}
+
+function emptyPendingSettingsMutation(): PendingSettingsMutation {
+  return { replacement: null, patch: emptySettingsPatch() };
+}
+
+function settingsPatch(previous: SafetySettings, next: SafetySettings): SettingsPatch {
+  const patch = emptySettingsPatch();
+  const fields = patch.fields as Record<string, unknown>;
+  for (const key of SETTINGS_FIELD_KEYS) {
+    if (!Object.is(previous[key], next[key])) fields[key] = next[key];
+  }
+
+  const sectorIds = new Set([
+    ...Object.keys(previous.sectorLimits ?? {}),
+    ...Object.keys(next.sectorLimits ?? {}),
+  ]);
+  for (const id of sectorIds) {
+    const before = previous.sectorLimits?.[id];
+    const after = next.sectorLimits?.[id];
+    if (!after) {
+      if (before) patch.sectorLimits[id] = null;
+    } else if (!before || before.safe !== after.safe || before.caution !== after.caution) {
+      patch.sectorLimits[id] = { ...after };
+    }
+  }
+  return patch;
+}
+
+function mergeSettingsPatches(current: SettingsPatch, incoming: SettingsPatch): SettingsPatch {
+  return {
+    fields: { ...current.fields, ...incoming.fields },
+    sectorLimits: { ...current.sectorLimits, ...incoming.sectorLimits },
+  };
+}
+
+function applySettingsPatch(base: SafetySettings, patch: SettingsPatch): SafetySettings {
+  const sectorLimits = { ...(base.sectorLimits ?? {}) };
+  for (const [id, cap] of Object.entries(patch.sectorLimits)) {
+    if (cap === null) delete sectorLimits[id];
+    else sectorLimits[id] = { ...cap };
+  }
+  return healSettings({ ...base, ...patch.fields, sectorLimits });
+}
+
+function applyPendingMutation(base: SafetySettings, mutation: PendingSettingsMutation): SafetySettings {
+  return mutation.replacement
+    ? healSettings(mutation.replacement)
+    : applySettingsPatch(base, mutation.patch);
+}
+
+function queueSettingsPatch(
+  mutation: PendingSettingsMutation,
+  previous: SafetySettings,
+  next: SafetySettings,
+): PendingSettingsMutation {
+  const patch = settingsPatch(previous, next);
+  if (mutation.replacement) {
+    return { replacement: applySettingsPatch(mutation.replacement, patch), patch: emptySettingsPatch() };
+  }
+  return { replacement: null, patch: mergeSettingsPatches(mutation.patch, patch) };
+}
+
+function sameSettings(left: SafetySettings, right: SafetySettings): boolean {
+  for (const key of SETTINGS_FIELD_KEYS) {
+    if (!Object.is(left[key], right[key])) return false;
+  }
+  const leftIds = Object.keys(left.sectorLimits ?? {});
+  const rightIds = Object.keys(right.sectorLimits ?? {});
+  if (leftIds.length !== rightIds.length) return false;
+  return leftIds.every((id) => {
+    const a = left.sectorLimits[id];
+    const b = right.sectorLimits[id];
+    return Boolean(b) && a.safe === b.safe && a.caution === b.caution;
+  });
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -238,6 +356,8 @@ function persistStoredSettings(storageKey: string, settings: SafetySettings, unr
 
 export function useSettings() {
   const customProfileRef = useRef<SafetySettings | null>(null);
+  const activeMutationRef = useRef<PendingSettingsMutation>(emptyPendingSettingsMutation());
+  const customMutationRef = useRef<PendingSettingsMutation>(emptyPendingSettingsMutation());
   const customWriteNeededRef = useRef(false);
   const customSlotMissingRef = useRef(false);
   const customWriteAuthorizedRef = useRef(false);
@@ -291,7 +411,10 @@ export function useSettings() {
           // replacing the user's limits with the factory Custom preset.
           customProfileRef.current = parsed;
           customRecoveryAvailableRef.current = true;
-          if (customSlotMissingRef.current) customWriteNeededRef.current = true;
+          if (customSlotMissingRef.current) {
+            customWriteNeededRef.current = true;
+            customMutationRef.current = { replacement: parsed, patch: emptySettingsPatch() };
+          }
           return parsed;
         }
         return getPresetSettings(parsed.tripMode);
@@ -302,64 +425,208 @@ export function useSettings() {
     }
     return DEFAULT_SETTINGS;
   });
-  const [saveFailed, setSaveFailed] = useState(false);
+  // The active choice and remembered Custom profile are separate records and
+  // can fail independently (for example, replacing the existing active value
+  // may fit while creating/growing the Custom slot exceeds quota). Never let a
+  // successful active write clear the warning for an unsaved Custom profile.
+  const [activeSaveFailed, setActiveSaveFailed] = useState(false);
+  const [customSaveFailed, setCustomSaveFailed] = useState(false);
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
 
   const activeModeRef = useRef(settings.tripMode);
   activeModeRef.current = settings.tripMode;
 
-  useEffect(() => {
+  const applyLiveSettings = useCallback((next: SafetySettings) => {
+    const previous = settingsRef.current;
+    settingsRef.current = next;
+    activeModeRef.current = next.tripMode;
+    if (!sameSettings(previous, next)) setSettings(next);
+  }, []);
+
+  const commitActiveNow = useCallback((): SafetySettings | null => {
     // Never persist over a profile we failed to read on MOUNT. `hasEdited`
     // flips on the first deliberate change (see saveSettings/setTripMode).
+    if (!activeWriteNeededRef.current
+      || (activeLoadFailedRef.current !== null && !hasEditedRef.current)) return null;
+
+    let base = settingsRef.current;
+    const latestRaw = readStorage(SETTINGS_STORAGE_KEY);
+    if (latestRaw !== null) {
+      try {
+        base = decodeStoredSettings(latestRaw).settings;
+        activeLoadFailedRef.current = null;
+      } catch {
+        // A record may have become corrupt after this tab mounted. A deliberate
+        // local edit is still allowed to replace it, but preserve the newest
+        // unreadable bytes under _corrupt just like the mount-time path.
+        activeLoadFailedRef.current = latestRaw;
+      }
+    }
+
+    const candidate = applyPendingMutation(base, activeMutationRef.current);
+    const saved = persistStoredSettings(SETTINGS_STORAGE_KEY, candidate, activeLoadFailedRef.current);
+    // A silent failure here is the dangerous kind. The panel and the verdict
+    // both use the new value immediately, so a user who lowers their wind cap at
+    // the launch site sees it take effect while the next session restores an
+    // older, looser value.
+    setActiveSaveFailed(!saved);
+    if (!saved) return null;
+
+    activeLoadFailedRef.current = null;
+    activeWriteNeededRef.current = false;
+    activeMutationRef.current = emptyPendingSettingsMutation();
+    if (candidate.tripMode === 'custom') {
+      customProfileRef.current = candidate;
+      customRecoveryAvailableRef.current = true;
+    }
+    applyLiveSettings(candidate);
+    return candidate;
+  }, [applyLiveSettings]);
+
+  const commitCustomNow = useCallback((preferredBase?: SafetySettings | null): SafetySettings | null => {
+    if (!customWriteNeededRef.current || !customProfileRef.current) return null;
+    if (customLoadFailedRef.current !== null && !customWriteAuthorizedRef.current) return null;
+
+    const latestRaw = readStorage(CUSTOM_SETTINGS_STORAGE_KEY);
+    let storedBase: SafetySettings | null = null;
+    if (latestRaw !== null) {
+      try {
+        storedBase = { ...decodeStoredSettings(latestRaw).settings, tripMode: 'custom' };
+        customLoadFailedRef.current = null;
+      } catch {
+        customLoadFailedRef.current = latestRaw;
+        if (!customWriteAuthorizedRef.current) return null;
+      }
+    }
+
+    // While Custom is active, the active record is the canonical newest view;
+    // use its cross-tab merge for the remembered slot too. When inactive, merge
+    // directly against the latest remembered Custom record.
+    const liveCustom = preferredBase?.tripMode === 'custom'
+      ? preferredBase
+      : settingsRef.current.tripMode === 'custom'
+        ? settingsRef.current
+        : null;
+    const base = liveCustom ?? storedBase ?? customProfileRef.current;
+    const candidate = {
+      ...applyPendingMutation(base, customMutationRef.current),
+      tripMode: 'custom' as const,
+    };
+    if (!persistStoredSettings(CUSTOM_SETTINGS_STORAGE_KEY, candidate, customLoadFailedRef.current)) {
+      setCustomSaveFailed(true);
+      return null;
+    }
+
+    setCustomSaveFailed(false);
+    customProfileRef.current = candidate;
+    customLoadFailedRef.current = null;
+    customWriteNeededRef.current = false;
+    customSlotMissingRef.current = false;
+    customMutationRef.current = emptyPendingSettingsMutation();
+    if (settingsRef.current.tripMode === 'custom') applyLiveSettings(candidate);
+    return candidate;
+  }, [applyLiveSettings]);
+
+  const commitAllNow = useCallback(() => {
+    const active = commitActiveNow();
+    commitCustomNow(active);
+  }, [commitActiveNow, commitCustomNow]);
+
+  const commitWithCrossTabLock = useCallback(async () => {
+    const lockManager = globalThis.navigator?.locks;
+    if (!lockManager) {
+      commitAllNow();
+      return;
+    }
+    try {
+      await lockManager.request(`frank-settings:${CURRENT_LOCATION.id}`, () => commitAllNow());
+    } catch {
+      // Web Locks are a concurrency enhancement. A browser that exposes a
+      // broken/blocked lock manager must still retain the synchronous guarded
+      // persistence path used before this feature existed.
+      commitAllNow();
+    }
+  }, [commitAllNow]);
+
+  useEffect(() => {
     const canWriteActive = activeWriteNeededRef.current
       && (activeLoadFailedRef.current === null || hasEditedRef.current);
-    const canWriteCustom = customLoadFailedRef.current === null || customWriteAuthorizedRef.current;
-    const shouldWriteCustom = customWriteNeededRef.current;
-    if (!canWriteActive && !(canWriteCustom && shouldWriteCustom)) return;
+    const canWriteCustom = customWriteNeededRef.current
+      && (customLoadFailedRef.current === null || customWriteAuthorizedRef.current);
+    if (!canWriteActive && !canWriteCustom) return;
 
-    const write = () => {
-      if (canWriteActive) {
-        const saved = persistStoredSettings(SETTINGS_STORAGE_KEY, settings, activeLoadFailedRef.current);
-        // A silent failure here is the dangerous kind. The panel and the verdict
-        // both use the new value immediately, so a user who lowers their wind
-        // cap at the launch site sees it take effect - and next session reads
-        // the old record back and paddles under a LOOSER limit than they believe
-        // is active. localStorage being full, or Safari private mode throwing on
-        // first write, is enough to cause it. The read side already degrades
-        // honestly; the write side said nothing at all.
-        setSaveFailed(!saved);
-        if (saved) {
-          activeLoadFailedRef.current = null;
-          activeWriteNeededRef.current = false;
-        }
-      }
-
-      if (canWriteCustom && shouldWriteCustom && customProfileRef.current) {
-        // When Custom is active, state is the newest source of truth. When it
-        // is inactive, use the last valid remembered profile for an authorized
-        // recovery or an explicitly requested save.
-        const custom = settings.tripMode === 'custom' ? settings : customProfileRef.current;
-        if (persistStoredSettings(CUSTOM_SETTINGS_STORAGE_KEY, custom, customLoadFailedRef.current)) {
-          customProfileRef.current = custom;
-          customLoadFailedRef.current = null;
-          customWriteNeededRef.current = false;
-          customSlotMissingRef.current = false;
-        }
-      }
-    };
-
-    const timeoutId = window.setTimeout(write, 250);
+    const timeoutId = window.setTimeout(() => { void commitWithCrossTabLock(); }, 250);
     // An edit made in the last 250ms before the phone is pocketed (tab hidden,
     // bfcache, iOS killing the page) would otherwise never reach storage —
     // exactly when someone adjusts a limit at the launch site. setTripMode
     // already flushes for this reason; the main write needs it too.
-    const flush = () => { window.clearTimeout(timeoutId); write(); };
+    // Page teardown cannot wait for an async lock request; merge synchronously
+    // against the newest bytes as the final best-effort flush.
+    const flush = () => { window.clearTimeout(timeoutId); commitAllNow(); };
     window.addEventListener('pagehide', flush);
 
     return () => {
       window.clearTimeout(timeoutId);
       window.removeEventListener('pagehide', flush);
     };
-  }, [settings]);
+  }, [settings, commitAllNow, commitWithCrossTabLock]);
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.newValue === null) return;
+      if (event.storageArea && event.storageArea !== window.localStorage) return;
+
+      if (event.key === SETTINGS_STORAGE_KEY) {
+        let incoming: SafetySettings;
+        try {
+          incoming = decodeStoredSettings(event.newValue).settings;
+        } catch {
+          // Another writer's corrupt/future record must not poison live safety
+          // state or authorize this tab to replace bytes it cannot understand.
+          return;
+        }
+        activeLoadFailedRef.current = null;
+        const next = activeWriteNeededRef.current
+          ? applyPendingMutation(incoming, activeMutationRef.current)
+          : incoming.tripMode === 'custom'
+            ? incoming
+            : getPresetSettings(incoming.tripMode);
+        if (next.tripMode === 'custom') {
+          customProfileRef.current = next;
+          customRecoveryAvailableRef.current = true;
+        }
+        applyLiveSettings(next);
+        return;
+      }
+
+      if (event.key === CUSTOM_SETTINGS_STORAGE_KEY) {
+        let incoming: SafetySettings;
+        try {
+          incoming = { ...decodeStoredSettings(event.newValue).settings, tripMode: 'custom' };
+        } catch {
+          return;
+        }
+        customLoadFailedRef.current = null;
+        let nextCustom = customWriteNeededRef.current
+          ? applyPendingMutation(incoming, customMutationRef.current)
+          : incoming;
+        nextCustom = { ...nextCustom, tripMode: 'custom' };
+        customProfileRef.current = nextCustom;
+        customRecoveryAvailableRef.current = true;
+
+        if (settingsRef.current.tripMode === 'custom') {
+          const nextActive = activeWriteNeededRef.current
+            ? applyPendingMutation(nextCustom, activeMutationRef.current)
+            : nextCustom;
+          applyLiveSettings(nextActive);
+        }
+      }
+    };
+
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [applyLiveSettings]);
 
   const saveSettings = useCallback((newSettings: SafetySettings) => {
     hasEditedRef.current = true;
@@ -367,12 +634,21 @@ export function useSettings() {
     // Heal on the way in (idempotent for the editors, which already maintain
     // the invariants) so an inverted band can never reach the assessment.
     const healed = healSettings(newSettings);
+    const previous = settingsRef.current;
+    activeMutationRef.current = activeLoadFailedRef.current !== null
+      ? { replacement: healed, patch: emptySettingsPatch() }
+      : queueSettingsPatch(activeMutationRef.current, previous, healed);
+    settingsRef.current = healed;
+    activeModeRef.current = healed.tripMode;
     setSettings(healed);
     if (healed.tripMode === 'custom') {
       customProfileRef.current = healed;
       customWriteAuthorizedRef.current = true;
       customRecoveryAvailableRef.current = true;
       customWriteNeededRef.current = true;
+      customMutationRef.current = previous.tripMode !== 'custom' || customLoadFailedRef.current !== null
+        ? { replacement: healed, patch: emptySettingsPatch() }
+        : queueSettingsPatch(customMutationRef.current, previous, healed);
     }
   }, []);
 
@@ -380,11 +656,16 @@ export function useSettings() {
     hasEditedRef.current = true;
     activeWriteNeededRef.current = true;
     if (mode === 'custom') {
+      const custom = customProfileRef.current ?? getPresetSettings('custom');
+      activeMutationRef.current = { replacement: custom, patch: emptySettingsPatch() };
       if (customSlotMissingRef.current && customLoadFailedRef.current === null) {
         customWriteNeededRef.current = true;
         customRecoveryAvailableRef.current = true;
+        customMutationRef.current = { replacement: custom, patch: emptySettingsPatch() };
       }
-      setSettings(customProfileRef.current ?? getPresetSettings('custom'));
+      settingsRef.current = custom;
+      activeModeRef.current = 'custom';
+      setSettings(custom);
     } else {
       // Leaving custom cancels the debounced write, so flush the profile now
       // or an edit made within the last 250ms never reaches storage. A valid
@@ -393,22 +674,37 @@ export function useSettings() {
       const leavingCustom = activeModeRef.current === 'custom';
       if (leavingCustom && customLoadFailedRef.current !== null && customRecoveryAvailableRef.current) {
         customWriteAuthorizedRef.current = true;
+        customWriteNeededRef.current = true;
+        customMutationRef.current = {
+          replacement: customProfileRef.current,
+          patch: emptySettingsPatch(),
+        };
       }
-      if (leavingCustom
-        && customProfileRef.current
-        && (customLoadFailedRef.current === null || customWriteAuthorizedRef.current)
-        && persistStoredSettings(
-          CUSTOM_SETTINGS_STORAGE_KEY,
-          customProfileRef.current,
-          customLoadFailedRef.current,
-        )) {
-        customLoadFailedRef.current = null;
-        customWriteNeededRef.current = false;
-        customSlotMissingRef.current = false;
+      if (leavingCustom && customProfileRef.current) {
+        // Leaving Custom cancels its debounced effect. Ensure the remembered
+        // slot owns a complete candidate, then use the same latest-record merge
+        // as the normal timer before switching live state to the preset.
+        if (!customWriteNeededRef.current && customLoadFailedRef.current === null) {
+          customWriteNeededRef.current = true;
+          customMutationRef.current = {
+            replacement: customProfileRef.current,
+            patch: emptySettingsPatch(),
+          };
+        }
+        commitCustomNow(customProfileRef.current);
       }
-      setSettings(getPresetSettings(mode));
+      const preset = getPresetSettings(mode);
+      activeMutationRef.current = { replacement: preset, patch: emptySettingsPatch() };
+      settingsRef.current = preset;
+      activeModeRef.current = mode;
+      setSettings(preset);
     }
-  }, []);
+  }, [commitCustomNow]);
 
-  return { settings, saveSettings, setTripMode, saveFailed };
+  return {
+    settings,
+    saveSettings,
+    setTripMode,
+    saveFailed: activeSaveFailed || customSaveFailed,
+  };
 }

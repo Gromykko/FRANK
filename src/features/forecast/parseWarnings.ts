@@ -59,10 +59,23 @@ const COLOUR_RANK: Record<WeatherWarning['colour'], number> = {
   yellow: 1,
 };
 
-// Pull the text of a CAP element, tolerating the optional `cap:` namespace.
+// Pull inert text from an XML element with any namespace prefix. CAP/Atom
+// producers may wrap text in CDATA (including literal `<`); keep that content
+// as a string and deliberately do NOT decode entities or interpret markup.
+function pickAll(block: string, tag: string): string[] {
+  const namespace = '(?:[A-Za-z_][\\w.-]*:)?';
+  const pattern = new RegExp(
+    `<${namespace}${tag}(?:\\s[^>]*)?>\\s*`
+      + `(?:<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>|([^<]*))`
+      + `\\s*</${namespace}${tag}\\s*>`,
+    'g',
+  );
+  return [...block.matchAll(pattern)]
+    .map((match) => (match[1] ?? match[2] ?? '').trim());
+}
+
 function pick(block: string, tag: string): string | undefined {
-  const match = block.match(new RegExp(`<(?:cap:)?${tag}>([^<]*)</(?:cap:)?${tag}>`));
-  return match ? match[1].trim() : undefined;
+  return pickAll(block, tag)[0];
 }
 
 // The awareness colour leads the event string ("yellow Rain"); fall back to the
@@ -93,13 +106,21 @@ export function parseMeteoalarmFeed(
 ): WeatherWarning[] {
   if (!emmaId || typeof xml !== 'string') return [];
 
-  const entries = xml.match(/<entry>[\s\S]*?<\/entry>/g) ?? [];
+  const entries = xml.match(
+    /<(?:[A-Za-z_][\w.-]*:)?entry(?:\s[^>]*)?>[\s\S]*?<\/(?:[A-Za-z_][\w.-]*:)?entry\s*>/g,
+  ) ?? [];
   const warnings: WeatherWarning[] = [];
 
   for (const entry of entries) {
     // A single entry can carry several EMMA_ID geocodes (e.g. a nationwide
     // warning listing many regions), so match them all — not just the first.
-    const regions = [...entry.matchAll(/EMMA_ID<\/valueName>\s*<value>\s*([^<\s]+)/g)].map((m) => m[1]);
+    const geocodes = entry.match(
+      /<(?:[A-Za-z_][\w.-]*:)?geocode(?:\s[^>]*)?>[\s\S]*?<\/(?:[A-Za-z_][\w.-]*:)?geocode\s*>/g,
+    ) ?? [];
+    const regions = geocodes.flatMap((geocode) =>
+      pick(geocode, 'valueName') === 'EMMA_ID'
+        ? [pick(geocode, 'value')].filter((value): value is string => Boolean(value))
+        : []);
     if (!regions.includes(emmaId)) continue;
 
     const expires = pick(entry, 'expires');
@@ -123,7 +144,7 @@ export function parseMeteoalarmFeed(
       effective,
       onset: pick(entry, 'onset'),
       expires: expires!,
-      title: entry.match(/<title>([^<]*)<\/title>/)?.[1]?.trim(),
+      title: pick(entry, 'title'),
       url: warningUrl,
       detailUrl,
     });

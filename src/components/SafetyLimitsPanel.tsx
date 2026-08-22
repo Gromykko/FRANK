@@ -197,7 +197,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
         className={`panel-collapse-header module-head ${isOpen ? 'is-open' : ''}`}
         onClick={() => setIsOpen(!isOpen)}
       >
-        <span className="settings-copy">
+        <div className="settings-copy">
           <h2 className="settings-title">
             <button
               type="button"
@@ -231,7 +231,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
             </button>
           </h2>
           <span className="settings-subtitle">{t('Your personal limits')}</span>
-        </span>
+        </div>
         <div className="settings-collapse-chevron" aria-hidden="true">
           {isOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
         </div>

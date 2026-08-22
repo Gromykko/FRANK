@@ -61,13 +61,16 @@ export default function ConditionsSnapshot({
   const tideText = isBlock
     ? (tideLo === tideHi ? `${tideHi} cm` : t('{0} to {1} cm', tideLo, tideHi))
     : `${formatLevelCm(data.tideLevel)} cm`;
-  // MET supplies one instant wind value for an outlook block. Ignore legacy
-  // percentile fields that may still exist in an older cached payload.
+  // Keep MET's central instant estimate as the honest headline wind. The p90
+  // is a separate uncertainty estimate at the block start (not a period max),
+  // disclosed in the outlook note and used conservatively by the safety rules.
   const windText = `${formatReading(data.windSpeed, 1)} m/s`;
+  const hasOutlookWindP90 = isBlock
+    && typeof data.windSpeedP90 === 'number'
+    && Number.isFinite(data.windSpeedP90);
   // MET publishes no gust for the longer-range blocks. Show the no-reading
   // dash rather than repeating the sustained wind under a "gusts" label.
-  // One label for both cases: the outlook note already says a block carries
-  // its worst-case values, so a "max" suffix here only read as inconsistency.
+  // Neither central nor p90 sustained wind is a gust or a within-period max.
   const blockGust = data.windGustMax ?? data.windGust;
   const gustValue = isBlock
     ? (Number.isFinite(blockGust) ? formatReading(blockGust, 1) : NO_READING_TEXT)
@@ -174,6 +177,9 @@ export default function ConditionsSnapshot({
       {isBlock && (
         <div className="snapshot-lowconf-note">
           {t('Long range outlook · more uncertain forecast')}
+          {hasOutlookWindP90 && (
+            <> · {t('90th-percentile wind at start: {0} m/s', formatReading(data.windSpeedP90 as number, 1))}</>
+          )}
         </div>
       )}
 

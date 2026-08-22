@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
-import { CRON_PERIOD_MS, DEFAULT_FETCH_TIMEOUT_MS } from '../../worker/execution';
+import {
+  CRON_PERIOD_MS,
+  CRON_TICK_BUDGET_MS,
+  DEFAULT_FETCH_TIMEOUT_MS,
+} from '../../worker/execution';
 import {
   cronExecutionPolicy,
   fetchLatestInstanceForCollections,
@@ -14,6 +18,7 @@ import {
 // against the one upstream that actively rate-limits this app.
 
 const WATER = ['dkss_idw', 'dkss_nsbs'];
+const WAVES = ['wam_nsb', 'wam_dw'];
 const instancesBody = (ids: string[]) => ({ instances: ids.map((id) => ({ id })) });
 
 const originalFetch = globalThis.fetch;
@@ -67,8 +72,9 @@ describe('fetchLatestInstanceForCollections memo', () => {
   });
 
   it('memoises a refusal too, so a 429 is not re-earned per location', async () => {
-    // No Retry-After: the provider gave no instruction, so our own backoff
-    // governs and the policy's attempt budget is spent as before.
+    // No Retry-After still opens the event-local provider circuit. DMI's limit
+    // is host-wide, so retrying the same refusal until the per-location attempt
+    // budget is gone can exhaust Cloudflare's whole invocation allowance.
     globalThis.fetch = (async (url: string) => {
       calls.push(String(url));
       return {
@@ -80,7 +86,10 @@ describe('fetchLatestInstanceForCollections memo', () => {
     }) as unknown as typeof fetch;
 
     await expect(fetchLatestInstanceForCollections(WATER, { maxAttempts: 3 }, eventMemo)).rejects.toThrow();
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(1);
+
+    await expect(fetchLatestInstanceForCollections(WAVES, { maxAttempts: 3 }, eventMemo)).rejects.toThrow();
+    expect(calls).toHaveLength(1);
   });
 
   // We parse Retry-After, attach it to the error and forward it to the browser.
@@ -358,15 +367,15 @@ describe('tickOrder', () => {
 });
 
 describe('cronExecutionPolicy', () => {
-  it('allocates fair share of the 5-minute tick with adaptive attempt budget', () => {
+  it('allocates the selected city the tick budget with bounded retry depth', () => {
     const now = Date.parse('2026-08-20T12:00:00Z');
-    const tickDeadline = now + 5 * 60_000;
+    const tickDeadline = now + CRON_TICK_BUDGET_MS;
 
-    expect(cronExecutionPolicy(now, tickDeadline, 4)).toEqual({
-      deadlineAt: now + 75_000,
-      hardDeadlineAt: now + 75_000,
+    expect(cronExecutionPolicy(now, tickDeadline, 1)).toEqual({
+      deadlineAt: tickDeadline,
+      hardDeadlineAt: tickDeadline,
       fetchTimeoutMs: 15_000,
-      maxAttempts: 41,
+      maxAttempts: 3,
       completionReserveMs: 8_000,
       retryDelayMs: undefined,
       retryBusyDelayMs: undefined,
@@ -380,7 +389,7 @@ describe('cronExecutionPolicy', () => {
     expect(policy).toMatchObject({
       deadlineAt: now + 20_000,
       fetchTimeoutMs: 15_000,
-      maxAttempts: 11,
+      maxAttempts: 3,
       completionReserveMs: 4_000,
       retryDelayMs: undefined,
       retryBusyDelayMs: undefined,

@@ -18,6 +18,9 @@ export interface LaunchWindow {
   startIndex: number;
   endIndex: number;
   duration: number;
+  // When the first forecast row is already in progress, the usable window
+  // starts at the clock rather than at that row's past hour mark.
+  effectiveStartMs?: number;
   // Set for windows built from longer-range MET blocks (past the hourly range):
   // a soft "this period looks generally suitable" hint, not an exact hourly window.
   lowConfidence?: boolean;
@@ -49,21 +52,27 @@ function isContiguous(previous: HourlyData, current: HourlyData): boolean {
   const gap = new Date(current.time).getTime() - new Date(previous.time).getTime();
   if (!Number.isFinite(gap)) return false;
   const expectedSpan = (previous.blockSpanHours ?? 1) * HOUR_MS;
-  return gap >= expectedSpan * 0.95 && gap <= expectedSpan * 1.05;
+  // Both providers are normalized onto exact ISO grid starts. A tolerance here
+  // fabricates unassessed coverage: e.g. a 06:00 block followed at 12:20 has no
+  // safe reading at its real 12:00 endpoint, even though the two rows are near.
+  return gap === expectedSpan;
 }
 
-// A window is a run of consecutive safe forecast samples within one day.
-// An N-hour window needs N+1 safe samples: both endpoints of every hour
-// interval must be safe.
+// A window is a run of consecutive safe forecast samples in absolute time.
+// Midnight does not break water-time continuity; the UI alone segments the
+// resulting bar by calendar day. An N-hour window needs N+1 safe samples: both
+// endpoints of every hour interval must be safe.
 //
 // Two ranges are searched: exact hourly windows within MET's hourly range, and
-// block-level windows across the longer-range MET period blocks. A single safe
-// block already qualifies (its span is 6h) and is flagged `lowConfidence`.
+// block-level windows across the longer-range MET period blocks. An outlook
+// interval needs a safe closing sample as well as a safe start, and is flagged
+// `lowConfidence` because the period data is still coarser than hourly data.
 export function findLaunchWindows(
   data: HourlyData[],
   settings: SafetySettings,
   startIndex: number,
-  sun?: SunTimes
+  sun?: SunTimes,
+  nowMs?: number,
 ): LaunchWindow[] {
   if (!data || data.length === 0) return [];
 
@@ -94,8 +103,13 @@ export function findLaunchWindows(
         }
         return true;
       case 'any':
-      default:
         return true;
+      default:
+        // Settings hydration supplies the legacy default (`any`) and rejects
+        // unknown enum strings. If an unvalidated/missing value nevertheless
+        // reaches this recommendation boundary, fail closed rather than
+        // silently weakening it to no tide preference.
+        return false;
     }
   };
 
@@ -126,19 +140,34 @@ export function findLaunchWindows(
   // --- Exact hourly windows (endpoints must be safe) ---------------------
   let currentStart: number | null = null;
   const addHourlySlot = (start: number, end: number) => {
-    const duration = end - start;
+    const nominalStartMs = Date.parse(data[start]?.time ?? '');
+    const endMs = Date.parse(data[end]?.time ?? '');
+    if (!Number.isFinite(nominalStartMs) || !Number.isFinite(endMs)) return;
+    const shouldClipStart = Number.isFinite(nowMs)
+      && (nowMs as number) > nominalStartMs
+      && (nowMs as number) < endMs;
+    const effectiveStartMs = shouldClipStart ? nowMs as number : nominalStartMs;
+    const duration = (endMs - effectiveStartMs) / HOUR_MS;
     if (duration >= settings.minDuration && matchesWaterLevelPreference(start, end)) {
-      slots.push({ startIndex: start, endIndex: end, duration });
+      slots.push({
+        startIndex: start,
+        endIndex: end,
+        duration,
+        ...(shouldClipStart ? { effectiveStartMs } : {}),
+      });
     }
   };
 
   for (let i = 0; i < hourlyEnd; i++) {
     // A gap in the series breaks the run for the same reason a new day does:
     // the hours either side are not one continuous stretch on the water.
-    const isNewDay = i > 0 && (!isSameLocationDay(data[i].time, data[i - 1].time) || !isContiguous(data[i - 1], data[i]));
+    // Midnight is a presentation boundary, not a break in safe water time.
+    // PaddlePlanner segments the one window into calendar-day bars; only a
+    // real timestamp gap ends the recommendation.
+    const breaksContinuity = i > 0 && !isContiguous(data[i - 1], data[i]);
     if (isSafe(i)) {
       if (currentStart === null) currentStart = i;
-      else if (isNewDay) {
+      else if (breaksContinuity) {
         addHourlySlot(currentStart, i - 1);
         currentStart = i;
       }
@@ -153,7 +182,9 @@ export function findLaunchWindows(
   const blockSlots: LaunchWindow[] = [];
   let blockStart: number | null = null;
   const addBlockSlot = (start: number, end: number) => {
-    if (!matchesWaterLevelPreference(start, end)) return;
+    // `end` names the last block interval; end + 1 is its closing forecast
+    // sample. Apply water-level preferences to the whole covered interval too.
+    if (!matchesWaterLevelPreference(start, end + 1)) return;
     const spanHours = data
       .slice(start, end + 1)
       .reduce((sum, hour) => sum + (hour.blockSpanHours ?? 0), 0);
@@ -198,11 +229,28 @@ export function findLaunchWindows(
     });
   };
 
+  // Unlike marine ranges, a MET outlook block's central wind and optional p90
+  // are both instant estimates at the block start. Neither can clear the
+  // following six hours by itself. A block is therefore a recommendable
+  // interval only when its exact closing sample is present, contiguous, and
+  // independently safe — the same two-safe-endpoints invariant the exact-hour
+  // path uses.
+  const isSafeBlockInterval = (index: number): boolean => {
+    const next = data[index + 1];
+    return Boolean(
+      data[index]?.blockSpanHours
+      && next
+      && isContiguous(data[index], next)
+      && isSafe(index)
+      && isSafe(index + 1),
+    );
+  };
+
   for (let i = hourlyEnd; i < data.length; i++) {
-    const isNewDay = i > hourlyEnd && (!isSameLocationDay(data[i].time, data[i - 1].time) || !isContiguous(data[i - 1], data[i]));
-    if (isSafe(i)) {
+    const breaksContinuity = i > hourlyEnd && !isContiguous(data[i - 1], data[i]);
+    if (isSafeBlockInterval(i)) {
       if (blockStart === null) blockStart = i;
-      else if (isNewDay) {
+      else if (breaksContinuity) {
         addBlockSlot(blockStart, i - 1);
         blockStart = i;
       }
@@ -211,7 +259,7 @@ export function findLaunchWindows(
       blockStart = null;
     }
   }
-  if (blockStart !== null) addBlockSlot(blockStart, data.length - 1);
+  if (blockStart !== null) addBlockSlot(blockStart, data.length - 2);
 
   return [...slots.slice(0, MAX_WINDOWS), ...blockSlots.slice(0, MAX_BLOCK_WINDOWS)];
 }

@@ -59,7 +59,10 @@ function getIconSpec(code: number, isNight: boolean, size: number): IconSpec {
   if (code >= 95 && code <= 99) {
     return { animation: 'lightning-flash', tone: 'tone-storm', icon: <CloudLightning size={size} /> };
   }
-  return { animation: 'sun-spin', tone: 'tone-sun', icon: <Sun size={size} /> };
+  // The payload contract currently accepts the full 0..99 numeric range, while
+  // WMO leaves several values unassigned. Unknown must look unknown: a sunny
+  // fallback would quietly turn malformed/new provider data into reassurance.
+  return { animation: '', tone: 'tone-cloud', icon: <CloudOff size={size} /> };
 }
 
 export default function WeatherWidgetIcon({ code, isNight, size = 32 }: WeatherWidgetIconProps) {

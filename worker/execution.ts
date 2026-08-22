@@ -1,3 +1,5 @@
+import type { EventMemo } from './domain';
+
 // The authenticated candidate route has a 24-second hard budget and reserves
 // four seconds for assembly and KV persistence, leaving at most 20 seconds for
 // one provider stage. DMI position responses have repeatedly completed just
@@ -9,8 +11,28 @@ const CRON_FETCH_TIMEOUT_MS = 15_000;
 const CRON_LOCATION_MIN_BUDGET_MS = 15_000;
 const CRON_COMPLETION_RESERVE_MS = 8_000;
 export const CRON_TICK_BUDGET_MS = 4 * 60_000;
-export const CRON_TOTAL_ATTEMPTS_BUDGET = 45;
+// Retry depth is a provider decision, not a way to spend the invocation-wide
+// subrequest allowance. Three total attempts cover two transient failures; a
+// still-failing stage then yields to this city's next 20-minute turn instead of
+// parsing dozens of identical 5xx responses on Workers Free's 10 ms CPU tier.
+export const CRON_PROVIDER_MAX_ATTEMPTS = 3;
 export const DMI_BUSY_RETRY_DELAY_MS = 1_200;
+// Workers Free permits 50 external subrequests per invocation. Keep five in
+// reserve for platform/provider behavior outside the explicit retry loops.
+export const EVENT_EXTERNAL_SUBREQUEST_BUDGET = 45;
+
+export class ExternalSubrequestBudgetError extends Error {
+  constructor() {
+    super(`External subrequest budget exhausted (${EVENT_EXTERNAL_SUBREQUEST_BUDGET} per event).`);
+    this.name = 'ExternalSubrequestBudgetError';
+  }
+}
+
+export function isExternalSubrequestBudgetError(
+  error: unknown,
+): error is ExternalSubrequestBudgetError {
+  return error instanceof ExternalSubrequestBudgetError;
+}
 
 export type DeadlineKind = 'hard' | 'provider';
 
@@ -75,8 +97,9 @@ export function rotateTickOrder<T>(
   return [...list.slice(offset), ...list.slice(0, offset)];
 }
 
-// Each remaining location receives its adaptive share of the scheduled tick,
-// distributing up to 200 attempts across unready cities to probe DMI backend nodes.
+// Each remaining location receives an adaptive time/attempt ceiling. The actual
+// invocation-wide fetch count is independently capped by
+// EVENT_EXTERNAL_SUBREQUEST_BUDGET in fetchWithTimeout.
 export function cronExecutionPolicy(
   nowMs: number,
   tickDeadlineAt: number,
@@ -92,8 +115,8 @@ export function cronExecutionPolicy(
   );
   if (locationBudgetMs <= 0) return null;
   const maxAttempts = Math.min(
-    CRON_TOTAL_ATTEMPTS_BUDGET,
-    Math.max(3, Math.floor(locationBudgetMs / 1_800)),
+    CRON_PROVIDER_MAX_ATTEMPTS,
+    Math.max(1, Math.floor(locationBudgetMs / 1_800)),
   );
   return executionPolicy({
     deadlineAt: Math.min(tickDeadlineAt, nowMs + locationBudgetMs),
@@ -190,8 +213,18 @@ export function fetchWithTimeout(
   url: RequestInfo | URL,
   init: RequestInit = {},
   policy: ExecutionPolicy = executionPolicy(),
+  eventMemo?: EventMemo,
 ): Promise<Response> {
   assertBeforeProviderDeadline(policy, `fetch ${String(url)}`);
+  if (eventMemo) {
+    const started = eventMemo.externalSubrequestsStarted ?? 0;
+    if (started >= EVENT_EXTERNAL_SUBREQUEST_BUDGET) {
+      throw new ExternalSubrequestBudgetError();
+    }
+    // Increment synchronously before fetch() starts. Parallel provider legs run
+    // in one JS event loop, so no two legs can observe and spend the same slot.
+    eventMemo.externalSubrequestsStarted = started + 1;
+  }
   const remainingMs = remainingProviderMs(policy);
   const timeoutMs = Math.max(1, Math.floor(Math.min(policy.fetchTimeoutMs, remainingMs)));
   return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });

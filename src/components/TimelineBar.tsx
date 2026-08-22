@@ -470,7 +470,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
       {/* Aligning items flex-start guarantees matching top coordinates for both panels */}
       <div className="timeline-scroll-wrapper">
         {/* Sticky Legend Column */}
-        <div className="timeline-legend-col">
+        <div className="timeline-legend-col" aria-hidden="true">
           <div className="timeline-legend-label">{t('Weather')}</div>
           <div className="timeline-legend-label tall">{t('Wind')} (m/s)</div>
           <div className="timeline-legend-label">{t('Waves')} (m)</div>
@@ -492,7 +492,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
         >
           <div className="timeline-track-wrapper" style={{ width: `${allHours.length * hourCellWidth}px` }}>
             {/* The colored blocks */}
-            <div className="timeline-track">
+            <div className="timeline-track" aria-hidden="true">
               {allHours.map((h) => {
                 const { data: hourData, actualIndex, status, isDayStart, isOutlookStart } = h;
                 const isSelected = selectedIndex === actualIndex;
@@ -519,7 +519,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
             </div>
 
             {/* Meteogram Rows */}
-            <div className="meteogram-row" title={t('Weather')}>
+            <div className="meteogram-row" title={t('Weather')} aria-hidden="true">
               {allHours.map((h) => (
                 <div key={h.actualIndex} className={meteogramCellClass(h)}>
                   {getWeatherIcon(h.data.weatherCode, WEATHER_ICON_SIZE)}
@@ -527,7 +527,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
               ))}
             </div>
 
-            <div className="meteogram-row tall" title={t('Wind direction, speed, and gusts (m/s)')}>
+            <div className="meteogram-row tall" title={t('Wind direction, speed, and gusts (m/s)')} aria-hidden="true">
               {allHours.map((h) => (
                 <div key={h.actualIndex} className={`${meteogramCellClass(h)} tall`}>
                   <div className="meteogram-wind-stack">
@@ -546,7 +546,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
               ))}
             </div>
 
-            <div className="meteogram-row" title={t('Wave Height (m)')}>
+            <div className="meteogram-row" title={t('Wave Height (m)')} aria-hidden="true">
               {allHours.map((h) => (
                 <div key={h.actualIndex} className={meteogramCellClass(h)}>
                   <span className="meteogram-value">
@@ -561,7 +561,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
               ))}
             </div>
 
-            <div className="meteogram-row" title={t('Water level (cm)')}>
+            <div className="meteogram-row" title={t('Water level (cm)')} aria-hidden="true">
               {allHours.map((h) => {
                 // An outlook block shows its HIGHEST and LOWEST water level,
                 // not one number. Every other row's block value is a defensible
@@ -627,7 +627,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
               })}
             </div>
 
-            <div className="meteogram-row" title={t('Air temperature (°C)')}>
+            <div className="meteogram-row" title={t('Air temperature (°C)')} aria-hidden="true">
               {allHours.map((h) => (
                 <div key={h.actualIndex} className={meteogramCellClass(h)}>
                   <span className="meteogram-value">
@@ -641,7 +641,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
               ))}
             </div>
 
-            <div className="meteogram-row" title={t('Water temperature (°C)')}>
+            <div className="meteogram-row" title={t('Water temperature (°C)')} aria-hidden="true">
               {allHours.map((h) => (
                 <div key={h.actualIndex} className={meteogramCellClass(h)}>
                   <span className="meteogram-value">

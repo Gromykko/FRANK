@@ -4,6 +4,11 @@ import {
   isSupportedLegacyForecastPayloadVersion,
 } from './releaseContract';
 import type { WeatherData } from './types';
+import {
+  FORECAST_CLOCK_LEAD_TOLERANCE_MS,
+  isPlausibleForecastTimestamp,
+  isPlausibleSourceTimestamp,
+} from './temporalPolicy';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -15,6 +20,12 @@ export interface ForecastPayloadValidationOptions {
   // The explicit /api/vN route must prove which stable contract answered. A
   // legacy endpoint/local slot may omit the additive release envelope.
   requireReleaseMetadata?: boolean;
+  // Injectable for deterministic boundary tests. Production callers use the
+  // browser clock and tolerate the documented device-clock lead.
+  nowMs?: number;
+  // Workers have an authoritative clock and pass the strict server tolerance;
+  // browsers retain the wider default for manually skewed device clocks.
+  sourceClockLeadToleranceMs?: number;
 }
 
 const REQUIRED_READING_FIELDS = [
@@ -36,6 +47,7 @@ const REQUIRED_READING_FIELDS = [
 const OPTIONAL_READING_FIELDS = [
   'windSpeedMin',
   'windSpeedMax',
+  'windSpeedP90',
   'windGustMax',
   'waveHeightMin',
   'waveHeightMax',
@@ -54,6 +66,7 @@ const NON_NEGATIVE_READING_FIELDS = new Set<string>([
   'currentSpeed',
   'windSpeedMin',
   'windSpeedMax',
+  'windSpeedP90',
   'windGustMax',
   'waveHeightMin',
   'waveHeightMax',
@@ -70,6 +83,11 @@ const DIRECTION_READING_FIELDS = new Set<string>([
 // payload does not actually cover.
 const SUPPORTED_BLOCK_SPANS = new Set([6, 12]);
 const HOUR_MS = 60 * 60 * 1000;
+// mapMetPayload clamps this field to at most 90 minutes after assembly. Pin the
+// same trust boundary here: this stamp gates Worker rebuilds, so parse-only
+// validation would let a poisoned cache suppress MET refresh until exhaustion.
+const MAX_WEATHER_EXPIRY_AFTER_FETCH_MS = 90 * 60 * 1000;
+const MAX_WEATHER_LAST_MODIFIED_AFTER_FETCH_MS = 5 * 60 * 1000;
 // About 111 m north/south and less east/west at Danish latitudes: enough to
 // absorb harmless rounding between independently deployed location manifests,
 // far too small for another launch area or fjord to pass as the requested one.
@@ -125,7 +143,7 @@ function isValidReading(field: string, value: unknown): value is number {
   return true;
 }
 
-function hasValidHourlyRows(value: unknown): boolean {
+function hasValidHourlyRows(value: unknown, nowMs: number): boolean {
   if (!Array.isArray(value) || value.length === 0) return false;
 
   let previousStart = Number.NEGATIVE_INFINITY;
@@ -135,7 +153,12 @@ function hasValidHourlyRows(value: unknown): boolean {
     if (!isRecord(item)) return false;
 
     const start = timestampMs(item.time);
-    if (start === null || start <= previousStart || start < previousEnd) return false;
+    if (
+      start === null
+      || !isPlausibleForecastTimestamp(start, nowMs)
+      || start <= previousStart
+      || start < previousEnd
+    ) return false;
 
     if (!isNonEmptyString(item.symbolCode) || typeof item.isDay !== 'boolean') return false;
     if (!REQUIRED_READING_FIELDS.every((field) => isValidReading(field, item[field]))) return false;
@@ -193,15 +216,36 @@ function hasValidWarnings(value: unknown): boolean {
   });
 }
 
-function hasValidCacheHealth(value: unknown): boolean {
+function hasValidCacheHealth(
+  value: unknown,
+  nowMs: number,
+  fetchedAtMs: number,
+  sourceClockLeadToleranceMs: number,
+): boolean {
   if (value === undefined) return true;
   if (!isRecord(value)) return false;
   if (!['current', 'pending', 'stale', 'fresh', 'fallback'].includes(value.status as string)) return false;
-  if (timestampMs(value.lastAttemptAt) === null) return false;
+  const lastAttemptMs = timestampMs(value.lastAttemptAt);
+  if (
+    lastAttemptMs === null
+    || !isPlausibleSourceTimestamp(lastAttemptMs, nowMs, sourceClockLeadToleranceMs)
+  ) return false;
 
   if (!isOptionalString(value.message) || !isOptionalString(value.checkedBy)) return false;
-  if (value.weatherExpires !== undefined && timestampMs(value.weatherExpires) === null) return false;
-  if (value.weatherLastModified !== undefined && timestampMs(value.weatherLastModified) === null) return false;
+  if (value.weatherExpires !== undefined) {
+    const weatherExpiresMs = timestampMs(value.weatherExpires);
+    if (
+      weatherExpiresMs === null
+      || weatherExpiresMs > fetchedAtMs + MAX_WEATHER_EXPIRY_AFTER_FETCH_MS
+    ) return false;
+  }
+  if (value.weatherLastModified !== undefined) {
+    const weatherLastModifiedMs = timestampMs(value.weatherLastModified);
+    if (
+      weatherLastModifiedMs === null
+      || weatherLastModifiedMs > fetchedAtMs + MAX_WEATHER_LAST_MODIFIED_AFTER_FETCH_MS
+    ) return false;
+  }
   if (value.needsRebuild !== undefined && typeof value.needsRebuild !== 'boolean') return false;
   if (value.providerBusy !== undefined && typeof value.providerBusy !== 'boolean') return false;
   if (value.busyProvider !== undefined && !['weather', 'marine', 'services'].includes(value.busyProvider as string)) return false;
@@ -211,6 +255,85 @@ function hasValidCacheHealth(value: unknown): boolean {
   )) return false;
 
   return true;
+}
+
+function hasValidCronHeartbeat(
+  value: unknown,
+  nowMs: number,
+  sourceClockLeadToleranceMs: number,
+): boolean {
+  if (value === undefined) return true;
+  if (!isRecord(value)) return false;
+  const lastTickMs = timestampMs(value.lastTickAt);
+  if (
+    lastTickMs === null
+    || !isPlausibleSourceTimestamp(lastTickMs, nowMs, sourceClockLeadToleranceMs)
+  ) return false;
+  if (value.ageMin !== undefined && (
+    typeof value.ageMin !== 'number'
+    || !Number.isFinite(value.ageMin)
+    || value.ageMin < 0
+  )) return false;
+  return true;
+}
+
+// Sunrise/sunset and the per-row isDay flag are one derived contract. Checking
+// their shapes independently lets a corrupt cache mark midnight as daylight,
+// after which Daylight Only and the launch planner both trust the forged flag.
+// Empty schedules remain valid for legacy/offline payloads; whenever a schedule
+// is present it must cover every forecast day and agree with every row.
+function hasConsistentDaylight(
+  hourly: unknown,
+  sunrise: string[],
+  sunset: string[],
+  timezone: string,
+): boolean {
+  if (!Array.isArray(hourly)) return false;
+  if (sunrise.length === 0) return true;
+
+  let dayKey: Intl.DateTimeFormat;
+  try {
+    dayKey = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+  } catch {
+    return false;
+  }
+
+  const intervals = new Map<string, { riseMs: number; setMs: number }>();
+  for (let index = 0; index < sunrise.length; index++) {
+    const riseMs = Date.parse(sunrise[index]);
+    const setMs = Date.parse(sunset[index]);
+    if (!Number.isFinite(riseMs) || !Number.isFinite(setMs) || setMs <= riseMs) return false;
+    const key = dayKey.format(riseMs);
+    // Danish sunrise/sunset pairs describe one local calendar day. Without
+    // this relation a forged next-day sunset can turn the whole intervening
+    // night into `isDay: true` and still agree with the oversized interval.
+    if (dayKey.format(setMs) !== key) return false;
+    if (intervals.has(key)) return false;
+    intervals.set(key, { riseMs, setMs });
+  }
+
+  const forecastDays = new Set<string>();
+  for (const value of hourly) {
+    if (!isRecord(value)) return false;
+    const timeMs = timestampMs(value.time);
+    if (timeMs === null) return false;
+    const key = dayKey.format(timeMs);
+    forecastDays.add(key);
+    const interval = intervals.get(key);
+    if (!interval) return false;
+    const expectedIsDay = timeMs >= interval.riseMs && timeMs <= interval.setMs;
+    if (value.isDay !== expectedIsDay) return false;
+  }
+
+  // Assembly builds the sun schedule before weather rows without nearby
+  // marine data are filtered, so valid payloads can carry extra schedule days.
+  // Every represented forecast day must be covered; harmless extras stay valid.
+  return [...forecastDays].every((key) => intervals.has(key));
 }
 
 function hasCompatibleVersion(sources: UnknownRecord, allowLegacyMissingVersion: boolean): boolean {
@@ -246,19 +369,34 @@ export function isValidForecastPayload(
   requestedLocation: ForecastLocation,
   options: ForecastPayloadValidationOptions = {},
 ): value is WeatherData {
+  const nowMs = Number.isFinite(options.nowMs) ? options.nowMs as number : Date.now();
+  const sourceClockLeadToleranceMs = Number.isFinite(options.sourceClockLeadToleranceMs)
+    && (options.sourceClockLeadToleranceMs as number) >= 0
+    ? options.sourceClockLeadToleranceMs as number
+    : FORECAST_CLOCK_LEAD_TOLERANCE_MS;
   if (!Number.isSafeInteger(requestedLocation.forecastConfigRevision)
     || requestedLocation.forecastConfigRevision < 1) return false;
   if (!isRecord(value)) return false;
-  if (!hasValidHourlyRows(value.hourly)) return false;
+  if (!hasValidHourlyRows(value.hourly, nowMs)) return false;
   if (
     !isStrictlyIncreasingTimestampArray(value.sunrise)
     || !isStrictlyIncreasingTimestampArray(value.sunset)
     || value.sunrise.length !== value.sunset.length
   ) return false;
+  if (!hasConsistentDaylight(
+    value.hourly,
+    value.sunrise,
+    value.sunset,
+    requestedLocation.timezone,
+  )) return false;
   if (!hasValidWarnings(value.warnings)) return false;
 
   const sources = value.sources;
   if (!isRecord(sources)) return false;
+  // Every current Worker assembly derives a non-empty solar schedule. Empty
+  // arrays remain a deliberate compatibility allowance only for release-less
+  // legacy/offline representations.
+  if (value.sunrise.length === 0 && sources.release !== undefined) return false;
   if (!hasCompatibleVersion(sources, options.allowLegacyMissingVersion === true)) return false;
   if (!hasValidReleaseMetadata(
     sources.release,
@@ -266,7 +404,22 @@ export function isValidForecastPayload(
     sources.payloadVersion,
   )) return false;
   if (!isNonEmptyString(sources.weather) || !isNonEmptyString(sources.waves) || !isNonEmptyString(sources.water)) return false;
-  if (timestampMs(sources.fetchedAt) === null || !hasValidCacheHealth(sources.cacheHealth)) return false;
+  const fetchedAtMs = timestampMs(sources.fetchedAt);
+  if (
+    fetchedAtMs === null
+    || !isPlausibleSourceTimestamp(fetchedAtMs, nowMs, sourceClockLeadToleranceMs)
+    || !hasValidCacheHealth(
+      sources.cacheHealth,
+      nowMs,
+      fetchedAtMs,
+      sourceClockLeadToleranceMs,
+    )
+    || !hasValidCronHeartbeat(
+      sources.cronHeartbeat,
+      nowMs,
+      sourceClockLeadToleranceMs,
+    )
+  ) return false;
 
   const coordinate = sources.coordinate;
   if (!isRecord(coordinate)) return false;
