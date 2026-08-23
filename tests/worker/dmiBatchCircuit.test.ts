@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import worker from '../../worker/index';
+import worker, { CRON_HEARTBEAT_KEY } from '../../worker/index';
 import locationData from '../../src/config/locations.json';
 import type { ForecastLocation } from '../../src/config/locationTypes';
 import { CURRENT_RELEASE } from '../../src/features/forecast/releaseContract';
@@ -149,8 +149,13 @@ afterEach(() => {
 });
 
 describe('scheduled DMI retries and location isolation', () => {
-  it('opens an event-local circuit on 429 and stops parallel-leg retries', async () => {
-    const { env, store } = runtime();
+  it('opens the 429 circuit while recording the successful MET contact', async () => {
+    const allCurrent = new Set(LOCATIONS.map(({ id }) => id));
+    const { env, store } = runtime(allCurrent);
+    const [horsens, vejle, kolding, aarhus] = LOCATIONS;
+    const vejleCached = forecast(store, vejle);
+    vejleCached.sources.cacheHealth!.weatherExpires = new Date(NOW - 1).toISOString();
+    store.set(assembledForecastKey(vejle), JSON.stringify(vejleCached));
     const calls: string[] = [];
     let vejleAttempts = 0;
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
@@ -208,7 +213,6 @@ describe('scheduled DMI retries and location isolation', () => {
       {} as ExecutionContext,
     );
 
-    const [horsens, vejle, kolding, aarhus] = LOCATIONS;
     const positionCalls = calls.filter((url) => url.includes('/position?'));
     // This tick belongs only to Vejle. Water and waves were already in flight
     // together when the first refusal arrived; the event circuit stops retries.
@@ -216,6 +220,8 @@ describe('scheduled DMI retries and location isolation', () => {
     expect(positionCalls).toHaveLength(2);
     expect(positionCalls.some((url) =>
       new URL(url).searchParams.get('coords') === 'POINT(9.659 55.512)')).toBe(false);
+    expect(calls.filter((url) => url.endsWith('/instances'))).toHaveLength(0);
+    expect(calls.filter((url) => url.includes('api.met.no/'))).toHaveLength(1);
 
     expect(forecast(store, horsens).sources.cacheHealth).toMatchObject({
       status: 'current',
@@ -227,6 +233,12 @@ describe('scheduled DMI retries and location isolation', () => {
       providerBusy: true,
       busyProvider: 'marine',
       degradedSources: ['water', 'waves'],
+    });
+    expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
+      schemaVersion: 2,
+      lastTickAt: new Date(vejleTick).toISOString(),
+      locations: { vejle: new Date(vejleTick).toISOString() },
+      unreachable: {},
     });
 
     // Kolding's turn is the next one-minute tick, so this invocation must not
@@ -241,6 +253,81 @@ describe('scheduled DMI retries and location isolation', () => {
       status: 'current',
     });
     expect(forecast(store, aarhus).sources.cacheHealth).not.toHaveProperty('providerBusy');
+  });
+
+  it('keeps successful contact evidence when later forecast assembly fails', async () => {
+    const { env, store } = runtime(new Set(LOCATIONS.map(({ id }) => id)));
+    const scheduledTime = NOW + 9 * 60_000;
+    const location = LOCATIONS.find(({ id }) => id === 'vejle')!;
+    const previousSuccess = scheduledTime - 8 * 60_000;
+    const cached = forecast(store, location);
+    cached.sources.cacheHealth!.weatherExpires = new Date(NOW - 1).toISOString();
+    cached.sources.cacheHealth!.marineInstances = {
+      water: { collection: 'dkss_idw', id: '2026-08-20T160000Z' },
+      waves: { collection: 'wam_nsb', id: '2026-08-20T160000Z' },
+    };
+    store.set(assembledForecastKey(location), JSON.stringify(cached));
+    store.set(CRON_HEARTBEAT_KEY, JSON.stringify({
+      schemaVersion: 2,
+      lastTickAt: new Date(scheduledTime - 60_000).toISOString(),
+      locations: { [location.id]: new Date(previousSuccess).toISOString() },
+      unreachable: { [location.id]: new Date(scheduledTime - 4 * 60_000).toISOString() },
+    }));
+    const nonOverlappingHour = '2026-08-21T17:00:00.000Z';
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('api.met.no/')) return metResponse();
+      if (url.includes('feeds.meteoalarm.org/')) {
+        return new Response('<feed></feed>', { status: 200 });
+      }
+      if (url.includes('/instances/')) {
+        const properties = url.includes('/collections/dkss_')
+          ? {
+              step: nonOverlappingHour,
+              'sea-mean-deviation': 0,
+              'water-temperature': 16,
+              'current-u': 0,
+              'current-v': 0,
+            }
+          : {
+              step: nonOverlappingHour,
+              'significant-wave-height': 0.1,
+              'mean-wave-dir': 180,
+              'mean-wave-period': 3,
+            };
+        return Response.json({ features: [{ properties }] });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    }) as typeof fetch;
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.setSystemTime(scheduledTime);
+
+    await worker.scheduled(
+      { scheduledTime } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('api.met.no/'),
+      expect.anything(),
+    );
+    expect(forecast(store, location).sources.cacheHealth).toMatchObject({
+      status: 'stale',
+      message: 'Forecast refresh failed; keeping the last completed forecast.',
+    });
+    expect(errorLog.mock.calls.some(([message]) =>
+      typeof message === 'string'
+      && message.includes('No overlapping weather + marine hours'))).toBe(true);
+    expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
+      schemaVersion: 2,
+      lastTickAt: new Date(scheduledTime).toISOString(),
+      locations: { [location.id]: new Date(scheduledTime).toISOString() },
+      // Failure history remains available for observability; the newer
+      // successful-contact stamp is what makes the current state reachable.
+      unreachable: { [location.id]: new Date(scheduledTime - 4 * 60_000).toISOString() },
+    });
   });
 
   it('clears a deferred marker after a successful same-run catalogue check', async () => {

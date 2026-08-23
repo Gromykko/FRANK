@@ -46,6 +46,8 @@ import type {
   HealthLocationEntry,
   HealthPayload,
   MarineInstances,
+  MarineKind,
+  ProviderContactEvidence,
   RefreshOptions,
   WorkerCacheHealth,
 } from './domain';
@@ -57,6 +59,7 @@ import {
 } from './providerAvailability';
 import {
   buildForecastCache,
+  degradedMarineSourcesAfterProbe,
   degradedSourcesAfterProbe,
   deriveMarineSeedsFromPayload,
   fetchLatestInstanceForCollections,
@@ -64,6 +67,7 @@ import {
   fetchMarineSeriesWithFallback,
   isMarineRunWithinFallbackAge,
   marineProbeDecision,
+  marineSourcesDueForProbe,
   marineInstancesEqual,
   marineInstancesWithinFallbackAge,
   readRetainedMarineInstances,
@@ -242,20 +246,6 @@ async function readCronHeartbeat(
 export function isHeartbeatMemoFresh(memoAtMs: number, nowMs: number): boolean {
   const ageMs = nowMs - memoAtMs;
   return Number.isFinite(ageMs) && ageMs >= 0 && ageMs < HEARTBEAT_MEMO_TTL_MS;
-}
-
-export function isCronRebuildHeartbeatSuccess(args: {
-  probeReason: ReturnType<typeof marineProbeDecision>['reason'];
-  degradedSources: readonly string[];
-  marineSubstituted: readonly string[];
-  degradedBusy: boolean;
-  marineProbeFailed: boolean;
-}): boolean {
-  return args.probeReason !== 'retry-backoff'
-    && args.degradedSources.length === 0
-    && args.marineSubstituted.length === 0
-    && !args.degradedBusy
-    && !args.marineProbeFailed;
 }
 
 type CronHeartbeatAttempt =
@@ -915,6 +905,15 @@ async function _refreshForecastCache(
   lastCheckAt.set(cacheKey(location), Date.now());
 
   let latestMarine: MarineInstances | undefined;
+  const contactEvidence: ProviderContactEvidence = { providerContacted: false };
+  const markCronContacted = (attemptedAt?: string): void => {
+    if (!contactEvidence.providerContacted || !options.cronOutcome) return;
+    options.cronOutcome.status = 'contacted';
+    options.cronOutcome.attemptedAt = typeof attemptedAt === 'string'
+      && Number.isFinite(Date.parse(attemptedAt))
+      ? attemptedAt
+      : new Date().toISOString();
+  };
 
   try {
     const cachedHealth = cached?.sources?.cacheHealth;
@@ -924,10 +923,10 @@ async function _refreshForecastCache(
     // down, keep the previously assembled forecast and mark its marine inputs
     // degraded rather than re-dating unverified water/wave data.
     let marineProbeFailed = false;
-    let marineSubstituted: readonly string[] = [];
+    let marineSubstituted: readonly MarineKind[] = [];
+    let marineManifestResolved: readonly MarineKind[] = [];
     let marineProbeBusy = false;
-    let marineProbeSucceeded = false;
-    let marineManifestVerified = false;
+    let marineCatalogueContacted = false;
     const knownMarine = cachedHealth?.marineInstances
       ?? await readRetainedMarineInstances(env, location, policy);
     // DMI's official completion windows determine when a newer marine run can
@@ -935,9 +934,11 @@ async function _refreshForecastCache(
     // being queried on every cron tick. Forced/recovery work and provenance
     // outside the 12-hour safety policy always bypass the schedule.
     const knownMarineWithinPolicy = marineInstancesWithinFallbackAge(knownMarine);
+    const probeDecisionAt = Date.now();
     const probeDecision = marineProbeDecision(
       knownMarine,
       cachedHealth?.lastAttemptAt,
+      probeDecisionAt,
     );
     const canSkipProbe = Boolean(knownMarine?.water?.id && knownMarine?.waves?.id)
       && !options.force
@@ -960,10 +961,11 @@ async function _refreshForecastCache(
           options.eventMemo,
           knownMarine,
           probeDecision.shouldProbe ? env.FRANK_FORECAST_CACHE : undefined,
+          contactEvidence,
         );
         latestMarine = probe.instances;
-        marineProbeSucceeded = probe.substituted.length === 0 && probe.catalogueContacted;
-        marineManifestVerified = probe.substituted.length === 0 && !probe.catalogueContacted;
+        marineCatalogueContacted = probe.catalogueContacted;
+        marineManifestResolved = probe.manifestResolved;
         // A carried-over run id is not a verified one. Reporting it as a clean
         // probe let a DMI catalogue outage read as a fully current forecast for
         // as long as the ids stayed within their fallback age.
@@ -994,6 +996,17 @@ async function _refreshForecastCache(
       }
     }
 
+    const degradedMarineProbeSources = degradedMarineSourcesAfterProbe(
+      knownMarine,
+      marineProbeFailed,
+      marineSubstituted,
+      probeDecisionAt,
+    );
+    const dueMarineSources = marineSourcesDueForProbe(knownMarine, probeDecisionAt);
+    const marineManifestVerified = !marineCatalogueContacted
+      && dueMarineSources.length > 0
+      && dueMarineSources.every((kind) => marineManifestResolved.includes(kind));
+
     const builtWeatherExpires = cachedHealth?.weatherExpires;
     const weatherExpiredMs = builtWeatherExpires ? Date.parse(builtWeatherExpires) : Number.NaN;
     const weatherStale = !Number.isFinite(weatherExpiredMs) || Date.now() >= weatherExpiredMs;
@@ -1010,7 +1023,12 @@ async function _refreshForecastCache(
         marineInstances: latestMarine,
         needsRebuild: cachedHealth?.needsRebuild || !latestMarineWithinPolicy,
         checkedBy: options.reason ?? 'failed-check',
-        degradedSources: degradedSourcesAfterProbe(cachedHealth?.degradedSources, true),
+        degradedSources: degradedSourcesAfterProbe(
+          (cachedHealth?.degradedSources ?? [])
+            .filter((source) => source !== 'water' && source !== 'waves'),
+          false,
+          degradedMarineProbeSources,
+        ),
         ...(marineProbeBusy ? { providerBusy: true, busyProvider: 'marine' } : {}),
         message: marineProbeBusy
           ? 'Marine service busy; keeping the last completed forecast.'
@@ -1023,6 +1041,7 @@ async function _refreshForecastCache(
           console.error(`Could not persist marine probe failure for ${location.id}:`, writeError);
         }
       }
+      markCronContacted(heldCache.sources.cacheHealth?.lastAttemptAt);
       return heldCache;
     }
 
@@ -1051,13 +1070,18 @@ async function _refreshForecastCache(
       //
       // A verified probe means these ids are the newest DMI has, which is not
       // degraded even when the run itself is hours old - DMI publishes about
-      // every six hours. A SUBSTITUTED id is the opposite: real data whose
-      // currency nothing checked this tick, so it is named as degraded.
+      // every six hours. A substituted id is degraded only when that source's
+      // own collection schedule says a newer run is due; a sibling's different
+      // run id is not evidence about this source.
       // Non-marine degradation is untouched; only marine is ours to judge here.
       const nonMarineDegraded = (cachedHealth?.degradedSources ?? [])
         .filter((source) => source !== 'water' && source !== 'waves');
-      const degradedNow = degradedSourcesAfterProbe(nonMarineDegraded, false, marineSubstituted);
-      const marineVerified = marineSubstituted.length === 0;
+      const degradedNow = degradedSourcesAfterProbe(
+        nonMarineDegraded,
+        false,
+        degradedMarineProbeSources,
+      );
+      const marineVerified = degradedMarineProbeSources.length === 0;
 
       const checkedCache = withCacheHealth(cached, 'current', {
         marineInstances: latestMarine,
@@ -1094,11 +1118,9 @@ async function _refreshForecastCache(
         }
       }
       if (options.cronOutcome) {
-        const clean = marineVerified && degradedNow.length === 0;
-        if (clean && marineProbeSucceeded) {
-          options.cronOutcome.status = 'contacted';
-          options.cronOutcome.attemptedAt = checkedCache.sources.cacheHealth?.lastAttemptAt;
-        } else if (clean && (
+        markCronContacted(checkedCache.sources.cacheHealth?.lastAttemptAt);
+        if (!contactEvidence.providerContacted
+          && marineVerified && degradedNow.length === 0 && (
           marineManifestVerified
           || (canSkipProbe && probeDecision.reason === 'publication-window')
         )) {
@@ -1108,9 +1130,9 @@ async function _refreshForecastCache(
           // so neither may mutate per-city success or failure history.
           options.cronOutcome.status = 'healthy-no-probe';
         }
-        // Retry-backoff, substitution, and degradation retain the default
-        // unreachable outcome. Its first transition persists immediately;
-        // unchanged repeats follow the shared five-tick write throttle.
+        // Retry-backoff and a check with no successful provider result retain
+        // the default unreachable outcome. Its first transition persists
+        // immediately; unchanged repeats use the shared five-tick throttle.
       }
       return checkedCache;
     }
@@ -1123,11 +1145,17 @@ async function _refreshForecastCache(
       cached?.warnings,
       policy,
       options.eventMemo,
+      contactEvidence,
     );
     // The build can succeed on last-good ingredients while a provider is
     // down; the payload is then still the freshest combination obtainable,
     // so it ships as 'current' with the degradation named in the message.
-    const degradedSources = degradedSourcesAfterProbe(built.degradedSources, marineProbeFailed, marineSubstituted);
+    const degradedSources = degradedSourcesAfterProbe(
+      built.degradedSources,
+      false,
+      degradedMarineProbeSources,
+    );
+    contactEvidence.providerContacted ||= built.providerContacted;
     const fallbackNotes: string[] = [
       ...degradedSources,
       ...(marineProbeFailed ? ['marine run schedule'] : []),
@@ -1161,21 +1189,12 @@ async function _refreshForecastCache(
     } catch (writeError) {
       console.error(`Could not persist rebuilt forecast for ${location.id}:`, writeError);
     }
-    if (options.cronOutcome) {
-      const contactedCleanly = isCronRebuildHeartbeatSuccess({
-        probeReason: probeDecision.reason,
-        degradedSources,
-        marineSubstituted,
-        degradedBusy: built.degradedBusy,
-        marineProbeFailed,
-      });
-      if (contactedCleanly) {
-        options.cronOutcome.status = 'contacted';
-        options.cronOutcome.attemptedAt = fresh.sources.cacheHealth?.lastAttemptAt;
-      }
-    }
+    markCronContacted(fresh.sources.cacheHealth?.lastAttemptAt);
     return fresh;
   } catch (error) {
+    // A later required leg, assembly check, or persistence operation must not
+    // erase a successful provider response already observed in this event.
+    markCronContacted();
     // At the hard wall-clock boundary, do no more assembly and start no KV
     // write. Returning the last assembled payload preserves its original
     // fetchedAt; a prolonged outage therefore ages naturally into /health's
@@ -1614,10 +1633,10 @@ const worker = {
           console.error(`Cron tick deadline reached; skipping ${location.id} until the next tick`);
           break;
         }
+        const cronOutcome: NonNullable<RefreshOptions['cronOutcome']> = {
+          status: 'unreachable',
+        };
         try {
-          const cronOutcome: NonNullable<RefreshOptions['cronOutcome']> = {
-            status: 'unreachable',
-          };
           const refreshed = await refreshForecastCache(env, location, {
             reason: 'cron',
             minIntervalMs: CRON_CHECK_MIN_INTERVAL_MS,
@@ -1639,11 +1658,16 @@ const worker = {
                   attemptedAt: new Date(Date.now()).toISOString(),
                 };
         } catch (error) {
-          heartbeatAttempt = {
-            locationId: location.id,
-            status: 'unreachable',
-            attemptedAt: new Date(Date.now()).toISOString(),
-          };
+          const attemptedAt = cronOutcome.attemptedAt;
+          heartbeatAttempt = cronOutcome.status === 'contacted'
+            && typeof attemptedAt === 'string'
+            && Number.isFinite(Date.parse(attemptedAt))
+            ? { locationId: location.id, status: 'contacted', attemptedAt }
+            : {
+                locationId: location.id,
+                status: 'unreachable',
+                attemptedAt: new Date(Date.now()).toISOString(),
+              };
           console.error(`Cron refresh failed for ${location.id}:`, error);
         }
       }

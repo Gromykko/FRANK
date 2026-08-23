@@ -5,6 +5,7 @@ import {
   FORECAST_SOURCE_POLICY,
   assembleForecastFromSources,
   canUseMetFallback,
+  degradedMarineSourcesAfterProbe,
   mapMetPayload,
   degradedSourcesAfterProbe,
   heldMarineFallback,
@@ -12,6 +13,7 @@ import {
   isMarineRunWithinFallbackAge,
   isTransientProviderFailure,
   marineProbeDecision,
+  marineSourcesDueForProbe,
   retainedActiveWarnings,
 } from '../../worker/forecastModel';
 import { MARINE_INGREDIENT_CACHE_SCHEMA_VERSION } from '../../src/features/forecast/releaseContract';
@@ -55,6 +57,7 @@ describe('generation-owned forecast model', () => {
         }],
         instance: { collection: 'dkss_idw', id: RUN },
         fallback: false,
+        providerContacted: true,
       },
       wave: {
         series: [{
@@ -66,6 +69,7 @@ describe('generation-owned forecast model', () => {
         }],
         instance: { collection: 'wam_nsb', id: RUN },
         fallback: true,
+        providerContacted: true,
         notReady: true,
       },
       warnings: [],
@@ -75,6 +79,7 @@ describe('generation-owned forecast model', () => {
       degradedSources: ['weather'],
       degradedBusy: true,
       degradedBusyProvider: 'weather',
+      providerContacted: true,
       marineInstances: {
         water: { collection: 'dkss_idw', id: RUN },
         waves: { collection: 'wam_nsb', id: RUN },
@@ -128,11 +133,12 @@ describe('generation-owned forecast model', () => {
       undefined,
       undefined,
       requested,
-      { degraded: true, busy: true },
+      { providerContacted: false, degraded: true, busy: true },
       NOW,
     )).toMatchObject({
       instance: { collection: 'dkss_idw', id: '2026-08-20T060000Z' },
       fallback: true,
+      providerContacted: false,
       degraded: true,
       busy: true,
     });
@@ -143,11 +149,12 @@ describe('generation-owned forecast model', () => {
       [{ time: HOUR, timeMs: HOUR_MS, waveHeight: 0.3 }],
       seedRun,
       { collection: 'wam_nsb', id: RUN },
-      { notReady: true },
+      { providerContacted: true, notReady: true },
       NOW,
     )).toMatchObject({
       instance: seedRun,
       fallback: true,
+      providerContacted: true,
       notReady: true,
     });
   });
@@ -212,6 +219,59 @@ describe('generation-owned forecast model', () => {
       warning('2026-08-20T12:29:59Z'),
       warning('2026-08-20T12:30:01Z'),
     ], NOW)).toEqual([warning('2026-08-20T12:30:01Z')]);
+  });
+
+  it('classifies staggered water and wave runs against their own schedules', () => {
+    const wavesLag = {
+      water: { collection: 'dkss_idw', id: '2026-08-20T180000Z' },
+      waves: { collection: 'wam_nsb', id: '2026-08-20T120000Z' },
+    };
+    const waterLag = {
+      water: { collection: 'dkss_idw', id: '2026-08-20T120000Z' },
+      waves: { collection: 'wam_nsb', id: '2026-08-20T180000Z' },
+    };
+
+    expect(marineSourcesDueForProbe(
+      wavesLag,
+      Date.parse('2026-08-20T20:54:59.999Z'),
+    )).toEqual([]);
+    expect(marineSourcesDueForProbe(
+      waterLag,
+      Date.parse('2026-08-20T21:29:59.999Z'),
+    )).toEqual([]);
+    expect(marineSourcesDueForProbe(
+      wavesLag,
+      Date.parse('2026-08-20T20:55:00.000Z'),
+    )).toEqual(['waves']);
+    expect(marineSourcesDueForProbe(
+      waterLag,
+      Date.parse('2026-08-20T21:30:00.000Z'),
+    )).toEqual(['water']);
+
+    // Water caused the combined probe. A failed carry-over for the ahead WAM
+    // run is not a wave degradation until WAM's own next publication is due.
+    expect(degradedMarineSourcesAfterProbe(
+      waterLag,
+      false,
+      ['waves'],
+      Date.parse('2026-08-20T21:30:00.000Z'),
+    )).toEqual([]);
+    expect(degradedMarineSourcesAfterProbe(
+      waterLag,
+      false,
+      ['water'],
+      Date.parse('2026-08-20T21:30:00.000Z'),
+    )).toEqual(['water']);
+    expect(degradedMarineSourcesAfterProbe(
+      waterLag,
+      true,
+      [],
+      Date.parse('2026-08-20T21:30:00.000Z'),
+    )).toEqual(['water']);
+    expect(marineSourcesDueForProbe({
+      water: { collection: 'dkss_idw', id: 'invalid' },
+      waves: { collection: 'wam_nsb', id: '2026-08-21T000001Z' },
+    }, Date.parse('2026-08-21T00:00:00Z'))).toEqual(['water', 'waves']);
   });
 
   it('marks a failed marine catalogue probe without rewriting existing source order', () => {

@@ -164,6 +164,7 @@ describe('shared DMI run manifest', () => {
       },
       substituted: [],
       catalogueContacted: false,
+      manifestResolved: ['water', 'waves'],
     });
     expect(store.gets).toEqual([DMI_RUN_MANIFEST_KEY]);
     expect(store.puts).toHaveLength(0);

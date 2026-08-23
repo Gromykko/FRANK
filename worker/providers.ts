@@ -19,6 +19,7 @@ import {
   deadlineError,
   executionPolicy,
   fetchWithTimeout,
+  reallocateMarinePositionAttempts,
   rethrowIfDeadlineReached,
 } from './execution';
 import type { ExecutionPolicy, ExecutionPolicyInput } from './execution';
@@ -34,6 +35,7 @@ import type {
   MarineSeriesResult,
   MetRawCache,
   MetResult,
+  ProviderContactEvidence,
 } from './domain';
 import {
   FORECAST_PROVIDER_PARAMETERS,
@@ -42,6 +44,7 @@ import {
   assembleForecastFromSources,
   canUseMetFallback,
   currentMarineIngredient,
+  degradedMarineSourcesAfterProbe,
   degradedSourcesAfterProbe,
   deriveMarineSeedsFromPayload,
   dmiForecastUrl,
@@ -58,6 +61,7 @@ import {
   marineInstancesEqual,
   marineInstancesWithinFallbackAge,
   marineProbeDecision,
+  marineSourcesDueForProbe,
   metForecastUrl,
   parseDmiInstanceMs,
   retainedActiveWarnings,
@@ -86,12 +90,14 @@ const WARNING_EXECUTION_BUDGET_MS = 5_000;
 // implementation lives at the generation-owned semantic boundary.
 export {
   PAYLOAD_VERSION,
+  degradedMarineSourcesAfterProbe,
   degradedSourcesAfterProbe,
   deriveMarineSeedsFromPayload,
   isMarineRunWithinFallbackAge,
   marineInstancesEqual,
   marineInstancesWithinFallbackAge,
   marineProbeDecision,
+  marineSourcesDueForProbe,
 };
 
 function assertMarineRunWithinFallbackAge(
@@ -148,7 +154,6 @@ interface DmiInstanceResolution {
 
 interface DmiInstanceResolutionPlan {
   promise: Promise<DmiInstanceResolution>;
-  catalogueContacted: boolean;
 }
 
 function dmiRunManifestKvPolicy(policy: ExecutionPolicy): ExecutionPolicy {
@@ -277,6 +282,7 @@ function resolveLatestInstanceForCollections(
   manifest: DmiRunManifestState,
   policy: ExecutionPolicy,
   eventMemo?: EventMemo,
+  contactEvidence?: ProviderContactEvidence,
 ): DmiInstanceResolutionPlan {
   const adopted = manifestInstanceForCollections(
     manifest,
@@ -292,18 +298,21 @@ function resolveLatestInstanceForCollections(
         collections,
         known,
       }),
-      catalogueContacted: false,
     };
   }
   return {
-    promise: fetchLatestInstanceForCollections(collections, policy, eventMemo)
+    promise: fetchLatestInstanceForCollections(
+      collections,
+      policy,
+      eventMemo,
+      contactEvidence,
+    )
       .then((instance) => ({
         instance,
         source: 'catalogue' as const,
         collections,
         known,
       })),
-    catalogueContacted: true,
   };
 }
 
@@ -388,6 +397,7 @@ export function fetchLatestInstanceForCollections(
   collections: string[],
   policyInput?: ExecutionPolicyInput,
   eventMemo?: EventMemo,
+  contactEvidence?: ProviderContactEvidence,
 ): Promise<MarineInstance> {
   const policy = executionPolicy(policyInput);
   assertBeforeDeadline(policy, `DMI ${collections.join(',')} instance probe`);
@@ -408,7 +418,12 @@ export function fetchLatestInstanceForCollections(
   // caller's ExecutionPolicy, so if that caller simply ran out of its provider
   // window the rejection is a deadline error, not a statement about DMI. A
   // later caller with its own budget deserves its own attempt.
-  const promise = probeLatestInstanceForCollections(collections, policy, eventMemo);
+  const promise = probeLatestInstanceForCollections(
+    collections,
+    policy,
+    eventMemo,
+    contactEvidence,
+  );
   eventMemo?.set(key, promise);
   promise.catch((error: unknown) => {
     if (!isProviderUnavailableError(error) && eventMemo?.get(key) === promise) {
@@ -422,6 +437,7 @@ async function probeLatestInstanceForCollections(
   collections: string[],
   policy: ExecutionPolicy,
   eventMemo?: EventMemo,
+  contactEvidence?: ProviderContactEvidence,
 ): Promise<MarineInstance> {
   let lastError: Error | undefined;
 
@@ -436,6 +452,9 @@ async function probeLatestInstanceForCollections(
         eventMemo,
       );
       const latest = latestInstanceFromResponse(data);
+      // A structurally valid empty catalogue still proves provider contact;
+      // resolving a usable run remains the stricter aggregate below.
+      if (contactEvidence) contactEvidence.providerContacted = true;
       if (latest) {
         return {
           collection,
@@ -462,13 +481,20 @@ async function probeLatestInstanceForCollections(
 export interface MarineInstanceProbe {
   instances: MarineInstances;
   // Kinds whose own probe failed and whose run id was carried over from the
-  // last known one. The data behind them is real, but nothing verified this
-  // tick that it is still the newest, so it must be reported as degraded.
+  // last known one. The caller combines this operational fact with that kind's
+  // own publication schedule; a not-yet-due sibling is not degraded merely
+  // because the other kind caused this combined probe.
   substituted: MarineKind[];
-  // True only when this invocation completed at least one catalogue request.
-  // A manifest-only verification is healthy evidence, but not a new provider
-  // contact and must not advance the per-city heartbeat stamp.
+  // True only when this invocation resolved at least one usable catalogue run.
+  // A valid empty catalogue is still provider-contact evidence, but cannot
+  // verify a run. A manifest-only verification is healthy but is not a new
+  // provider contact and must not advance the per-city heartbeat stamp.
   catalogueContacted: boolean;
+  // Kinds resolved from the shared manifest rather than DMI in this
+  // invocation. The caller evaluates these against each kind's own publication
+  // schedule; an unrelated sibling failure cannot invalidate a due manifest
+  // entry.
+  manifestResolved: MarineKind[];
 }
 
 export async function fetchLatestMarineInstances(
@@ -477,6 +503,7 @@ export async function fetchLatestMarineInstances(
   eventMemo?: EventMemo,
   fallbackInstances?: MarineInstances,
   runManifestStore?: DmiRunManifestStore,
+  contactEvidence?: ProviderContactEvidence,
 ): Promise<MarineInstanceProbe> {
   const policy = executionPolicy(policyInput);
   assertBeforeDeadline(policy, `marine instance probes for ${location.id}`);
@@ -489,6 +516,7 @@ export async function fetchLatestMarineInstances(
     manifest,
     policy,
     eventMemo,
+    contactEvidence,
   );
   const waveResolution = resolveLatestInstanceForCollections(
     location.dmiCollections.waves,
@@ -496,11 +524,15 @@ export async function fetchLatestMarineInstances(
     manifest,
     policy,
     eventMemo,
+    contactEvidence,
   );
   const results = await Promise.allSettled([
     waterResolution.promise,
     waveResolution.promise,
   ]);
+  const catalogueContacted = results.some((result) =>
+    result.status === 'fulfilled' && result.value.source === 'catalogue');
+  if (catalogueContacted && contactEvidence) contactEvidence.providerContacted = true;
   assertBeforeDeadline(policy, `marine instance probe results for ${location.id}`);
   if (runManifestStore) {
     await persistDmiRunManifest(runManifestStore, manifest, results, policy);
@@ -508,8 +540,13 @@ export async function fetchLatestMarineInstances(
 
   let water = results[0].status === 'fulfilled' ? results[0].value.instance : undefined;
   let waves = results[1].status === 'fulfilled' ? results[1].value.instance : undefined;
-  const catalogueContacted = waterResolution.catalogueContacted
-    || waveResolution.catalogueContacted;
+  const manifestResolved: MarineKind[] = [];
+  if (results[0].status === 'fulfilled' && results[0].value.source === 'manifest') {
+    manifestResolved.push('water');
+  }
+  if (results[1].status === 'fulfilled' && results[1].value.source === 'manifest') {
+    manifestResolved.push('waves');
+  }
 
   // Substituting a still-valid id keeps one source's outage from blanking the
   // other, but it is NOT a successful probe and the caller has to know the
@@ -549,7 +586,12 @@ export async function fetchLatestMarineInstances(
     throw new Error(`Failed to fetch DMI marine instances: ${errors.join(', ')}`);
   }
 
-  return { instances: { water, waves }, substituted, catalogueContacted };
+  return {
+    instances: { water, waves },
+    substituted,
+    catalogueContacted,
+    manifestResolved,
+  };
 }
 
 async function fetchDmiGeoJson<TFeature>(
@@ -575,6 +617,7 @@ async function fetchMetWeather(
   location: ForecastLocation,
   policy: ExecutionPolicy,
   eventMemo?: EventMemo,
+  contactEvidence?: ProviderContactEvidence,
 ): Promise<MetResult> {
   assertBeforeDeadline(policy, `MET cache read for ${location.id}`);
   const rawKey = metRawKey(location);
@@ -618,6 +661,7 @@ async function fetchMetWeather(
     if (response.status === 304 && stored?.body) {
       // Unchanged on MET's side: reuse the stored body. A 304 can still extend
       // the validity window through its own Expires header.
+      if (contactEvidence) contactEvidence.providerContacted = true;
       const expiresHeader = response.headers.get('Expires');
       const expiresMs = expiresHeader ? Date.parse(expiresHeader) : Number.NaN;
       return { ...mapMetPayload(stored.body, stored.lastModified, expiresMs), fallback: false };
@@ -652,6 +696,7 @@ async function fetchMetWeather(
     if (!isMetForecastResponse(data)) {
       throw new Error('MET Norway weather returned an invalid payload.');
     }
+    if (contactEvidence) contactEvidence.providerContacted = true;
     const lastModified = response.headers.get('Last-Modified');
     const expiresHeader = response.headers.get('Expires');
     const expiresMs = expiresHeader ? Date.parse(expiresHeader) : Number.NaN;
@@ -783,6 +828,7 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
   seedInstance?: MarineInstance,
   policyInput?: ExecutionPolicyInput,
   eventMemo?: EventMemo,
+  contactEvidence?: ProviderContactEvidence,
 ): Promise<MarineSeriesResult> {
   const policy = executionPolicy(policyInput);
   assertBeforeDeadline(policy, `${kind} marine cache read for ${location.id}`);
@@ -810,13 +856,18 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
   if (currentStored
     && currentStored.collection === instance.collection
     && currentStored.id === instance.id) {
-    return { series: currentStored.series, instance, fallback: false };
+    return {
+      series: currentStored.series,
+      instance,
+      fallback: false,
+      providerContacted: false,
+    };
   }
 
   // Fall back to the run we already hold (retained ingredient, else the seed
   // from the cached payload). `extra` distinguishes WHY we fell back.
   const fallbackToHeld = (
-    extra: Pick<MarineSeriesResult, 'degraded' | 'busy' | 'notReady'>,
+    extra: Pick<MarineSeriesResult, 'providerContacted' | 'degraded' | 'busy' | 'notReady'>,
   ): MarineSeriesResult | null => heldMarineFallback(
     currentStored,
     seedSeries,
@@ -835,12 +886,16 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
       policy,
       eventMemo,
     );
+    // featureCollectionFromJson has validated the response boundary. Record
+    // contact before run-age, mapper, retention, or no-data handling can fail.
+    if (contactEvidence) contactEvidence.providerContacted = true;
   } catch (error) {
     rethrowIfDeadlineReached(error, policy, `${kind} retained fallback for ${location.id}`);
     if (!isProviderUnavailableError(error)) throw error;
     // Transport error (429/5xx/network): we genuinely could not refresh this
     // source. Show the held run and flag it degraded (amber).
     const held = fallbackToHeld({
+      providerContacted: false,
       degraded: true,
       busy: error.busy,
     });
@@ -877,13 +932,13 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
       rethrowIfDeadlineReached(error, policy, `${kind} retained cache write recovery for ${location.id}`);
       // Retention is best-effort.
     }
-    return { series, instance, fallback: false };
+    return { series, instance, fallback: false, providerContacted: true };
   }
 
   // 200 but no data for this instance: the run is listed in the catalog but
   // not published yet. The run we already hold is still the latest AVAILABLE
   // data, so this is NOT degradation - fall back silently and stay green.
-  const held = fallbackToHeld({ notReady: true });
+  const held = fallbackToHeld({ providerContacted: true, notReady: true });
   if (held) return held;
   throw new ProviderUnavailableError(
     'marine',
@@ -1002,16 +1057,29 @@ export async function buildForecastCache(
   warningSeed: WeatherWarning[] | undefined,
   policy: ExecutionPolicy,
   eventMemo?: EventMemo,
+  contactEvidence?: ProviderContactEvidence,
 ): Promise<ForecastBuildResult> {
   assertBeforeDeadline(policy, `forecast build for ${location.id}`);
   const seedInstances = marineSeeds?.instances;
-  const warningPolicy = advisoryWarningPolicy(policy);
+  // The caller has fully awaited catalogue/manifest resolution. Snapshot the
+  // live count before any member of this concurrent build fanout starts, then
+  // divide only what remains after reserving MET and warning requests.
+  const providerPolicy = reallocateMarinePositionAttempts(policy, eventMemo);
+  const warningPolicy = advisoryWarningPolicy(providerPolicy);
   const results = await Promise.allSettled([
-    fetchMetWeather(env, location, policy, eventMemo),
-    fetchMarineSeriesWithFallback(env, location, 'water', marineInstances.water, FORECAST_PROVIDER_PARAMETERS.water, mapWaterFeatures, marineSeeds?.water, seedInstances?.water, policy, eventMemo),
-    fetchMarineSeriesWithFallback(env, location, 'waves', marineInstances.waves, FORECAST_PROVIDER_PARAMETERS.waves, mapWaveFeatures, marineSeeds?.waves, seedInstances?.waves, policy, eventMemo),
+    fetchMetWeather(env, location, providerPolicy, eventMemo, contactEvidence),
+    fetchMarineSeriesWithFallback(env, location, 'water', marineInstances.water, FORECAST_PROVIDER_PARAMETERS.water, mapWaterFeatures, marineSeeds?.water, seedInstances?.water, providerPolicy, eventMemo, contactEvidence),
+    fetchMarineSeriesWithFallback(env, location, 'waves', marineInstances.waves, FORECAST_PROVIDER_PARAMETERS.waves, mapWaveFeatures, marineSeeds?.waves, seedInstances?.waves, providerPolicy, eventMemo, contactEvidence),
     fetchWarnings(location, warningSeed, warningPolicy, eventMemo),
   ]);
+  const requiredProviderContacted = (
+    results[0].status === 'fulfilled' && !results[0].value.fallback
+  ) || (
+    results[1].status === 'fulfilled' && results[1].value.providerContacted
+  ) || (
+    results[2].status === 'fulfilled' && results[2].value.providerContacted
+  );
+  if (requiredProviderContacted && contactEvidence) contactEvidence.providerContacted = true;
   assertBeforeDeadline(policy, `forecast assembly for ${location.id}`);
 
   // Only weather + both marine sources are required to build; the warnings leg

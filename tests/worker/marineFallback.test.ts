@@ -237,9 +237,37 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     const result = await fetchMarineSeriesWithFallback(env, LOCATION, 'water', WATER_INSTANCE, ['x'], identityMap);
 
     expect(result.fallback).toBe(true);
+    expect(result.providerContacted).toBe(true);
     expect(result.notReady).toBe(true);
     expect(result.degraded).toBeUndefined(); // not degradation -> no amber
     expect(result.series).toEqual(retained);
+  });
+
+  it('records a validated empty response even when no held run can be served', async () => {
+    globalThis.fetch = (async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ features: [] }),
+    })) as typeof fetch;
+    const contactEvidence = { providerContacted: false };
+
+    await expect(fetchMarineSeriesWithFallback(
+      makeEnv(),
+      LOCATION,
+      'water',
+      WATER_INSTANCE,
+      ['x'],
+      identityMap,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      contactEvidence,
+    )).rejects.toMatchObject({
+      name: 'ProviderUnavailableError',
+      provider: 'marine',
+    });
+    expect(contactEvidence.providerContacted).toBe(true);
   });
 
   it('bootstraps from the seed series when busy and nothing is retained yet', async () => {
@@ -272,11 +300,12 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     });
   });
 
-  it('never relabels a mapper TypeError as transient provider availability', async () => {
+  it('records contact but never relabels a mapper TypeError as provider availability', async () => {
     globalThis.fetch = (async () => new Response(JSON.stringify({
       features: [{ time: '2026-07-11T13:00:00Z' }],
     }), { status: 200 })) as typeof fetch;
 
+    const contactEvidence = { providerContacted: false };
     await expect(fetchMarineSeriesWithFallback(
       makeEnv(),
       LOCATION,
@@ -286,10 +315,16 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
       () => {
         throw new TypeError('mapper implementation failed');
       },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      contactEvidence,
     )).rejects.toMatchObject({
       name: 'TypeError',
       message: 'mapper implementation failed',
     });
+    expect(contactEvidence.providerContacted).toBe(true);
   });
 
   it('does not use retained or seeded marine runs older than two publication cycles', async () => {

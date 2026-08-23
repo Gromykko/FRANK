@@ -32,6 +32,7 @@ import type {
   MarineIngredientEnvelope,
   MarineInstance,
   MarineInstances,
+  MarineKind,
   MarineRunRef,
   MarineSeedPayload,
   MarineSeeds,
@@ -208,6 +209,44 @@ function dmiCompleteDelayMs(collection: unknown): number {
   return Number.NaN;
 }
 
+export function marineSourcesDueForProbe(
+  marineInstances: Partial<MarineInstances> | null | undefined,
+  nowMs = Date.now(),
+): MarineKind[] {
+  const kinds: readonly MarineKind[] = ['water', 'waves'];
+  return kinds.filter((kind) => {
+    const instance = marineInstances?.[kind];
+    const runMs = parseDmiInstanceMs(instance?.id);
+    const completeDelayMs = dmiCompleteDelayMs(instance?.collection);
+    if (!Number.isFinite(runMs)
+      || !Number.isFinite(completeDelayMs)
+      || runMs > nowMs
+      || nowMs - runMs > FORECAST_SOURCE_POLICY.marineFallbackMaxAgeMs) {
+      return true;
+    }
+    return nowMs >= runMs
+      + FORECAST_SOURCE_POLICY.dmiRunCycleMs
+      + completeDelayMs
+      + FORECAST_SOURCE_POLICY.dmiPublicationCushionMs;
+  });
+}
+
+export function degradedMarineSourcesAfterProbe(
+  marineInstances: Partial<MarineInstances> | null | undefined,
+  marineProbeFailed: boolean,
+  substituted: readonly MarineKind[] = [],
+  nowMs = Date.now(),
+): MarineKind[] {
+  const unavailable = new Set<MarineKind>(
+    marineProbeFailed ? ['water', 'waves'] : substituted,
+  );
+  // A combined probe may ask both catalogues because ONE source is due. A
+  // failed carry-over for the other source is not degradation while that
+  // source remains inside its own collection's publication schedule.
+  return marineSourcesDueForProbe(marineInstances, nowMs)
+    .filter((kind) => unavailable.has(kind));
+}
+
 export function marineProbeDecision(
   marineInstances: {
     water?: MarineRunRef;
@@ -374,7 +413,7 @@ export function heldMarineFallback(
   seedSeries: SeriesPoint[] | undefined,
   seedInstance: MarineInstance | undefined,
   requestedInstance: MarineInstance,
-  extra: Pick<MarineSeriesResult, 'degraded' | 'busy' | 'notReady'>,
+  extra: Pick<MarineSeriesResult, 'providerContacted' | 'degraded' | 'busy' | 'notReady'>,
   nowMs = Date.now(),
 ): MarineSeriesResult | null {
   if (currentStored && isMarineRunWithinFallbackAge(currentStored, nowMs)) {
@@ -506,6 +545,7 @@ export function assembleForecastFromSources(
     degradedSources,
     degradedBusy,
     ...(degradedBusyProvider ? { degradedBusyProvider } : {}),
+    providerContacted: !met.fallback || water.providerContacted || wave.providerContacted,
     marineInstances: effectiveInstances,
     forecast: {
       hourly,
@@ -539,9 +579,9 @@ export function assembleForecastFromSources(
 export function degradedSourcesAfterProbe(
   degradedSources: string[] = [],
   marineProbeFailed = false,
-  // Sources whose run id was carried over because their own probe failed while
-  // the other's succeeded. Split from the boolean because a whole-probe failure
-  // degrades both, whereas a substitution degrades only what it substituted.
+  // Sources already classified as unavailable for their own schedule. The
+  // caller filters mere sibling substitutions before they reach this generic
+  // merge; a whole-probe failure keeps the legacy both-sources behavior.
   substituted: readonly string[] = [],
 ): string[] {
   return [...new Set([

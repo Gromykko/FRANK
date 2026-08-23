@@ -5,7 +5,12 @@ import { CURRENT_RELEASE } from '../../src/features/forecast/releaseContract';
 import { buildSunSchedule } from '../../src/features/forecast/sun';
 import { FORECAST_PAYLOAD_VERSION } from '../../src/features/forecast/types';
 import type { ForecastData } from '../../worker/domain';
-import { CRON_PERIOD_MS } from '../../worker/execution';
+import {
+  CRON_MARINE_CATALOGUE_MAX_ATTEMPTS,
+  CRON_PERIOD_MS,
+  CRON_SUBREQUEST_CALL_GRAPH,
+  CRON_TICK_BUDGET_MS,
+} from '../../worker/execution';
 import { assembledForecastKey } from '../../worker/generation';
 import worker, {
   CRON_HEARTBEAT_KEY,
@@ -22,6 +27,9 @@ const LOCATIONS = locationData as ForecastLocation[];
 const FIRST_TICK_MS = Date.parse('2026-08-20T16:00:00.000Z');
 const MARINE_RUN = '2026-08-20T160000Z';
 const DUE_MARINE_RUN = '2026-08-20T060000Z';
+const EXHAUSTED_FIRST_COLLECTION_REQUESTS =
+  CRON_SUBREQUEST_CALL_GRAPH.marineKinds
+  * CRON_MARINE_CATALOGUE_MAX_ATTEMPTS;
 
 interface KvWriteEvent {
   event: 'kv_write';
@@ -47,7 +55,12 @@ function kvWriteEvents(calls: readonly (readonly unknown[])[]): KvWriteEvent[] {
   });
 }
 
-function cachedForecast(location: ForecastLocation, marineRun: string): ForecastData {
+function cachedForecast(
+  location: ForecastLocation,
+  marineRun: string | { water: string; waves: string },
+): ForecastData {
+  const waterRun = typeof marineRun === 'string' ? marineRun : marineRun.water;
+  const wavesRun = typeof marineRun === 'string' ? marineRun : marineRun.waves;
   const fetchedAt = new Date(FIRST_TICK_MS - 30 * 60_000).toISOString();
   const hour = new Date(FIRST_TICK_MS + 60 * 60_000).toISOString();
   const sun = buildSunSchedule([hour], location);
@@ -96,15 +109,15 @@ function cachedForecast(location: ForecastLocation, marineRun: string): Forecast
         // Exactly the production maximum: fetchedAt + 90 minutes.
         weatherExpires: new Date(FIRST_TICK_MS + 60 * 60_000).toISOString(),
         marineInstances: {
-          water: { collection: 'dkss_idw', id: marineRun },
-          waves: { collection: 'wam_nsb', id: marineRun },
+          water: { collection: 'dkss_idw', id: waterRun },
+          waves: { collection: 'wam_nsb', id: wavesRun },
         },
       },
     },
   };
 }
 
-function runtime(marineRun = MARINE_RUN) {
+function runtime(marineRun: string | { water: string; waves: string } = MARINE_RUN) {
   const store = new Map<string, string>();
   for (const location of LOCATIONS) {
     store.set(assembledForecastKey(location), JSON.stringify(cachedForecast(location, marineRun)));
@@ -192,6 +205,46 @@ describe('scheduled city rotation', () => {
     expect(gets).toContain(assembledForecastKey(location));
     expect(gets).not.toContain(DMI_RUN_MANIFEST_KEY);
     expect(provider).not.toHaveBeenCalled();
+  });
+
+  it('keeps a budget-truncated selected city unreachable without moving its last success', async () => {
+    const { env, store } = runtime();
+    const scheduledTime = FIRST_TICK_MS + 20 * LOCATIONS.length * CRON_PERIOD_MS;
+    const location = tickOrder(scheduledTime)[0];
+    const forecastKey = assembledForecastKey(location);
+    const cachedBefore = store.get(forecastKey)!;
+    const previousSuccess = scheduledTime - 4 * CRON_PERIOD_MS;
+    store.set(CRON_HEARTBEAT_KEY, JSON.stringify({
+      schemaVersion: 2,
+      lastTickAt: new Date(scheduledTime - CRON_PERIOD_MS).toISOString(),
+      locations: { [location.id]: new Date(previousSuccess).toISOString() },
+      unreachable: {},
+    }));
+    const provider = vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      new Error('A budget-truncated tick must not start provider work.'),
+    );
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.setSystemTime(scheduledTime);
+    vi.spyOn(Date, 'now')
+      .mockReturnValueOnce(scheduledTime)
+      .mockReturnValueOnce(scheduledTime)
+      .mockReturnValue(scheduledTime + CRON_TICK_BUDGET_MS + 1);
+
+    await worker.scheduled(
+      { scheduledTime } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    expect(provider).not.toHaveBeenCalled();
+    expect(store.get(forecastKey)).toBe(cachedBefore);
+    expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
+      schemaVersion: 2,
+      lastTickAt: new Date(scheduledTime).toISOString(),
+      locations: { [location.id]: new Date(previousSuccess).toISOString() },
+      unreachable: { [location.id]: new Date(scheduledTime).toISOString() },
+    });
   });
 
   it('does not report an equal manifest-only run as a fresh city contact', async () => {
@@ -287,6 +340,162 @@ describe('scheduled city rotation', () => {
     });
   });
 
+  it('does not degrade an ahead sibling when only the lagging source is due', async () => {
+    const { env, store } = runtime({
+      water: DUE_MARINE_RUN,
+      waves: '2026-08-20T120000Z',
+    });
+    const scheduledTime = FIRST_TICK_MS + LOCATIONS.length * CRON_PERIOD_MS;
+    const location = tickOrder(scheduledTime)[0];
+    const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/instances') && url.includes('/collections/dkss_')) {
+        return Response.json({ instances: [{ id: DUE_MARINE_RUN }] });
+      }
+      if (url.endsWith('/instances') && url.includes('/collections/wam_')) {
+        return new Response('temporary provider failure', { status: 503 });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.setSystemTime(scheduledTime);
+
+    await worker.scheduled(
+      { scheduledTime } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    const checked = JSON.parse(store.get(assembledForecastKey(location))!) as ForecastData;
+    expect(provider.mock.calls.some(([input]) => String(input).includes('/collections/dkss_')))
+      .toBe(true);
+    expect(provider.mock.calls.some(([input]) => String(input).includes('/collections/wam_')))
+      .toBe(true);
+    expect(checked.sources.cacheHealth?.marineInstances).toEqual({
+      water: { collection: 'dkss_idw', id: DUE_MARINE_RUN },
+      waves: { collection: 'wam_nsb', id: '2026-08-20T120000Z' },
+    });
+    expect(checked.sources.cacheHealth?.degradedSources).toBeUndefined();
+    expect(checked.sources.cacheHealth?.providerBusy).toBeUndefined();
+    expect(checked.sources.cacheHealth?.message).toBeUndefined();
+    expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
+      schemaVersion: 2,
+      lastTickAt: new Date(scheduledTime).toISOString(),
+      locations: { [location.id]: new Date(scheduledTime).toISOString() },
+      unreachable: {},
+    });
+  });
+
+  it('keeps a due manifest hit healthy when only its ahead sibling catalogue fails', async () => {
+    const { env, store } = runtime({
+      water: DUE_MARINE_RUN,
+      waves: '2026-08-20T120000Z',
+    });
+    const scheduledTime = FIRST_TICK_MS + 6 * LOCATIONS.length * CRON_PERIOD_MS;
+    const location = tickOrder(scheduledTime)[0];
+    const previousSuccess = scheduledTime - 4 * CRON_PERIOD_MS;
+    store.set(CRON_HEARTBEAT_KEY, JSON.stringify({
+      schemaVersion: 2,
+      lastTickAt: new Date(scheduledTime - CRON_PERIOD_MS).toISOString(),
+      locations: { [location.id]: new Date(previousSuccess).toISOString() },
+      unreachable: {},
+    }));
+    store.set(DMI_RUN_MANIFEST_KEY, JSON.stringify({
+      schemaVersion: DMI_RUN_MANIFEST_SCHEMA_VERSION,
+      entries: {
+        [dmiCollectionListKey(location.dmiCollections.water)]: {
+          collection: location.dmiCollections.water[0],
+          id: DUE_MARINE_RUN,
+          discoveredAt: new Date(scheduledTime).toISOString(),
+        },
+      },
+    }));
+    const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/instances') && url.includes('/collections/wam_')) {
+        return new Response('not due sibling unavailable', {
+          status: 503,
+          headers: { 'Retry-After': '1200' },
+        });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.setSystemTime(scheduledTime);
+
+    await worker.scheduled(
+      { scheduledTime } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    expect(provider.mock.calls.some(([input]) => String(input).includes('/collections/dkss_')))
+      .toBe(false);
+    expect(provider.mock.calls.some(([input]) => String(input).includes('/collections/wam_')))
+      .toBe(true);
+    const checked = JSON.parse(store.get(assembledForecastKey(location))!) as ForecastData;
+    expect(checked.sources.cacheHealth?.degradedSources).toBeUndefined();
+    expect(checked.sources.cacheHealth?.providerBusy).toBeUndefined();
+    expect(checked.sources.cacheHealth?.message).toBeUndefined();
+    expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
+      schemaVersion: 2,
+      // This is a healthy manifest-only verification, so the cadence write is
+      // throttled and neither provider-contact nor failure history is invented.
+      lastTickAt: new Date(scheduledTime - CRON_PERIOD_MS).toISOString(),
+      locations: { [location.id]: new Date(previousSuccess).toISOString() },
+      unreachable: {},
+    });
+  });
+
+  it('records valid empty catalogues as contact while retaining due runs', async () => {
+    const { env, store } = runtime(DUE_MARINE_RUN);
+    const scheduledTime = FIRST_TICK_MS + 7 * LOCATIONS.length * CRON_PERIOD_MS;
+    const location = tickOrder(scheduledTime)[0];
+    const previousSuccess = scheduledTime - 4 * CRON_PERIOD_MS;
+    const previousFailure = scheduledTime - 2 * CRON_PERIOD_MS;
+    store.set(CRON_HEARTBEAT_KEY, JSON.stringify({
+      schemaVersion: 2,
+      lastTickAt: new Date(scheduledTime - CRON_PERIOD_MS).toISOString(),
+      locations: { [location.id]: new Date(previousSuccess).toISOString() },
+      unreachable: { [location.id]: new Date(previousFailure).toISOString() },
+    }));
+    const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/instances')) return Response.json({ instances: [] });
+      throw new Error(`Unexpected provider URL: ${url}`);
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.setSystemTime(scheduledTime);
+
+    await worker.scheduled(
+      { scheduledTime } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    expect(provider).toHaveBeenCalledTimes(
+      location.dmiCollections.water.length + location.dmiCollections.waves.length,
+    );
+    expect(provider.mock.calls.some(([input]) => String(input).includes('/position')))
+      .toBe(false);
+    const checked = JSON.parse(store.get(assembledForecastKey(location))!) as ForecastData;
+    expect(checked.sources.cacheHealth).toMatchObject({
+      degradedSources: ['water', 'waves'],
+    });
+    expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
+      schemaVersion: 2,
+      lastTickAt: new Date(scheduledTime).toISOString(),
+      locations: { [location.id]: new Date(scheduledTime).toISOString() },
+      unreachable: { [location.id]: new Date(previousFailure).toISOString() },
+    });
+  });
+
   it('skips heartbeat writes inside five minutes and writes once the interval elapses', async () => {
     const { env, store, puts } = runtime();
     const provider = vi.spyOn(globalThis, 'fetch').mockRejectedValue(
@@ -365,7 +574,7 @@ describe('scheduled city rotation', () => {
     });
   });
 
-  it('limits a selected city to three attempts per failing 5xx catalogue stage', async () => {
+  it('uses the raised catalogue ceiling and retains a current cache without position work', async () => {
     const { env, store } = runtime(DUE_MARINE_RUN);
     const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
       new Response('temporary provider failure', { status: 503 }));
@@ -384,9 +593,12 @@ describe('scheduled city rotation', () => {
       {} as ExecutionContext,
     );
 
-    // Water and wave catalogue stages run in parallel. Each gets one initial
-    // request plus two retries; neither can spend the 45-request event reserve.
-    expect(provider).toHaveBeenCalledTimes(6);
+    // Water and wave catalogue stages run in parallel. A 5xx does not qualify
+    // for collection fallback, so each spends exactly its catalogue ceiling
+    // and this still-current assembled forecast needs no position endpoint.
+    expect(provider).toHaveBeenCalledTimes(EXHAUSTED_FIRST_COLLECTION_REQUESTS);
+    expect(provider.mock.calls.some(([input]) =>
+      /\/position(?:\?|$)/.test(String(input)))).toBe(false);
     const heartbeat = JSON.parse(store.get(CRON_HEARTBEAT_KEY)!) as {
       locations: Record<string, string>;
       unreachable: Record<string, string>;
@@ -422,7 +634,7 @@ describe('scheduled city rotation', () => {
       {} as ExecutionContext,
     );
 
-    expect(provider).toHaveBeenCalledTimes(6);
+    expect(provider).toHaveBeenCalledTimes(EXHAUSTED_FIRST_COLLECTION_REQUESTS);
     expect(puts.filter((key) => key === CRON_HEARTBEAT_KEY)).toHaveLength(1);
     expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
       schemaVersion: 2,
@@ -463,7 +675,7 @@ describe('scheduled city rotation', () => {
       {} as ExecutionContext,
     );
 
-    expect(provider).toHaveBeenCalledTimes(6);
+    expect(provider).toHaveBeenCalledTimes(EXHAUSTED_FIRST_COLLECTION_REQUESTS);
     expect(puts.filter((key) => key === CRON_HEARTBEAT_KEY)).toHaveLength(0);
     expect(store.get(CRON_HEARTBEAT_KEY)).toBe(storedHeartbeat);
 
@@ -479,7 +691,7 @@ describe('scheduled city rotation', () => {
 
     // The first 503 established provider retry-backoff. That no-probe repeat is
     // still an unchanged unreachable outcome, without another upstream burst.
-    expect(provider).toHaveBeenCalledTimes(6);
+    expect(provider).toHaveBeenCalledTimes(EXHAUSTED_FIRST_COLLECTION_REQUESTS);
     expect(puts.filter((key) => key === CRON_HEARTBEAT_KEY)).toHaveLength(1);
     expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
       schemaVersion: 2,

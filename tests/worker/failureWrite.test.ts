@@ -4,7 +4,6 @@ import {
   CRON_HEARTBEAT_THROTTLE_TICKS,
   assertHeartbeatThrottleCoprime,
   healthChanged,
-  isCronRebuildHeartbeatSuccess,
   isCronHeartbeat,
   isHeartbeatMemoFresh,
   shouldPersistFailureState,
@@ -166,26 +165,6 @@ describe('heartbeat schema and cadence guard', () => {
       CRON_HEARTBEAT_THROTTLE_TICKS,
       5,
     )).toThrow(/must be coprime/);
-  });
-});
-
-describe('cron rebuild heartbeat outcome', () => {
-  const cleanRebuild = {
-    degradedSources: [],
-    marineSubstituted: [],
-    degradedBusy: false,
-    marineProbeFailed: false,
-  } as const;
-
-  it('keeps retry-backoff unsuccessful even when the rebuild is otherwise clean', () => {
-    expect(isCronRebuildHeartbeatSuccess({
-      ...cleanRebuild,
-      probeReason: 'retry-backoff',
-    })).toBe(false);
-    expect(isCronRebuildHeartbeatSuccess({
-      ...cleanRebuild,
-      probeReason: 'due',
-    })).toBe(true);
   });
 });
 

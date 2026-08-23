@@ -129,7 +129,9 @@ function requestMaxAttempts(
   if (provider !== 'marine') return policy.maxAttempts;
   try {
     const pathname = new URL(url).pathname;
+    const isCatalogueStage = /\/collections\/[^/]+\/instances$/.test(pathname);
     const isPositionStage = /\/collections\/[^/]+\/instances\/[^/]+\/position$/.test(pathname);
+    if (isCatalogueStage) return policy.marineCatalogueMaxAttempts;
     return isPositionStage ? policy.marinePositionMaxAttempts : policy.maxAttempts;
   } catch {
     return policy.maxAttempts;

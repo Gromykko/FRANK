@@ -113,6 +113,9 @@ export interface MarineSeriesResult {
   series: SeriesPoint[];
   instance: MarineInstance;
   fallback: boolean;
+  // Event-local evidence that this invocation received and validated a DMI
+  // position response. Reusing the retained series is deliberately false.
+  providerContacted: boolean;
   degraded?: boolean;
   busy?: boolean;
   notReady?: boolean;
@@ -138,10 +141,20 @@ export interface ForecastBuildResult {
   degradedSources: string[];
   degradedBusy: boolean;
   degradedBusyProvider?: BusyProvider;
+  // Required forecast providers only (MET or per-coordinate DMI), not the
+  // advisory country-wide warning feed.
+  providerContacted: boolean;
   marineInstances: MarineInstances;
   forecast: ForecastData;
   weatherExpires: string;
   weatherLastModified?: string;
+}
+
+// Mutable event-local evidence shared across provider stages so a successful
+// required-provider response is not forgotten if a later stage or assembly
+// step fails. It is never retained between Worker invocations.
+export interface ProviderContactEvidence {
+  providerContacted: boolean;
 }
 
 export interface MarineSeedPayload {

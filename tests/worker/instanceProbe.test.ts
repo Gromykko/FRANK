@@ -84,9 +84,9 @@ describe('fetchLatestInstanceForCollections memo', () => {
 
     // A single 429 is evidence of nothing. The same DMI position request has
     // been observed returning seven 429s and succeeding on the eighth, so this
-    // stage spends its own attempt budget first. Affordable: with one city per
-    // tick that is six marine calls against a ceiling of 45, and retries are
-    // network wait, which costs no CPU.
+    // stage spends its caller-supplied three-attempt budget first. The cron's
+    // raised catalogue ceiling and whole-event arithmetic are pinned in the
+    // provider budget tests; this test isolates refusal memoization.
     await expect(fetchLatestInstanceForCollections(WATER, { maxAttempts: 3 }, eventMemo)).rejects.toThrow();
     expect(calls).toHaveLength(3);
 
@@ -265,6 +265,7 @@ describe('fetchLatestMarineInstances (split resolution)', () => {
     // Both verified, so nothing is degraded - an unchanged id is normal, DMI
     // publishes about every six hours.
     expect(result.substituted).toEqual([]);
+    expect(result.catalogueContacted).toBe(true);
   });
 
   it('adopts fresh water and falls back to cached waves when waves probe is busy', async () => {
@@ -283,6 +284,7 @@ describe('fetchLatestMarineInstances (split resolution)', () => {
     // The carried-over id must be NAMED. Returning it silently is what let a
     // DMI catalogue outage read as a fully current forecast.
     expect(result.substituted).toEqual(['waves']);
+    expect(result.catalogueContacted).toBe(true);
   });
 
   it('adopts fresh waves and falls back to cached water when water probe is busy', async () => {
@@ -299,6 +301,20 @@ describe('fetchLatestMarineInstances (split resolution)', () => {
       waves: { collection: 'wam_nsb', id: '2026-08-08T120000Z' },
     });
     expect(result.substituted).toEqual(['water']);
+    expect(result.catalogueContacted).toBe(true);
+  });
+
+  it('does not count failed catalogue attempts as successful provider contact', async () => {
+    globalThis.fetch = (async () => ({
+      ok: false,
+      status: 429,
+      text: async () => 'Server is busy',
+    })) as unknown as typeof fetch;
+
+    const result = await fetchLatestMarineInstances(location, undefined, eventMemo, fallback);
+
+    expect(result.substituted).toEqual(['water', 'waves']);
+    expect(result.catalogueContacted).toBe(false);
   });
 
   it('throws provider unavailable when both endpoints fail and no fallback is available', async () => {
@@ -392,7 +408,8 @@ describe('cronExecutionPolicy', () => {
       hardDeadlineAt: tickDeadline,
       fetchTimeoutMs: 50_000,
       maxAttempts: 3,
-      marinePositionMaxAttempts: 10,
+      marineCatalogueMaxAttempts: 8,
+      marinePositionMaxAttempts: 18,
       completionReserveMs: 8_000,
       retryDelayMs: undefined,
       retryBusyDelayMs: undefined,
@@ -414,7 +431,8 @@ describe('cronExecutionPolicy', () => {
       deadlineAt: now + 20_000,
       fetchTimeoutMs: 20_000,
       maxAttempts: 3,
-      marinePositionMaxAttempts: 10,
+      marineCatalogueMaxAttempts: 8,
+      marinePositionMaxAttempts: 11,
       completionReserveMs: 4_000,
       retryDelayMs: undefined,
       retryBusyDelayMs: undefined,
@@ -429,6 +447,7 @@ describe('cronExecutionPolicy', () => {
       deadlineAt: now + 15_000,
       fetchTimeoutMs: 15_000,
       maxAttempts: 3,
+      marineCatalogueMaxAttempts: 8,
       marinePositionMaxAttempts: 8,
       completionReserveMs: 3_000,
     });

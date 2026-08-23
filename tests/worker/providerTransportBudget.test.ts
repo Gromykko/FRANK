@@ -2,15 +2,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import locationData from '../../src/config/locations.json';
 import {
+  CRON_CONCURRENT_EXTERNAL_SUBREQUEST_RESERVE,
+  CRON_EXTERNAL_SUBREQUEST_PATHS,
+  CRON_MARINE_CATALOGUE_MAX_ATTEMPTS,
   CRON_MARINE_POSITION_MAX_ATTEMPTS,
+  CRON_MAX_CATALOGUE_EXTERNAL_SUBREQUESTS,
   CRON_PROVIDER_MAX_ATTEMPTS,
   CRON_SUBREQUEST_CALL_GRAPH,
   CRON_TICK_BUDGET_MS,
-  CRON_WORST_CASE_EXTERNAL_SUBREQUESTS,
   EVENT_EXTERNAL_SUBREQUEST_BUDGET,
   cronExecutionPolicy,
   executionPolicy,
   ExternalSubrequestBudgetError,
+  reallocateMarinePositionAttempts,
 } from '../../worker/execution';
 import { dmiForecastUrl } from '../../worker/forecastModel';
 import { fetchJsonWithRetries } from '../../worker/providerTransport';
@@ -86,28 +90,37 @@ describe('event external-subrequest budget', () => {
     expect(fetchMock).toHaveBeenCalledTimes(CRON_MARINE_POSITION_MAX_ATTEMPTS);
   });
 
-  it.each([
-    {
-      stage: 'marine catalogue',
-      url: 'https://opendataapi.dmi.dk/v2/forecastedr/collections/dkss_idw/instances',
-      provider: 'marine' as const,
-    },
-    {
-      stage: 'non-marine weather',
-      url: 'https://api.met.no/weatherapi/locationforecast/2.0/complete?lat=55.8580&lon=9.9050',
-      provider: 'weather' as const,
-    },
-  ])('keeps the ordinary retry cap for the $stage stage', async ({ url, provider }) => {
+  it('lets a marine catalogue stage use its raised provider-specific ceiling', async () => {
     const fetchMock = vi.fn(async () =>
       new Response('temporary provider failure', { status: 503 }));
     globalThis.fetch = fetchMock as typeof fetch;
     vi.spyOn(console, 'log').mockImplementation(() => {});
 
     await expect(fetchJsonWithRetries(
-      url,
-      `${provider} stage`,
+      'https://opendataapi.dmi.dk/v2/forecastedr/collections/dkss_idw/instances',
+      'marine catalogue',
       { ...fullCronPolicy(), retryDelayMs: 0 },
-      provider,
+      'marine',
+      new Map(),
+    )).rejects.toThrow(/temporarily unavailable/i);
+
+    expect(CRON_MARINE_CATALOGUE_MAX_ATTEMPTS).toBeGreaterThan(
+      CRON_PROVIDER_MAX_ATTEMPTS,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(CRON_MARINE_CATALOGUE_MAX_ATTEMPTS);
+  });
+
+  it('keeps a non-marine retry-loop stage at the ordinary ceiling', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response('temporary provider failure', { status: 503 }));
+    globalThis.fetch = fetchMock as typeof fetch;
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await expect(fetchJsonWithRetries(
+      'https://api.met.no/example-retry-loop',
+      'non-marine stage',
+      { ...fullCronPolicy(), retryDelayMs: 0 },
+      'weather',
       new Map(),
     )).rejects.toThrow(/temporarily unavailable/i);
 
@@ -123,19 +136,25 @@ describe('event external-subrequest budget', () => {
     globalThis.fetch = fetchMock as typeof fetch;
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const eventMemo: EventMemo = new Map();
+    eventMemo.externalSubrequestsStarted = CRON_MAX_CATALOGUE_EXTERNAL_SUBREQUESTS;
+    const reducedPolicy = reallocateMarinePositionAttempts(fullCronPolicy(), eventMemo);
 
     await expect(fetchJsonWithRetries(
       marinePositionUrl('wam_nsb'),
       'DMI wam_nsb',
-      { ...fullCronPolicy(), retryBusyDelayMs: 0 },
+      { ...reducedPolicy, retryBusyDelayMs: 0 },
       'marine',
-      new Map(),
+      eventMemo,
     )).rejects.toThrow(/temporarily unavailable/i);
 
+    expect(reducedPolicy.marinePositionMaxAttempts).toBeLessThan(
+      CRON_MARINE_POSITION_MAX_ATTEMPTS,
+    );
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it('keeps the audited one-city call-graph budget within the event ceiling', async () => {
+  it('models manifest, successful-catalogue and exhausted-catalogue paths separately', async () => {
     for (const location of locationData) {
       expect(Object.keys(location.dmiCollections)).toHaveLength(
         CRON_SUBREQUEST_CALL_GRAPH.marineKinds,
@@ -153,18 +172,92 @@ describe('event external-subrequest budget', () => {
     );
     expect(configuredWarningDetails).toBe(CRON_SUBREQUEST_CALL_GRAPH.warningDetails);
 
-    const computedWorstCase =
-      CRON_SUBREQUEST_CALL_GRAPH.marineKinds
-        * CRON_SUBREQUEST_CALL_GRAPH.instanceCollectionsPerKind
-        * CRON_PROVIDER_MAX_ATTEMPTS
-      + CRON_SUBREQUEST_CALL_GRAPH.marineKinds
-        * CRON_MARINE_POSITION_MAX_ATTEMPTS
-      + CRON_SUBREQUEST_CALL_GRAPH.metForecasts
+    const computedReserve = CRON_SUBREQUEST_CALL_GRAPH.metForecasts
       + CRON_SUBREQUEST_CALL_GRAPH.warningFeeds
       + CRON_SUBREQUEST_CALL_GRAPH.warningDetails;
+    expect(computedReserve).toBe(CRON_CONCURRENT_EXTERNAL_SUBREQUEST_RESERVE);
 
-    expect(computedWorstCase).toBe(CRON_WORST_CASE_EXTERNAL_SUBREQUESTS);
-    expect(computedWorstCase).toBeLessThanOrEqual(EVENT_EXTERNAL_SUBREQUEST_BUDGET);
+    const computedCatalogueMaximum =
+      CRON_SUBREQUEST_CALL_GRAPH.marineKinds
+        * CRON_SUBREQUEST_CALL_GRAPH.instanceCollectionsPerKind
+        * CRON_MARINE_CATALOGUE_MAX_ATTEMPTS;
+    expect(computedCatalogueMaximum).toBe(CRON_MAX_CATALOGUE_EXTERNAL_SUBREQUESTS);
+
+    const positionCap = (consumed: number) => Math.max(1, Math.min(
+      CRON_MARINE_POSITION_MAX_ATTEMPTS,
+      Math.floor(
+        (EVENT_EXTERNAL_SUBREQUEST_BUDGET - consumed - computedReserve)
+          / CRON_SUBREQUEST_CALL_GRAPH.concurrentPositionLegs,
+      ),
+    ));
+    const modelPath = (catalogueSubrequests: number, positionsRun: boolean) => {
+      const marinePositionAttemptsPerLeg = positionsRun
+        ? positionCap(catalogueSubrequests)
+        : 0;
+      return {
+        catalogueSubrequests,
+        marinePositionAttemptsPerLeg,
+        concurrentReserve: computedReserve,
+        total: catalogueSubrequests
+          + CRON_SUBREQUEST_CALL_GRAPH.concurrentPositionLegs
+            * marinePositionAttemptsPerLeg
+          + computedReserve,
+      };
+    };
+
+    expect(CRON_EXTERNAL_SUBREQUEST_PATHS).toEqual({
+      manifestHit: modelPath(0, true),
+      catalogueSucceeds: modelPath(computedCatalogueMaximum, true),
+      catalogueExhausts: modelPath(computedCatalogueMaximum, true),
+    });
+    for (const path of Object.values(CRON_EXTERNAL_SUBREQUEST_PATHS)) {
+      expect(path.total).toBeLessThanOrEqual(EVENT_EXTERNAL_SUBREQUEST_BUDGET);
+    }
+  });
+
+  it('gives a manifest hit with zero catalogue spend the position ceiling', () => {
+    const eventMemo: EventMemo = new Map();
+    const adjusted = reallocateMarinePositionAttempts(fullCronPolicy(), eventMemo);
+
+    expect(eventMemo.externalSubrequestsStarted ?? 0).toBe(0);
+    expect(adjusted.marinePositionMaxAttempts).toBe(
+      CRON_MARINE_POSITION_MAX_ATTEMPTS,
+    );
+  });
+
+  it('keeps a quick catalogue success at one attempt below the position ceiling', () => {
+    const eventMemo: EventMemo = new Map();
+    eventMemo.externalSubrequestsStarted = CRON_SUBREQUEST_CALL_GRAPH.marineKinds;
+
+    const adjusted = reallocateMarinePositionAttempts(fullCronPolicy(), eventMemo);
+
+    expect(adjusted.marinePositionMaxAttempts).toBeGreaterThanOrEqual(
+      CRON_MARINE_POSITION_MAX_ATTEMPTS - 1,
+    );
+    expect(
+      eventMemo.externalSubrequestsStarted
+      + CRON_SUBREQUEST_CALL_GRAPH.concurrentPositionLegs
+        * adjusted.marinePositionMaxAttempts
+      + CRON_CONCURRENT_EXTERNAL_SUBREQUEST_RESERVE,
+    ).toBeLessThanOrEqual(EVENT_EXTERNAL_SUBREQUEST_BUDGET);
+  });
+
+  it('reduces an expensive catalogue path without taking either position leg below one', () => {
+    const eventMemo: EventMemo = new Map();
+    eventMemo.externalSubrequestsStarted = CRON_MAX_CATALOGUE_EXTERNAL_SUBREQUESTS;
+
+    const adjusted = reallocateMarinePositionAttempts(fullCronPolicy(), eventMemo);
+
+    expect(adjusted.marinePositionMaxAttempts).toBeGreaterThanOrEqual(1);
+    expect(adjusted.marinePositionMaxAttempts).toBeLessThan(
+      CRON_MARINE_POSITION_MAX_ATTEMPTS,
+    );
+    expect(
+      eventMemo.externalSubrequestsStarted
+      + CRON_SUBREQUEST_CALL_GRAPH.concurrentPositionLegs
+        * adjusted.marinePositionMaxAttempts
+      + CRON_CONCURRENT_EXTERNAL_SUBREQUEST_RESERVE,
+    ).toBeLessThanOrEqual(EVENT_EXTERNAL_SUBREQUEST_BUDGET);
   });
 
   it('treats malformed JSON from a reached 2xx as terminal', async () => {

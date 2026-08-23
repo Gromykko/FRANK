@@ -18,12 +18,13 @@ const CRON_COMPLETION_RESERVE_MS = 8_000;
 // one-minute tick.
 export const CRON_TICK_BUDGET_MS = 50_000;
 // Retry depth is a provider-stage decision, not a way to spend the
-// invocation-wide subrequest allowance. Catalogue probes keep the ordinary
-// cap, while MET and warnings keep their existing single-pass behavior. Only
-// a DMI marine position leg can use the larger cap below, where production has
-// shown seven quick 429s followed by a success.
+// invocation-wide subrequest allowance. MET and warnings are direct,
+// single-pass fetches. DMI catalogue probes are now rare behind the shared run
+// manifest, so they get their own ceiling; position legs receive the larger
+// ceiling and are reallocated from the live remaining count before build fanout.
 export const CRON_PROVIDER_MAX_ATTEMPTS = 3;
-export const CRON_MARINE_POSITION_MAX_ATTEMPTS = 10;
+export const CRON_MARINE_CATALOGUE_MAX_ATTEMPTS = 8;
+export const CRON_MARINE_POSITION_MAX_ATTEMPTS = 18;
 export const DMI_BUSY_RETRY_DELAY_MS = 1_200;
 // Workers Free permits 50 external subrequests per invocation. Keep five in
 // reserve for platform/provider behavior outside the explicit retry loops.
@@ -32,24 +33,86 @@ export const EVENT_EXTERNAL_SUBREQUEST_BUDGET = 45;
 export const CRON_SUBREQUEST_CALL_GRAPH = Object.freeze({
   marineKinds: 2,
   instanceCollectionsPerKind: 2,
+  concurrentPositionLegs: 2,
   metForecasts: 1,
   warningFeeds: 1,
   warningDetails: 6,
 });
 
-// Actual one-city call graph in providers.ts:
-// 2 marine kinds x 2 instance collections x 3 catalogue attempts
-// + 2 position legs x 10 attempts + 1 MET + 1 warning feed + 6 CAP details
-// = 40 app-started external requests, at most 45 and below the hard 50.
-export const CRON_WORST_CASE_EXTERNAL_SUBREQUESTS =
-  CRON_SUBREQUEST_CALL_GRAPH.marineKinds
-    * CRON_SUBREQUEST_CALL_GRAPH.instanceCollectionsPerKind
-    * CRON_PROVIDER_MAX_ATTEMPTS
-  + CRON_SUBREQUEST_CALL_GRAPH.marineKinds
-    * CRON_MARINE_POSITION_MAX_ATTEMPTS
-  + CRON_SUBREQUEST_CALL_GRAPH.metForecasts
+// These stages start concurrently with the two marine position legs and may
+// not be starved: one direct MET fetch + one warning feed + up to six CAP
+// detail fetches (MAX_DETAIL_FETCHES in parseWarnings.ts) = eight requests.
+export const CRON_CONCURRENT_EXTERNAL_SUBREQUEST_RESERVE =
+  CRON_SUBREQUEST_CALL_GRAPH.metForecasts
   + CRON_SUBREQUEST_CALL_GRAPH.warningFeeds
   + CRON_SUBREQUEST_CALL_GRAPH.warningDetails;
+
+// A catalogue collection can spend its full retry ceiling and finally return
+// a valid empty list, after which the fallback collection gets the same chance.
+// Therefore the real catalogue maximum is 2 kinds x 2 collections x 8 = 32.
+// A ninth attempt would be unsafe on a successful final probe:
+// 2 x 2 x 9 catalogue + 2 minimum position attempts + 8 reserve = 46 > 45.
+export const CRON_MAX_CATALOGUE_EXTERNAL_SUBREQUESTS =
+  CRON_SUBREQUEST_CALL_GRAPH.marineKinds
+    * CRON_SUBREQUEST_CALL_GRAPH.instanceCollectionsPerKind
+    * CRON_MARINE_CATALOGUE_MAX_ATTEMPTS;
+
+function normalizedExternalSubrequestsStarted(value: number | undefined): number {
+  if (value === undefined) return 0;
+  if (!Number.isFinite(value)) return EVENT_EXTERNAL_SUBREQUEST_BUDGET;
+  return Math.max(0, Math.floor(value));
+}
+
+function positionAttemptCapFromConsumed(
+  ceiling: number,
+  consumed: number | undefined,
+): number {
+  const remainingForPositions = EVENT_EXTERNAL_SUBREQUEST_BUDGET
+    - normalizedExternalSubrequestsStarted(consumed)
+    - CRON_CONCURRENT_EXTERNAL_SUBREQUEST_RESERVE;
+  const fairShare = Math.floor(
+    remainingForPositions / CRON_SUBREQUEST_CALL_GRAPH.concurrentPositionLegs,
+  );
+  return Math.max(1, Math.min(Math.max(1, Math.floor(ceiling)), fairShare));
+}
+
+function cronSubrequestPath(
+  catalogueSubrequests: number,
+  positionsRun: boolean,
+) {
+  const marinePositionAttemptsPerLeg = positionsRun
+    ? positionAttemptCapFromConsumed(
+        CRON_MARINE_POSITION_MAX_ATTEMPTS,
+        catalogueSubrequests,
+      )
+    : 0;
+  return Object.freeze({
+    catalogueSubrequests,
+    marinePositionAttemptsPerLeg,
+    concurrentReserve: CRON_CONCURRENT_EXTERNAL_SUBREQUEST_RESERVE,
+    total: catalogueSubrequests
+      + CRON_SUBREQUEST_CALL_GRAPH.concurrentPositionLegs
+        * marinePositionAttemptsPerLeg
+      + CRON_CONCURRENT_EXTERNAL_SUBREQUEST_RESERVE,
+  });
+}
+
+// A single summed worst case is false because catalogue and position spending
+// are sequential and dynamically coupled. Model the three actual paths. Cold
+// catalogue exhaustion stops before build, but valid retained run ids can let
+// a build continue; model that stricter case because a missing raw-marine cache
+// can still send both old-run position legs through the dynamic allocation.
+export const CRON_EXTERNAL_SUBREQUEST_PATHS = Object.freeze({
+  manifestHit: cronSubrequestPath(0, true),
+  catalogueSucceeds: cronSubrequestPath(
+    CRON_MAX_CATALOGUE_EXTERNAL_SUBREQUESTS,
+    true,
+  ),
+  catalogueExhausts: cronSubrequestPath(
+    CRON_MAX_CATALOGUE_EXTERNAL_SUBREQUESTS,
+    true,
+  ),
+});
 
 export class ExternalSubrequestBudgetError extends Error {
   constructor() {
@@ -71,6 +134,7 @@ export interface ExecutionPolicyInput {
   hardDeadlineAt?: number;
   fetchTimeoutMs?: number;
   maxAttempts?: number;
+  marineCatalogueMaxAttempts?: number;
   marinePositionMaxAttempts?: number;
   completionReserveMs?: number;
   retryDelayMs?: number;
@@ -82,6 +146,7 @@ export interface ExecutionPolicy {
   hardDeadlineAt: number;
   fetchTimeoutMs: number;
   maxAttempts: number;
+  marineCatalogueMaxAttempts: number;
   marinePositionMaxAttempts: number;
   completionReserveMs: number;
   retryDelayMs?: number;
@@ -106,12 +171,32 @@ export function executionPolicy(policy: ExecutionPolicyInput = {}): ExecutionPol
     hardDeadlineAt: policy.hardDeadlineAt ?? policy.deadlineAt ?? Number.POSITIVE_INFINITY,
     fetchTimeoutMs: policy.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS,
     maxAttempts,
+    marineCatalogueMaxAttempts: policy.marineCatalogueMaxAttempts !== undefined
+      ? Math.max(1, policy.marineCatalogueMaxAttempts)
+      : maxAttempts,
     marinePositionMaxAttempts: policy.marinePositionMaxAttempts !== undefined
       ? Math.max(1, policy.marinePositionMaxAttempts)
       : maxAttempts,
     completionReserveMs: reserve,
     retryDelayMs: policy.retryDelayMs,
     retryBusyDelayMs: policy.retryBusyDelayMs,
+  };
+}
+
+// Called exactly once at the build fanout boundary: catalogue/manifest
+// resolution has finished, while MET, both position legs and warnings have not
+// started. Read the event's live counter rather than reconstructing catalogue
+// calls. The existing policy value remains a separate time/candidate ceiling.
+export function reallocateMarinePositionAttempts(
+  policy: ExecutionPolicy,
+  eventMemo?: EventMemo,
+): ExecutionPolicy {
+  return {
+    ...policy,
+    marinePositionMaxAttempts: positionAttemptCapFromConsumed(
+      policy.marinePositionMaxAttempts,
+      eventMemo?.externalSubrequestsStarted,
+    ),
   };
 }
 
@@ -150,18 +235,24 @@ export function cronExecutionPolicy(
     Math.floor(remainingMs / locationsRemaining),
   );
   if (locationBudgetMs <= 0) return null;
+  const timeBoundAttempts = Math.max(1, Math.floor(locationBudgetMs / 1_800));
   const maxAttempts = Math.min(
     CRON_PROVIDER_MAX_ATTEMPTS,
-    Math.max(1, Math.floor(locationBudgetMs / 1_800)),
+    timeBoundAttempts,
+  );
+  const marineCatalogueMaxAttempts = Math.min(
+    CRON_MARINE_CATALOGUE_MAX_ATTEMPTS,
+    timeBoundAttempts,
   );
   const marinePositionMaxAttempts = Math.min(
     CRON_MARINE_POSITION_MAX_ATTEMPTS,
-    Math.max(1, Math.floor(locationBudgetMs / 1_800)),
+    timeBoundAttempts,
   );
   return executionPolicy({
     deadlineAt: Math.min(tickDeadlineAt, nowMs + locationBudgetMs),
     fetchTimeoutMs: Math.min(CRON_FETCH_TIMEOUT_MS, locationBudgetMs),
     maxAttempts,
+    marineCatalogueMaxAttempts,
     marinePositionMaxAttempts,
     completionReserveMs: Math.min(
       CRON_COMPLETION_RESERVE_MS,

@@ -1,11 +1,11 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import worker from '../../worker/index';
+import worker, { CRON_HEARTBEAT_KEY } from '../../worker/index';
 import locationData from '../../src/config/locations.json';
 import type { ForecastLocation } from '../../src/config/locationTypes';
 import { FORECAST_PAYLOAD_VERSION } from '../../src/features/forecast/types';
 import { CURRENT_RELEASE } from '../../src/features/forecast/releaseContract';
 import { buildSunSchedule } from '../../src/features/forecast/sun';
-import type { ForecastData, HealthLocationEntry } from '../../worker/domain';
+import type { ForecastData, HealthLocationEntry, HealthPayload } from '../../worker/domain';
 import { buildHealthPayload, statusResponse } from '../../worker/health';
 import {
   RELEASE_HEADER,
@@ -213,6 +213,50 @@ describe('Worker route HTTP contract', () => {
       expect(await response.text()).toBe('');
     },
   );
+
+  it('/health keeps a recently contacted degraded city out of not-checking', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      // Advance past the isolate-local heartbeat memo without making the other
+      // three five-minute-old fixtures stale.
+      const now = Date.now() + 31_000;
+      vi.setSystemTime(now);
+      const location = locationById('kolding');
+      const degraded = cachedForecast(location.id);
+      degraded.sources.fetchedAt = new Date(now - 13 * 60_000).toISOString();
+      degraded.sources.cacheHealth = {
+        ...degraded.sources.cacheHealth!,
+        lastAttemptAt: new Date(now - 2 * 60 * 60_000).toISOString(),
+        degradedSources: ['waves'],
+      };
+      const lastTickAt = new Date(now - 60_000).toISOString();
+      const runtime = makeRuntime({
+        seed: {
+          [assembledForecastKey(location)]: degraded,
+          [CRON_HEARTBEAT_KEY]: {
+            schemaVersion: 2,
+            lastTickAt,
+            locations: {
+              [location.id]: new Date(now - 4 * 60_000).toISOString(),
+            },
+            unreachable: {},
+          },
+        },
+      });
+
+      const response = await worker.fetch(request('/health'), runtime.env, runtime.ctx);
+      const body = await response.json() as HealthPayload;
+      const kolding = body.locations.find(({ id }) => id === location.id);
+
+      expect(response.status).toBe(200);
+      expect(body.reason).toBeNull();
+      expect(body.stalled).not.toContain(location.id);
+      expect(kolding?.cacheHealth?.lastAttemptAt).toBe(lastTickAt);
+      expect(kolding?.cacheHealth?.degradedSources).toEqual(['waves']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it('keeps routing strict and does not advertise unknown paths', async () => {
     const runtime = makeRuntime();
