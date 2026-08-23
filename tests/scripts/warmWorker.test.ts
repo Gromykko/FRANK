@@ -2,6 +2,7 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  DEFAULT_WARM_TOTAL_TIMEOUT_MS,
   WARM_LOCATION_IDS,
   warmWorkerLocations,
 } from '../../scripts/warm-worker.mjs';
@@ -92,6 +93,41 @@ describe('deployment Worker warm-up', () => {
     ]);
     expect(sleepImpl).toHaveBeenCalledOnce();
     expect(sleepImpl).toHaveBeenCalledWith(2_000);
+  });
+
+  it('allows two full initialization cooldowns before the candidate gate closes', async () => {
+    let nowMs = 1_000;
+    let aarhusAttempts = 0;
+    const fetchImpl = vi.fn(async (url: string) => {
+      const locationId = locationIdFrom(url);
+      if (locationId === 'aarhus' && aarhusAttempts++ < 2) {
+        return initializingResponse('600');
+      }
+      return readyResponse();
+    });
+    const sleepImpl = vi.fn(async (delayMs: number) => {
+      nowMs += delayMs;
+    });
+
+    await warmWorkerLocations({
+      baseUrl: BASE_URL,
+      token: TOKEN,
+      fetchImpl,
+      now: () => nowMs,
+      sleepImpl,
+      logger: silentLogger(),
+    });
+
+    expect(DEFAULT_WARM_TOTAL_TIMEOUT_MS).toBe(25 * 60_000);
+    expect(fetchImpl.mock.calls.map(([url]) => locationIdFrom(String(url)))).toEqual([
+      'horsens',
+      'vejle',
+      'kolding',
+      'aarhus',
+      'aarhus',
+      'aarhus',
+    ]);
+    expect(sleepImpl.mock.calls).toEqual([[600_000], [600_000]]);
   });
 
   it('fails the release when exactly one city cannot retry within the global deadline', async () => {
@@ -244,6 +280,10 @@ describe('deployment Worker warm-up', () => {
     expect(uploadJobBody).not.toContain('continue-on-error');
 
     expect(warmJobBody).toContain('needs: upload_candidate');
+    const warmJobTimeout = warmJobBody.match(/timeout-minutes:\s*(\d+)/);
+    expect(Number(warmJobTimeout?.[1]) * 60_000).toBeGreaterThan(
+      DEFAULT_WARM_TOTAL_TIMEOUT_MS,
+    );
     expect(warmJobBody).toContain('FRANK_WARM_TOKEN: ${{ secrets.FRANK_WARM_TOKEN }}');
     expect(warmJobBody).toContain(
       'FRANK_WORKER_BASE_URL: ${{ needs.upload_candidate.outputs.preview_url }}',
