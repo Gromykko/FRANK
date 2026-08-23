@@ -802,10 +802,93 @@ describe('Worker route HTTP contract', () => {
         runtime.ctx,
       );
       expect(repeated.status).toBe(200);
+      await Promise.all(runtime.waits);
       expect(providerFetch.mock.calls.length).toBeGreaterThan(providerCallsAfterBuild);
       expect(runtime.puts.filter(({ key }) => key === CRON_HEARTBEAT_KEY))
         .toHaveLength(heartbeatWritesAfterBuild);
       expect(JSON.parse(runtime.store.get(CRON_HEARTBEAT_KEY)!)).toEqual(equalFailureHeartbeat);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('returns a successful warm response before its heartbeat write completes', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(WARM_BUILD_NOW);
+      const location = locationById('aarhus');
+      const previousHeartbeat = warmHeartbeat(location.id);
+      const runtime = makeRuntime({
+        exact: false,
+        seed: {
+          [CRON_HEARTBEAT_KEY]: previousHeartbeat,
+          [DMI_RUN_MANIFEST_KEY]: warmManifest(location),
+        },
+      });
+      installWarmProviderResponses();
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const originalPut = runtime.env.FRANK_FORECAST_CACHE.put;
+      let signalHeartbeatWriteStarted = () => {};
+      const heartbeatWriteStarted = new Promise<void>((resolve) => {
+        signalHeartbeatWriteStarted = resolve;
+      });
+      let releaseHeartbeatWrite = () => {};
+      const heartbeatWriteGate = new Promise<void>((resolve) => {
+        releaseHeartbeatWrite = resolve;
+      });
+      let heartbeatWriteCompleted = false;
+      runtime.env.FRANK_FORECAST_CACHE.put = async (key: string, value: string) => {
+        if (key === CRON_HEARTBEAT_KEY) {
+          signalHeartbeatWriteStarted();
+          await heartbeatWriteGate;
+        }
+        await originalPut(key, value);
+        if (key === CRON_HEARTBEAT_KEY) heartbeatWriteCompleted = true;
+      };
+
+      let responseSettled = false;
+      const responsePromise = worker.fetch(
+        authorizedWarmRequest('/api/v1/forecast/aarhus?warm=1'),
+        runtime.env,
+        runtime.ctx,
+      ).then((response) => {
+        responseSettled = true;
+        return response;
+      });
+
+      try {
+        await heartbeatWriteStarted;
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+        expect(responseSettled).toBe(true);
+        expect(heartbeatWriteCompleted).toBe(false);
+        expect(runtime.waits).toHaveLength(2);
+
+        let waitUntilSettled = false;
+        const waitUntilWork = Promise.all(runtime.waits).then(() => {
+          waitUntilSettled = true;
+        });
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        expect(waitUntilSettled).toBe(false);
+
+        releaseHeartbeatWrite();
+        const response = await responsePromise;
+        await waitUntilWork;
+
+        expect(response.status).toBe(200);
+        expect(heartbeatWriteCompleted).toBe(true);
+        const heartbeat = JSON.parse(runtime.store.get(CRON_HEARTBEAT_KEY)!);
+        expect(heartbeat.locations[location.id]).toBe(
+          new Date(WARM_BUILD_NOW).toISOString(),
+        );
+        expect(heartbeat.lastTickAt).toBe(previousHeartbeat.lastTickAt);
+      } finally {
+        releaseHeartbeatWrite();
+        await Promise.allSettled([responsePromise, ...runtime.waits]);
+      }
     } finally {
       vi.useRealTimers();
     }

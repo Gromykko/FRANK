@@ -1202,11 +1202,11 @@ async function _refreshForecastCache(
       weatherLastModified: built.weatherLastModified,
       checkedBy: options.reason ?? 'refresh',
       // Names the sources riding on last-good data (weather/water/waves) so
-      // the client can show a calm "from an earlier update" note, and whether
-      // it was because their provider was busy.
+      // the client can show a calm "from an earlier update" note. Busy copy is
+      // reserved for a provider boundary that verified an HTTP 429.
       ...(degradedSources.length ? { degradedSources } : {}),
-      ...((built.degradedBusy || marineProbeFailed) ? { providerBusy: true } : {}),
-      ...(marineProbeFailed
+      ...((built.degradedBusy || marineProbeBusy) ? { providerBusy: true } : {}),
+      ...(marineProbeBusy
         ? { busyProvider: 'marine' as const }
         : built.degradedBusyProvider
           ? { busyProvider: built.degradedBusyProvider }
@@ -1457,17 +1457,18 @@ async function handleForecastRequest(
       eventMemo,
       cached: null,
       cronOutcome: warmOutcome,
-    }).finally(async () => {
+    }).finally(() => {
       const attemptedAt = warmOutcome.attemptedAt;
       const heartbeatAttempt: HeartbeatAttempt | null = warmOutcome.status === 'contacted'
         && typeof attemptedAt === 'string'
         && Number.isFinite(Date.parse(attemptedAt))
         ? { locationId: location.id, status: 'contacted', attemptedAt }
         : null;
-      await writeHeartbeat(env, { kind: 'contact-only' }, heartbeatAttempt, {
+      if (!heartbeatAttempt) return;
+      ctx.waitUntil(writeHeartbeat(env, { kind: 'contact-only' }, heartbeatAttempt, {
         deadlineAt: Date.now() + HEARTBEAT_WRITE_BUDGET_MS,
         maxAttempts: 1,
-      });
+      }));
     });
     return candidateWarmResponse(
       ctx,
