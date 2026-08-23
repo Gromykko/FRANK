@@ -12,6 +12,11 @@ import worker, {
   CRON_HEARTBEAT_THROTTLE_TICKS,
   tickOrder,
 } from '../../worker/index';
+import {
+  DMI_RUN_MANIFEST_KEY,
+  DMI_RUN_MANIFEST_SCHEMA_VERSION,
+  dmiCollectionListKey,
+} from '../../worker/providers';
 
 const LOCATIONS = locationData as ForecastLocation[];
 const FIRST_TICK_MS = Date.parse('2026-08-20T16:00:00.000Z');
@@ -166,6 +171,120 @@ describe('scheduled city rotation', () => {
     }
 
     expect(provider).not.toHaveBeenCalled();
+  });
+
+  it('does not read the run manifest or probe the catalogue when no marine run is due', async () => {
+    const { env, gets } = runtime();
+    const scheduledTime = FIRST_TICK_MS + 2 * LOCATIONS.length * CRON_PERIOD_MS;
+    const location = tickOrder(scheduledTime)[0];
+    const provider = vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      new Error('The outer marine probe gate should prevent this request.'),
+    );
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.setSystemTime(scheduledTime);
+
+    await worker.scheduled(
+      { scheduledTime } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    expect(gets).toContain(assembledForecastKey(location));
+    expect(gets).not.toContain(DMI_RUN_MANIFEST_KEY);
+    expect(provider).not.toHaveBeenCalled();
+  });
+
+  it('does not report an equal manifest-only run as a fresh city contact', async () => {
+    const { env, store, gets, puts } = runtime(DUE_MARINE_RUN);
+    const scheduledTime = FIRST_TICK_MS + 3 * LOCATIONS.length * CRON_PERIOD_MS;
+    const location = tickOrder(scheduledTime)[0];
+    const forecastKey = assembledForecastKey(location);
+    const cachedBefore = store.get(forecastKey)!;
+    const previousSuccess = scheduledTime - 8 * CRON_PERIOD_MS;
+    const previousFailure = scheduledTime - 4 * CRON_PERIOD_MS;
+    store.set(CRON_HEARTBEAT_KEY, JSON.stringify({
+      schemaVersion: 2,
+      lastTickAt: new Date(
+        scheduledTime - CRON_HEARTBEAT_THROTTLE_TICKS * CRON_PERIOD_MS,
+      ).toISOString(),
+      locations: { [location.id]: new Date(previousSuccess).toISOString() },
+      unreachable: { [location.id]: new Date(previousFailure).toISOString() },
+    }));
+    const discoveredAt = new Date(scheduledTime).toISOString();
+    store.set(DMI_RUN_MANIFEST_KEY, JSON.stringify({
+      schemaVersion: DMI_RUN_MANIFEST_SCHEMA_VERSION,
+      entries: {
+        [dmiCollectionListKey(location.dmiCollections.water)]: {
+          collection: location.dmiCollections.water[0],
+          id: DUE_MARINE_RUN,
+          discoveredAt,
+        },
+        [dmiCollectionListKey(location.dmiCollections.waves)]: {
+          collection: location.dmiCollections.waves[0],
+          id: DUE_MARINE_RUN,
+          discoveredAt,
+        },
+      },
+    }));
+    const provider = vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      new Error('A manifest-only verification must not reach the catalogue.'),
+    );
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.setSystemTime(scheduledTime);
+
+    await worker.scheduled(
+      { scheduledTime } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    expect(gets.filter((key) => key === DMI_RUN_MANIFEST_KEY)).toHaveLength(1);
+    expect(provider).not.toHaveBeenCalled();
+    expect(store.get(forecastKey)).toBe(cachedBefore);
+    expect(puts).not.toContain(forecastKey);
+    expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
+      schemaVersion: 2,
+      lastTickAt: new Date(scheduledTime).toISOString(),
+      locations: { [location.id]: new Date(previousSuccess).toISOString() },
+      unreachable: { [location.id]: new Date(previousFailure).toISOString() },
+    });
+  });
+
+  it('falls back from corrupt manifest JSON through a clean scheduled verdict check', async () => {
+    const { env, store, gets, puts } = runtime(DUE_MARINE_RUN);
+    const scheduledTime = FIRST_TICK_MS + 4 * LOCATIONS.length * CRON_PERIOD_MS;
+    const location = tickOrder(scheduledTime)[0];
+    const forecastKey = assembledForecastKey(location);
+    const before = JSON.parse(store.get(forecastKey)!) as ForecastData;
+    store.set(DMI_RUN_MANIFEST_KEY, '{');
+    const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/instances')) {
+        return Response.json({ instances: [{ id: DUE_MARINE_RUN }] });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.setSystemTime(scheduledTime);
+
+    await worker.scheduled(
+      { scheduledTime } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    expect(gets.filter((key) => key === DMI_RUN_MANIFEST_KEY)).toHaveLength(1);
+    expect(provider).toHaveBeenCalledTimes(2);
+    expect(puts).not.toContain(DMI_RUN_MANIFEST_KEY);
+    const after = JSON.parse(store.get(forecastKey)!) as ForecastData;
+    expect(after.hourly).toEqual(before.hourly);
+    expect(after.sources.cacheHealth?.status).toBe('current');
+    expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
+      schemaVersion: 2,
+      lastTickAt: new Date(scheduledTime).toISOString(),
+      locations: { [location.id]: new Date(scheduledTime).toISOString() },
+      unreachable: {},
+    });
   });
 
   it('skips heartbeat writes inside five minutes and writes once the interval elapses', async () => {

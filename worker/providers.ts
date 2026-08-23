@@ -59,12 +59,14 @@ import {
   marineInstancesWithinFallbackAge,
   marineProbeDecision,
   metForecastUrl,
+  parseDmiInstanceMs,
   retainedActiveWarnings,
   shouldTryNextDmiCollection,
 } from './forecastModel';
 import {
   errorStatus,
   errorWithStatus,
+  isRecord,
 } from './validation';
 import {
   ProviderUnavailableError,
@@ -111,15 +113,276 @@ function assertMarineRunWithinFallbackAge(
   }
 }
 
-// Which model run is newest is a property of DMI, not of a fjord, and every
-// location currently configured probes the identical two collection lists. So a
-// cron tick that loops 4 locations asked DMI the same two questions 8 times,
-// ~2.1s of the tick, against the one provider that actively rate-limits us.
-//
-// A scheduled event supplies one event-local memo, making its four locations
-// self-consistent without retaining request-scoped I/O promises in module
-// globals. Separate HTTP/scheduled events can never inherit one another's
-// promise, deadline, or failure.
+export const DMI_RUN_MANIFEST_KEY = 'frank:system:dmi-run-manifest';
+export const DMI_RUN_MANIFEST_SCHEMA_VERSION = 1;
+const DMI_INSTANCE_PROBE_MEMO_PREFIX = 'instance-probe:';
+const DMI_RUN_MANIFEST_KV_BUDGET_MS = 1_000;
+
+type DmiRunManifestStore = Pick<KVNamespace, 'get' | 'put'>;
+
+interface DmiRunManifestEntry extends MarineInstance {
+  discoveredAt: string;
+}
+
+type DmiRunManifestState =
+  | { kind: 'missing' }
+  | { kind: 'valid'; entries: Record<string, unknown> }
+  | { kind: 'unusable' };
+
+type DmiRunManifestEntryState =
+  | { kind: 'missing' }
+  | {
+      kind: 'valid';
+      entry: DmiRunManifestEntry;
+      discoveredAtMs: number;
+      runAtMs: number;
+    }
+  | { kind: 'unusable' };
+
+interface DmiInstanceResolution {
+  instance: MarineInstance;
+  source: 'catalogue' | 'manifest';
+  collections: readonly string[];
+  known: MarineInstance | undefined;
+}
+
+interface DmiInstanceResolutionPlan {
+  promise: Promise<DmiInstanceResolution>;
+  catalogueContacted: boolean;
+}
+
+function dmiRunManifestKvPolicy(policy: ExecutionPolicy): ExecutionPolicy {
+  // The manifest is only a hint. Bound its KV work before the existing
+  // completion reserve so a slow internal service cannot consume the provider
+  // opportunity or the time needed to assemble and persist the real forecast.
+  return {
+    ...policy,
+    deadlineAt: Math.min(
+      policy.deadlineAt - policy.completionReserveMs,
+      Date.now() + DMI_RUN_MANIFEST_KV_BUDGET_MS,
+    ),
+    completionReserveMs: 0,
+  };
+}
+
+// Collection order is part of DMI fallback policy, so this identity must never
+// sort. The same joined list owns both the event-local probe memo and the
+// persisted cross-invocation manifest entry.
+export function dmiCollectionListKey(collections: readonly string[]): string {
+  return collections.join(',');
+}
+
+function instanceProbeMemoKey(collections: readonly string[]): string {
+  return `${DMI_INSTANCE_PROBE_MEMO_PREFIX}${dmiCollectionListKey(collections)}`;
+}
+
+function validatedDmiRunManifestEntry(
+  value: unknown,
+  collections: readonly string[],
+  nowMs: number,
+): Extract<DmiRunManifestEntryState, { kind: 'valid' }> | null {
+  if (!isRecord(value)
+    || typeof value.collection !== 'string'
+    || !collections.includes(value.collection)
+    || typeof value.id !== 'string'
+    || typeof value.discoveredAt !== 'string') {
+    return null;
+  }
+
+  const runAtMs = parseDmiInstanceMs(value.id);
+  const discoveredAtMs = Date.parse(value.discoveredAt);
+  if (!Number.isFinite(runAtMs)
+    || runAtMs > nowMs
+    || !Number.isFinite(discoveredAtMs)
+    || discoveredAtMs > nowMs
+    || new Date(discoveredAtMs).toISOString() !== value.discoveredAt) {
+    return null;
+  }
+
+  return {
+    kind: 'valid',
+    entry: {
+      collection: value.collection,
+      id: value.id,
+      discoveredAt: value.discoveredAt,
+    },
+    discoveredAtMs,
+    runAtMs,
+  };
+}
+
+function dmiRunManifestEntryState(
+  manifest: DmiRunManifestState,
+  collections: readonly string[],
+  nowMs: number,
+): DmiRunManifestEntryState {
+  if (manifest.kind === 'unusable') return { kind: 'unusable' };
+  if (manifest.kind === 'missing') return { kind: 'missing' };
+  const value = manifest.entries[dmiCollectionListKey(collections)];
+  if (value === undefined) return { kind: 'missing' };
+  return validatedDmiRunManifestEntry(value, collections, nowMs)
+    ?? { kind: 'unusable' };
+}
+
+async function readDmiRunManifest(
+  store: DmiRunManifestStore,
+  policy: ExecutionPolicy,
+): Promise<DmiRunManifestState> {
+  try {
+    const manifestPolicy = dmiRunManifestKvPolicy(policy);
+    const value = await awaitWithinDeadline(
+      () => store.get<unknown>(DMI_RUN_MANIFEST_KEY, 'json'),
+      manifestPolicy,
+      'DMI run manifest read',
+    );
+    if (value === null) return { kind: 'missing' };
+    if (!isRecord(value)
+      || value.schemaVersion !== DMI_RUN_MANIFEST_SCHEMA_VERSION
+      || !isRecord(value.entries)) {
+      return { kind: 'unusable' };
+    }
+    return { kind: 'valid', entries: value.entries };
+  } catch {
+    // This object is only an optimization. Any storage/parse/contract failure
+    // degrades to the pre-manifest catalogue probe, never to assumed currency.
+    return { kind: 'unusable' };
+  }
+}
+
+function manifestInstanceForCollections(
+  manifest: DmiRunManifestState,
+  collections: readonly string[],
+  known: MarineInstance | undefined,
+  nowMs: number,
+): MarineInstance | null {
+  const stored = dmiRunManifestEntryState(manifest, collections, nowMs);
+  if (stored.kind !== 'valid'
+    || !isMarineRunWithinFallbackAge(stored.entry, nowMs)
+    || nowMs - stored.discoveredAtMs > FORECAST_SOURCE_POLICY.dmiRunCycleMs) {
+    return null;
+  }
+
+  const knownRunAtMs = known ? parseDmiInstanceMs(known.id) : Number.NaN;
+  if (known && !Number.isFinite(knownRunAtMs)) return null;
+  if (Number.isFinite(knownRunAtMs) && stored.runAtMs < knownRunAtMs) return null;
+  return {
+    collection: stored.entry.collection,
+    id: stored.entry.id,
+  };
+}
+
+function resolveLatestInstanceForCollections(
+  collections: string[],
+  known: MarineInstance | undefined,
+  manifest: DmiRunManifestState,
+  policy: ExecutionPolicy,
+  eventMemo?: EventMemo,
+): DmiInstanceResolutionPlan {
+  const adopted = manifestInstanceForCollections(
+    manifest,
+    collections,
+    known,
+    Date.now(),
+  );
+  if (adopted) {
+    return {
+      promise: Promise.resolve({
+        instance: adopted,
+        source: 'manifest',
+        collections,
+        known,
+      }),
+      catalogueContacted: false,
+    };
+  }
+  return {
+    promise: fetchLatestInstanceForCollections(collections, policy, eventMemo)
+      .then((instance) => ({
+        instance,
+        source: 'catalogue' as const,
+        collections,
+        known,
+      })),
+    catalogueContacted: true,
+  };
+}
+
+async function persistDmiRunManifest(
+  store: DmiRunManifestStore,
+  manifest: DmiRunManifestState,
+  resolutions: readonly PromiseSettledResult<DmiInstanceResolution>[],
+  policy: ExecutionPolicy,
+): Promise<void> {
+  if (manifest.kind === 'unusable') return;
+
+  const nowMs = Date.now();
+  const updates = new Map<string, MarineInstance>();
+  for (const result of resolutions) {
+    if (result.status !== 'fulfilled' || result.value.source !== 'catalogue') continue;
+    const { collections, instance, known } = result.value;
+    if (!isMarineRunWithinFallbackAge(instance, nowMs)) continue;
+    const discoveredRunAtMs = parseDmiInstanceMs(instance.id);
+    if (!Number.isFinite(discoveredRunAtMs)) continue;
+
+    const stored = dmiRunManifestEntryState(manifest, collections, nowMs);
+    if (stored.kind === 'unusable') continue;
+    const knownRunAtMs = known
+      && collections.includes(known.collection)
+      && isMarineRunWithinFallbackAge(known, nowMs)
+      ? parseDmiInstanceMs(known.id)
+      : Number.NaN;
+    const advancesKnownRun = !Number.isFinite(knownRunAtMs)
+      || discoveredRunAtMs > knownRunAtMs;
+    if (advancesKnownRun
+      && (stored.kind === 'missing'
+        || (stored.kind === 'valid' && discoveredRunAtMs > stored.runAtMs))) {
+      updates.set(dmiCollectionListKey(collections), instance);
+    }
+  }
+  if (updates.size === 0) return;
+
+  const discoveredAt = new Date(nowMs).toISOString();
+  const entries: Record<string, unknown> = manifest.kind === 'valid'
+    ? { ...manifest.entries }
+    : {};
+  for (const [key, instance] of updates) {
+    entries[key] = {
+      collection: instance.collection,
+      id: instance.id,
+      discoveredAt,
+    } satisfies DmiRunManifestEntry;
+  }
+
+  try {
+    const manifestPolicy = dmiRunManifestKvPolicy(policy);
+    await awaitWithinDeadline(
+      () => putKvWithLog(
+        store,
+        DMI_RUN_MANIFEST_KEY,
+        JSON.stringify({
+          schemaVersion: DMI_RUN_MANIFEST_SCHEMA_VERSION,
+          entries,
+        }),
+        'dmi-run-manifest',
+      ),
+      manifestPolicy,
+      'DMI run manifest write',
+    );
+  } catch (error) {
+    // The catalogue result remains authoritative for this invocation. Losing
+    // this best-effort hint may cost a later redundant probe, never correctness.
+    console.error(JSON.stringify({
+      event: 'dmi_run_manifest_write_failed',
+      error: error instanceof Error ? error.message : String(error),
+    }));
+  }
+}
+
+// The event memo still coalesces duplicate callers inside one invocation and
+// shares a provider refusal with the parallel sibling leg. Scheduled refreshes
+// now own one rotated city, though, so cross-tick catalogue evidence belongs in
+// the validated KV manifest above rather than in request-scoped promises or
+// module globals.
 
 export function fetchLatestInstanceForCollections(
   collections: string[],
@@ -128,28 +391,23 @@ export function fetchLatestInstanceForCollections(
 ): Promise<MarineInstance> {
   const policy = executionPolicy(policyInput);
   assertBeforeDeadline(policy, `DMI ${collections.join(',')} instance probe`);
-  const key = `instance-probe:${collections.join(',')}`;
+  const key = instanceProbeMemoKey(collections);
   const memo = eventMemo?.get(key);
   if (memo) return memo as Promise<MarineInstance>;
 
-  // The PROMISE is cached, not its result. Caching the result only would have
-  // deduplicated nothing here: water and waves are probed with Promise.allSettled
-  // and the locations are looped, so four callers can all miss the cache before
-  // the first response lands, and all four would still hit DMI. Sharing the
-  // in-flight promise is what actually collapses them into one request.
+  // The PROMISE is cached, not its result. Only an in-flight promise can
+  // coalesce duplicate same-list callers that start concurrently inside one
+  // invocation; caching after resolution is too late to prevent both requests.
   //
   // A PROVIDER rejection is cached on the same terms, deliberately: a 429 means
-  // "stop asking", and re-probing once per location is exactly the hammering
-  // that earned it. The first caller always awaits, so the stored rejection is
-  // never an unhandled one.
+  // "stop asking", and repeating it inside the same invocation is exactly the
+  // hammering that earned it. The first caller always awaits, so the stored
+  // rejection is never an unhandled one.
   //
   // A rejection that is about US is not shared. The promise carries the FIRST
-  // location's ExecutionPolicy, so if that location simply ran out of its own
-  // provider window the rejection is a deadline error, not a statement about
-  // DMI - and serving it to the other three marked all four cities stale with
-  // "Marine service unavailable" (and, since it is not a busy error, the wrong
-  // alarming copy) because one request was slow while DMI was perfectly fine.
-  // Those callers have their own budgets and deserve their own attempt.
+  // caller's ExecutionPolicy, so if that caller simply ran out of its provider
+  // window the rejection is a deadline error, not a statement about DMI. A
+  // later caller with its own budget deserves its own attempt.
   const promise = probeLatestInstanceForCollections(collections, policy, eventMemo);
   eventMemo?.set(key, promise);
   promise.catch((error: unknown) => {
@@ -207,6 +465,10 @@ export interface MarineInstanceProbe {
   // last known one. The data behind them is real, but nothing verified this
   // tick that it is still the newest, so it must be reported as degraded.
   substituted: MarineKind[];
+  // True only when this invocation completed at least one catalogue request.
+  // A manifest-only verification is healthy evidence, but not a new provider
+  // contact and must not advance the per-city heartbeat stamp.
+  catalogueContacted: boolean;
 }
 
 export async function fetchLatestMarineInstances(
@@ -214,17 +476,40 @@ export async function fetchLatestMarineInstances(
   policyInput?: ExecutionPolicyInput,
   eventMemo?: EventMemo,
   fallbackInstances?: MarineInstances,
+  runManifestStore?: DmiRunManifestStore,
 ): Promise<MarineInstanceProbe> {
   const policy = executionPolicy(policyInput);
   assertBeforeDeadline(policy, `marine instance probes for ${location.id}`);
+  const manifest: DmiRunManifestState = runManifestStore
+    ? await readDmiRunManifest(runManifestStore, policy)
+    : { kind: 'unusable' };
+  const waterResolution = resolveLatestInstanceForCollections(
+    location.dmiCollections.water,
+    fallbackInstances?.water,
+    manifest,
+    policy,
+    eventMemo,
+  );
+  const waveResolution = resolveLatestInstanceForCollections(
+    location.dmiCollections.waves,
+    fallbackInstances?.waves,
+    manifest,
+    policy,
+    eventMemo,
+  );
   const results = await Promise.allSettled([
-    fetchLatestInstanceForCollections(location.dmiCollections.water, policy, eventMemo),
-    fetchLatestInstanceForCollections(location.dmiCollections.waves, policy, eventMemo),
+    waterResolution.promise,
+    waveResolution.promise,
   ]);
   assertBeforeDeadline(policy, `marine instance probe results for ${location.id}`);
+  if (runManifestStore) {
+    await persistDmiRunManifest(runManifestStore, manifest, results, policy);
+  }
 
-  let water = results[0].status === 'fulfilled' ? results[0].value : undefined;
-  let waves = results[1].status === 'fulfilled' ? results[1].value : undefined;
+  let water = results[0].status === 'fulfilled' ? results[0].value.instance : undefined;
+  let waves = results[1].status === 'fulfilled' ? results[1].value.instance : undefined;
+  const catalogueContacted = waterResolution.catalogueContacted
+    || waveResolution.catalogueContacted;
 
   // Substituting a still-valid id keeps one source's outage from blanking the
   // other, but it is NOT a successful probe and the caller has to know the
@@ -264,7 +549,7 @@ export async function fetchLatestMarineInstances(
     throw new Error(`Failed to fetch DMI marine instances: ${errors.join(', ')}`);
   }
 
-  return { instances: { water, waves }, substituted };
+  return { instances: { water, waves }, substituted, catalogueContacted };
 }
 
 async function fetchDmiGeoJson<TFeature>(

@@ -927,6 +927,7 @@ async function _refreshForecastCache(
     let marineSubstituted: readonly string[] = [];
     let marineProbeBusy = false;
     let marineProbeSucceeded = false;
+    let marineManifestVerified = false;
     const knownMarine = cachedHealth?.marineInstances
       ?? await readRetainedMarineInstances(env, location, policy);
     // DMI's official completion windows determine when a newer marine run can
@@ -951,11 +952,18 @@ async function _refreshForecastCache(
       // A DMI 429 is provider-wide rather than specific to the fjord that
       // received it. providerTransport opens an event-local circuit on the
       // first refusal: the two already-parallel water/wave calls may finish,
-      // but retries and later locations fall back without calling DMI again.
+      // but retries and later marine stages fall back without calling DMI again.
       try {
-        const probe = await fetchLatestMarineInstances(location, policy, options.eventMemo, knownMarine);
+        const probe = await fetchLatestMarineInstances(
+          location,
+          policy,
+          options.eventMemo,
+          knownMarine,
+          probeDecision.shouldProbe ? env.FRANK_FORECAST_CACHE : undefined,
+        );
         latestMarine = probe.instances;
-        marineProbeSucceeded = probe.substituted.length === 0;
+        marineProbeSucceeded = probe.substituted.length === 0 && probe.catalogueContacted;
+        marineManifestVerified = probe.substituted.length === 0 && !probe.catalogueContacted;
         // A carried-over run id is not a verified one. Reporting it as a clean
         // probe let a DMI catalogue outage read as a fully current forecast for
         // as long as the ids stayed within their fallback age.
@@ -1053,10 +1061,11 @@ async function _refreshForecastCache(
 
       const checkedCache = withCacheHealth(cached, 'current', {
         marineInstances: latestMarine,
-        // Neither a normal publication-window skip nor retry-backoff contacted
-        // a provider. Preserve the actual contact stamp; in the backoff case,
-        // restamping would also slide that window forward indefinitely.
-        preserveAttemptAt: canSkipProbe,
+        // Neither a normal publication-window skip, retry-backoff, nor a
+        // manifest-only verification contacted a provider in this invocation.
+        // Preserve the actual contact stamp; in the backoff case, restamping
+        // would also slide that window forward indefinitely.
+        preserveAttemptAt: canSkipProbe || marineManifestVerified,
         checkedBy: options.reason ?? 'check',
         degradedSources: degradedNow.length > 0 ? degradedNow : undefined,
         providerBusy: marineVerified ? undefined : cachedHealth?.providerBusy,
@@ -1089,10 +1098,14 @@ async function _refreshForecastCache(
         if (clean && marineProbeSucceeded) {
           options.cronOutcome.status = 'contacted';
           options.cronOutcome.attemptedAt = checkedCache.sources.cacheHealth?.lastAttemptAt;
-        } else if (clean && canSkipProbe && probeDecision.reason === 'publication-window') {
+        } else if (clean && (
+          marineManifestVerified
+          || (canSkipProbe && probeDecision.reason === 'publication-window')
+        )) {
           // DMI's documented publication window proves there is nothing to ask
-          // for yet. This is healthy but is not a provider contact, so it must
-          // mutate neither per-city success nor failure history.
+          // for yet. A manifest-only result likewise carries another tick's
+          // verified global run. Both are healthy without a provider contact,
+          // so neither may mutate per-city success or failure history.
           options.cronOutcome.status = 'healthy-no-probe';
         }
         // Retry-backoff, substitution, and degradation retain the default

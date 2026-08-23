@@ -12,10 +12,9 @@ import {
   tickOrder,
 } from '../../worker/index';
 
-// Which DMI model run is newest is a fact about DMI, not about a fjord, and all
-// four configured fjords probe the identical collection lists. Unmemoised, one
-// cron tick asked DMI the same two questions eight times (~2.1s of the tick)
-// against the one upstream that actively rate-limits this app.
+// The event-local memo remains useful for duplicate same-list callers inside a
+// single invocation. Cross-city evidence now lives in the shared KV manifest,
+// because the cron rotates one city per invocation.
 
 const WATER = ['dkss_idw', 'dkss_nsbs'];
 const WAVES = ['wam_nsb', 'wam_dw'];
@@ -43,7 +42,7 @@ const stubOk = (ids: string[]) => {
 };
 
 describe('fetchLatestInstanceForCollections memo', () => {
-  it('asks DMI once for four locations sharing a collection list', async () => {
+  it('asks DMI once for four concurrent callers sharing a collection list', async () => {
     stubOk(['2026-08-08T060000Z', '2026-08-08T120000Z']);
 
     const first = fetchLatestInstanceForCollections(WATER, undefined, eventMemo);
@@ -58,9 +57,7 @@ describe('fetchLatestInstanceForCollections memo', () => {
     ]);
 
     expect(calls).toHaveLength(1);
-    // And every location lands on the same run, which is the other half of the
-    // point: DMI publishing mid-loop used to leave some fjords on the new run
-    // and some on the old, which reads in /health as a fault it is not.
+    // Every same-invocation caller also observes the exact same resolved run.
     expect(results.every((r) => r.id === '2026-08-08T120000Z')).toBe(true);
     expect(results[0].collection).toBe('dkss_idw');
   });
@@ -71,9 +68,9 @@ describe('fetchLatestInstanceForCollections memo', () => {
     expect(latest.id).toBe('2026-08-08T120000Z');
   });
 
-  it('memoises a refusal too, so a 429 is not re-earned per location', async () => {
+  it('memoises a refusal too, so duplicate callers do not re-earn a 429', async () => {
     // No Retry-After still opens the event-local provider circuit. DMI's limit
-    // is host-wide, so retrying the same refusal until the per-location attempt
+    // is host-wide, so retrying the same refusal until the provider-stage attempt
     // budget is gone can exhaust Cloudflare's whole invocation allowance.
     globalThis.fetch = (async (url: string) => {
       calls.push(String(url));
@@ -119,13 +116,10 @@ describe('fetchLatestInstanceForCollections memo', () => {
     expect(calls).toHaveLength(1);
   });
 
-  // The memo key is the collection list, identical for all four cities, but the
-  // cached promise carries the FIRST city's ExecutionPolicy. Sharing a 429 is
-  // the point; sharing "this city ran out of its own window" is not - it marked
-  // all four stale with "Marine service unavailable" (and, not being a busy
-  // error, the wrong alarming copy) because one request was slow while DMI was
-  // fine.
-  it('shares a provider refusal but not one location running out of budget', async () => {
+  // The cached promise carries the FIRST caller's ExecutionPolicy. Sharing a
+  // provider refusal is the point; sharing "this caller ran out of its own
+  // window" is not, because a later caller may still have time to reach DMI.
+  it('shares a provider refusal but not one caller running out of budget', async () => {
     let attempts = 0;
     globalThis.fetch = (async (url: string) => {
       calls.push(String(url));
@@ -137,7 +131,7 @@ describe('fetchLatestInstanceForCollections memo', () => {
     await expect(
       fetchLatestInstanceForCollections(WATER, { maxAttempts: 1 }, eventMemo),
     ).rejects.toThrow();
-    // The next city gets its own attempt rather than inheriting the first's.
+    // The next caller gets its own attempt rather than inheriting the first's.
     await expect(
       fetchLatestInstanceForCollections(WATER, { maxAttempts: 1 }, eventMemo),
     ).resolves.toEqual({ collection: 'dkss_idw', id: '2026-08-08T120000Z' });

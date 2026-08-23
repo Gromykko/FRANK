@@ -161,7 +161,7 @@ export function metForecastUrl(location: Pick<ForecastLocation, 'coordinate'>): 
   return buildMetUrl(FORECAST_SOURCE_POLICY.metBaseUrl, location.coordinate);
 }
 
-function parseDmiInstanceMs(id: unknown): number {
+export function parseDmiInstanceMs(id: unknown): number {
   if (typeof id !== 'string') return Number.NaN;
   const compact = id.match(/^(\d{4})-?(\d{2})-?(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
   if (compact) {

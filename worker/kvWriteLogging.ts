@@ -6,6 +6,7 @@ export const KV_WRITE_CATEGORIES = Object.freeze([
   'heartbeat-anomaly',
   'initialization-marker',
   'failure-state',
+  'dmi-run-manifest',
 ] as const);
 
 export type KvWriteCategory = typeof KV_WRITE_CATEGORIES[number];
