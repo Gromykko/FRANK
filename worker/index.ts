@@ -254,29 +254,44 @@ export function isHeartbeatMemoFresh(memoAtMs: number, nowMs: number): boolean {
   return Number.isFinite(ageMs) && ageMs >= 0 && ageMs < HEARTBEAT_MEMO_TTL_MS;
 }
 
-type CronHeartbeatAttempt =
+type HeartbeatAttempt =
   | { locationId: string; status: 'healthy-no-probe' }
   | { locationId: string; status: 'contacted' | 'unreachable'; attemptedAt: string };
 
-async function writeCronHeartbeat(
+type HeartbeatWriteScope =
+  | { kind: 'scheduled'; tickAtMs: number }
+  | { kind: 'contact-only' };
+
+async function writeHeartbeat(
   env: Env,
-  tickAtMs: number,
-  attempt: CronHeartbeatAttempt | null,
+  scope: HeartbeatWriteScope,
+  attempt: HeartbeatAttempt | null,
   policyInput?: ExecutionPolicyInput,
 ): Promise<void> {
+  // Candidate warming may publish true positive contact evidence, but it may
+  // not turn a candidate-only failure into a production "not checking" alarm.
+  // The outcome is still classified unreachable by the shared refresh path;
+  // only scheduled ticks are allowed to persist that negative evidence.
+  if (scope.kind === 'contact-only' && attempt?.status !== 'contacted') return;
+
   try {
     // Deliberately unmemoised. This merge is the only thing preserving the
-    // stamps of cities this tick did not reach, so it has to read what is
+    // stamps of cities this operation did not reach, so it has to read what is
     // actually stored, not what this isolate happened to serve a moment ago.
     const previous = await fetchCronHeartbeat(env, policyInput);
     const previousTickMs = Date.parse(previous?.lastTickAt ?? '');
-    if (!Number.isFinite(tickAtMs)) {
+    if (scope.kind === 'scheduled' && !Number.isFinite(scope.tickAtMs)) {
       throw new Error('Cron heartbeat tick time is invalid.');
     }
+    // A warm must never invent scheduler liveness. Until a real scheduled tick
+    // has created the heartbeat, there is no lastTickAt value it can preserve.
+    if (scope.kind === 'contact-only' && !Number.isFinite(previousTickMs)) return;
     // This read/compare prevents a late older invocation from overwriting a
     // newer value visible at this edge. Workers KV is eventually consistent,
     // so this is deliberately not described as an atomic global compare-and-set.
-    if (Number.isFinite(previousTickMs) && tickAtMs < previousTickMs) {
+    if (scope.kind === 'scheduled'
+      && Number.isFinite(previousTickMs)
+      && scope.tickAtMs < previousTickMs) {
       return;
     }
 
@@ -292,7 +307,7 @@ async function writeCronHeartbeat(
     if (attempt && attempt.status !== 'healthy-no-probe' && !Number.isFinite(attemptAtMs)) {
       throw new Error(`Cron heartbeat attempt time is invalid for ${attempt.locationId}.`);
     }
-    if (tickAtMs === previousTickMs) {
+    if (scope.kind === 'scheduled' && scope.tickAtMs === previousTickMs) {
       // Equal-tick failures must still be mergeable so a concurrent success
       // cannot hide them. A duplicate outcome is free to skip, and an equal
       // success never outranks an already-recorded failure.
@@ -303,7 +318,7 @@ async function writeCronHeartbeat(
           : true;
       if (!attempt
         || outcomeAlreadyStored
-        || (attempt.status === 'contacted' && previousFailureMs >= tickAtMs)) {
+        || (attempt.status === 'contacted' && previousFailureMs >= scope.tickAtMs)) {
         return;
       }
     }
@@ -312,7 +327,8 @@ async function writeCronHeartbeat(
     const newlyUnreachable = attempt?.status === 'unreachable'
       && !hasActiveUnreachable;
     const recovering = attempt?.status === 'contacted'
-      && hasActiveUnreachable;
+      && hasActiveUnreachable
+      && (scope.kind === 'scheduled' || attemptAtMs > previousFailureMs);
     const firstRecordedContact = attempt?.status === 'contacted'
       && !Number.isFinite(previousSuccessMs);
     const heartbeatCategory: KvWriteCategory = newlyUnreachable || recovering
@@ -321,8 +337,19 @@ async function writeCronHeartbeat(
     const forceWrite = Boolean(
       newlyUnreachable || recovering || firstRecordedContact,
     );
-    const elapsedTicks = Number.isFinite(previousTickMs)
-      ? Math.floor((tickAtMs - previousTickMs) / CRON_PERIOD_MS)
+    // Scheduled cadence is global, while a warm has no tick of its own. Using
+    // lastTickAt for a warm would suppress the exact repair this path exists
+    // for whenever cron is alive but one city's contact stamp is old.
+    const previousOutcomeMs = Math.max(
+      Number.isFinite(previousSuccessMs) ? previousSuccessMs : Number.NEGATIVE_INFINITY,
+      Number.isFinite(previousFailureMs) ? previousFailureMs : Number.NEGATIVE_INFINITY,
+    );
+    const cadenceAnchorMs = scope.kind === 'scheduled'
+      ? previousTickMs
+      : previousOutcomeMs;
+    const observedAtMs = scope.kind === 'scheduled' ? scope.tickAtMs : attemptAtMs;
+    const elapsedTicks = Number.isFinite(cadenceAnchorMs)
+      ? Math.floor((observedAtMs - cadenceAnchorMs) / CRON_PERIOD_MS)
       : Number.POSITIVE_INFINITY;
     if (!forceWrite && elapsedTicks < CRON_HEARTBEAT_THROTTLE_TICKS) {
       // Skipped healthy samples are intentionally not accumulated in module
@@ -332,7 +359,9 @@ async function writeCronHeartbeat(
 
     const locations = { ...previous?.locations };
     const unreachable = { ...previous?.unreachable };
-    const tickAt = new Date(tickAtMs).toISOString();
+    const lastTickAt = scope.kind === 'scheduled'
+      ? new Date(scope.tickAtMs).toISOString()
+      : previous!.lastTickAt;
     if (attempt) {
       if (!KNOWN_FORECAST_LOCATION_IDS.has(attempt.locationId)) {
         throw new Error(`Unknown heartbeat location: ${attempt.locationId}`);
@@ -347,7 +376,7 @@ async function writeCronHeartbeat(
     }
     const heartbeat: CronHeartbeat = {
       schemaVersion: CRON_HEARTBEAT_SCHEMA_VERSION,
-      lastTickAt: tickAt,
+      lastTickAt,
       locations,
       unreachable,
     };
@@ -1416,6 +1445,9 @@ async function handleForecastRequest(
       return forecastInitializingResponse(location, retryAfterSeconds);
     }
 
+    const warmOutcome: NonNullable<RefreshOptions['cronOutcome']> = {
+      status: 'unreachable',
+    };
     const refresh = refreshForecastCache(env, location, {
       force: true,
       forceRebuild: true,
@@ -1424,6 +1456,18 @@ async function handleForecastRequest(
       executionPolicy: candidateExecutionPolicy(),
       eventMemo,
       cached: null,
+      cronOutcome: warmOutcome,
+    }).finally(async () => {
+      const attemptedAt = warmOutcome.attemptedAt;
+      const heartbeatAttempt: HeartbeatAttempt | null = warmOutcome.status === 'contacted'
+        && typeof attemptedAt === 'string'
+        && Number.isFinite(Date.parse(attemptedAt))
+        ? { locationId: location.id, status: 'contacted', attemptedAt }
+        : null;
+      await writeHeartbeat(env, { kind: 'contact-only' }, heartbeatAttempt, {
+        deadlineAt: Date.now() + HEARTBEAT_WRITE_BUDGET_MS,
+        maxAttempts: 1,
+      });
     });
     return candidateWarmResponse(
       ctx,
@@ -1628,7 +1672,7 @@ const worker = {
       ? event.scheduledTime
       : tickStartedAt;
     const eventMemo: EventMemo = new Map();
-    let heartbeatAttempt: CronHeartbeatAttempt | null = null;
+    let heartbeatAttempt: HeartbeatAttempt | null = null;
     try {
       // Workers Free allows only 10 ms active CPU per scheduled invocation;
       // network/KV waits are wall time, but still must not overlap later ticks.
@@ -1636,7 +1680,7 @@ const worker = {
       // assembling all four in one event. Every city is selected once per four
       // minutes, inside MET's 30-minute minimum TTL and the 60-minute health
       // threshold.
-      // Authenticated deployment warming remains per-location and unchanged.
+      // Authenticated deployment warming remains a separate per-location path.
       const scheduledLocations = tickOrder(event?.scheduledTime).slice(0, 1);
       for (const location of scheduledLocations) {
         // Default to unsuccessful before any operation that can throw or run
@@ -1694,7 +1738,10 @@ const worker = {
       // chance to land when provider work runs long. Healthy ticks and repeated
       // failures usually return after the read; failure transitions and
       // recoveries deliberately bypass the five-tick throttle.
-      await writeCronHeartbeat(env, heartbeatTickAt, heartbeatAttempt, {
+      await writeHeartbeat(env, {
+        kind: 'scheduled',
+        tickAtMs: heartbeatTickAt,
+      }, heartbeatAttempt, {
         deadlineAt: Date.now() + HEARTBEAT_WRITE_BUDGET_MS,
         maxAttempts: 1,
       });

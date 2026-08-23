@@ -3,7 +3,10 @@ import worker, { CRON_HEARTBEAT_KEY } from '../../worker/index';
 import locationData from '../../src/config/locations.json';
 import type { ForecastLocation } from '../../src/config/locationTypes';
 import { FORECAST_PAYLOAD_VERSION } from '../../src/features/forecast/types';
-import { CURRENT_RELEASE } from '../../src/features/forecast/releaseContract';
+import {
+  CURRENT_RELEASE,
+  MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
+} from '../../src/features/forecast/releaseContract';
 import { buildSunSchedule } from '../../src/features/forecast/sun';
 import type { ForecastData, HealthLocationEntry, HealthPayload } from '../../worker/domain';
 import { buildHealthPayload, statusResponse } from '../../worker/health';
@@ -12,13 +15,23 @@ import {
   assembledForecastKey,
   generationKeyPrefix,
   initializationStateKey,
+  marineIngredientKey,
 } from '../../worker/generation';
+import {
+  DMI_RUN_MANIFEST_KEY,
+  DMI_RUN_MANIFEST_SCHEMA_VERSION,
+  dmiCollectionListKey,
+} from '../../worker/providers';
 
 const LOCATIONS = locationData as ForecastLocation[];
 const LAST_COMPLETED_CHECK = new Date(Date.now() - 5 * 60_000).toISOString();
 const CURRENT_RUN = new Date().toISOString();
 const WORKER_VERSION_ID = 'cba7bd5e-93f4-4df7-8b61-8f00d5b6f3a1';
 const WARM_TOKEN = 'test-only-frank-warm-token-with-256-bits-of-entropy';
+const WARM_BUILD_NOW = Date.parse('2031-08-23T11:59:00.000Z');
+const WARM_FORECAST_HOUR = '2031-08-23T13:00:00.000Z';
+const WARM_CURRENT_RUN = '2031-08-23T060000Z';
+const WARM_RETAINED_RUN = '2031-08-23T000000Z';
 const subtleWithTimingSafeEqual = crypto.subtle as SubtleCrypto & {
   timingSafeEqual?: (left: ArrayBuffer | ArrayBufferView, right: ArrayBuffer | ArrayBufferView) => boolean;
 };
@@ -113,6 +126,7 @@ function cachedForecast(locationId = 'horsens'): ForecastData {
 function makeRuntime(options: {
   exact?: boolean;
   seed?: Record<string, unknown>;
+  failPut?: (key: string) => boolean;
 } = {}) {
   const exact = options.exact ?? true;
   const store = new Map<string, string>();
@@ -143,6 +157,7 @@ function makeRuntime(options: {
       },
       put: async (key: string, value: string) => {
         puts.push({ key, value });
+        if (options.failPut?.(key)) throw new Error(`Test KV write failure for ${key}`);
         store.set(key, value);
       },
     },
@@ -175,6 +190,139 @@ function rejectProviderWork() {
   return vi.spyOn(globalThis, 'fetch').mockRejectedValue(
     new Error('Browser route unexpectedly contacted a provider'),
   );
+}
+
+function warmHeartbeat(locationId: string, nowMs = WARM_BUILD_NOW) {
+  return {
+    schemaVersion: 2,
+    lastTickAt: new Date(nowMs - 60_000).toISOString(),
+    locations: {
+      [locationId]: new Date(nowMs - 43 * 60_000).toISOString(),
+    },
+    unreachable: {},
+  };
+}
+
+function warmManifest(location: ForecastLocation, runId = WARM_CURRENT_RUN) {
+  const discoveredAt = new Date(WARM_BUILD_NOW).toISOString();
+  return {
+    schemaVersion: DMI_RUN_MANIFEST_SCHEMA_VERSION,
+    entries: {
+      [dmiCollectionListKey(location.dmiCollections.water)]: {
+        collection: location.dmiCollections.water[0],
+        id: runId,
+        discoveredAt,
+      },
+      [dmiCollectionListKey(location.dmiCollections.waves)]: {
+        collection: location.dmiCollections.waves[0],
+        id: runId,
+        discoveredAt,
+      },
+    },
+  };
+}
+
+function retainedMarineIngredient(
+  location: ForecastLocation,
+  kind: 'water' | 'waves',
+) {
+  return {
+    schemaVersion: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
+    locationId: location.id,
+    forecastConfigRevision: location.forecastConfigRevision,
+    collection: location.dmiCollections[kind][0],
+    id: WARM_RETAINED_RUN,
+    series: kind === 'water'
+      ? [{
+          time: WARM_FORECAST_HOUR,
+          timeMs: Date.parse(WARM_FORECAST_HOUR),
+          tempWater: 16,
+          tideLevel: 0,
+          currentSpeed: 0,
+          currentDirection: 0,
+        }]
+      : [{
+          time: WARM_FORECAST_HOUR,
+          timeMs: Date.parse(WARM_FORECAST_HOUR),
+          waveHeight: 0.1,
+          waveDirection: 180,
+          wavePeriod: 3,
+        }],
+  };
+}
+
+function warmMetResponse(): Response {
+  return Response.json({
+    properties: {
+      timeseries: [{
+        time: WARM_FORECAST_HOUR,
+        data: {
+          instant: {
+            details: {
+              air_temperature: 15,
+              wind_speed: 2,
+              wind_speed_of_gust: 3,
+              wind_from_direction: 180,
+            },
+          },
+          next_1_hours: {
+            summary: { symbol_code: 'clearsky_day' },
+            details: { precipitation_amount: 0 },
+          },
+        },
+      }],
+    },
+  }, {
+    headers: {
+      Expires: new Date(WARM_BUILD_NOW + 60 * 60_000).toUTCString(),
+      'Last-Modified': new Date(WARM_BUILD_NOW).toUTCString(),
+    },
+  });
+}
+
+function installWarmProviderResponses(marineBusy = false) {
+  const calls: string[] = [];
+  const providerFetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
+    async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes('api.met.no/')) return warmMetResponse();
+      if (url.includes('feeds.meteoalarm.org/')) {
+        return new Response('<feed></feed>', { status: 200 });
+      }
+      if (url.includes('/instances/')) {
+        if (marineBusy) {
+          return new Response('Server is busy', {
+            status: 429,
+            headers: { 'Retry-After': '1200' },
+          });
+        }
+        const properties = url.includes('/collections/dkss_')
+          ? {
+              step: WARM_FORECAST_HOUR,
+              'sea-mean-deviation': 0,
+              'water-temperature': 16,
+              'current-u': 0,
+              'current-v': 0,
+            }
+          : {
+              step: WARM_FORECAST_HOUR,
+              'significant-wave-height': 0.1,
+              'mean-wave-dir': 180,
+              'mean-wave-period': 3,
+            };
+        return Response.json({ features: [{ properties }] });
+      }
+      if (url.endsWith('/instances') && marineBusy) {
+        return new Response('Server is busy', {
+          status: 429,
+          headers: { 'Retry-After': '1200' },
+        });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    },
+  );
+  return { calls, providerFetch };
 }
 
 describe('Worker route HTTP contract', () => {
@@ -561,9 +709,81 @@ describe('Worker route HTTP contract', () => {
     expect(providerFetch).not.toHaveBeenCalled();
   });
 
+  it('records and throttles candidate contact without advancing scheduler liveness', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(WARM_BUILD_NOW);
+      const location = locationById('aarhus');
+      const previousHeartbeat = warmHeartbeat(location.id);
+      const runtime = makeRuntime({
+        exact: false,
+        seed: {
+          [CRON_HEARTBEAT_KEY]: previousHeartbeat,
+          [DMI_RUN_MANIFEST_KEY]: warmManifest(location),
+        },
+        // Keep the generation cold so the second request genuinely reaches
+        // providers and exercises the heartbeat throttle rather than the
+        // route's already-prepared early return.
+        failPut: (key) => key === assembledForecastKey(location),
+      });
+      const { calls, providerFetch } = installWarmProviderResponses();
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const response = await worker.fetch(
+        authorizedWarmRequest('/api/v1/forecast/aarhus?warm=1'),
+        runtime.env,
+        runtime.ctx,
+      );
+      const body = await response.json<ForecastData>();
+      await Promise.all(runtime.waits);
+
+      expect(response.status).toBe(200);
+      expect(calls.filter((url) => url.includes('api.met.no/'))).toHaveLength(1);
+      expect(calls.filter((url) => url.includes('/instances/'))).toHaveLength(2);
+      const attemptedAt = body.sources.cacheHealth?.lastAttemptAt;
+      expect(attemptedAt).toBe(new Date(WARM_BUILD_NOW).toISOString());
+      const heartbeat = JSON.parse(runtime.store.get(CRON_HEARTBEAT_KEY)!);
+      expect(heartbeat.locations[location.id]).toBe(attemptedAt);
+      expect(heartbeat.lastTickAt).toBe(previousHeartbeat.lastTickAt);
+      expect(runtime.puts.filter(({ key }) => key === CRON_HEARTBEAT_KEY)).toHaveLength(1);
+      expect(runtime.store.has(assembledForecastKey(location))).toBe(false);
+
+      // Model an equal-time scheduled failure becoming visible between two
+      // warm attempts. The second contact does not outrank it, so it is not a
+      // recovery and must not force its way through the cadence throttle.
+      const equalFailureHeartbeat = {
+        ...heartbeat,
+        unreachable: { [location.id]: attemptedAt },
+      };
+      runtime.store.set(CRON_HEARTBEAT_KEY, JSON.stringify(equalFailureHeartbeat));
+      const providerCallsAfterBuild = providerFetch.mock.calls.length;
+      const heartbeatWritesAfterBuild = runtime.puts.filter(
+        ({ key }) => key === CRON_HEARTBEAT_KEY,
+      ).length;
+      const repeated = await worker.fetch(
+        authorizedWarmRequest('/api/v1/forecast/aarhus?warm=1'),
+        runtime.env,
+        runtime.ctx,
+      );
+      expect(repeated.status).toBe(200);
+      expect(providerFetch.mock.calls.length).toBeGreaterThan(providerCallsAfterBuild);
+      expect(runtime.puts.filter(({ key }) => key === CRON_HEARTBEAT_KEY))
+        .toHaveLength(heartbeatWritesAfterBuild);
+      expect(JSON.parse(runtime.store.get(CRON_HEARTBEAT_KEY)!)).toEqual(equalFailureHeartbeat);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps candidate 429 state inside the target generation and honors its cooldown', async () => {
     const location = locationById('aarhus');
-    const runtime = makeRuntime({ exact: false });
+    const previousHeartbeat = warmHeartbeat(location.id, Date.now());
+    const runtime = makeRuntime({
+      exact: false,
+      seed: { [CRON_HEARTBEAT_KEY]: previousHeartbeat },
+    });
     const providerFetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
       async () => new Response('Server is busy: private detail', { status: 429 }),
     );
@@ -596,6 +816,8 @@ describe('Worker route HTTP contract', () => {
       provider: 'marine',
       busy: true,
     });
+    expect(JSON.parse(runtime.store.get(CRON_HEARTBEAT_KEY)!)).toEqual(previousHeartbeat);
+    expect(runtime.puts.filter(({ key }) => key === CRON_HEARTBEAT_KEY)).toHaveLength(0);
 
     const health = await worker.fetch(request('/health'), runtime.env, runtime.ctx);
     const healthBody = await health.json();
@@ -639,6 +861,51 @@ describe('Worker route HTTP contract', () => {
     expect(publicResponse.headers.get('Retry-After')).toBe('600');
     expect(await publicResponse.json()).toMatchObject({ retryAfterSeconds: 600 });
     expect(providerFetch).toHaveBeenCalledTimes(callsAfterFirst);
+  });
+
+  it('records MET contact when a candidate build falls back to degraded marine data', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(WARM_BUILD_NOW);
+      const location = locationById('vejle');
+      const previousHeartbeat = warmHeartbeat(location.id);
+      const runtime = makeRuntime({
+        exact: false,
+        seed: {
+          [CRON_HEARTBEAT_KEY]: previousHeartbeat,
+          [marineIngredientKey(location, 'water')]: retainedMarineIngredient(location, 'water'),
+          [marineIngredientKey(location, 'waves')]: retainedMarineIngredient(location, 'waves'),
+        },
+      });
+      const { calls } = installWarmProviderResponses(true);
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const response = await worker.fetch(
+        authorizedWarmRequest('/api/v1/forecast/vejle?warm=1'),
+        runtime.env,
+        runtime.ctx,
+      );
+      const body = await response.json<ForecastData>();
+      await Promise.all(runtime.waits);
+
+      expect(response.status).toBe(200);
+      expect(calls.filter((url) => url.endsWith('/instances'))).toHaveLength(2);
+      expect(calls.filter((url) => url.includes('/instances/'))).toHaveLength(0);
+      expect(calls.filter((url) => url.includes('api.met.no/'))).toHaveLength(1);
+      expect(body.sources.cacheHealth).toMatchObject({
+        status: 'current',
+        degradedSources: ['water', 'waves'],
+      });
+      const attemptedAt = body.sources.cacheHealth?.lastAttemptAt;
+      const heartbeat = JSON.parse(runtime.store.get(CRON_HEARTBEAT_KEY)!);
+      expect(heartbeat.locations[location.id]).toBe(attemptedAt);
+      expect(heartbeat.lastTickAt).toBe(previousHeartbeat.lastTickAt);
+      expect(runtime.puts.filter(({ key }) => key === CRON_HEARTBEAT_KEY)).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('lets the same isolate retry authenticated warming after 90 seconds', async () => {

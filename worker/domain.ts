@@ -68,9 +68,10 @@ export interface RefreshOptions {
   executionPolicy?: ExecutionPolicyInput;
   eventMemo?: EventMemo;
   cached?: ForecastData | null;
-  // Event-local output used only by scheduled refreshes. It distinguishes an
-  // actual provider contact from a healthy policy skip and a failed/skipped
-  // attempt without retaining cross-event state in module scope.
+  // Event-local output used by scheduled refreshes and authenticated candidate
+  // warming. It distinguishes an actual provider contact from a healthy policy
+  // skip and a failed/skipped attempt without retaining cross-event state in
+  // module scope.
   cronOutcome?: {
     status: 'unreachable' | 'healthy-no-probe' | 'contacted';
     attemptedAt?: string;
