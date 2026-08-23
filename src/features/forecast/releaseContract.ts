@@ -64,10 +64,10 @@ export type ForecastReleaseMetadata = ReleaseMetadata;
 export const AUDITED_PREVIOUS_FORECAST_GENERATIONS: readonly Readonly<ReleaseMetadata>[] = Object.freeze([
   Object.freeze({
     apiSchemaVersion: 1,
-    modelRevision: 34,
+    modelRevision: 33,
     assembledCacheSchema: 1,
     marineCacheSchema: 1,
-    dataGenerationId: 'api1-model34',
+    dataGenerationId: 'api1-model33',
     payloadVersion: 7,
   }),
 ]);

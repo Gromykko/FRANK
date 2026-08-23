@@ -13,7 +13,7 @@
     "src/features/forecast/normalize.ts": "6e2b8b84f3f352627756b6c50eb522bddcfe1a5e557c34c05122d631a49b1663",
     "src/features/forecast/parseWarnings.ts": "aff0d375651002e5ce34e52e88f580ac3eb07ec0189b1e0a964ed1ca6c5d25f8",
     "src/features/forecast/providerUrls.ts": "491974f7d92da617466abb68b2bce53640294fb3d2b34530ff989d61b7fa5d58",
-    "src/features/forecast/releaseContract.ts": "3f2039e002bcbb42b80a557996f50244afbd69de8702ebf27d1eb38eba9bce6e",
+    "src/features/forecast/releaseContract.ts": "07ba4f6d5c34a20eee69a2e62b18975a0a0528f62c547ad972accaccb5d25137",
     "src/features/forecast/sun.ts": "f69dacefb9f43709f63a11a01b66b2cda77b25d7e53bcda62cefae10fd0543e4",
     "src/features/forecast/temporalPolicy.ts": "59940e152870a1b8a071f46deb378e0cbc2901ea30b00c725f16e836d395775d",
     "src/features/forecast/types.ts": "49ad21614451d541ed61519c745e4b874ad2cb6f7c4a964d82268531150ef2ea",
