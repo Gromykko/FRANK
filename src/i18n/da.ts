@@ -44,8 +44,8 @@ export const da: Record<string, string> = {
     'Prognosen er kortvarigt forældet, mens FRANK opdaterer i baggrunden. Kig tilbage om et par minutter.',
   "{0} has been busy for a while, so the forecast hasn't updated since {1}. FRANK keeps retrying automatically — you are seeing the last good forecast.":
     '{0} har været optaget et stykke tid, så prognosen er ikke opdateret siden {1}. FRANK prøver igen automatisk — du ser den seneste gode prognose.',
-  'Forecast refresh keeps failing (last try {0}). You are seeing data from {1} — {2} old, so treat it with extra caution.{3} FRANK retries by itself roughly every 10 minutes.':
-    'Prognoseopdateringen fejler fortsat (sidste forsøg {0}). Du ser data fra {1} — {2} gamle, så brug dem med ekstra forsigtighed.{3} FRANK prøver selv igen cirka hvert 10. minut.',
+  'The forecast could not be refreshed. You are seeing data from {0} — {1} old, so treat it with extra caution. FRANK retries by itself roughly every 10 minutes.':
+    'Prognosen kunne ikke opdateres. Du ser data fra {0} — {1} gamle, så brug dem med ekstra forsigtighed. FRANK prøver selv igen cirka hvert 10. minut.',
   // Offline AND old: the age warning still fires (a paddler on the water needs
   // it), but nothing is "failing" — there is no connection to try over.
   'You have been offline for a while, so this forecast is from {0} — {1} old. Treat it with extra caution; it will update by itself once you are back online.':
@@ -159,9 +159,7 @@ export const da: Record<string, string> = {
   // ── Cache status (cacheStatusView.ts) ─────────────────────────────────────
   'Offline': 'Offline',
   'Showing your saved forecast from {0}': 'Viser din gemte prognose fra {0}',
-  'Showing your saved forecast': 'Viser din gemte prognose',
   'Showing your older saved forecast from {0}': 'Viser din ældre gemte prognose fra {0}',
-  'Showing your older saved forecast': 'Viser din ældre gemte prognose',
   'Weather service': 'Vejrtjenesten',
   'Waves & water service': 'Bølge- og vandstandstjenesten',
   'Wave service': 'Bølgetjenesten',
@@ -183,16 +181,12 @@ export const da: Record<string, string> = {
   'Refreshing…': 'Opdaterer…',
   'Preparing update…': 'Klargør opdatering…',
   'Saved forecast · {0}': 'Gemt prognose · {0}',
-  'Saved forecast': 'Gemt prognose',
   'Showing saved forecast · {0} old': 'Viser gemt prognose · {0} gammel',
   'Needs a new check': 'Skal tjekkes igen',
   'Checking…': 'Tjekker…',
   '{0} busy': '{0} er optaget',
   'Couldn’t refresh': 'Kunne ikke opdatere',
-  'Checked · {0}': 'Tjekket · {0}',
-  'Retrying automatically · checked {0}': 'Prøver igen automatisk · tjekket {0}',
   'Retrying automatically': 'Prøver igen automatisk',
-  'Showing earlier data · last try {0}': 'Viser ældre data · sidste forsøg {0}',
   '{0} from an earlier update · {1} busy': '{0} er ældre · {1} er optaget',
   '{0} from an earlier update · couldn’t refresh just now': '{0} fra en tidligere opdatering · kunne ikke opdatere lige nu',
   '{0} min': '{0} min',
@@ -208,14 +202,13 @@ export const da: Record<string, string> = {
     'Den gemte prognose fra {0} skal tjekkes igen.',
   '{0} is busy right now, so the forecast could not be refreshed. FRANK is retrying automatically; you are seeing the last good forecast from {1}.':
     '{0} er optaget lige nu, så prognosen kunne ikke opdateres. FRANK prøver igen automatisk; du ser den seneste gode prognose fra {1}.',
-  'The forecast could not be refreshed on the last try ({0}); FRANK is retrying automatically. You are seeing the last good forecast from {1}.':
-    'Prognosen kunne ikke opdateres ved sidste forsøg ({0}); FRANK prøver igen automatisk. Du ser den seneste gode prognose fra {1}.',
+  'The forecast could not be refreshed; FRANK is retrying automatically. You are seeing the last good forecast from {0}.':
+    'Prognosen kunne ikke opdateres; FRANK prøver igen automatisk. Du ser den seneste gode prognose fra {0}.',
   'Forecast from {0}; {1} is from an earlier update while its service was busy. FRANK is retrying automatically.':
     'Prognose fra {0}; {1} er fra en tidligere opdatering, mens tjenesten var optaget. FRANK prøver igen automatisk.',
   'Forecast from {0}; {1} is from an earlier update (could not refresh just now). FRANK is retrying automatically.':
     'Prognose fra {0}; {1} er fra en tidligere opdatering (kunne ikke opdatere lige nu). FRANK prøver igen automatisk.',
   'Checking for a newer forecast': 'Tjekker efter en nyere prognose',
-  'Forecast from {0}; cache checked {1}': 'Prognose fra {0}; cache tjekket {1}',
   'Forecast from {0}': 'Prognose fra {0}',
   ' Last issue: {0}': ' Seneste fejl: {0}',
   'Advisory only — FRANK does not replace official warnings, club rules, or your own look at the water. You are responsible for the decision to launch.':
@@ -427,8 +420,6 @@ export const da: Record<string, string> = {
     'Dine personlige grænser er slået fra, så der er intet at måle prognosen op imod, og intet vindue kan anbefales. Slå en grænse til igen for at se foreslåede vinduer.',
   'Showing your saved forecast from {0} · {1} from an earlier update':
     'Viser din gemte prognose fra {0} · {1} er fra en tidligere opdatering',
-  'Showing your saved forecast · {0} from an earlier update':
-    'Viser din gemte prognose · {0} er fra en tidligere opdatering',
   'Nothing you are still checking flagged this — {0}, {1}, {2}. Not checked: {3}.':
     'Intet af det, du stadig tjekker, gav udslag — {0}, {1}, {2}. Ikke tjekket: {3}.',
   'Nothing you are still checking flagged the outlook — {0}, {1}, {2}. Not checked: {3}.':

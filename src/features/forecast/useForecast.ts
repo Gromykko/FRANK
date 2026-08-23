@@ -73,8 +73,8 @@ export function useForecast(daylightOnly: boolean) {
   const [initialization, setInitialization] = useState<ForecastInitializationState | null>(null);
   const [selectedHourIndex, setSelectedHourIndex] = useState<number>(0);
   // 60s heartbeat: re-renders the consumer each minute so relative-age labels
-  // ("Checked · 14:32", "2 hours old") stay current, and so `nowIndex` below
-  // re-derives as the clock moves.
+  // ("2 hours old") stay current, and so `nowIndex` below re-derives as the
+  // clock moves.
   const [minuteTick, setMinuteTick] = useState(0);
 
   const daylightOnlyRef = useRef(daylightOnly);

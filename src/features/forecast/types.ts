@@ -127,8 +127,9 @@ export interface WeatherData {
     };
     cacheHealth?: {
       status: 'current' | 'pending' | 'stale' | 'fresh' | 'fallback';
-      // When the Worker last checked upstream — but COARSE, and safe to display
-      // rather than to compute with.
+      // When the Worker last successfully reached upstream — a COARSE,
+      // operator-facing contact time. Keep it on /health and /status; main-page
+      // forecast freshness must use fetchedAt.
       //
       // The assembled forecast is not rewritten for timestamp-only changes.
       // Responses instead overlay the shared, five-tick heartbeat when this city

@@ -21,11 +21,10 @@ export interface CacheStatusView {
 export interface CacheStatusInput {
   refreshing: boolean;
   cacheHealth: WeatherData['sources']['cacheHealth'];
-  checkedAtLabel: string; // formatTime(cacheCheckedAt)
+  forecastAtLabel: string; // formatTime(fetchedAt)
   // The device has no connection right now (navigator.onLine === false).
   offline?: boolean;
-  savedAtLabel?: string; // formatTime(fetchedAt) — the saved forecast's time
-  savedAgeLabel?: string;
+  forecastAgeLabel?: string;
   // The app has been inactive long enough that it should verify again, but no
   // completed request has failed. This must never be worded as a failure.
   needsVerification?: boolean;
@@ -47,10 +46,9 @@ const CLOCK_LEAD_TOLERANCE_MS = 5 * 60 * 1000;
 export function getCacheStatusView({
   refreshing,
   cacheHealth,
-  checkedAtLabel,
+  forecastAtLabel,
   offline,
-  savedAtLabel,
-  savedAgeLabel,
+  forecastAgeLabel,
   needsVerification,
   preparing,
 }: CacheStatusInput, translate: Translate = interpolate): CacheStatusView {
@@ -104,10 +102,9 @@ export function getCacheStatusView({
   const hasDegraded = degradedLabel !== '';
   const partiallyDegraded = !isStale && !refreshing && !isPending && hasDegraded;
 
-  // Offline takes precedence for the LABEL: a green "Checked" would be
-  // dishonest with no connection, since nothing was just checked. But offline
-  // is not by itself a data problem — the saved forecast may be perfectly
-  // recent — so that case reads as calm neutral.
+  // Offline takes precedence for the LABEL. But offline is not by itself a
+  // data problem — the saved forecast may be perfectly recent — so that case
+  // reads as calm neutral.
   //
   // Degradation still has to survive the trip. This block used to hard-code
   // partiallyDegraded/degradedLabel to empty, so a forecast carrying recycled
@@ -124,12 +121,10 @@ export function getCacheStatusView({
     return {
       label: translate('Offline'),
       detail: hasDegraded
-        ? (savedAtLabel
-          ? translate('Showing your saved forecast from {0} · {1} from an earlier update', savedAtLabel, degradedLabel)
-          : translate('Showing your saved forecast · {0} from an earlier update', degradedLabel))
+        ? translate('Showing your saved forecast from {0} · {1} from an earlier update', forecastAtLabel, degradedLabel)
         : isStale
-          ? (savedAtLabel ? translate('Showing your older saved forecast from {0}', savedAtLabel) : translate('Showing your older saved forecast'))
-          : (savedAtLabel ? translate('Showing your saved forecast from {0}', savedAtLabel) : translate('Showing your saved forecast')),
+          ? translate('Showing your older saved forecast from {0}', forecastAtLabel)
+          : translate('Showing your saved forecast from {0}', forecastAtLabel),
       tone: staleOrDegraded ? 'watch' : 'neutral',
       partiallyDegraded: hasDegraded,
       providerBusy: false,
@@ -150,38 +145,38 @@ export function getCacheStatusView({
         ? (isStale ? 'watch' : 'neutral')
         : (isStale || hasDegraded || isPending) ? 'watch' : 'fresh';
 
-  // The forecast time rides on the "Checked" label so a timestamp is always
-  // visible; other states keep it in the detail line.
+  // The settled header names the forecast's own build time. Operational check
+  // time belongs on /status; transient states keep forecast age in the detail.
   const label = refreshing
     ? translate('Refreshing…')
     : preparing
       ? translate('Preparing update…')
       : needsVerification
-        ? (savedAtLabel ? translate('Saved forecast · {0}', savedAtLabel) : translate('Saved forecast'))
+        ? translate('Saved forecast · {0}', forecastAtLabel)
         : isPending
           ? translate('Checking…')
           : isStale
             ? (providerBusy ? translate('{0} busy', busyServiceName) : translate('Couldn’t refresh'))
-            : translate('Checked · {0}', checkedAtLabel);
+            : translate('Forecast from {0}', forecastAtLabel);
 
   const detail = refreshing
-    ? (isStale && savedAgeLabel
-      ? translate('Showing saved forecast · {0} old', savedAgeLabel)
+    ? (isStale && forecastAgeLabel
+      ? translate('Showing saved forecast · {0} old', forecastAgeLabel)
       : '')
     : preparing
-      ? (savedAgeLabel
-        ? translate('Showing saved forecast · {0} old', savedAgeLabel)
+      ? (forecastAgeLabel
+        ? translate('Showing saved forecast · {0} old', forecastAgeLabel)
         : translate('Retrying automatically'))
       : needsVerification
-        ? (isStale && savedAgeLabel
-          ? translate('Showing saved forecast · {0} old', savedAgeLabel)
+        ? (isStale && forecastAgeLabel
+          ? translate('Showing saved forecast · {0} old', forecastAgeLabel)
           : translate('Needs a new check'))
         : isPending
           ? ''
           : isStale
-            ? (providerBusy
-              ? translate('Retrying automatically · checked {0}', checkedAtLabel)
-              : translate('Showing earlier data · last try {0}', checkedAtLabel))
+            ? (forecastAgeLabel
+              ? translate('Showing saved forecast · {0} old', forecastAgeLabel)
+              : translate('Retrying automatically'))
             : partiallyDegraded
               // One calm line: what you're looking at + why. Named cause per the
               // confirmed wording ("· marine service busy").
@@ -223,15 +218,11 @@ export interface DerivedCacheStatus {
   view: CacheStatusView;
   // The long-form sentence behind the status line (aria + expanded detail).
   expandedDetail: string;
-  // " Last issue: …" suffix when the worker recorded a failure message.
-  failureDetail: string;
   // Stale AND old enough (6h+) to warrant the amber page-level warning.
   showRefreshWarning: boolean;
   // Payload built by older worker logic than this client expects.
   workerOutdated: boolean;
   forecastAgeLabel: string;
-  // ISO time of the worker's last cache check (falls back to fetchedAt).
-  checkedAt: string;
 }
 
 // Everything the header + warning banners need, derived in one pure place from
@@ -255,16 +246,13 @@ export function deriveCacheStatus(args: {
   const isInitializing = checkState === 'initializing';
 
   const fetchedAtMs = new Date(sources.fetchedAt).getTime();
-  const checkedAt = sources.cronHeartbeat?.lastTickAt ?? sources.cacheHealth?.lastAttemptAt ?? sources.fetchedAt;
-  const checkedAtMs = new Date(checkedAt).getTime();
-  const checkDiffersFromData =
-    Number.isFinite(checkedAtMs) && Number.isFinite(fetchedAtMs) && Math.abs(checkedAtMs - fetchedAtMs) > 90_000;
 
   // Freshness was taken entirely from the payload's own cacheHealth. But when
   // the worker is unreachable the client quietly falls back to the browser's
   // saved copy — which still carries the last GOOD payload's `status:'current'`.
-  // The header then read a green "Checked · 09:14" at 14:50. `navigator.onLine`
-  // doesn't help: it stays true behind a captive portal or a dead worker.
+  // The header then presented the saved forecast as fresh at 14:50.
+  // `navigator.onLine` doesn't help: it stays true behind a captive portal or
+  // a dead worker.
   //
   // The honest test is whether WE have heard from the worker lately. Before, this
   // asked the payload's own throttled stamp instead, which coupled the client's
@@ -326,7 +314,7 @@ export function deriveCacheStatus(args: {
     ? {
         ...sources.cacheHealth,
         status: 'stale' as const,
-        lastAttemptAt: checkedAt,
+        lastAttemptAt: sources.cacheHealth?.lastAttemptAt ?? sources.fetchedAt,
         ...(staleFromAgeOnly
           ? { providerBusy: false, busyProvider: undefined, message: undefined }
           : {}),
@@ -357,10 +345,9 @@ export function deriveCacheStatus(args: {
   const view = getCacheStatusView({
     refreshing,
     cacheHealth,
-    checkedAtLabel: formatTime(checkedAt),
+    forecastAtLabel: formatTime(sources.fetchedAt),
     offline: !online,
-    savedAtLabel: formatTime(sources.fetchedAt),
-    savedAgeLabel: formatRelativeAge(cacheAgeMs, translate),
+    forecastAgeLabel: formatRelativeAge(cacheAgeMs, translate),
     needsVerification,
     preparing: isInitializing,
   }, translate);
@@ -380,27 +367,20 @@ export function deriveCacheStatus(args: {
     : isStale
       ? (providerBusy
         ? translate('{0} is busy right now, so the forecast could not be refreshed. FRANK is retrying automatically; you are seeing the last good forecast from {1}.', busyServiceName, fetchedAtFull)
-        : translate('The forecast could not be refreshed on the last try ({0}); FRANK is retrying automatically. You are seeing the last good forecast from {1}.', formatTime(checkedAt), fetchedAtFull))
+        : translate('The forecast could not be refreshed; FRANK is retrying automatically. You are seeing the last good forecast from {0}.', fetchedAtFull))
       : partiallyDegraded
         ? (providerBusy
           ? translate('Forecast from {0}; {1} is from an earlier update while its service was busy. FRANK is retrying automatically.', fetchedAtFull, degradedLabel)
           : translate('Forecast from {0}; {1} is from an earlier update (could not refresh just now). FRANK is retrying automatically.', fetchedAtFull, degradedLabel))
         : isPending
           ? translate('Checking for a newer forecast')
-          : checkDiffersFromData
-            ? translate('Forecast from {0}; cache checked {1}', fetchedAtFull, formatTime(checkedAt))
-            : translate('Forecast from {0}', fetchedAtFull);
+          : translate('Forecast from {0}', fetchedAtFull);
 
   return {
     view,
     expandedDetail,
-    // Deliberately NOT surfaced: cacheHealth.message is an untranslated slice
-    // of an upstream HTTP body, so it dropped raw English provider HTML into a
-    // Danish safety banner. It stays in the payload for /health and the console.
-    failureDetail: '',
     showRefreshWarning,
     workerOutdated,
     forecastAgeLabel: formatRelativeAge(cacheAgeMs, translate),
-    checkedAt,
   };
 }

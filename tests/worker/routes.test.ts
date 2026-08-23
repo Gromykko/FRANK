@@ -563,6 +563,40 @@ describe('Worker route HTTP contract', () => {
     expect(body).not.toContain('MeteoAlarm current');
   });
 
+  it('keeps scheduler, provider-contact, and forecast ages separate on /status', async () => {
+    const now = Date.parse('2026-08-20T18:00:00.000Z');
+    const entries: HealthLocationEntry[] = [{
+      id: 'horsens',
+      areaName: 'Horsens Fjord',
+      hasCache: true,
+      exactGenerationReady: true,
+      availabilitySource: 'generation',
+      fetchedAt: '2026-08-20T17:15:00.000Z',
+      cacheHealth: {
+        status: 'current',
+        lastAttemptAt: '2026-08-20T17:40:00.000Z',
+        checkedBy: 'release-candidate',
+      },
+    }];
+    const heartbeat = {
+      schemaVersion: 1 as const,
+      lastTickAt: '2026-08-20T17:55:00.000Z',
+      locations: {},
+    };
+
+    const body = await statusResponse(
+      buildHealthPayload(entries, false, now, heartbeat),
+    ).text();
+    const horsensCard = body.match(
+      /<article class="location-module" data-location="horsens">[\s\S]*?<\/article>/,
+    )?.[0] ?? '';
+
+    expect(body).toContain('Cron Heartbeat: Active · 5m ago');
+    expect(horsensCard).toMatch(/<span>Last check<\/span>[\s\S]*?>20 min<\/strong>/);
+    expect(horsensCard).toContain('release-candidate');
+    expect(horsensCard).toMatch(/<span>Forecast age<\/span>[\s\S]*?>45 min<\/strong>/);
+  });
+
   it('keeps the unversioned bootstrap route as an exact canonical alias', async () => {
     const runtime = makeRuntime();
     const providerFetch = rejectProviderWork();

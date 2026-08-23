@@ -259,11 +259,9 @@ export default function App() {
   const {
     view: statusView,
     expandedDetail: cacheStatusExpandedDetail,
-    failureDetail: cacheFailureDetail,
     showRefreshWarning: showCacheRefreshWarning,
     workerOutdated,
     forecastAgeLabel,
-    checkedAt: cacheCheckedAt,
   } = deriveCacheStatus({
     sources: weatherData.sources,
     refreshing,
@@ -342,7 +340,7 @@ export default function App() {
             ) : providerBusy ? (
               <span>{t("{0} has been busy for a while, so the forecast hasn't updated since {1}. FRANK keeps retrying automatically — you are seeing the last good forecast.", busyServiceName, formatDateTime(weatherData.sources.fetchedAt))}</span>
             ) : (
-              <span>{t('Forecast refresh keeps failing (last try {0}). You are seeing data from {1} — {2} old, so treat it with extra caution.{3} FRANK retries by itself roughly every 10 minutes.', formatDateTime(cacheCheckedAt), formatDateTime(weatherData.sources.fetchedAt), forecastAgeLabel, cacheFailureDetail)}</span>
+              <span>{t('The forecast could not be refreshed. You are seeing data from {0} — {1} old, so treat it with extra caution. FRANK retries by itself roughly every 10 minutes.', formatDateTime(weatherData.sources.fetchedAt), forecastAgeLabel)}</span>
             )}
           </div>
         )}
