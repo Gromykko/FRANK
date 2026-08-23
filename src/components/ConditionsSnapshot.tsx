@@ -196,7 +196,9 @@ export default function ConditionsSnapshot({
                   ? `${t('Danger')}: `
                   : reason.severity === 'caution'
                     ? `${t('Caution')}: `
-                    : ''}
+                    : reason.severity === 'info'
+                      ? `${t('Note')}: `
+                      : ''}
               </span>
               {reason.text}
             </li>

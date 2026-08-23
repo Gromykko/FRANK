@@ -254,6 +254,10 @@ export const da: Record<string, string> = {
     '{0} vind ({1}°) er over dit sikre loft på {2} m/s for denne retning.',
   'Wind-against-water-level conflict: wind opposes {0} water level. Expect steeper chop.':
     'Vind mod vandstand: vinden går imod {0} vandstand. Forvent mere krap sø.',
+  'Cross-shore wind ({0}°): no curated direction-specific cap matches this bearing. The general wind limit is used, and the wind-against-water-level interaction is not evaluated. Missing those local rules does not mean safer conditions.':
+    'Sidevind ({0}°): Intet kurateret retningsspecifikt loft dækker denne retning. Den generelle vindgrænse bruges, og samspillet mellem vind og vandstand vurderes ikke. Fraværet af disse lokale regler betyder ikke sikrere forhold.',
+  'Cross-shore wind ({0}°): no curated direction-specific cap matches this bearing, and the wind-against-water-level interaction is not evaluated. The general wind limit is switched off, so no wind-speed limit is being applied. Missing those local rules does not mean safer conditions.':
+    'Sidevind ({0}°): Intet kurateret retningsspecifikt loft dækker denne retning, og samspillet mellem vind og vandstand vurderes ikke. Den generelle vindgrænse er slået fra, så ingen vindstyrkegrænse anvendes. Fraværet af disse lokale regler betyder ikke sikrere forhold.',
   "Water temperature: {0}°C — colder than your danger limit of {1}°C. You'd really want a drysuit or heavy thermals for this.":
     'Vandtemperatur: {0}°C — koldere end din faregrænse på {1}°C. Her vil du virkelig ønske dig en tørdragt eller tykt termotøj.',
   'Water temperature: {0}°C — under your safe limit of {1}°C. Worth layering up.':
@@ -654,6 +658,7 @@ export const da: Record<string, string> = {
     'Opstår en konflikt, og vindstyrken er > 4,0 m/s, markeres timen automatisk',
   'Caution': 'Pas på',
   'Danger': 'Fare',
+  'Note': 'Bemærk',
   '4. Local Wind Sectors': '4. Lokale vindsektorer',
   'is enabled. Applies separate, stricter absolute limits for the wind sectors configured for {0}:':
     'er slået til. Anvender separate, strammere absolutte grænser for vindsektorerne for {0}:',
