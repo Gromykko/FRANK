@@ -221,7 +221,7 @@ describe('Worker runtime integration contract', () => {
     expect(providerFetch).not.toHaveBeenCalled();
   });
 
-  it('persists and honors a real-KV initialization cooldown after a typed 429', async () => {
+  it('persists real-KV state and honors the same-isolate cooldown after a typed 429', async () => {
     await env.FRANK_FORECAST_CACHE.delete(FORECAST_KEY);
     const providerFetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
       async () => new Response('Server is busy: private provider detail', { status: 429 }),
@@ -230,14 +230,14 @@ describe('Worker runtime integration contract', () => {
 
     const first = await dispatch('/api/v1/forecast/horsens?warm=1', 'GET', WARM_TOKEN);
     expect(first.status).toBe(503);
-    expect(first.headers.get('retry-after')).toBe('600');
+    expect(first.headers.get('retry-after')).toBe('90');
     expectCurrentWorkerVersion(first);
     const body = await first.json<ForecastInitializingPayload>();
     expect(body).toMatchObject({
       schemaVersion: 1,
       status: 'initializing',
       code: 'FORECAST_INITIALIZING',
-      retryAfterSeconds: 600,
+      retryAfterSeconds: 90,
       location: { id: HORSENS.id },
     });
     expect(JSON.stringify(body)).not.toContain('private provider detail');
@@ -259,6 +259,14 @@ describe('Worker runtime integration contract', () => {
     const callsAfterFirst = providerFetch.mock.calls.length;
     const repeatedWarm = await dispatch('/api/v1/forecast/horsens?warm=1', 'GET', WARM_TOKEN);
     expect(repeatedWarm.status).toBe(503);
+    expect(repeatedWarm.headers.get('retry-after')).toBe('90');
+    expect((await repeatedWarm.json<ForecastInitializingPayload>()).retryAfterSeconds).toBe(90);
+    expect(providerFetch).toHaveBeenCalledTimes(callsAfterFirst);
+
+    const publicResponse = await dispatch('/api/v1/forecast/horsens');
+    expect(publicResponse.status).toBe(503);
+    expect(publicResponse.headers.get('retry-after')).toBe('600');
+    expect((await publicResponse.json<ForecastInitializingPayload>()).retryAfterSeconds).toBe(600);
     expect(providerFetch).toHaveBeenCalledTimes(callsAfterFirst);
   });
 

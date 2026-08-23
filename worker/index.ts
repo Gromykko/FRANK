@@ -126,8 +126,9 @@ const FORECAST_LOCATIONS = locationData as ForecastLocation[];
 // waiting longer than this during a storage incident only turns a truthful 503
 // into an apparently frozen app/status monitor.
 const RESPONSE_KV_READ_BUDGET_MS = 2_000;
-// A candidate warm request must finish before the caller's 25-second HTTP
-// budget. The one-second margin covers persistence and structured logging.
+// A candidate warm request must finish before the caller's 30-second HTTP
+// budget. The six-second margin covers persistence, structured logging, and
+// returning the response before the caller aborts.
 const CANDIDATE_BUILD_EXECUTION_BUDGET_MS = 24_000;
 // Provider work stops before the event wall so cache-health assembly and the
 // final KV write still have a deterministic chance to finish.
@@ -135,6 +136,11 @@ const CANDIDATE_COMPLETION_RESERVE_MS = 4_000;
 
 const INITIALIZATION_PAYLOAD_SCHEMA_VERSION = 1;
 const INITIALIZATION_RETRY_SECONDS = 10 * 60;
+// Candidate warming is one authenticated, serial deploy caller rather than an
+// unbounded browser crowd. Ninety seconds gives every city six complete tries
+// inside the 13-minute gate even when each request consumes its full 30-second
+// caller allowance, without removing the provider cooldown entirely.
+const DEPLOYMENT_WARM_INITIALIZATION_RETRY_SECONDS = 90;
 // KV requires expirationTtl >= 60 seconds. A little extra lifetime lets a
 // caller calculate the remaining retry delay even if it arrives near the
 // boundary; the marker itself stops gating at retryAfterSeconds.
@@ -679,6 +685,7 @@ const lastInitializationFailureAt = new Map<string, number>();
 
 function initializationRetrySeconds(
   location: ForecastCacheLocation,
+  retryCooldownSeconds: number,
   marker?: ForecastInitializationMarker | null,
   nowMs = Date.now(),
 ): number {
@@ -692,7 +699,7 @@ function initializationRetrySeconds(
     usable(memoryMs),
   );
   if (!Number.isFinite(latestAttemptMs)) return 0;
-  const remainingMs = INITIALIZATION_RETRY_SECONDS * 1000 - Math.max(0, nowMs - latestAttemptMs);
+  const remainingMs = retryCooldownSeconds * 1000 - Math.max(0, nowMs - latestAttemptMs);
   return remainingMs > 0 ? Math.ceil(remainingMs / 1000) : 0;
 }
 
@@ -1298,11 +1305,12 @@ function candidateExecutionPolicy(): ExecutionPolicy {
 async function activeInitializationRetrySeconds(
   env: Env,
   location: ForecastLocation,
+  retryCooldownSeconds: number,
 ): Promise<number> {
-  const memoryRetry = initializationRetrySeconds(location);
+  const memoryRetry = initializationRetrySeconds(location, retryCooldownSeconds);
   if (memoryRetry > 0) return memoryRetry;
   const marker = await readInitializationMarker(env, location, responseKvReadPolicy());
-  return initializationRetrySeconds(location, marker);
+  return initializationRetrySeconds(location, retryCooldownSeconds, marker);
 }
 
 function keepCandidateBuildAlive(
@@ -1349,6 +1357,7 @@ async function candidateWarmResponse(
   location: ForecastLocation,
   refresh: Promise<ForecastData>,
   reason: string,
+  retryCooldownSeconds: number,
 ): Promise<Response> {
   keepCandidateBuildAlive(ctx, refresh, location, reason);
   try {
@@ -1356,7 +1365,7 @@ async function candidateWarmResponse(
     return preparedForecastResponse(data, true);
   } catch (error) {
     if (isProviderUnavailableError(error)) {
-      const retryAfterSeconds = initializationRetrySeconds(location);
+      const retryAfterSeconds = initializationRetrySeconds(location, retryCooldownSeconds);
       return forecastInitializingResponse(location, retryAfterSeconds);
     }
     throw error;
@@ -1398,7 +1407,11 @@ async function handleForecastRequest(
     // Authenticated `warm=1` is the deployment candidate path. It is the only
     // HTTP path allowed to build an empty generation, and it still honors the
     // generation-scoped provider cooldown (no rebuild bypass).
-    const retryAfterSeconds = await activeInitializationRetrySeconds(env, location);
+    const retryAfterSeconds = await activeInitializationRetrySeconds(
+      env,
+      location,
+      DEPLOYMENT_WARM_INITIALIZATION_RETRY_SECONDS,
+    );
     if (retryAfterSeconds > 0) {
       return forecastInitializingResponse(location, retryAfterSeconds);
     }
@@ -1417,6 +1430,7 @@ async function handleForecastRequest(
       location,
       refresh,
       'deployment-warm',
+      DEPLOYMENT_WARM_INITIALIZATION_RETRY_SECONDS,
     );
   }
 
@@ -1427,7 +1441,11 @@ async function handleForecastRequest(
     return preparedForecastResponse(cached, true);
   }
 
-  const retryAfterSeconds = await activeInitializationRetrySeconds(env, location);
+  const retryAfterSeconds = await activeInitializationRetrySeconds(
+    env,
+    location,
+    INITIALIZATION_RETRY_SECONDS,
+  );
   return forecastInitializingResponse(
     location,
     retryAfterSeconds > 0 ? retryAfterSeconds : INITIALIZATION_RETRY_SECONDS,

@@ -492,6 +492,7 @@ describe('Worker route HTTP contract', () => {
       schemaVersion: 1,
       status: 'initializing',
       code: 'FORECAST_INITIALIZING',
+      retryAfterSeconds: 600,
       location: { id: 'aarhus' },
     });
     expect(runtime.puts).toHaveLength(0);
@@ -574,7 +575,11 @@ describe('Worker route HTTP contract', () => {
       runtime.ctx,
     );
     expect(first.status).toBe(503);
-    expect((await first.json()).code).toBe('FORECAST_INITIALIZING');
+    expect(first.headers.get('Retry-After')).toBe('90');
+    expect(await first.json()).toMatchObject({
+      code: 'FORECAST_INITIALIZING',
+      retryAfterSeconds: 90,
+    });
     expect(runtime.puts.map(({ key }) => key)).toEqual([initializationStateKey(location)]);
     expect(runtime.puts.every(({ key }) =>
       key.startsWith(`${generationKeyPrefix(CURRENT_RELEASE)}:`)))
@@ -587,6 +592,7 @@ describe('Worker route HTTP contract', () => {
       status: 'initializing',
       locationId: location.id,
       forecastConfigRevision: location.forecastConfigRevision,
+      retryAfterSeconds: 600,
       provider: 'marine',
       busy: true,
     });
@@ -620,7 +626,54 @@ describe('Worker route HTTP contract', () => {
       runtime.ctx,
     );
     expect(repeated.status).toBe(503);
+    expect(repeated.headers.get('Retry-After')).toBe('90');
+    expect(await repeated.json()).toMatchObject({ retryAfterSeconds: 90 });
     expect(providerFetch).toHaveBeenCalledTimes(callsAfterFirst);
+
+    const publicResponse = await worker.fetch(
+      request('/api/v1/forecast/aarhus'),
+      runtime.env,
+      runtime.ctx,
+    );
+    expect(publicResponse.status).toBe(503);
+    expect(publicResponse.headers.get('Retry-After')).toBe('600');
+    expect(await publicResponse.json()).toMatchObject({ retryAfterSeconds: 600 });
+    expect(providerFetch).toHaveBeenCalledTimes(callsAfterFirst);
+  });
+
+  it('lets the same isolate retry authenticated warming after 90 seconds', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2030-08-23T10:00:00.000Z'));
+      const runtime = makeRuntime({ exact: false });
+      const providerFetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
+        async () => new Response('Server is busy', { status: 429 }),
+      );
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const first = await worker.fetch(
+        authorizedWarmRequest('/api/v1/forecast/kolding?warm=1'),
+        runtime.env,
+        runtime.ctx,
+      );
+      expect(first.status).toBe(503);
+      expect(first.headers.get('Retry-After')).toBe('90');
+      const callsAfterFirst = providerFetch.mock.calls.length;
+      await Promise.all(runtime.waits);
+
+      vi.setSystemTime(new Date('2030-08-23T10:01:31.000Z'));
+      const second = await worker.fetch(
+        authorizedWarmRequest('/api/v1/forecast/kolding?warm=1'),
+        runtime.env,
+        runtime.ctx,
+      );
+      expect(second.status).toBe(503);
+      expect(second.headers.get('Retry-After')).toBe('90');
+      expect(providerFetch.mock.calls.length).toBeGreaterThan(callsAfterFirst);
+      await Promise.all(runtime.waits);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('honors a persisted generation-scoped cooldown without provider work', async () => {
@@ -647,7 +700,12 @@ describe('Worker route HTTP contract', () => {
       runtime.ctx,
     );
     expect(response.status).toBe(503);
-    expect((await response.json()).code).toBe('FORECAST_INITIALIZING');
+    expect(response.headers.get('Retry-After')).toBe('90');
+    expect(await response.json()).toMatchObject({
+      code: 'FORECAST_INITIALIZING',
+      retryAfterSeconds: 90,
+    });
+    expect(runtime.gets).toContain(initializationStateKey(location));
     expect(providerFetch).not.toHaveBeenCalled();
   });
 

@@ -95,13 +95,13 @@ describe('deployment Worker warm-up', () => {
     expect(sleepImpl).toHaveBeenCalledWith(2_000);
   });
 
-  it('allows two full initialization cooldowns before the candidate gate closes', async () => {
+  it('allows repeated authenticated initialization cooldowns inside the candidate gate', async () => {
     let nowMs = 1_000;
     let aarhusAttempts = 0;
     const fetchImpl = vi.fn(async (url: string) => {
       const locationId = locationIdFrom(url);
       if (locationId === 'aarhus' && aarhusAttempts++ < 2) {
-        return initializingResponse('600');
+        return initializingResponse('90');
       }
       return readyResponse();
     });
@@ -118,7 +118,7 @@ describe('deployment Worker warm-up', () => {
       logger: silentLogger(),
     });
 
-    expect(DEFAULT_WARM_TOTAL_TIMEOUT_MS).toBe(25 * 60_000);
+    expect(DEFAULT_WARM_TOTAL_TIMEOUT_MS).toBe(13 * 60_000);
     expect(fetchImpl.mock.calls.map(([url]) => locationIdFrom(String(url)))).toEqual([
       'horsens',
       'vejle',
@@ -127,7 +127,7 @@ describe('deployment Worker warm-up', () => {
       'aarhus',
       'aarhus',
     ]);
-    expect(sleepImpl.mock.calls).toEqual([[600_000], [600_000]]);
+    expect(sleepImpl.mock.calls).toEqual([[90_000], [90_000]]);
   });
 
   it('fails the release when exactly one city cannot retry within the global deadline', async () => {
@@ -281,6 +281,7 @@ describe('deployment Worker warm-up', () => {
 
     expect(warmJobBody).toContain('needs: upload_candidate');
     const warmJobTimeout = warmJobBody.match(/timeout-minutes:\s*(\d+)/);
+    expect(Number(warmJobTimeout?.[1])).toBe(15);
     expect(Number(warmJobTimeout?.[1]) * 60_000).toBeGreaterThan(
       DEFAULT_WARM_TOTAL_TIMEOUT_MS,
     );

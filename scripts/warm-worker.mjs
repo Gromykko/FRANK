@@ -8,9 +8,9 @@ export const WARM_LOCATION_IDS = Object.freeze([
   'aarhus',
 ]);
 
-// Two complete initialization cooldowns can elapse before the candidate gate
-// gives up. Promotion still fails closed if the provider remains unavailable.
-export const DEFAULT_WARM_TOTAL_TIMEOUT_MS = 25 * 60_000;
+// The authenticated Worker route applies a 90-second provider cooldown. This
+// window still fits six worst-case serial passes across all four locations.
+export const DEFAULT_WARM_TOTAL_TIMEOUT_MS = 13 * 60_000;
 export const DEFAULT_WARM_REQUEST_TIMEOUT_MS = 30_000;
 
 function sleep(delayMs) {
