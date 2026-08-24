@@ -13,6 +13,7 @@ import {
   cronExecutionPolicy,
 } from '../../worker/execution';
 import { assembledForecastKey } from '../../worker/generation';
+import { HEALTH_MAX_CHECK_AGE_MS } from '../../worker/health';
 import worker, {
   CRON_HEARTBEAT_KEY,
   CRON_HEARTBEAT_THROTTLE_TICKS,
@@ -958,6 +959,62 @@ describe('scheduled city rotation', () => {
         'heartbeat-anomaly',
         'heartbeat-anomaly',
       ]);
+  });
+
+  it('refreshes a drifting contact stamp inside the throttle, but still throttles a recent one', async () => {
+    // Regression: cities contact providers about every MET TTL (~30 min) while
+    // the heartbeat writes every fifth tick. At a one-minute cron that dropped
+    // roughly four in five contacts, so a healthy city's stamp drifted past
+    // HEALTH_MAX_CHECK_AGE_MS and /health reported "not checking" for cities
+    // that were rebuilding normally (observed in production 2026-08-24).
+    const succeedingProvider = async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/instances')) {
+        return Response.json({ instances: [{ id: DUE_MARINE_RUN }] });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    };
+
+    const cases = [
+      [HEALTH_MAX_CHECK_AGE_MS / 2 + CRON_PERIOD_MS, 1],
+      [HEALTH_MAX_CHECK_AGE_MS / 2 - CRON_PERIOD_MS, 0],
+    ] as const;
+    for (const [index, [driftMs, expectedWrites]] of cases.entries()) {
+      const { env, store, puts } = runtime(DUE_MARINE_RUN);
+      // Distinct tick per case AND distinct from other tests: the worker's
+      // in-memory lastCheckAt map is module scope and survives between tests,
+      // so a reused scheduledTime would short-circuit the provider call.
+      const scheduledTime = FIRST_TICK_MS
+        + (40 + index) * LOCATIONS.length * CRON_PERIOD_MS;
+      const location = tickOrder(scheduledTime)[0];
+      const previousSuccess = scheduledTime - driftMs;
+      store.set(CRON_HEARTBEAT_KEY, JSON.stringify({
+        schemaVersion: 2,
+        // One tick ago: comfortably inside the five-tick throttle, so only the
+        // drifting stamp can justify a write.
+        lastTickAt: new Date(scheduledTime - CRON_PERIOD_MS).toISOString(),
+        locations: { [location.id]: new Date(previousSuccess).toISOString() },
+        unreachable: {},
+      }));
+      vi.spyOn(globalThis, 'fetch').mockImplementation(succeedingProvider);
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      vi.setSystemTime(scheduledTime);
+      await worker.scheduled(
+        { scheduledTime } as ScheduledController,
+        env as Env,
+        {} as ExecutionContext,
+      );
+
+      expect(puts.filter((key) => key === CRON_HEARTBEAT_KEY)).toHaveLength(expectedWrites);
+      const stored = JSON.parse(store.get(CRON_HEARTBEAT_KEY)!);
+      expect(stored.locations[location.id]).toBe(new Date(
+        expectedWrites === 1 ? scheduledTime : previousSuccess,
+      ).toISOString());
+      vi.restoreAllMocks();
+    }
   });
 
   it('records a city\'s first actual provider contact inside the normal throttle', async () => {

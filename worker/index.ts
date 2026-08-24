@@ -18,6 +18,7 @@ import {
   withWorkerVersion,
 } from './http';
 import {
+  HEALTH_MAX_CHECK_AGE_MS,
   buildHealthPayload,
   healthResponse,
   statusResponse,
@@ -356,11 +357,28 @@ async function writeHeartbeat(
       && (scope.kind === 'scheduled' || attemptAtMs > previousFailureMs);
     const firstRecordedContact = attempt?.status === 'contacted'
       && !Number.isFinite(previousSuccessMs);
+    // A city contacts providers roughly every MET TTL (~30 min), but the
+    // throttle below only lets the heartbeat write every fifth tick. At a
+    // one-minute cron that discards about four in five contacts, and the city's
+    // stamp drifts past HEALTH_MAX_CHECK_AGE_MS while it is demonstrably
+    // healthy - a false "not checking" alarm (observed in production
+    // 2026-08-24: forecasts rebuilding every 30 min, check age reported 62 min).
+    //
+    // This was latent until the cron trigger was corrected to one minute. At
+    // the previous five-minute cadence elapsedTicks computed to exactly the
+    // throttle every tick, so the heartbeat wrote every time and no contact was
+    // ever dropped.
+    //
+    // Forcing at half the alarm threshold guarantees a contacted city can never
+    // cross it, and bounds the extra writes to one per city per 30 minutes.
+    const contactStampDrifting = attempt?.status === 'contacted'
+      && Number.isFinite(previousSuccessMs)
+      && attemptAtMs - previousSuccessMs >= HEALTH_MAX_CHECK_AGE_MS / 2;
     const heartbeatCategory: KvWriteCategory = newlyUnreachable || recovering
       ? 'heartbeat-anomaly'
       : 'heartbeat-cadence';
     const forceWrite = Boolean(
-      newlyUnreachable || recovering || firstRecordedContact,
+      newlyUnreachable || recovering || firstRecordedContact || contactStampDrifting,
     );
     // Scheduled cadence is global, while a warm has no tick of its own. Using
     // lastTickAt for a warm would suppress the exact repair this path exists
