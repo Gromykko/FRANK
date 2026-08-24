@@ -244,6 +244,10 @@ export function statusResponse(health: HealthPayload): Response {
   const byId = new Map(health.ages.map((age) => [age.id, age]));
   const level = (ms: number, budget: number): 'bad' | 'warn' | 'good' =>
     (ms > budget ? 'bad' : ms > budget * 0.75 ? 'warn' : 'good');
+  // 'good' deliberately yields no class. A healthy panel should be monochrome
+  // so that the one amber cell is findable at a glance.
+  const toneClass = (tone: 'bad' | 'warn' | 'good'): string =>
+    (tone === 'good' ? '' : `tone-${tone}`);
   const checkedAtMs = Date.parse(health.checkedAt);
   const nowMs = Number.isFinite(checkedAtMs) ? checkedAtMs : Date.now();
 
@@ -340,8 +344,8 @@ export function statusResponse(health: HealthPayload): Response {
         // shift the moment a source turns amber.
         state: busy ? 'Provider busy' : degraded ? 'Last-good fallback' : provenanceAgeMs === null ? 'Age not recorded' : 'Current',
         value: provenanceAgeMs === null
-          ? 'Snapshot available'
-          : `${formatAge(provenanceAgeMs)} old`,
+          ? 'not recorded'
+          : formatAge(provenanceAgeMs),
         detail: provenanceDetail,
       };
     };
@@ -392,43 +396,66 @@ export function statusResponse(health: HealthPayload): Response {
               // forecast poll, so state that instead of inventing an age.
               value: location.warningCount && location.warningCount > 0
                 ? `${location.warningCount} active ${location.warningCount === 1 ? 'warning' : 'warnings'}`
-                : 'None active',
+                : '—',
               // Not escaped here: the shared card template escapes every detail,
               // so escaping twice rendered an ampersand in a MeteoAlarm headline
               // as &amp;amp;.
               detail: location.warningsSummary ?? 'Polled with the forecast',
             },
     ];
-    const sourceCards = sources.map((source) => `<section class="source-card tone-${source.tone}" data-source="${source.key}" role="listitem">
-      <div class="source-card-head">
-        <div><h4>${escapeHtml(source.label)}</h4><span>${escapeHtml(source.provider)}</span></div>
-        <span class="source-state"><i aria-hidden="true"></i>${escapeHtml(source.state)}</span>
-      </div>
-      <strong class="source-value">${escapeHtml(source.value)}</strong>
-      <span class="source-detail">${escapeHtml(source.detail)}</span>
-    </section>`).join('');
     const overallTone = health.storageUnavailable || missing
       ? 'bad'
       : location.exactGenerationReady
         ? 'good'
         : 'warn';
 
-    return `<article class="location-module" data-location="${escapeHtml(location.id)}">
-      <header class="location-module-head">
-        <div class="location-identity"><h3>${escapeHtml(location.areaName)}</h3></div>
-        <span class="generation-state ${overallTone}">${escapeHtml(generationState)}</span>
-      </header>
-      <div class="location-vitals">
-        <!-- Forecast age leads: it describes the data an operator is judging.
-             Last check describes our polling, which can look alarming while the
-             forecast is perfectly current - the same inversion removed from the
-             main page in the forecast-age change. -->
-        <div><span>Forecast age</span><strong class="${missing ? 'bad' : level(age.ageMs, HEALTH_MAX_DATA_AGE_MS)}">${escapeHtml(missing ? 'no forecast' : formatAge(age.ageMs))}</strong><small>last complete rebuild</small></div>
-        <div><span>Last check</span><strong class="${initialization ? 'warn' : missing ? 'bad' : level(age.checkAgeMs, HEALTH_MAX_CHECK_AGE_MS)}">${escapeHtml(formatAge(age.checkAgeMs))}</strong><small>${escapeHtml(checkDetail)}</small></div>
-        <div><span>Cache state</span><strong class="${overallTone}">${escapeHtml(status)}</strong><small>${providerState ? escapeHtml(providerState) : 'prepared snapshot'}</small></div>
-      </div>
-      <div class="source-board" role="list" aria-label="${escapeHtml(`${location.areaName} source status`)}">${sourceCards}</div>
-    </article>`;
+    // One aligned row per location instead of a card containing three vitals
+    // and four sub-cards. The old shape repeated the same static text once per
+    // location - provider names, "last complete rebuild", "cron", "prepared
+    // snapshot", and an identical model-run stamp eight times - so a healthy
+    // page was ~1400px of mostly chrome. A row lets every number for every
+    // location be read at once, which is the entire point of a panel.
+    //
+    // Tone is applied ONLY when a cell is not good. Twelve green badges on a
+    // healthy page carry no signal; the app's own rule is that colour means
+    // something. Here the page is quiet when nothing is wrong.
+    const cell = (source: typeof sources[number]): string =>
+      // The exact provenance stamp ("Model run 2026-08-20 12:00 UTC") is what
+      // an operator checks against DMI's run table, so it must not be lost -
+      // but printed on all four rows it was eight identical lines of noise.
+      // It rides the cell as a title instead: available on demand, silent when
+      // not wanted.
+      `<td class="num ${source.tone === 'warn' || source.tone === 'bad' ? `tone-${source.tone}` : ''}" data-source="${source.key}" title="${escapeHtml(source.detail)}">`
+      + `<span class="cell-value">${escapeHtml(source.value)}</span>`
+      + (source.tone === 'warn' || source.tone === 'bad'
+        ? `<span class="cell-note">${escapeHtml(source.state)}</span>`
+        : '')
+      + '</td>';
+
+    // Only a location with something to say gets a second line.
+    const note = [
+      status === 'current' ? '' : status,
+      providerState,
+      location.warningsSummary,
+    ].filter(Boolean).join(' · ');
+
+    return `<tbody class="board-group ${overallTone}" data-location="${escapeHtml(location.id)}">
+      <tr class="board-row">
+        <th scope="row" class="cell-name">
+          ${escapeHtml(location.areaName)}
+          ${location.exactGenerationReady ? '' : `<span class="generation-state ${overallTone}">${escapeHtml(generationState)}</span>`}
+        </th>
+        <td class="num ${missing ? 'tone-bad' : toneClass(level(age.ageMs, HEALTH_MAX_DATA_AGE_MS))}">
+          <span class="cell-value">${escapeHtml(missing ? 'none' : formatAge(age.ageMs))}</span>
+        </td>
+        <td class="num ${initialization ? 'tone-warn' : missing ? 'tone-bad' : toneClass(level(age.checkAgeMs, HEALTH_MAX_CHECK_AGE_MS))}">
+          <span class="cell-value">${escapeHtml(formatAge(age.checkAgeMs))}</span>
+          ${checkDetail === 'cron' ? '' : `<span class="cell-note">${escapeHtml(checkDetail)}</span>`}
+        </td>
+        ${sources.map(cell).join('')}
+      </tr>
+      ${note ? `<tr class="board-note ${overallTone}"><td colspan="7">${escapeHtml(note)}</td></tr>` : ''}
+    </tbody>`;
   }).join('');
 
   const rating: FrankStatusRating = health.ok && health.release.allLocationsReady
@@ -497,28 +524,37 @@ export function statusResponse(health: HealthPayload): Response {
     --text-caption:.75rem;
     --text-ui:.8125rem;
     --text-body:.875rem;
-    --bg-app:#f5f7fa;
-    --bg-gradient:linear-gradient(180deg,#e5f2fc 0%,#eef7fd 38rem,#f5f7fa 78rem);
-    --pixel-cloud:rgba(255,255,255,.78);
-    --pixel-cloud-shade:rgba(104,151,188,.13);
-    --panel-bg:#f9fcff;
-    --panel-border:rgba(51,91,124,.13);
-    --module-bg:#f3f8fc;
-    --module-edge:rgba(51,91,124,.14);
-    --text-main:#1a2332;
-    --text-muted:#566577;
-    --primary:#1d6fd1;
-    --color-safe:#059669;
-    --color-caution:#d97706;
-    --color-danger:#dc2626;
-    --color-safe-text:#047857;
-    --color-caution-text:#b45309;
-    --color-danger-text:#b91c1c;
-    --shadow-lg:0 1px 2px rgba(46,78,107,.07);
+    /* Marine plotter dark, lifted verbatim from the app's own tokens in
+       src/index.css. This page used to be a light theme bolted onto a
+       dark-first app, which is the single biggest reason it read as a
+       different product. The app's rule applies here too: colour carries
+       MEANING only. Green is therefore a quiet hairline, never a word - when
+       every source is healthy, twelve green badges signal nothing. Amber and
+       red are the only saturated things on a working page. */
+    --bg-app:#0c1117;
+    --bg-gradient:linear-gradient(180deg,#122235 0%,#0c1622 42rem,#0c1117 78rem);
+    --pixel-cloud:rgba(178,211,235,.18);
+    --pixel-cloud-shade:rgba(80,130,171,.12);
+    --panel-bg:#161d27;
+    --panel-border:rgba(255,255,255,.06);
+    --module-bg:#1b2330;
+    --module-edge:rgba(255,255,255,.09);
+    --text-main:#e8ecf1;
+    --text-muted:#7a8ba0;
+    --primary:#4b9eff;
+    --color-safe:#34d399;
+    --color-caution:#fbbf24;
+    --color-danger:#f87171;
+    /* On the dark ground the fills are already legible as text, so unlike the
+       light theme these need no darker variants. */
+    --color-safe-text:var(--color-safe);
+    --color-caution-text:var(--color-caution);
+    --color-danger-text:var(--color-danger);
+    --shadow-lg:0 1px 3px rgba(0,0,0,.3);
     --radius-md:8px;
     --radius-sm:6px;
     --frank-housing:var(--panel-bg);
-    --frank-housing-edge:rgba(26,35,50,.16);
+    --frank-housing-edge:rgba(255,255,255,.10);
     --frank-housing-text:var(--text-main);
     --crt-screen:#0a0e14;
   }
@@ -597,43 +633,15 @@ export function statusResponse(health: HealthPayload): Response {
   .frank-device-shell.rating-safe { --frank-phosphor:var(--color-safe) }
   .frank-device-shell.rating-caution { --frank-phosphor:var(--color-caution) }
   .frank-device-shell.rating-danger { --frank-phosphor:var(--color-danger) }
-  .frank-cache {
-    align-self:center;
-    display:inline-flex;
-    max-width:100%;
-    align-items:center;
-    gap:6px;
-    padding-right:18px;
-    color:var(--text-muted);
-    font-size:var(--text-caption);
-    font-variant-numeric:tabular-nums;
-    text-align:center;
-  }
-  .frank-cache::before {
-    content:'';
-    flex:0 0 auto;
-    width:7px;
-    height:7px;
-    border-radius:50%;
-    background:var(--frank-phosphor);
-    box-shadow:0 0 4px var(--frank-phosphor);
-  }
-  .cron-heartbeat-pill {
-    display:inline-flex;
-    align-items:center;
-    gap:6px;
-    margin-left:auto;
-    font:700 var(--text-instrument)/1.4 var(--font-mono);
-    letter-spacing:.02em;
-  }
   .frank-device-columns {
     display:grid;
-    grid-template-columns:auto minmax(0,1fr) 142px;
+    grid-template-columns:auto minmax(0,1fr);
     grid-template-areas:
-      'crt display actions'
-      'name . location';
+      'crt display'
+      'name display';
     column-gap:16px;
-    row-gap:10px;
+    row-gap:6px;
+    align-items:start;
     min-width:0;
   }
   .frank-crt {
@@ -671,6 +679,31 @@ export function statusResponse(health: HealthPayload): Response {
     93%,95% { transform:scaleY(.12) }
     98% { transform:scaleY(1) }
   }
+  .device-meta {
+    display:flex;
+    flex-wrap:wrap;
+    gap:6px;
+    margin:6px 0 0;
+    color:var(--text-muted);
+    font:var(--text-instrument)/1.4 var(--font-mono);
+  }
+  .device-meta .warn { color:var(--color-caution-text); font-weight:700 }
+  .board-legend {
+    display:flex;
+    flex-wrap:wrap;
+    gap:4px 16px;
+    margin:0;
+    padding:0 12px 12px;
+    color:var(--text-muted);
+    font:var(--text-instrument)/1.5 var(--font-mono);
+  }
+  .board-legend b { color:var(--text-main); font-weight:700 }
+  .page-stamp {
+    margin:10px 2px 0;
+    color:var(--text-muted);
+    font:var(--text-instrument)/1.4 var(--font-mono);
+    text-align:right;
+  }
   .frank-nameplate {
     grid-area:name;
     place-self:center;
@@ -684,13 +717,16 @@ export function statusResponse(health: HealthPayload): Response {
     text-transform:uppercase;
     opacity:.9;
   }
+  /* Column, not row: the meta line belongs UNDER the readout, the way a label
+     sits under a gauge. The right-hand border is gone with the panel that used
+     to follow it - a divider with nothing on the far side is just a stray line. */
   .frank-cell-display {
     grid-area:display;
     display:flex;
-    align-items:center;
+    flex-direction:column;
+    justify-content:center;
     min-width:0;
-    padding:0 16px;
-    border-right:1px solid var(--frank-housing-edge);
+    padding:0 0 0 16px;
     border-left:1px solid var(--frank-housing-edge);
   }
   .frank-display {
@@ -718,44 +754,6 @@ export function statusResponse(health: HealthPayload): Response {
     overflow-wrap:normal;
     word-break:normal;
     text-shadow:0 0 8px color-mix(in srgb,currentColor 60%,transparent);
-  }
-  .operation-stamp {
-    grid-area:actions;
-    align-self:stretch;
-    display:grid;
-    grid-template-columns:1fr;
-    align-content:center;
-    gap:2px;
-    min-width:0;
-    padding:10px 11px;
-    border:1px solid var(--module-edge);
-    border-radius:var(--radius-sm);
-    color:var(--text-muted);
-    background:var(--module-bg);
-    box-shadow:inset 0 1px 0 rgba(255,255,255,.65);
-    font-size:var(--text-instrument);
-    line-height:1.25;
-    letter-spacing:.1em;
-    text-transform:uppercase;
-  }
-  .operation-stamp strong {
-    min-width:0;
-    margin-bottom:0;
-    overflow-wrap:anywhere;
-    color:var(--text-main);
-    font-size:var(--text-caption);
-    letter-spacing:.02em;
-    text-transform:none;
-  }
-  .frank-location {
-    grid-area:location;
-    place-self:center;
-    color:var(--frank-housing-text);
-    font-size:var(--text-caption);
-    font-weight:700;
-    letter-spacing:.18em;
-    line-height:1;
-    text-transform:uppercase;
   }
 
   .instrument-panel {
@@ -787,130 +785,72 @@ export function statusResponse(health: HealthPayload): Response {
     color:var(--text-muted);
     font-size:var(--text-instrument);
   }
-  .locations-board { display:grid; gap:10px; padding:10px }
-  .location-module {
-    overflow:hidden;
-    border:1px solid var(--module-edge);
-    border-radius:var(--radius-sm);
-    background:var(--module-bg);
+  /* Instrument grid. Values are tabular-nums so the columns line up the way a
+     plotter's readouts do - the eye scans a column, not a card. Sizes follow
+     the app's scale: 14px for values you read, 11px reserved for dense marks.
+     Contrast on the dark panel is 4.9:1 for muted text and 6.1-10.2:1 for the
+     safety colours, all above the 4.5:1 AA floor for normal text. */
+  .board-scroll { overflow-x:auto; padding:2px 10px 10px }
+  .board {
+    width:100%;
+    min-width:560px;
+    border-collapse:collapse;
+    font-variant-numeric:tabular-nums;
   }
-  .location-module-head {
-    display:flex;
-    align-items:center;
-    justify-content:flex-start;
-    gap:8px;
-    padding:11px 12px;
-    border-bottom:1px solid var(--module-edge);
-    background:color-mix(in srgb,var(--primary) 4%,var(--module-bg));
-  }
-  .location-identity { min-width:0 }
-  .location-identity h3 {
-    margin:0;
-    font-size:.9375rem;
-    line-height:1.2;
-  }
-  .generation-state {
-    flex:0 0 auto;
-    font-size:.625rem;
-    font-weight:800;
-    letter-spacing:.09em;
-  }
-  .generation-state.good {
+  .board thead th {
+    padding:8px 10px;
+    text-align:left;
+    white-space:nowrap;
     color:var(--text-muted);
-    font-weight:700;
-  }
-  .location-vitals {
-    display:grid;
-    grid-template-columns:repeat(3,minmax(0,1fr));
-    border-bottom:1px solid var(--module-edge);
-  }
-  .location-vitals > div {
-    display:grid;
-    align-content:start;
-    gap:2px;
-    min-width:0;
-    padding:10px 12px;
-  }
-  .location-vitals > div + div { border-left:1px solid var(--module-edge) }
-  .location-vitals span {
-    color:var(--text-muted);
-    font-size:.625rem;
-    font-weight:800;
-    letter-spacing:.1em;
+    font:700 var(--text-instrument)/1.3 var(--font-heading);
+    letter-spacing:.08em;
     text-transform:uppercase;
+    border-bottom:1px solid var(--module-edge);
   }
-  .location-vitals strong { font-size:var(--text-ui); overflow-wrap:anywhere }
-  .location-vitals small { color:var(--text-muted); font-size:var(--text-instrument); overflow-wrap:anywhere }
-  .source-board {
-    display:grid;
-    grid-template-columns:repeat(4,minmax(0,1fr));
+  .board th.num, .board td.num { text-align:right }
+  .board-group { border-bottom:1px solid var(--panel-border) }
+  .board-group:last-child { border-bottom:0 }
+  .board-row th, .board-row td { padding:9px 10px; vertical-align:baseline }
+  .cell-name {
+    display:flex;
+    align-items:baseline;
     gap:8px;
-    padding:10px;
-  }
-  .source-card {
-    --source-tone:#718096;
-    display:flex;
-    min-width:0;
-    min-height:116px;
-    flex-direction:column;
-    padding:10px;
-    border:1px solid var(--module-edge);
-    border-top:2px solid var(--source-tone);
-    border-radius:var(--radius-sm);
-    background:color-mix(in srgb,var(--source-tone) 2.5%,var(--panel-bg));
-    box-shadow:inset 0 1px 0 rgba(255,255,255,.7);
-  }
-  .source-card.tone-good { --source-tone:var(--color-safe) }
-  .source-card.tone-warn { --source-tone:var(--color-caution) }
-  .source-card.tone-bad { --source-tone:var(--color-danger) }
-  .source-card-head {
-    display:flex;
-    align-items:flex-start;
-    justify-content:space-between;
-    gap:7px;
-  }
-  .source-card h4 { margin:0; font-size:var(--text-ui); line-height:1.15 }
-  .source-card-head > div > span {
-    display:block;
-    margin-top:2px;
-    color:var(--text-muted);
-    font-size:.625rem;
-  }
-  .source-state {
-    display:inline-flex;
-    max-width:52%;
-    align-items:flex-start;
-    justify-content:flex-end;
-    gap:4px;
-    color:var(--source-tone);
-    font-size:.59375rem;
-    font-weight:800;
-    line-height:1.15;
-    text-align:right;
-  }
-  .source-state i {
-    width:6px;
-    height:6px;
-    flex:0 0 auto;
-    margin-top:1px;
-    border-radius:50%;
-    background:currentColor;
-    box-shadow:0 0 4px color-mix(in srgb,currentColor 38%,transparent);
-  }
-  .source-value {
-    margin-top:auto;
-    padding-top:14px;
+    text-align:left;
+    white-space:nowrap;
     color:var(--text-main);
-    font-size:var(--text-caption);
-    line-height:1.25;
-    overflow-wrap:anywhere;
+    font:600 var(--text-ui)/1.35 var(--font-heading);
   }
-  .source-detail {
+  .cell-value {
+    display:block;
+    color:var(--text-main);
+    font:600 var(--text-body)/1.25 var(--font-mono);
+  }
+  .cell-note {
+    display:block;
     margin-top:3px;
+    white-space:nowrap;
     color:var(--text-muted);
     font:var(--text-instrument)/1.3 var(--font-mono);
-    overflow-wrap:anywhere;
   }
+  .board td.tone-warn .cell-value,
+  .board td.tone-warn .cell-note { color:var(--color-caution-text) }
+  .board td.tone-bad .cell-value,
+  .board td.tone-bad .cell-note { color:var(--color-danger-text) }
+  .board-note td {
+    padding:0 10px 10px;
+    color:var(--color-caution-text);
+    font:var(--text-caption)/1.4 var(--font-body);
+  }
+  .board-note.bad td { color:var(--color-danger-text) }
+  /* Only rendered when a location is NOT on the target generation, so it is
+     always an exception and always earns its colour. */
+  .generation-state {
+    font:700 var(--text-instrument)/1.3 var(--font-mono);
+    letter-spacing:.06em;
+    text-transform:uppercase;
+  }
+  .generation-state.warn { color:var(--color-caution-text) }
+  .generation-state.bad { color:var(--color-danger-text) }
   .good { color:var(--color-safe-text) }
   .warn { color:var(--color-caution-text) }
   .bad { color:var(--color-danger-text) }
@@ -991,16 +931,18 @@ export function statusResponse(health: HealthPayload): Response {
   }
   @media (max-width:360px) {
     .status-shell { padding-right:8px; padding-left:8px }
+    /* The status message is the one thing that must survive the narrowest
+       screen. The old rule hid the display and kept the refresh-interval panel,
+       so the smallest phone showed a face and a constant, but not the state. */
     .frank-device-columns {
       grid-template-columns:64px minmax(0,1fr);
       grid-template-areas:
         'crt display'
-        'name location';
-      column-gap:16px;
+        'name display';
+      column-gap:12px;
     }
     .frank-nameplate { font-size:.625rem; letter-spacing:.35em; text-indent:.35em }
-    .operation-stamp { display:none }
-    .frank-location { justify-self:end }
+    .frank-cell-display { padding-left:12px }
   }
   @media (prefers-reduced-motion:reduce) {
     .pixel-cloud,.gerty-eyes { animation:none; will-change:auto }
@@ -1016,31 +958,29 @@ export function statusResponse(health: HealthPayload): Response {
 </div>
 <main class="status-shell">
   <h1 class="sr-only">FRANK forecast worker status</h1>
+  <!-- One band instead of three. The render timestamp used to head the page in
+       a cramped strip: it is the least important fact here (it is always "now"
+       by construction) and now sits in the footer, where a stamp that stops
+       advancing still proves the auto-refresh died. Heartbeat and generation
+       move under the display as one quiet meta line rather than a boxed panel
+       carrying the same visual weight as system status. -->
   <header class="frank-device-shell rating-${rating}">
-    <div class="frank-cache">
-      <!-- "System checked" implied an upstream check had just happened. This is
-           Date.now() at render - always now, never a freshness guarantee. It
-           still earns its place: with the 30s meta refresh, a stamp that stops
-           advancing is proof the page itself is stale. -->
-      <span>Page rendered ${escapeHtml(formatUtcTimestamp(health.checkedAt))}</span>
-      <span class="cron-heartbeat-pill ${beatLive ? 'good' : 'warn'}">${escapeHtml(beatText)}</span>
-    </div>
     <div class="frank-device-columns">
       <span class="frank-crt">${gertyStatusFace(rating)}</span>
       <div class="frank-cell-display">
         <!-- No aria-label: on role="status" it becomes the accessible name and
              replaces the content, so a screen reader got statusDetail and never
-             the status message itself. statusDetail is rendered visibly below.
-             The id was referenced by nothing. -->
+             the status message itself. statusDetail is rendered visibly below. -->
         <div class="frank-display" role="status">
           <span class="frank-display-text">${escapeHtml(displayMessage)}</span>
         </div>
-      </div>
-      <div class="operation-stamp" aria-label="Data generation target">
-        <span>Generation</span><strong>${escapeHtml(health.release.target.dataGenerationId)}</strong>
+        <p class="device-meta">
+          <span class="${beatLive ? '' : 'warn'}">${escapeHtml(beatText)}</span>
+          <span aria-hidden="true">·</span>
+          <span>${escapeHtml(health.release.target.dataGenerationId)}</span>
+        </p>
       </div>
       <span class="frank-nameplate">FRANK</span>
-      <span class="frank-location">Forecast worker</span>
     </div>
   </header>
 
@@ -1051,7 +991,31 @@ export function statusResponse(health: HealthPayload): Response {
         <p>${escapeHtml(statusDetail)}</p>
       </div>
     </div>
-    <div class="locations-board">${locationCards}</div>
+    <div class="board-scroll">
+      <table class="board">
+        <thead>
+          <tr>
+            <th scope="col">Location</th>
+            <th scope="col" class="num">Forecast</th>
+            <th scope="col" class="num">Check</th>
+            <th scope="col" class="num">Weather</th>
+            <th scope="col" class="num">Water</th>
+            <th scope="col" class="num">Waves</th>
+            <th scope="col" class="num">Warnings</th>
+          </tr>
+        </thead>
+        ${locationCards}
+      </table>
+    </div>
+    <!-- Which provider stands behind each column. The old card layout repeated
+         these four names once per location; stated once they are a legend, not
+         noise. Hover a cell for that source's exact provenance stamp. -->
+    <p class="board-legend">
+      <span><b>Weather</b> MET Norway</span>
+      <span><b>Water</b> DMI DKSS</span>
+      <span><b>Waves</b> DMI WAM</span>
+      <span><b>Warnings</b> MeteoAlarm</span>
+    </p>
   </section>
 
   <details class="notes">
@@ -1103,6 +1067,11 @@ export function statusResponse(health: HealthPayload): Response {
       <code>reason</code> when either clock trips.</p>
     </div>
   </details>
+
+  <!-- Least important fact on the page, so it sits last. It still earns a
+       place: this page reloads every 30 seconds, so a stamp that stops
+       advancing is the proof the refresh itself has died. -->
+  <p class="page-stamp">Page rendered ${escapeHtml(formatUtcTimestamp(health.checkedAt))} · reloads every 30s</p>
 </main>
 </body></html>
 `);

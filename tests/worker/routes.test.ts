@@ -430,7 +430,7 @@ describe('Worker route HTTP contract', () => {
     expect(body).toContain('How to read this instrument');
     expect(body).toContain('Only those operational paths may start provider');
     expect(body).not.toContain("visitor's request prompts a check");
-    expect(body).toContain('EXACT GENERATION READY');
+    expect(body).toContain('Forecast locations');
   });
 
   it('renders a self-contained FRANK status instrument with responsive location cards', async () => {
@@ -445,23 +445,22 @@ describe('Worker route HTTP contract', () => {
     expect(body).toContain('class="gerty-face" viewBox="3 3.5 10 9"');
     expect(body).toContain('<rect x="4" y="5" width="1" height="1"/>');
     expect(body).toContain('<span class="frank-nameplate">FRANK</span>');
-    expect(body).toContain('<span class="frank-location">Forecast worker</span>');
     expect(body).toContain('class="frank-display"');
-    expect(body).toContain('aria-label="Data generation target"');
-    expect(body).toContain(
-      `<span>Generation</span><strong>${CURRENT_RELEASE.dataGenerationId}</strong>`,
-    );
+    // The generation target moved out of a boxed panel and onto the device's
+    // meta line, alongside the heartbeat.
+    expect(body).toContain('class="device-meta"');
+    expect(body).toContain(CURRENT_RELEASE.dataGenerationId);
     expect(body).not.toContain('aria-label="Status page operations"');
     expect(body).not.toContain('<span>Auto refresh</span>');
     expect(body).toContain('class="pixel-sky"');
     expect(body).toContain("--font-heading:'Inter'");
     expect(body).toContain("--font-crt:'VT323'");
-    expect(body).toContain('--bg-gradient:linear-gradient(180deg,#e5f2fc 0%,#eef7fd 38rem,#f5f7fa 78rem)');
-    expect(body).toContain('--panel-bg:#f9fcff');
+    expect(body).toContain('--bg-gradient:linear-gradient(180deg,#122235 0%,#0c1622 42rem,#0c1117 78rem)');
+    expect(body).toContain('--panel-bg:#161d27');
     expect(body).toContain('--crt-screen:#0a0e14');
     expect(body).toContain('class="instrument-panel"');
-    expect(body.match(/class="location-module"/g) ?? []).toHaveLength(LOCATIONS.length);
-    expect(body.match(/class="source-board"/g) ?? []).toHaveLength(LOCATIONS.length);
+    expect(body.match(/class="board-group [^"]*" data-location=/g) ?? []).toHaveLength(LOCATIONS.length);
+    expect(body).toContain('<table class="board">');
     expect(body).toContain('@media (max-width:720px)');
     expect(body).toContain('@media (max-width:480px)');
     expect(body).toContain('@media (max-width:360px)');
@@ -470,24 +469,18 @@ describe('Worker route HTTP contract', () => {
     expect(narrowCssStart).toBeGreaterThan(-1);
     expect(narrowCssEnd).toBeGreaterThan(narrowCssStart);
     const narrowCss = body.slice(narrowCssStart, narrowCssEnd);
-    expect(narrowCss).toContain("grid-template-areas:\n        'crt display'\n        'name location';");
-    expect(narrowCss).toContain('.operation-stamp { display:none }');
+    // The status message must survive the narrowest screen. An earlier rule hid
+    // the display and kept the refresh-interval panel, so the smallest phone
+    // showed a face and a constant but not the state.
+    expect(narrowCss).toContain("grid-template-areas:\n        'crt display'\n        'name display';");
     expect(narrowCss).not.toContain('.frank-cell-display { display:none }');
-    expect(narrowCss).not.toContain('grid-template-columns:minmax(0,1fr) auto;');
-    expect(narrowCss).not.toContain('.operation-stamp strong');
-    expect(body).toMatch(
-      /\.location-module-head \{[^}]*justify-content:flex-start;[^}]*gap:8px;/,
-    );
-    expect(body).not.toContain(
-      '.location-module-head { align-items:flex-start; flex-direction:column; gap:6px }',
-    );
-    expect(body).not.toContain('.generation-state { text-align:left }');
-    expect(body).toMatch(
-      /\.generation-state\.good \{\s*color:var\(--text-muted\);\s*font-weight:700;\s*\}/,
-    );
-    expect(body).toContain(`<div class="location-identity"><h3>${
-      locationById('horsens').areaName
-    }</h3></div>`);
+    expect(body).toMatch(/\.cell-name \{[^}]*display:flex;[^}]*gap:8px;/);
+    // The generation badge is no longer demoted when healthy - it is not
+    // rendered at all. A row only carries it when the location is off target,
+    // so it is always an exception and always earns its colour.
+    expect(body).not.toContain('generation-state good');
+    expect(body).not.toContain('EXACT GENERATION READY');
+    expect(body).toContain(`${locationById('horsens').areaName}`);
     expect(body).not.toContain('class="location-index"');
     expect(body).not.toContain('.location-index {');
     expect(body).not.toContain('.neutral {');
@@ -497,12 +490,17 @@ describe('Worker route HTTP contract', () => {
     expect(body.match(/data-source="water"/g) ?? []).toHaveLength(LOCATIONS.length);
     expect(body.match(/data-source="waves"/g) ?? []).toHaveLength(LOCATIONS.length);
     expect(body.match(/data-source="warnings"/g) ?? []).toHaveLength(LOCATIONS.length);
-    expect(body).toContain('<div><h4>Weather</h4><span>MET Norway</span></div>');
-    expect(body).toContain('<div><h4>Water level</h4><span>DMI DKSS</span></div>');
-    expect(body).toContain('<div><h4>Waves</h4><span>DMI WAM</span></div>');
-    expect(body).toContain('<div><h4>Warnings</h4><span>MeteoAlarm</span></div>');
+    // Provider attribution is stated once as a legend rather than repeated in
+    // every location's card head.
+    expect(body).toContain('<span><b>Weather</b> MET Norway</span>');
+    expect(body).toContain('<span><b>Water</b> DMI DKSS</span>');
+    expect(body).toContain('<span><b>Waves</b> DMI WAM</span>');
+    expect(body).toContain('<span><b>Warnings</b> MeteoAlarm</span>');
     expect(body).toContain('Polled with the forecast');
-    expect(body).not.toContain('<table');
+    // A real data table now, with header cells and row scopes - not the layout
+    // table this assertion originally guarded against.
+    expect(body).toContain('<table class="board">');
+    expect(body).toContain('<th scope="row" class="cell-name">');
     expect(body).not.toContain('F · R · A · N · K');
     expect(body).not.toContain('backdrop-filter');
     expect(body).not.toContain('class="banner');
@@ -551,8 +549,8 @@ describe('Worker route HTTP contract', () => {
       statusResponse(buildHealthPayload([available], true, now)).text(),
     ]);
     const cacheState = (body: string): string | undefined => body.match(
-      /<span>Cache state<\/span><strong class="[^"]+">([^<]+)<\/strong>/,
-    )?.[1];
+      /<tr class="board-note[^"]*"><td colspan="7">([^<·]+)/,
+    )?.[1]?.trim();
 
     expect(cacheState(awaitingBody)).toBe('awaiting data');
     expect(cacheState(initializingBody)).toBe('initializing');
@@ -608,11 +606,14 @@ describe('Worker route HTTP contract', () => {
 
     const response = await worker.fetch(request('/status'), runtime.env, runtime.ctx);
     const body = await response.text();
-    const horsensCard = body.match(/<article class="location-module" data-location="horsens">[\s\S]*?<\/article>/)?.[0] ?? '';
+    const horsensCard = body.match(/<tbody class="board-group[^"]*" data-location="horsens">[\s\S]*?<\/tbody>/)?.[0] ?? '';
 
     expect(body).toContain('provider busy · marine');
-    expect(horsensCard).toMatch(/class="source-card tone-warn" data-source="waves"[\s\S]*?Provider busy/);
-    expect(horsensCard).toMatch(/class="source-card tone-good" data-source="water"[\s\S]*?Current/);
+    expect(horsensCard).toMatch(/tone-warn" data-source="waves"[\s\S]*?Provider busy/);
+    // A healthy source carries no tone class and no annotation: on this panel
+    // colour and commentary are reserved for exceptions.
+    expect(horsensCard).toMatch(/class="num " data-source="water"/);
+    expect(horsensCard).not.toMatch(/data-source="water"[^>]*>(?:(?!<\/td>)[\s\S])*?Provider busy/);
   });
 
   it('shows real provider provenance ages without claiming MeteoAlarm health', async () => {
@@ -637,8 +638,8 @@ describe('Worker route HTTP contract', () => {
 
     const body = await statusResponse(buildHealthPayload(entries, false, now)).text();
 
-    expect(body).toContain('30 min old');
-    expect(body.match(/6h 00m old/g) ?? []).toHaveLength(2);
+    expect(body).toContain('30 min');
+    expect(body.match(/6h 00m/g) ?? []).toHaveLength(2);
     expect(body).toContain('Forecast issued 2026-08-20 17:30 UTC');
     expect(body).not.toContain('Forecast issued 2026-08-20 17:30:00 UTC');
     expect(body).toContain('Model run 2026-08-20 12:00 UTC');
@@ -648,9 +649,8 @@ describe('Worker route HTTP contract', () => {
     // `${formatAge(age.ageMs)} snapshot`, which was the Forecast age vital
     // relabelled as a warnings fact - two identical numbers, one of them
     // mislabelled. Warnings ride the forecast poll and have no age of their own.
-    expect(body).toContain('None active');
+    expect(body).toContain('—');
     expect(body).toContain('Polled with the forecast');
-    expect(body).toContain('Advisory');
     expect(body).not.toContain('MeteoAlarm current');
     expect(body).not.toMatch(/\d+\s*min snapshot/);
   });
@@ -680,13 +680,13 @@ describe('Worker route HTTP contract', () => {
       buildHealthPayload(entries, false, now, heartbeat),
     ).text();
     const horsensCard = body.match(
-      /<article class="location-module" data-location="horsens">[\s\S]*?<\/article>/,
+      /<tbody class="board-group[^"]*" data-location="horsens">[\s\S]*?<\/tbody>/,
     )?.[0] ?? '';
 
     expect(body).toContain('Cron heartbeat: live · 5m ago');
-    expect(horsensCard).toMatch(/<span>Last check<\/span>[\s\S]*?>20 min<\/strong>/);
+    expect(horsensCard).toContain('>45 min<');
+    expect(horsensCard).toContain('>20 min<');
     expect(horsensCard).toContain('release-candidate');
-    expect(horsensCard).toMatch(/<span>Forecast age<\/span>[\s\S]*?>45 min<\/strong>/);
   });
 
   it('keeps the unversioned bootstrap route as an exact canonical alias', async () => {
@@ -1045,8 +1045,8 @@ describe('Worker route HTTP contract', () => {
 
     const status = await worker.fetch(request('/status'), runtime.env, runtime.ctx);
     const statusBody = await status.text();
-    expect(statusBody).toContain('>initializing</strong>');
-    expect(statusBody).not.toContain('>INITIALIZING</strong>');
+    expect(statusBody).toMatch(/board-note[^>]*><td colspan="7">initializing/);
+    expect(statusBody).not.toContain('INITIALIZING');
     expect(statusBody).toContain('initialization attempt ·');
     expect(statusBody).toContain('provider busy · marine');
     expect(statusBody).not.toContain('private detail');
