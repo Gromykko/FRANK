@@ -1,4 +1,4 @@
-import type { SafetyRating } from '../features/safety/analyzeSafetyConditions';
+import type { DisplayStatus } from '../features/safety/analyzeSafetyConditions';
 
 // GERTY-style emoticon for the CRT status monitor (Moon, 2009), drawn as a
 // 16x16 pixel grid so the face sits on the same pixel raster as the screen's
@@ -23,7 +23,28 @@ const EYES = [
   '................',
 ];
 
-const MOUTHS: Record<SafetyRating, string[]> = {
+const MOUTHS: Record<DisplayStatus, string[]> = {
+  // No verdict: a shorter, flatter mouth than 'caution', and the shell paints
+  // it in muted grey rather than a safety colour. FRANK has no expression
+  // because it has been asked not to have an opinion.
+  none: [
+    '................',
+    '................',
+    '................',
+    '................',
+    '................',
+    '................',
+    '................',
+    '................',
+    '................',
+    '................',
+    '......xxxx......',
+    '................',
+    '................',
+    '................',
+    '................',
+    '................',
+  ],
   safe: [
     '................',
     '................',
@@ -91,7 +112,7 @@ function gridRects(grid: string[]) {
 // The device header renders the face inside a real circular CRT bezel, so the
 // housing is the circle; the viewBox crops to the eyes and mouth (x 4–11,
 // y 5–10 on the grid) so the face fills the screen.
-export default function GertyFace({ rating }: { rating: SafetyRating }) {
+export default function GertyFace({ rating }: { rating: DisplayStatus }) {
   return (
     <svg
       className="gerty-face"

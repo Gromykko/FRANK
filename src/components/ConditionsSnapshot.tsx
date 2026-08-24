@@ -7,7 +7,7 @@ import { formatWeekday, locationHourLabel } from '../utils/date';
 import { formatReading, formatLevelCm, NO_READING_TEXT } from '../utils/number';
 import type { HourlyData } from '../features/forecast/types';
 import { RATING_WORD } from '../features/safety/analyzeSafetyConditions';
-import type { SafetyRating, SafetyReason } from '../features/safety/analyzeSafetyConditions';
+import type { DisplayStatus, SafetyReason } from '../features/safety/analyzeSafetyConditions';
 
 // Centimetres, matching DMI and the meteogram's Level row. See formatLevelCm.
 const signed = (v: number) => formatLevelCm(v);
@@ -22,7 +22,7 @@ interface ConditionsSnapshotProps {
   sunrise: string;
   sunset: string;
   reasons: SafetyReason[];
-  rating: SafetyRating;
+  rating: DisplayStatus;
 }
 
 // The 5-second scan: what does it look like right now? Compact two-column

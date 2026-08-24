@@ -3,10 +3,12 @@ import GertyFace from './GertyFace';
 import LocationSwitcher from './LocationSwitcher';
 import { FlagDK, FlagUK } from './FlagIcons';
 import { useLang } from '../i18n';
-import type { SafetyRating } from '../features/safety/analyzeSafetyConditions';
+import type { DisplayStatus } from '../features/safety/analyzeSafetyConditions';
 
 interface StatusBarProps {
-  rating: SafetyRating;
+  // DisplayStatus: 'none' when every check is off, so the bar renders
+  // neutral instead of claiming a verdict.
+  rating: DisplayStatus;
   phrase: string;
   srTitle: string;
   srSubtitle: string;

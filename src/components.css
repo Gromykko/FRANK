@@ -87,6 +87,15 @@
   padding-bottom: 7px;
 }
 
+/* No verdict: every check is off, so the ribbon is a neutral marker rather
+   than a colour on the safe/caution/danger scale. Painting these amber - which
+   the old limits-off fallback did - claimed a caution nobody assessed. */
+.timeline-block.status-none {
+  --ribbon-color: var(--text-muted);
+  background: linear-gradient(var(--ribbon-color), var(--ribbon-color)) bottom / 100% 7px no-repeat;
+  opacity: 0.75;
+}
+
 .timeline-block.status-safe {
   --ribbon-color: var(--color-safe);
   background: linear-gradient(var(--ribbon-color), var(--ribbon-color)) bottom / 100% 7px no-repeat;
@@ -2594,6 +2603,8 @@ button.legend-toggle.is-on {
   min-width: 0;
 }
 
+/* The device face goes monochrome when there is no verdict to display. */
+.frank-device-shell.rating-none { --frank-phosphor: var(--text-muted); }
 .frank-device-shell.rating-safe { --frank-phosphor: var(--crt-safe); }
 .frank-device-shell.rating-caution { --frank-phosphor: var(--crt-caution); }
 .frank-device-shell.rating-danger { --frank-phosphor: var(--crt-danger); }
@@ -3574,6 +3585,12 @@ button.legend-toggle.is-on {
 /* Each bullet is coloured by that reason's OWN severity, so a caution-level
    note (e.g. the nighttime rule) shows amber even while the hour's overall
    verdict is danger. */
+/* A statement of fact, not a verdict: "Heavy rain" reported while FRANK is
+   judging nothing at all. */
+.snapshot-reasons li.reason-none::before {
+  background: var(--text-muted);
+}
+
 .snapshot-reasons li.reason-safe::before {
   background: var(--color-safe);
 }

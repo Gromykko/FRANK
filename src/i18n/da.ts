@@ -76,7 +76,7 @@ export const da: Record<string, string> = {
   'Forecast built {0}. Worker checked {1}.': 'Prognose bygget {0}. Server tjekket {1}.',
   'Data and version': 'Data og version',
   'Technical data note': 'Teknisk datanote',
-  'FRANK has no user accounts, sets no cookies, does not track your GPS, and includes no advertising or analytics trackers. Your chosen location, safety limits, and offline forecasts are stored strictly in this browser.':
+  'FRANK has no user accounts, sets no cookies, does not track your GPS, and includes no advertising or analytics trackers. Your chosen location, your limits, and offline forecasts are stored strictly in this browser.':
     'FRANK har ingen brugerkonti, sætter ingen cookies, sporer ikke din GPS og indeholder ingen reklamer eller analyseværktøjer. Dine valgte steder, sikkerhedsgrænser og offline-prognoser gemmes udelukkende lokalt i denne browser.',
   'Served via Cloudflare and GitHub Pages.': 'Serveres via Cloudflare og GitHub Pages.',
   'Privacy policies:': 'Privatlivspolitikker:',
@@ -510,8 +510,8 @@ export const da: Record<string, string> = {
   'Or choose another location:': 'Eller vælg et andet sted:',
   // ── TripProfilePanel ──────────────────────────────────────────────────────
   'Weather only': 'Kun vejr',
-  'Weather only — turn off all safety limits': 'Kun vejr — slå alle sikkerhedsgrænser fra',
-  'Weather only — no safety limits applied': 'Kun vejr — ingen sikkerhedsgrænser anvendes',
+  'Weather only — turn off all your limits': 'Kun vejr — slå alle dine grænser fra',
+  'Weather only — no limits applied': 'Kun vejr — ingen grænser anvendes',
   'switches every check off: FRANK shows the forecast and stops giving a verdict.':
     'slår alle tjek fra: FRANK viser prognosen og giver ikke længere en vurdering.',
   'Trip Profile': 'Turprofil',

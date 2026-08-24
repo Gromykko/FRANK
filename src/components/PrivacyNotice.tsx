@@ -44,7 +44,7 @@ export default function PrivacyNotice({ buildLabel, builtAt }: PrivacyNoticeProp
       <summary>{t('About FRANK — data, privacy and version')}</summary>
       <div className="privacy-copy">
         <p>
-          {t('FRANK has no user accounts, sets no cookies, does not track your GPS, and includes no advertising or analytics trackers. Your chosen location, safety limits, and offline forecasts are stored strictly in this browser.')}
+          {t('FRANK has no user accounts, sets no cookies, does not track your GPS, and includes no advertising or analytics trackers. Your chosen location, your limits, and offline forecasts are stored strictly in this browser.')}
         </p>
         <p>
           {t('Served via Cloudflare and GitHub Pages.')}

@@ -1,12 +1,11 @@
 import type { SafetySettings } from './presets';
-import type { SafetyAnalysis, SafetyRating, SafetyReason } from './analyzeSafetyConditions';
+import type { DisplayStatus, SafetyAnalysis, SafetyReason } from './analyzeSafetyConditions';
 
 export interface SafetyDisplay {
-  rating: SafetyRating;
+  // DisplayStatus, not SafetyRating: with every check off there is no verdict
+  // to show, and 'none' is how the matrix and the reasons render grey.
+  rating: DisplayStatus;
   reasons: SafetyReason[];
-  // True only when raw mode turns an otherwise-safe analysis into the generic
-  // "limits are off" caution. Weather hazards never take this fallback path.
-  usesLimitsOffFallback: boolean;
 }
 
 // Weather is deliberately absent: MET's condition severity is always assessed
@@ -32,30 +31,30 @@ export function getSafetyDisplay(
     return {
       rating: analysis.rating,
       reasons: analysis.reasons,
-      usesLimitsOffFallback: false,
     };
   }
 
   const limitsOffReason: SafetyReason = {
     text: limitsOffText,
-    severity: 'caution',
+    severity: 'none',
   };
 
-  if (analysis.rating === 'safe') {
-    return {
-      rating: 'caution',
-      reasons: [limitsOffReason],
-      usesLimitsOffFallback: true,
-    };
-  }
-
-  // Thunder, heavy precipitation, fog and other non-configurable weather
-  // hazards remain authoritative even when every personal limit is disabled.
-  // Keep their exact analyzer reasons, then state separately that personal
-  // thresholds are off so the user understands the scope of the verdict.
+  // With nothing to judge against, FRANK reports and does not advise. Every
+  // hour is 'none' rather than amber: the previous fallback rated a calm hour
+  // 'caution', so a mode that applies no limits still painted the whole matrix
+  // cautionary - neither a verdict nor useful information.
+  //
+  // Weather hazards remain VISIBLE but as observations. "Heavy rain" is a fact
+  // and belongs on a weather display; "probably one to skip" is advice, and
+  // advice is exactly what was switched off. Withholding the fact would be a
+  // different thing from withholding the judgement.
   return {
-    rating: analysis.rating,
-    reasons: [...analysis.reasons, limitsOffReason],
-    usesLimitsOffFallback: false,
+    rating: 'none',
+    reasons: [
+      ...(analysis.weatherFact
+        ? [{ text: analysis.weatherFact, severity: 'none' as const }]
+        : []),
+      limitsOffReason,
+    ],
   };
 }

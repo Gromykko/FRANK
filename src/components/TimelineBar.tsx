@@ -7,11 +7,13 @@ import { blockHourRange } from '../features/forecast/blockHours';
 import { useLang } from '../i18n';
 import type { HourlyData } from '../features/forecast/types';
 import { RATING_WORD } from '../features/safety/analyzeSafetyConditions';
-import type { SafetyRating } from '../features/safety/analyzeSafetyConditions';
+import type { DisplayStatus } from '../features/safety/analyzeSafetyConditions';
 
 interface TimelineBarProps {
   data: HourlyData[];
-  statuses: SafetyRating[];
+  // DisplayStatus: with every check off there is no verdict, and those
+  // hours render neutral rather than being painted amber.
+  statuses: DisplayStatus[];
   selectedIndex: number;
   onSelectIndex: (index: number) => void;
   startIndex: number;
@@ -21,7 +23,7 @@ interface DayGroup {
   label: string;
   // Keep the rating union rather than widening to string — it's what lets the
   // cell label reuse the app's shared RATING_WORD vocabulary.
-  hours: { data: HourlyData; actualIndex: number; status: SafetyRating }[];
+  hours: { data: HourlyData; actualIndex: number; status: DisplayStatus }[];
 }
 
 const HOUR_CELL_WIDTH = 44;

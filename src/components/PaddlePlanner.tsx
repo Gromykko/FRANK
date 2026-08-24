@@ -1,6 +1,6 @@
 import { Fragment, memo, useState, useMemo, useRef } from 'react';
 import { AlertTriangle, CalendarClock, Check, Share2, Sunset } from 'lucide-react';
-import type { SafetyRating } from '../features/safety/analyzeSafetyConditions';
+import type { DisplayStatus } from '../features/safety/analyzeSafetyConditions';
 import { sunsetCutoffFor } from '../features/planner/findLaunchWindows';
 import type { LaunchWindow } from '../features/planner/findLaunchWindows';
 import { blockHourRange } from '../features/forecast/blockHours';
@@ -14,7 +14,9 @@ import { formatDateMedium, formatDateShort, formatTime, formatWeekday, isSameLoc
 
 interface PaddlePlannerProps {
   data: HourlyData[];
-  statuses: SafetyRating[];
+  // DisplayStatus: with every check off there is no verdict, and those
+  // hours render neutral rather than being painted amber.
+  statuses: DisplayStatus[];
   // No personal limits are switched on, so the empty list below is a refusal to
   // recommend rather than a report about conditions.
   limitsOff: boolean;

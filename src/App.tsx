@@ -213,10 +213,13 @@ export default function App() {
   );
   const {
     rating: safetyDisplayRating,
-    usesLimitsOffFallback,
   } = safetyDisplay;
-  const safetyBadgeTitle = t(usesLimitsOffFallback ? 'Weather' : RATING_WORD[safetyDisplayRating]);
-  const safetyBadgeSubtitle = t(usesLimitsOffFallback
+  // Narrow on the rating rather than the flag: 'none' IS the no-verdict state,
+  // so this is both the honest source of truth and what lets TypeScript prove
+  // the other branches only ever see a real verdict.
+  const noVerdict = safetyDisplayRating === 'none';
+  const safetyBadgeTitle = t(noVerdict ? 'Weather' : RATING_WORD[safetyDisplayRating]);
+  const safetyBadgeSubtitle = t(noVerdict
     ? 'Limits are off — raw forecast only'
     : safetyDisplayRating === 'safe'
       ? 'Have fun out there'
@@ -237,7 +240,7 @@ export default function App() {
   // definite form ("Fjorden"/"Bugten").
   const isBugt = CURRENT_LOCATION.areaName.toLowerCase().includes('bugt');
   const waterWord = lang === 'da' ? (isBugt ? 'Bugten' : 'Fjorden') : (isBugt ? 'bay' : 'fjord');
-  const frankPhrase = usesLimitsOffFallback
+  const frankPhrase = noVerdict
     ? t('Limits are off. You are the captain now')
     : t(getFrankPhrase(safetyDisplayRating, selectedDateStr), waterWord);
 

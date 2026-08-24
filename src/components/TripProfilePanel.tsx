@@ -126,7 +126,7 @@ export default function TripProfilePanel({ tripMode, onTripModeChange }: TripPro
         aria-pressed={weatherOnly}
         onClick={() => onTripModeChange(weatherOnly ? 'default' : 'weather')}
       >
-        {t(weatherOnly ? 'Weather only — no safety limits applied' : 'Weather only — turn off all safety limits')}
+        {t(weatherOnly ? 'Weather only — no limits applied' : 'Weather only — turn off all your limits')}
       </button>
 
       {/* BELOW the mode bank, and in normal flow rather than floating over it.

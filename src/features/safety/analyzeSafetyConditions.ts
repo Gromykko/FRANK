@@ -7,14 +7,23 @@ import type { SunTimes } from './blockDaylight';
 
 export type SafetyRating = 'safe' | 'caution' | 'danger';
 
+// A verdict is always one of the three above. A DISPLAY can additionally show
+// no verdict at all: with every check switched off FRANK reports the weather
+// and judges nothing, and painting that state amber would be a judgement.
+export type DisplayStatus = SafetyRating | 'none';
+
 // The one place a rating becomes a word for the user. Shared so the header and
 // the timeline's screen-reader labels can't drift apart — they used to, and a
 // screen-reader user arrowing the timeline heard "DANGER" while the status bar
 // said "Rough": two vocabularies for one verdict.
-export const RATING_WORD: Record<SafetyRating, string> = {
+export const RATING_WORD: Record<DisplayStatus, string> = {
   safe: 'Good to go',
   caution: 'Take care',
   danger: 'Rough',
+  // Not a verdict word. Screen readers announce this where the other three
+  // would be, so it has to say that no judgement was made rather than imply a
+  // mild one.
+  none: 'No verdict',
 };
 
 // Below this sustained wind speed, wind-against-water-level chop is negligible,
@@ -88,12 +97,19 @@ const WEATHER_CODE_SEVERITY: Record<number, SafetyRating> = {
 // colour them independently from the hour's overall rating.
 export interface SafetyReason {
   text: string;
-  severity: SafetyRating;
+  // 'none' is a statement of fact carrying no verdict - used only where the
+  // app has stopped judging.
+  severity: DisplayStatus;
 }
 
 export interface SafetyAnalysis {
   rating: SafetyRating;
   reasons: SafetyReason[];
+  // The bare hazard description, without the advice clause that normally
+  // follows it. Weather-only mode reports what the sky is doing but must not
+  // say what to do about it, and "Heavy rain" is a fact while "probably one to
+  // skip" is a verdict. Only set when a weather hazard actually fired.
+  weatherFact?: string;
 }
 
 export interface SafetyAnalysisContext {
@@ -387,12 +403,15 @@ export function analyzeSafetyConditions(
   const weatherSeverity = data.symbolCode
     ? severityFromMetSymbol(data.symbolCode)
     : WEATHER_CODE_SEVERITY[data.weatherCode] ?? 'safe';
+  let weatherFact: string | undefined;
   const weatherDesc = translate(getWeatherDescription(data.weatherCode));
   if (weatherSeverity === 'danger') {
     rating = 'danger';
+    weatherFact = weatherDesc;
     addReason('danger', translate('{0} — rough out there, probably one to skip.', weatherDesc));
   } else if (weatherSeverity === 'caution') {
     if (rating !== 'danger') rating = 'caution';
+    weatherFact = weatherDesc;
     addReason('caution', translate('{0} — worth keeping an eye on.', weatherDesc));
   }
 
@@ -485,5 +504,5 @@ export function analyzeSafetyConditions(
         ));
   }
 
-  return { rating, reasons };
+  return { rating, reasons, ...(weatherFact ? { weatherFact } : {}) };
 }
