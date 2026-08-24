@@ -71,14 +71,15 @@ export const da: Record<string, string> = {
   'Weather data by MET Norway': 'Vejrdata fra MET Norway',
   ', waves & water by DMI ({0}) for {1}.': ', bølger & vandstand fra DMI ({0}) for {1}.',
   'Warnings by': 'Varsler fra',
+  'Time delays between this website and the http://www.meteoalarm.org website are possible. For the most up-to-date awareness information as published by the participating National Meteorological and Hydrological Services, please refer to http://www.meteoalarm.org.':
+    'Der kan forekomme tidsforsinkelser mellem denne hjemmeside og hjemmesiden http://www.meteoalarm.org. For de senest opdaterede varslingsoplysninger, som de deltagende nationale meteorologiske og hydrologiske tjenester har offentliggjort, henvises der til http://www.meteoalarm.org.',
   'Forecast built {0}. Worker checked {1}.': 'Prognose bygget {0}. Server tjekket {1}.',
   'Data and version': 'Data og version',
   'Technical data note': 'Teknisk datanote',
   'FRANK has no user accounts, sets no cookies, does not track your GPS, and includes no advertising or analytics trackers. Your chosen location, safety limits, and offline forecasts are stored strictly in this browser.':
     'FRANK har ingen brugerkonti, sætter ingen cookies, sporer ikke din GPS og indeholder ingen reklamer eller analyseværktøjer. Dine valgte steder, sikkerhedsgrænser og offline-prognoser gemmes udelukkende lokalt i denne browser.',
-  'Forecast data is provided by MET Norway, DMI, and MeteoAlarm, served securely via Cloudflare and GitHub Pages.':
-    'Vejr- og havdata leveres af MET Norway, DMI og MeteoAlarm og serveres sikkert via Cloudflare og GitHub Pages.',
-  'Technical sources:': 'Tekniske kilder:',
+  'Served via Cloudflare and GitHub Pages.': 'Serveres via Cloudflare og GitHub Pages.',
+  'Privacy policies:': 'Privatlivspolitikker:',
   'logs': 'logs',
   'Delete saved choices and forecasts': 'Slet gemte valg og prognoser',
   'Tap again to delete and reload': 'Tryk igen for at slette og genindlæse',
@@ -484,6 +485,7 @@ export const da: Record<string, string> = {
   'danger below {0}°': 'fare under {0}°',
 
   // ── WarningStripe (+ planner warning badge) ───────────────────────────────
+  'issued {0}': 'udstedt {0}',
   // "varsel"/"vejrvarsel" are neuter (et varsel), so the colour takes -t —
   // DMI itself writes "Gult varsel". These keys are only ever composed with
   // those two nouns, so the neuter form is correct at every call site.

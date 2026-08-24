@@ -154,6 +154,27 @@ describe('forecast payload trust boundary', () => {
     expect(isValidForecastPayload(mismatchedLegacyStamp, CURRENT_LOCATION)).toBe(false);
   });
 
+  it('validates optional warning sent timestamps and rejects malformed values', () => {
+    const withSent = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
+    withSent.warnings = [{
+      event: 'Wind',
+      colour: 'orange',
+      sent: '2026-08-12T05:30:00Z',
+      effective: '2026-08-12T06:00:00Z',
+      expires: '2026-08-12T18:00:00Z',
+      url: 'https://www.dmi.dk/varsler',
+    }];
+    expect(isValidForecastPayload(withSent, CURRENT_LOCATION)).toBe(true);
+
+    const withoutSent = structuredClone(withSent);
+    delete withoutSent.warnings![0].sent;
+    expect(isValidForecastPayload(withoutSent, CURRENT_LOCATION)).toBe(true);
+
+    const malformedSent = structuredClone(withSent);
+    malformedSent.warnings![0].sent = 'not-a-timestamp';
+    expect(isValidForecastPayload(malformedSent, CURRENT_LOCATION)).toBe(false);
+  });
+
   it('accepts cache health with or without marine provenance and rejects malformed references', () => {
     const withoutProvenance = weatherData([
       hour(new Date(NOW + 60 * 60 * 1000).toISOString()),

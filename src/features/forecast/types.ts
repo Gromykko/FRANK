@@ -58,6 +58,9 @@ export interface WeatherWarning {
   severity?: string;
   // Human region name, e.g. "Østjylland".
   areaDesc?: string;
+  // CAP time of issue. Optional so a browser can still read a payload cached
+  // before model 46; the UI falls back to effective for that older shape.
+  sent?: string;
   // When the warning is in effect / when the hazard begins / when it lapses.
   effective: string;
   onset?: string;

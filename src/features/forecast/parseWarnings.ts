@@ -96,8 +96,9 @@ function splitEvent(
 
 // Parse the MeteoAlarm Denmark Atom feed to the active/upcoming warnings for one
 // EMMA region. Pure string work (no DOMParser — this runs in the Worker too).
-// Already-expired warnings are dropped; the rest keep their effective/expires
-// times so the client can re-filter as `now` moves without a rebuild.
+// Already-expired warnings are dropped; the rest keep their CAP issue,
+// effective and expiry times so the client can disclose when a warning was
+// issued and re-filter as `now` moves without a rebuild.
 export function parseMeteoalarmFeed(
   xml: string,
   emmaId: string,
@@ -131,6 +132,10 @@ export function parseMeteoalarmFeed(
     const severity = pick(entry, 'severity');
     const { colour, label } = splitEvent(pick(entry, 'event'), severity);
     const effective = pick(entry, 'effective') ?? expires!;
+    // The Denmark Atom feed exposes CAP `sent` as the issue time. Retain an
+    // effective fallback for malformed/legacy entries and cached payloads from
+    // before the field was carried through the forecast contract.
+    const sent = pick(entry, 'sent') ?? effective;
     // The entry's second link is the per-warning CAP detail (public, no token)
     // whose "Gældende for:" text names the covered kommunes — the coverage
     // check below reads it.
@@ -141,6 +146,7 @@ export function parseMeteoalarmFeed(
       colour,
       severity,
       areaDesc: pick(entry, 'areaDesc'),
+      sent,
       effective,
       onset: pick(entry, 'onset'),
       expires: expires!,

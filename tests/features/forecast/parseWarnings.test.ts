@@ -28,6 +28,8 @@ function entry(fields: {
   emmaId: string;
   event: string;
   severity: string;
+  sent?: string;
+  omitSent?: boolean;
   effective: string;
   onset?: string;
   expires: string;
@@ -43,6 +45,7 @@ function entry(fields: {
     <cap:areaDesc>${fields.areaDesc ?? 'Østjylland'}</cap:areaDesc>
     <cap:event>${fields.event}</cap:event>
     <cap:expires>${fields.expires}</cap:expires>
+    ${fields.omitSent ? '' : `<cap:sent>${fields.sent ?? fields.effective}</cap:sent>`}
     <cap:effective>${fields.effective}</cap:effective>
     ${fields.onset ? `<cap:onset>${fields.onset}</cap:onset>` : ''}
     <cap:severity>${fields.severity}</cap:severity>
@@ -60,7 +63,7 @@ describe('parseMeteoalarmFeed', () => {
   it('keeps only the region, drops expired, sorts most-severe first', () => {
     const xml = feed([
       entry({ emmaId: 'DK004', event: 'yellow Rain', severity: 'Moderate', effective: '2026-07-12T06:00:00+00:00', expires: '2026-07-13T16:00:00+00:00' }),
-      entry({ emmaId: 'DK004', event: 'orange Wind', severity: 'Severe', effective: '2026-07-12T06:00:00+00:00', onset: '2026-07-12T12:00:00+00:00', expires: '2026-07-12T22:00:00+00:00' }),
+      entry({ emmaId: 'DK004', event: 'orange Wind', severity: 'Severe', sent: '2026-07-12T05:30:00+00:00', effective: '2026-07-12T06:00:00+00:00', onset: '2026-07-12T12:00:00+00:00', expires: '2026-07-12T22:00:00+00:00' }),
       entry({ emmaId: 'DK001', event: 'red Thunderstorm', severity: 'Extreme', effective: '2026-07-12T06:00:00+00:00', expires: '2026-07-14T00:00:00+00:00' }),
       entry({ emmaId: 'DK004', event: 'yellow Rain', severity: 'Moderate', effective: '2026-07-10T00:00:00+00:00', expires: '2026-07-11T00:00:00+00:00' }),
     ]);
@@ -71,7 +74,20 @@ describe('parseMeteoalarmFeed', () => {
     expect(result[0].colour).toBe('orange');
     expect(result[1].colour).toBe('yellow');
     expect(result[0].areaDesc).toBe('Østjylland');
+    expect(result[0].sent).toBe('2026-07-12T05:30:00+00:00');
     expect(result[0].onset).toBe('2026-07-12T12:00:00+00:00');
+  });
+
+  it('uses CAP sent as the issue time and falls back to effective when sent is absent', () => {
+    const withSent = parseMeteoalarmFeed(feed([
+      entry({ emmaId: 'DK004', event: 'yellow Rain', severity: 'Moderate', sent: '2026-07-12T05:15:00+00:00', effective: '2026-07-12T06:00:00+00:00', expires: '2026-07-13T16:00:00+00:00' }),
+    ]), 'DK004', NOW);
+    const withoutSent = parseMeteoalarmFeed(feed([
+      entry({ emmaId: 'DK004', event: 'yellow Rain', severity: 'Moderate', omitSent: true, effective: '2026-07-12T06:00:00+00:00', expires: '2026-07-13T16:00:00+00:00' }),
+    ]), 'DK004', NOW);
+
+    expect(withSent[0].sent).toBe('2026-07-12T05:15:00+00:00');
+    expect(withoutSent[0].sent).toBe('2026-07-12T06:00:00+00:00');
   });
 
   it('collapses re-issued duplicates of the same hazard', () => {

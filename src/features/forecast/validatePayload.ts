@@ -206,6 +206,7 @@ function hasValidWarnings(value: unknown): boolean {
     if (!isRecord(warning)) return false;
     if (!isNonEmptyString(warning.event)) return false;
     if (!['yellow', 'orange', 'red'].includes(warning.colour as string)) return false;
+    if (warning.sent !== undefined && timestampMs(warning.sent) === null) return false;
     if (timestampMs(warning.effective) === null || timestampMs(warning.expires) === null) return false;
     if (warning.onset !== undefined && timestampMs(warning.onset) === null) return false;
     if (!isHttpsUrl(warning.url)) return false;

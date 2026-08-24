@@ -31,15 +31,16 @@ afterEach(async () => {
 });
 
 describe('PrivacyNotice', () => {
-  it('plainly separates browser, GitHub, Cloudflare, and weather-provider processing', async () => {
+  it('separates browser storage from hosting and provider privacy links', async () => {
     await act(async () => {
       root.render(<LanguageProvider><PrivacyNotice /></LanguageProvider>);
     });
 
     expect(host.querySelector('summary')?.textContent).toBe('About FRANK — data, privacy and version');
     expect(host.textContent).toContain('no user accounts, sets no cookies, does not track your GPS');
-    expect(host.textContent).toContain('Cloudflare and GitHub Pages');
-    expect(host.textContent).toContain('MET Norway, DMI, and MeteoAlarm');
+    expect(host.textContent).toContain('Served via Cloudflare and GitHub Pages.');
+    expect(host.textContent).toContain('Privacy policies:');
+    expect(host.textContent).not.toContain('Forecast data is provided by MET Norway, DMI, and MeteoAlarm');
   });
 
   it('links only to relevant platform technical and privacy sources', async () => {

@@ -47,10 +47,10 @@ export default function PrivacyNotice({ buildLabel, builtAt }: PrivacyNoticeProp
           {t('FRANK has no user accounts, sets no cookies, does not track your GPS, and includes no advertising or analytics trackers. Your chosen location, safety limits, and offline forecasts are stored strictly in this browser.')}
         </p>
         <p>
-          {t('Forecast data is provided by MET Norway, DMI, and MeteoAlarm, served securely via Cloudflare and GitHub Pages.')}
+          {t('Served via Cloudflare and GitHub Pages.')}
         </p>
         <p className="privacy-sources">
-          {t('Technical sources:')}{' '}
+          {t('Privacy policies:')}{' '}
           <a href={TECHNICAL_SOURCES.githubPages} target="_blank" rel="noreferrer">GitHub Pages</a>
           {' · '}
           <a href={TECHNICAL_SOURCES.cloudflareLogs} target="_blank" rel="noreferrer">Cloudflare {t('logs')}</a>

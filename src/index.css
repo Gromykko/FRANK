@@ -674,6 +674,10 @@ h1, h2, h3, h4, h5, h6 {
   line-height: 1.6;
 }
 
+.meteoalarm-delay-disclaimer {
+  margin-top: 8px;
+}
+
 .footer-build {
   display: block;
   margin-top: 4px;
@@ -744,10 +748,6 @@ h1, h2, h3, h4, h5, h6 {
 .footer-details summary:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
-}
-
-.footer-technical {
-  margin-top: 6px;
 }
 
 .privacy-details {

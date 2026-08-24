@@ -26,6 +26,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import ForecastErrorScreen from './components/ForecastErrorScreen';
 import ForecastInitializingScreen from './components/ForecastInitializingScreen';
 import PrivacyNotice from './components/PrivacyNotice';
+import ForecastAttribution from './components/ForecastAttribution';
 import { getFrankPhrase } from './features/safety/frankPhrases';
 import {
   getSafetyDisplay,
@@ -451,9 +452,11 @@ export default function App() {
             <p className="footer-disclaimer">
               {t('Advisory only — FRANK does not replace official warnings, club rules, or your own look at the water. You are responsible for the decision to launch.')}
             </p>
-            <p className="footer-text">
-              {t('Weather data by MET Norway')} (<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">CC BY 4.0</a>){t(', waves & water by DMI ({0}) for {1}.', dmiModels, weatherData.sources.location?.areaName ?? CURRENT_LOCATION.areaName)}{weatherData.warnings?.length ? <> {t('Warnings by')} <a href="https://meteoalarm.org" target="_blank" rel="noreferrer">MeteoAlarm</a>/DMI (CC BY 4.0).</> : ''}
-            </p>
+            <ForecastAttribution
+              dmiModels={dmiModels}
+              areaName={weatherData.sources.location?.areaName ?? CURRENT_LOCATION.areaName}
+              hasWarnings={Boolean(weatherData.warnings?.length)}
+            />
             <PrivacyNotice
               buildLabel={appBuildLabel}
               builtAt={formatDateTime(weatherData.sources.fetchedAt)}

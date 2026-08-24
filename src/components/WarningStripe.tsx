@@ -23,9 +23,10 @@ function untilLabel(t: Translate, expires: string): string {
     : t('until {0} {1}', formatDateShort(expires), formatTime(expires));
 }
 
-// DMI issues warnings AHEAD of the hazard: `effective` is when the warning was
-// published, `onset` is when the weather actually starts. The stripe read only
-// `expires`, so a warning published at 06:00 for weather starting at 12:00
+// DMI issues warnings AHEAD of the hazard: CAP `sent` is the issue time,
+// `effective` is when the message takes effect, and `onset` is when the weather
+// actually starts. The stripe read only `expires`, so a warning issued at 06:00
+// for weather starting at 12:00
 // showed at 08:00 as "Yellow warning · Østjylland · until 18:00" — indistinguishable
 // from one already in force. `onset` was parsed and stored all along and only
 // the planner used it. Upcoming warnings still show (that is useful); they just
@@ -85,8 +86,9 @@ export default function WarningStripe({ warnings }: WarningStripeProps) {
       : allSameLevel
         ? t('{0} {1}', count, t(`${LEVEL_WORD[top.colour]} weather warnings`))
         : t('{0} weather warning and {1} more', level, count - 1);
+  const timing = `${periodLabel(t, top, now)} · ${t('issued {0}', formatTime(top.sent ?? top.effective))}`;
   const ariaLabel =
-    t('{0} for the {1}, {2}.', ariaCount, region, periodLabel(t, top, now)) +
+    t('{0} for the {1}, {2}.', ariaCount, region, timing) +
     ' ' + t('Opens DMI warnings in a new tab for the full details.');
 
   return (
@@ -100,7 +102,7 @@ export default function WarningStripe({ warnings }: WarningStripeProps) {
       <AlertTriangle size={18} className="warning-stripe-icon" aria-hidden="true" />
       <span className="warning-stripe-body">
         <span className="warning-stripe-title">{headline}</span>
-        <span className="warning-stripe-meta">{periodLabel(t, top, now)}</span>
+        <span className="warning-stripe-meta">{timing}</span>
       </span>
       <span className="warning-stripe-source" aria-hidden="true">DMI</span>
       <ChevronRight size={18} className="warning-stripe-chevron" aria-hidden="true" />
