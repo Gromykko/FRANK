@@ -89,10 +89,10 @@ describe('raw-mode safety display', () => {
     });
   });
 
-  it('appends source-age disclosure without changing a byte of the rating or verdict reasons', () => {
+  it('appends source-freshness disclosure without changing a byte of the rating or verdict reasons', () => {
     const analysis = analyzeSafetyConditions(baseData, DEFAULT_SETTINGS);
     const withoutDisclosure = getSafetyDisplay(analysis, true, LIMITS_OFF);
-    const disclosure = 'Wind updated 5 min ago · water level from 11 h ago';
+    const disclosure = "Wind updated 5 min ago · water level couldn't be refreshed";
     const withDisclosure = withSafetyInfoDisclosure(withoutDisclosure, disclosure);
 
     expect(withDisclosure.rating).toBe(withoutDisclosure.rating);

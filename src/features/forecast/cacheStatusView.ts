@@ -239,10 +239,10 @@ function formatRelativeAge(ms: number, translate: Translate): string {
   return translate('{0} d', Math.round(hours / 24));
 }
 
-function parseDmiRunIdMs(value: string | undefined): number | null {
-  if (typeof value !== 'string') return null;
+function hasUsableDmiRunProvenance(value: string | undefined, nowMs: number): boolean {
+  if (typeof value !== 'string') return false;
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(value);
-  if (!match) return null;
+  if (!match) return false;
   const [, year, month, day, hour, minute, second] = match;
   const parsed = Date.UTC(
     Number(year),
@@ -252,16 +252,14 @@ function parseDmiRunIdMs(value: string | undefined): number | null {
     Number(minute),
     Number(second),
   );
-  if (!Number.isFinite(parsed)) return null;
+  if (!Number.isFinite(parsed) || parsed > nowMs) return false;
   const roundTrip = new Date(parsed);
   return roundTrip.getUTCFullYear() === Number(year)
     && roundTrip.getUTCMonth() === Number(month) - 1
     && roundTrip.getUTCDate() === Number(day)
     && roundTrip.getUTCHours() === Number(hour)
     && roundTrip.getUTCMinutes() === Number(minute)
-    && roundTrip.getUTCSeconds() === Number(second)
-    ? parsed
-    : null;
+    && roundTrip.getUTCSeconds() === Number(second);
 }
 
 function sourceAgeMs(timestampMs: number | null, nowMs: number): number | null {
@@ -281,56 +279,52 @@ function degradedFreshnessDetail(
   const wavesDegraded = degraded.has('waves');
   if (!weatherDegraded && !waterDegraded && !wavesDegraded) return null;
 
+  // MET's HTTP Last-Modified is a publication clock, so this age means time
+  // since MET published the response rather than time since its model run.
   const weatherAgeMs = sourceAgeMs(
     cacheHealth.weatherLastModified === undefined
       ? null
       : Date.parse(cacheHealth.weatherLastModified),
     nowMs,
   );
-  const waterAgeMs = sourceAgeMs(parseDmiRunIdMs(cacheHealth.marineInstances?.water?.id), nowMs);
-  const wavesAgeMs = sourceAgeMs(parseDmiRunIdMs(cacheHealth.marineInstances?.waves?.id), nowMs);
+  // Weather-degraded branches keep this validity gate even when they do not
+  // print the age, so missing or unparseable provenance retains the established
+  // generic fallback instead of gaining a more specific claim.
+  // Marine provenance is only a trust gate for the more specific disclosure.
+  // Its schedule is not meaningful as a lay-reader age, so no timestamp or
+  // duration derived from these IDs reaches presentation.
+  const waterProvenanceUsable = hasUsableDmiRunProvenance(
+    cacheHealth.marineInstances?.water?.id,
+    nowMs,
+  );
+  const wavesProvenanceUsable = hasUsableDmiRunProvenance(
+    cacheHealth.marineInstances?.waves?.id,
+    nowMs,
+  );
   const marineDegradedCount = Number(waterDegraded) + Number(wavesDegraded);
   const marineLabel = translate(marineDegradedCount === 2
     ? 'marine data'
     : waterDegraded
       ? 'water level'
       : 'waves');
-  const degradedMarineAges = [
-    ...(waterDegraded ? [waterAgeMs] : []),
-    ...(wavesDegraded ? [wavesAgeMs] : []),
-  ];
-  const knownDegradedMarineAges = degradedMarineAges
-    .filter((age): age is number => age !== null);
-  if (knownDegradedMarineAges.length !== degradedMarineAges.length) return null;
-  const oldestDegradedMarineAge = knownDegradedMarineAges.length > 0
-    ? Math.max(...knownDegradedMarineAges)
-    : null;
+  const degradedMarineProvenanceUsable = (!waterDegraded || waterProvenanceUsable)
+    && (!wavesDegraded || wavesProvenanceUsable);
 
   if (weatherDegraded && marineDegradedCount > 0) {
-    if (weatherAgeMs === null || oldestDegradedMarineAge === null) return null;
-    return translate(
-      'Wind from {0} ago · {1} from {2} ago',
-      formatRelativeAge(weatherAgeMs, translate),
-      marineLabel,
-      formatRelativeAge(oldestDegradedMarineAge, translate),
-    );
+    if (weatherAgeMs === null || !degradedMarineProvenanceUsable) return null;
+    return translate("Wind and {0} couldn't be refreshed", marineLabel);
   }
 
   if (weatherDegraded) {
-    if (weatherAgeMs === null || waterAgeMs === null || wavesAgeMs === null) return null;
-    return translate(
-      'Marine data updated {0} ago · wind from {1} ago',
-      formatRelativeAge(Math.max(waterAgeMs, wavesAgeMs), translate),
-      formatRelativeAge(weatherAgeMs, translate),
-    );
+    if (weatherAgeMs === null || !waterProvenanceUsable || !wavesProvenanceUsable) return null;
+    return translate("Marine data is current · wind couldn't be refreshed");
   }
 
-  if (weatherAgeMs === null || oldestDegradedMarineAge === null) return null;
+  if (weatherAgeMs === null || !degradedMarineProvenanceUsable) return null;
   return translate(
-    'Wind updated {0} ago · {1} from {2} ago',
+    "Wind updated {0} ago · {1} couldn't be refreshed",
     formatRelativeAge(weatherAgeMs, translate),
     marineLabel,
-    formatRelativeAge(oldestDegradedMarineAge, translate),
   );
 }
 

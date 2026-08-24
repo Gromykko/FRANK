@@ -411,27 +411,27 @@ describe('main-page forecast freshness presentation', () => {
 });
 
 describe('per-source freshness disclosure', () => {
-  const NOW = Date.parse('2026-08-23T23:00:00.000Z');
+  const NOW = Date.parse('2026-08-24T09:00:00.000Z');
   const translateDa = (key: string, ...args: Array<string | number>) =>
     interpolate(da[key] ?? key, ...args);
   const sources = (
     degradedSources: string[],
     marineInstances?: NonNullable<Health['marineInstances']>,
-    weatherLastModified = '2026-08-23T22:55:00.000Z',
+    weatherLastModified: string | null = '2026-08-24T08:55:00.000Z',
   ) => ({
-    fetchedAt: '2026-08-23T22:58:00.000Z',
+    fetchedAt: '2026-08-24T08:58:00.000Z',
     cacheHealth: {
       status: 'current' as const,
-      lastAttemptAt: '2026-08-23T22:59:00.000Z',
+      lastAttemptAt: '2026-08-24T08:59:00.000Z',
       degradedSources,
-      weatherLastModified,
+      ...(weatherLastModified !== null ? { weatherLastModified } : {}),
       ...(marineInstances ? { marineInstances } : {}),
     },
   }) as Parameters<typeof deriveCacheStatus>[0]['sources'];
   const derive = (
     degradedSources: string[],
     marineInstances?: NonNullable<Health['marineInstances']>,
-    weatherLastModified?: string,
+    weatherLastModified?: string | null,
     translate = interpolate,
   ) => deriveCacheStatus({
     sources: sources(degradedSources, marineInstances, weatherLastModified),
@@ -442,47 +442,84 @@ describe('per-source freshness disclosure', () => {
     checkState: 'succeeded',
   }, translate);
 
-  it('names an eleven-hour-old water run beside the current wind age', () => {
-    const result = derive(['water'], {
-      water: { collection: 'dkss_idw', id: '2026-08-23T120000Z' },
-      waves: { collection: 'wam_nsb', id: '2026-08-23T220000Z' },
-    });
+  const marineInstances = {
+    water: { collection: 'dkss_idw', id: '2026-08-23T220000Z' },
+    waves: { collection: 'wam_nsb', id: '2026-08-24T080000Z' },
+  };
+  const degradedCases = [
+    {
+      name: 'water only',
+      degradedSources: ['water'],
+      english: "Wind updated 5 min ago · water level couldn't be refreshed",
+      danish: 'Vind opdateret for 5 min. siden · vandstand kunne ikke opdateres',
+    },
+    {
+      name: 'waves only',
+      degradedSources: ['waves'],
+      english: "Wind updated 5 min ago · waves couldn't be refreshed",
+      danish: 'Vind opdateret for 5 min. siden · bølger kunne ikke opdateres',
+    },
+    {
+      name: 'water and waves',
+      degradedSources: ['water', 'waves'],
+      english: "Wind updated 5 min ago · marine data couldn't be refreshed",
+      danish: 'Vind opdateret for 5 min. siden · havdata kunne ikke opdateres',
+    },
+    {
+      name: 'weather only',
+      degradedSources: ['weather'],
+      english: "Marine data is current · wind couldn't be refreshed",
+      danish: 'Havdata er aktuelle · vindprognosen kunne ikke opdateres',
+    },
+    {
+      name: 'weather and water',
+      degradedSources: ['weather', 'water'],
+      english: "Wind and water level couldn't be refreshed",
+      danish: 'Hverken vind eller vandstand kunne opdateres',
+    },
+    {
+      name: 'weather and waves',
+      degradedSources: ['weather', 'waves'],
+      english: "Wind and waves couldn't be refreshed",
+      danish: 'Hverken vind eller bølger kunne opdateres',
+    },
+    {
+      name: 'weather, water, and waves',
+      degradedSources: ['weather', 'water', 'waves'],
+      english: "Wind and marine data couldn't be refreshed",
+      danish: 'Hverken vind eller havdata kunne opdateres',
+    },
+  ];
 
-    expect(result.view.detail).toBe(
-      'Wind updated 5 min ago · water level from 11 h ago',
-    );
-    expect(result.view.degradedSourceDisclosure).toBe(result.view.detail);
-    expect(result.view.detail.split(' · ')).toHaveLength(2);
-    expect(result.view.tone).toBe('watch');
+  it.each(degradedCases)('renders qualitative freshness for $name', ({
+    degradedSources,
+    english,
+    danish,
+  }) => {
+    const englishResult = derive(degradedSources, marineInstances);
+    const danishResult = derive(degradedSources, marineInstances, undefined, translateDa);
+
+    expect(englishResult.view.detail).toBe(english);
+    expect(danishResult.view.detail).toBe(danish);
+    expect(englishResult.view.degradedSourceDisclosure).toBe(englishResult.view.detail);
+    expect(englishResult.view.detail.split(' · ').length).toBeLessThanOrEqual(2);
+    expect(englishResult.view.tone).toBe('watch');
   });
 
-  it('collapses two stale marine sources to the older run in one clause', () => {
-    const result = derive(['water', 'waves'], {
-      water: { collection: 'dkss_idw', id: '2026-08-23T180000Z' },
-      waves: { collection: 'wam_nsb', id: '2026-08-23T120000Z' },
-    });
+  it('never renders a duration or run clock beside marine data', () => {
+    const details = degradedCases.flatMap(({ degradedSources }) => [
+      derive(degradedSources, marineInstances).view.detail,
+      derive(degradedSources, marineInstances, undefined, translateDa).view.detail,
+    ]);
+    const marineLabel = /water level|waves|marine data|vandstand|bølger|havdata/iu;
+    const marineDuration = /\b\d+\s*(?:min|h|t|d)\b/iu;
 
-    expect(result.view.detail).toBe(
-      'Wind updated 5 min ago · marine data from 11 h ago',
-    );
-    expect(result.view.detail).not.toMatch(/water level|waves/);
-    expect(result.view.detail.split(' · ')).toHaveLength(2);
-  });
-
-  it('inverts the comparison when weather is the retained source', () => {
-    const result = derive(
-      ['weather'],
-      {
-        water: { collection: 'dkss_idw', id: '2026-08-23T220000Z' },
-        waves: { collection: 'wam_nsb', id: '2026-08-23T210000Z' },
-      },
-      '2026-08-23T12:00:00.000Z',
-    );
-
-    expect(result.view.detail).toBe(
-      'Marine data updated 2 h ago · wind from 11 h ago',
-    );
-    expect(result.view.detail.split(' · ')).toHaveLength(2);
+    for (const detail of details) {
+      expect(detail).not.toMatch(/\b\d{1,2}[:.]\d{2}\b|\brun\b|kørsl/iu);
+      const marineClauses = detail.split(' · ').filter((clause) => marineLabel.test(clause));
+      expect(marineClauses.length).toBeGreaterThan(0);
+      for (const clause of marineClauses) expect(clause).not.toMatch(marineDuration);
+    }
   });
 
   it('falls back honestly when marine provenance is absent, invalid, or future', () => {
@@ -491,7 +528,7 @@ describe('per-source freshness disclosure', () => {
       water: { collection: 'dkss_idw', id: 'not-a-run' },
     });
     const future = derive(['water'], {
-      water: { collection: 'dkss_idw', id: '2026-08-24T000000Z' },
+      water: { collection: 'dkss_idw', id: '2026-08-24T100000Z' },
     });
 
     for (const result of [absent, invalid, future]) {
@@ -501,30 +538,55 @@ describe('per-source freshness disclosure', () => {
       expect(result.view.degradedSourceDisclosure).toBe(result.view.detail);
       expect(result.view.detail).not.toMatch(/NaN|0 min/);
     }
-  });
 
-  it('uses proper Danish relative-age wording', () => {
-    const result = derive(['water'], {
-      water: { collection: 'dkss_idw', id: '2026-08-23T120000Z' },
-      waves: { collection: 'wam_nsb', id: '2026-08-23T220000Z' },
-    }, undefined, translateDa);
+    const missingWeather = derive(['weather'], marineInstances, null);
+    const missingMarineForCurrentClaim = derive(['weather'], {
+      water: marineInstances.water,
+    });
+    const invalidMarineForCurrentClaim = derive(['weather'], {
+      water: marineInstances.water,
+      waves: { collection: 'wam_nsb', id: 'not-a-run' },
+    });
+    const futureMarineForCurrentClaim = derive(['weather'], {
+      water: marineInstances.water,
+      waves: { collection: 'wam_nsb', id: '2026-08-24T100000Z' },
+    });
+    const invalidMarineInCombinedClaim = derive(['weather', 'water'], {
+      water: { collection: 'dkss_idw', id: 'not-a-run' },
+      waves: marineInstances.waves,
+    });
+    const futureMarineInCombinedClaim = derive(['weather', 'waves'], {
+      water: marineInstances.water,
+      waves: { collection: 'wam_nsb', id: '2026-08-24T100000Z' },
+    });
 
-    expect(result.view.detail).toBe(
-      'Vind opdateret for 5 min. siden · vandstand opdateret for 11 t. siden',
+    expect(missingWeather.view.detail).toBe(
+      'weather from an earlier update · couldn’t refresh just now',
+    );
+    for (const result of [
+      missingMarineForCurrentClaim,
+      invalidMarineForCurrentClaim,
+      futureMarineForCurrentClaim,
+    ]) {
+      expect(result.view.detail).toBe(
+        'weather from an earlier update · couldn’t refresh just now',
+      );
+    }
+    expect(invalidMarineInCombinedClaim.view.detail).toBe(
+      'weather & water from an earlier update · couldn’t refresh just now',
+    );
+    expect(futureMarineInCombinedClaim.view.detail).toBe(
+      'weather & waves from an earlier update · couldn’t refresh just now',
     );
   });
 
   it('does not add a source disclosure to healthy or held-stale payloads', () => {
-    const instances = {
-      water: { collection: 'dkss_idw', id: '2026-08-23T120000Z' },
-      waves: { collection: 'wam_nsb', id: '2026-08-23T120000Z' },
-    };
-    const healthy = derive([], instances);
+    const healthy = derive([], marineInstances);
     const stale = deriveCacheStatus({
       sources: {
-        ...sources(['water'], instances),
+        ...sources(['water'], marineInstances),
         cacheHealth: {
-          ...sources(['water'], instances).cacheHealth!,
+          ...sources(['water'], marineInstances).cacheHealth!,
           status: 'stale',
         },
       },

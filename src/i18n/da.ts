@@ -195,12 +195,12 @@ export const da: Record<string, string> = {
   '{0} min': '{0} min',
   '{0} h': '{0} t',
   '{0} d': '{0} d',
-  'Wind updated {0} ago · {1} from {2} ago':
-    'Vind opdateret for {0}. siden · {1} opdateret for {2}. siden',
-  'Marine data updated {0} ago · wind from {1} ago':
-    'Havdata opdateret for {0}. siden · vind opdateret for {1}. siden',
-  'Wind from {0} ago · {1} from {2} ago':
-    'Vind opdateret for {0}. siden · {1} opdateret for {2}. siden',
+  "Wind updated {0} ago · {1} couldn't be refreshed":
+    'Vind opdateret for {0}. siden · {1} kunne ikke opdateres',
+  "Marine data is current · wind couldn't be refreshed":
+    'Havdata er aktuelle · vindprognosen kunne ikke opdateres',
+  "Wind and {0} couldn't be refreshed":
+    'Hverken vind eller {0} kunne opdateres',
   "You're offline, so FRANK is showing your last saved forecast from {0}. It will refresh on its own once you're back online.":
     'Du er offline, så FRANK viser din senest gemte prognose fra {0}. Den opdateres af sig selv, når du er online igen.',
   'FRANK is updating now; meanwhile it is showing the saved forecast from {0}, which is {1} old.':
