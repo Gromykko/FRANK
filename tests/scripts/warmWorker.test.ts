@@ -261,6 +261,7 @@ describe('deployment Worker warm-up', () => {
     const warmCommand = workflow.indexOf('node scripts/warm-worker.mjs');
     const promoteJob = workflow.indexOf('  promote_worker:');
     const promoteCommand = workflow.indexOf('npx wrangler versions deploy');
+    const triggerSyncStep = workflow.indexOf('- name: Sync Worker triggers to wrangler.jsonc');
     const cleanupStep = workflow.indexOf('- name: Clean stale KV generations (best effort)');
     const cleanupCommand = workflow.indexOf('npm run worker:gc-kv');
     const pagesJob = workflow.indexOf('  deploy_pages:');
@@ -339,6 +340,15 @@ describe('deployment Worker warm-up', () => {
       'npx wrangler versions deploy "${CANDIDATE_VERSION_ID}@100%" --yes',
     );
     expect(promotionGateBody).not.toContain('continue-on-error');
+    // Cron schedules are Worker-level and are NOT carried by `versions
+    // deploy`. This step is the only thing keeping the live schedule equal to
+    // wrangler.jsonc on a normal push; without it production silently ran
+    // */5 * * * * against a repo that said * * * * *. It has to stay inside
+    // the promotion gate (so a sync failure fails the run) and it has to run
+    // AFTER promotion, or the new cadence drives the outgoing version.
+    expect(triggerSyncStep).toBeGreaterThan(promoteCommand);
+    expect(triggerSyncStep).toBeLessThan(cleanupStep);
+    expect(promoteJobBody.match(/npx wrangler triggers deploy/g)).toHaveLength(1);
     expect(promoteJobBody.match(/npm run worker:gc-kv/g)).toHaveLength(1);
     expect(cleanupStepBody).toContain('continue-on-error: true');
 

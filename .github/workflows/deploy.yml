@@ -346,8 +346,9 @@ jobs:
       # is live, so syncing earlier would drive the OLD code at the NEW cadence
       # for the length of the deploy.
       #
-      # Deliberately not continue-on-error. Silent trigger drift is the exact
-      # failure being fixed, so a sync failure must fail the run.
+      # This is a release gate, not maintenance: a sync failure must fail the
+      # run rather than be tolerated, because silent trigger drift is the exact
+      # failure being fixed here.
       - name: Sync Worker triggers to wrangler.jsonc
         run: npx wrangler triggers deploy
         env:
