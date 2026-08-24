@@ -509,6 +509,11 @@ export const da: Record<string, string> = {
   'Choose location': 'Vælg sted',
   'Or choose another location:': 'Eller vælg et andet sted:',
   // ── TripProfilePanel ──────────────────────────────────────────────────────
+  'Weather only': 'Kun vejr',
+  'Weather only — turn off all safety limits': 'Kun vejr — slå alle sikkerhedsgrænser fra',
+  'Weather only — no safety limits applied': 'Kun vejr — ingen sikkerhedsgrænser anvendes',
+  'switches every check off: FRANK shows the forecast and stops giving a verdict.':
+    'slår alle tjek fra: FRANK viser prognosen og giver ikke længere en vurdering.',
   'Trip Profile': 'Turprofil',
   'About the modes': 'Om profilerne',
   'How cautious should FRANK be for you?': 'Hvor forsigtig skal FRANK være for dig?',

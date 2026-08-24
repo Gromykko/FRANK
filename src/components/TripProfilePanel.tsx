@@ -20,6 +20,11 @@ interface TripProfilePanelProps {
 // src/features/safety/presets.ts - keep in sync).
 export default function TripProfilePanel({ tripMode, onTripModeChange }: TripProfilePanelProps) {
   const { t } = useLang();
+  // 'weather' is deliberately NOT a fifth detent in the bank. The bank is a
+  // scale of caution; switching every check off is a different kind of choice,
+  // and a detent sitting next to Pro could be slid onto by accident, silently
+  // removing the verdict. It also keeps the bank's four-column grid intact.
+  const weatherOnly = tripMode === 'weather';
   const activeIdx = Math.max(0, MODES.findIndex((m) => m.value === tripMode));
   const [showInfo, setShowInfo] = useState(false);
   const infoBtnRef = useRef<HTMLButtonElement>(null);
@@ -77,7 +82,7 @@ export default function TripProfilePanel({ tripMode, onTripModeChange }: TripPro
       </div>
 
       <div
-        className="frank-mode-bank"
+        className={`frank-mode-bank ${weatherOnly ? 'is-unset' : ''}`}
         role="radiogroup"
         aria-label={t('Trip mode')}
         style={{ '--mode-index': activeIdx } as React.CSSProperties}
@@ -94,7 +99,7 @@ export default function TripProfilePanel({ tripMode, onTripModeChange }: TripPro
       >
         <span className="frank-mode-indicator" aria-hidden="true" />
         {MODES.map(({ value, label }) => {
-          const isOn = tripMode === value;
+          const isOn = !weatherOnly && tripMode === value;
           return (
             <button
               key={value}
@@ -111,6 +116,19 @@ export default function TripProfilePanel({ tripMode, onTripModeChange }: TripPro
         })}
       </div>
 
+      {/* Wanting raw weather with no judgement used to mean switching six rules
+          off by hand and remembering which. One control, reversible in one
+          click, and named for exactly what it does - "Simple" or "Basic" would
+          hide that every safety check is gone. */}
+      <button
+        type="button"
+        className={`frank-weather-toggle ${weatherOnly ? 'is-on' : ''}`}
+        aria-pressed={weatherOnly}
+        onClick={() => onTripModeChange(weatherOnly ? 'default' : 'weather')}
+      >
+        {t(weatherOnly ? 'Weather only — no safety limits applied' : 'Weather only — turn off all safety limits')}
+      </button>
+
       {/* BELOW the mode bank, and in normal flow rather than floating over it.
           As an absolutely-positioned popover hanging off the header it covered
           the four buttons it exists to describe (Chill and Normal were hidden
@@ -124,6 +142,9 @@ export default function TripProfilePanel({ tripMode, onTripModeChange }: TripPro
           </p>
           <p>
             <strong>{t('Custom')}</strong> {t('is your own set: change anything in Your Limits below and it lands there.')}
+          </p>
+          <p>
+            <strong>{t('Weather only')}</strong> {t('switches every check off: FRANK shows the forecast and stops giving a verdict.')}
           </p>
           <p className="trip-profile-info-note">
             {t('Picking a mode updates the exact numbers in Your Limits — the manual explains every rule.')}

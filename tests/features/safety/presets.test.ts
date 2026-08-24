@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { getPresetSettings, DEFAULT_SETTINGS } from '../../../src/features/safety/presets';
+import { hasActiveSafetyChecks } from '../../../src/features/safety/safetyDisplay';
 import type { SafetySettings } from '../../../src/features/safety/presets';
 import { CURRENT_LOCATION } from '../../../src/config/locations';
 
@@ -133,5 +134,24 @@ describe('safety presets', () => {
     const second = getPresetSettings('default');
     expect(second.maxWindSpeedSafe).toBe(5.5);
     expect(second.sectorLimits.onshore.safe).toBe(onshore.safeLimit);
+  });
+  // The whole point of the mode is that nothing is judged. If a new enable*
+  // flag is ever added and not defaulted off here, this mode would silently
+  // keep giving a verdict while claiming to be weather-only - so assert the
+  // property, not the individual flags.
+  it('weather-only leaves no safety check active', () => {
+    const s = getPresetSettings('weather');
+    expect(s.tripMode).toBe('weather');
+    expect(hasActiveSafetyChecks(s)).toBe(false);
+    // daylightOnly counts as a check: leaving it on would keep a verdict on
+    // screen and make the mode a no-op.
+    expect(s.daylightOnly).toBe(false);
+  });
+
+  it('weather-only keeps the thresholds intact for the mode you switch back to', () => {
+    const s = getPresetSettings('weather');
+    expect(s.maxWindSpeedSafe).toBe(DEFAULT_SETTINGS.maxWindSpeedSafe);
+    expect(s.maxWaveHeightSafe).toBe(DEFAULT_SETTINGS.maxWaveHeightSafe);
+    expect(hasActiveSafetyChecks(getPresetSettings('default'))).toBe(true);
   });
 });

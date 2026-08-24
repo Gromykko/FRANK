@@ -225,7 +225,7 @@ const BOOLEAN_FLAGS = [
   'enableWaterTemp', 'enableCustomWindDirs', 'daylightOnly',
 ] as const;
 
-const TRIP_MODES: readonly SafetySettings['tripMode'][] = ['default', 'beginner', 'pro', 'custom'];
+const TRIP_MODES: readonly SafetySettings['tripMode'][] = ['default', 'beginner', 'pro', 'custom', 'weather'];
 const TIDE_PREFERENCES: readonly SafetySettings['tidePreference'][] = ['any', 'high', 'low', 'incoming'];
 
 function coerceNumericLimits(s: SafetySettings): SafetySettings {

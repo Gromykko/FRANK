@@ -2825,6 +2825,39 @@ button.legend-toggle.is-on {
   padding: 2px;
 }
 
+/* Weather-only is an escape hatch, not a fifth caution level, so it sits
+   below the bank and reads quieter than the primary choice. When it is on it
+   wears the caution colour: the app has stopped giving a verdict, and that is
+   a state the operator should be able to see at a glance. */
+.frank-weather-toggle {
+  width: 100%;
+  margin-top: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--control-border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-muted);
+  font: 600 var(--text-caption) / 1.35 var(--font-body);
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.frank-weather-toggle:hover {
+  color: var(--text-main);
+}
+
+.frank-weather-toggle.is-on {
+  border-color: var(--color-caution-border);
+  background: var(--color-caution-bg);
+  color: var(--color-caution-text);
+}
+
+/* Nothing in the bank is selected while weather-only is active - leaving the
+   pill parked on Chill would claim a caution level that is not being applied. */
+.frank-mode-bank.is-unset .frank-mode-indicator {
+  opacity: 0;
+}
+
 .frank-mode-indicator {
   position: absolute;
   top: 2px;

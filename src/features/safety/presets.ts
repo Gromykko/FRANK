@@ -23,7 +23,11 @@ export interface SafetySettings {
   // Per-sector cap overrides, keyed by WindSector.id. Missing sectors fall back
   // to the location's configured caps.
   sectorLimits: Record<string, SectorCap>;
-  tripMode: 'default' | 'beginner' | 'pro' | 'custom';
+  // 'weather' is not a caution level - it is the absence of one. Every check
+  // is off, so hasActiveSafetyChecks() returns false and the app presents raw
+  // weather with no verdict. It exists so wanting that takes one choice
+  // instead of switching six rules off by hand and remembering which.
+  tripMode: 'default' | 'beginner' | 'pro' | 'custom' | 'weather';
   daylightOnly: boolean;
   minDuration: number;
   tidePreference: 'any' | 'high' | 'low' | 'incoming';
@@ -54,6 +58,10 @@ const PRESET_SECTOR_DELTAS: Record<SafetySettings['tripMode'], Record<'onshore' 
   pro: { onshore: 1.0, offshore: 1.0 },
   default: null,
   custom: null,
+  // Weather-only disables enableCustomWindDirs, so sector caps are never
+  // consulted. Identity keeps the configured values intact for the mode the
+  // user switches back to.
+  weather: null,
 };
 
 function buildSectorLimits(mode: SafetySettings['tripMode']): Record<string, SectorCap> {
@@ -128,6 +136,21 @@ const PRESET_SETTINGS: Record<SafetySettings['tripMode'], SafetySettings> = {
   custom: {
     ...BASE_SETTINGS,
     tripMode: 'custom',
+  },
+  // daylightOnly counts in hasActiveSafetyChecks, so it has to go too - leave
+  // it on and the badge keeps showing a verdict and the mode silently does
+  // nothing. The thresholds themselves are left at their defaults so switching
+  // back to a judged mode restores sane numbers.
+  weather: {
+    ...BASE_SETTINGS,
+    tripMode: 'weather',
+    enableWindSpeed: false,
+    enableWindGust: false,
+    enableWaveHeight: false,
+    enableWaveCaution: false,
+    enableWaterTemp: false,
+    enableCustomWindDirs: false,
+    daylightOnly: false,
   },
 };
 
