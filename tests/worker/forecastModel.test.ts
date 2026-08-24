@@ -196,14 +196,14 @@ describe('generation-owned forecast model', () => {
     expect(isMetRawCache(retained('Fri, 01 Jan 3000 00:00:00 GMT'), LOCATION, NOW)).toBe(false);
   });
 
-  it('uses the official publication window and retains only active warnings', () => {
+  it('uses the measured DMI publication gate and retains only active warnings', () => {
     const decision = marineProbeDecision({
       water: { collection: 'dkss_idw', id: RUN },
       waves: { collection: 'wam_nsb', id: RUN },
     }, undefined, Date.parse('2026-08-20T20:00:00Z'));
     expect(decision).toEqual({
       shouldProbe: false,
-      nextProbeAtMs: Date.parse('2026-08-20T21:30:00Z'),
+      nextProbeAtMs: Date.parse('2026-08-20T21:45:00Z'),
       reason: 'publication-window',
     });
     expect(FORECAST_SOURCE_POLICY.marineFallbackMaxAgeMs).toBe(12 * 60 * 60 * 1000);
@@ -233,19 +233,19 @@ describe('generation-owned forecast model', () => {
 
     expect(marineSourcesDueForProbe(
       wavesLag,
-      Date.parse('2026-08-20T20:54:59.999Z'),
+      Date.parse('2026-08-20T20:59:59.999Z'),
     )).toEqual([]);
     expect(marineSourcesDueForProbe(
       waterLag,
-      Date.parse('2026-08-20T21:29:59.999Z'),
+      Date.parse('2026-08-20T21:44:59.999Z'),
     )).toEqual([]);
     expect(marineSourcesDueForProbe(
       wavesLag,
-      Date.parse('2026-08-20T20:55:00.000Z'),
+      Date.parse('2026-08-20T21:00:00.000Z'),
     )).toEqual(['waves']);
     expect(marineSourcesDueForProbe(
       waterLag,
-      Date.parse('2026-08-20T21:30:00.000Z'),
+      Date.parse('2026-08-20T21:45:00.000Z'),
     )).toEqual(['water']);
 
     // Water caused the combined probe. A failed carry-over for the ahead WAM
@@ -254,19 +254,19 @@ describe('generation-owned forecast model', () => {
       waterLag,
       false,
       ['waves'],
-      Date.parse('2026-08-20T21:30:00.000Z'),
+      Date.parse('2026-08-20T21:45:00.000Z'),
     )).toEqual([]);
     expect(degradedMarineSourcesAfterProbe(
       waterLag,
       false,
       ['water'],
-      Date.parse('2026-08-20T21:30:00.000Z'),
+      Date.parse('2026-08-20T21:45:00.000Z'),
     )).toEqual(['water']);
     expect(degradedMarineSourcesAfterProbe(
       waterLag,
       true,
       [],
-      Date.parse('2026-08-20T21:30:00.000Z'),
+      Date.parse('2026-08-20T21:45:00.000Z'),
     )).toEqual(['water']);
     expect(marineSourcesDueForProbe({
       water: { collection: 'dkss_idw', id: 'invalid' },

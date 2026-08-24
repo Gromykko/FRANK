@@ -426,7 +426,18 @@ describe('marineProbeDecision (DMI publication schedule)', () => {
     water: { collection: 'dkss_idw', id: '2026-07-11T120000Z' },
     waves: { collection: 'wam_nsb', id: '2026-07-11T120000Z' },
   };
-  const expectedSharedRunAt = Date.parse('2026-07-11T21:30:00Z');
+  const expectedSharedRunAt = Date.parse('2026-07-11T21:45:00Z');
+
+  it('pins the measured completion delays and the separate publication cushion', () => {
+    expect(FORECAST_SOURCE_POLICY.dmiDkssCompleteDelayMs)
+      .toBe((3 * 60 + 35) * 60 * 1000);
+    expect(FORECAST_SOURCE_POLICY.dmiWamNsbCompleteDelayMs)
+      .toBe((2 * 60 + 50) * 60 * 1000);
+    expect(FORECAST_SOURCE_POLICY.dmiOtherWamCompleteDelayMs)
+      .toBe(3 * 60 * 60 * 1000);
+    expect(FORECAST_SOURCE_POLICY.dmiPublicationCushionMs)
+      .toBe(10 * 60 * 1000);
+  });
 
   it('waits for the slower collection when water and waves share a run', () => {
     expect(marineProbeDecision(
@@ -461,8 +472,8 @@ describe('marineProbeDecision (DMI publication schedule)', () => {
     expect(marineProbeDecision(
       waterLags,
       undefined,
-      Date.parse('2026-07-11T21:29:59.999Z'),
-    ).nextProbeAtMs).toBe(Date.parse('2026-07-11T21:30:00Z'));
+      Date.parse('2026-07-11T21:44:59.999Z'),
+    ).nextProbeAtMs).toBe(Date.parse('2026-07-11T21:45:00Z'));
 
     const wavesLag = {
       water: { collection: 'dkss_idw', id: '2026-07-11T180000Z' },
@@ -471,12 +482,12 @@ describe('marineProbeDecision (DMI publication schedule)', () => {
     expect(marineProbeDecision(
       wavesLag,
       undefined,
-      Date.parse('2026-07-11T20:54:59.999Z'),
-    ).nextProbeAtMs).toBe(Date.parse('2026-07-11T20:55:00Z'));
+      Date.parse('2026-07-11T20:59:59.999Z'),
+    ).nextProbeAtMs).toBe(Date.parse('2026-07-11T21:00:00Z'));
   });
 
   it('keeps the full publication backoff after a successful due check found no newer run', () => {
-    const attemptedAt = Date.parse('2026-07-11T21:31:00Z');
+    const attemptedAt = Date.parse('2026-07-11T21:46:00Z');
     const retryAt = attemptedAt + FORECAST_SOURCE_POLICY.dmiDueProbeBackoffMs;
     expect(marineProbeDecision(
       sharedRun,
@@ -497,7 +508,7 @@ describe('marineProbeDecision (DMI publication schedule)', () => {
   });
 
   it('retries a failed due probe after one city rotation instead of the publication backoff', () => {
-    const attemptedAt = Date.parse('2026-07-11T21:31:00Z');
+    const attemptedAt = Date.parse('2026-07-11T21:46:00Z');
     const retryAt = attemptedAt + FORECAST_SOURCE_POLICY.dmiFailedProbeRetryMs;
     expect(marineProbeDecision(
       sharedRun,
@@ -524,7 +535,7 @@ describe('marineProbeDecision (DMI publication schedule)', () => {
   it('does not mistake pre-window or future stamps for a completed due probe', () => {
     expect(marineProbeDecision(
       sharedRun,
-      '2026-07-11T21:29:59Z',
+      '2026-07-11T21:44:59Z',
       expectedSharedRunAt,
     ).shouldProbe).toBe(true);
     expect(marineProbeDecision(

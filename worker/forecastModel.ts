@@ -59,8 +59,17 @@ export const FORECAST_SOURCE_POLICY = Object.freeze({
   metFallbackMaxAgeMs: 6 * 60 * 60 * 1000,
   marineFallbackMaxAgeMs: 12 * 60 * 60 * 1000,
   dmiRunCycleMs: 6 * 60 * 60 * 1000,
-  dmiDkssCompleteDelayMs: (3 * 60 + 20) * 60 * 1000,
-  dmiWamNsbCompleteDelayMs: (2 * 60 + 45) * 60 * 1000,
+  // DMI's usual complete-model delays are DKSS +3h20, wam_nsb +2h45,
+  // and wam_dw +3h00:
+  // https://www.dmi.dk/friedata/dokumentation/data/forecast-data-availability
+  // Recent STAC properties.created observations showed DKSS becoming available
+  // later than its published figure, while wam_nsb straddled its figure. The
+  // measured gates below use +3h35 and +2h50; unmeasured wam_dw stays at its
+  // published +3h00. The separate 10-minute cushion remains unchanged. DMI also
+  // identifies properties.created as the factual availability clock; observing
+  // it directly is intentionally left for a separate change.
+  dmiDkssCompleteDelayMs: (3 * 60 + 35) * 60 * 1000,
+  dmiWamNsbCompleteDelayMs: (2 * 60 + 50) * 60 * 1000,
   dmiOtherWamCompleteDelayMs: 3 * 60 * 60 * 1000,
   dmiPublicationCushionMs: 10 * 60 * 1000,
   dmiDueProbeBackoffMs: 20 * 60 * 1000,
