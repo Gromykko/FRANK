@@ -237,9 +237,6 @@ export const da: Record<string, string> = {
   'Unknown': 'Ukendt',
   'sea state unknown': 'ukendt søtilstand',
   'danger from {0}': 'fare fra {0}',
-  'Danger from {0} m/s for gusts and average wind alike':
-    'Fare fra {0} m/s for både vindstød og middelvind',
-  'Danger at {0} m and above': 'Fare ved {0} m og derover',
   'Forecast days': 'Prognosedage',
 
   // ── Safety reasons (analyzeSafetyConditions.ts) ───────────────────────────
@@ -542,8 +539,12 @@ export const da: Record<string, string> = {
   '0 calm': '0 stille',
   'caution to {0}': 'pas på til {0}',
   '20+ gale': '20+ kuling',
+  'Danger margin': 'Faregrænse',
+  'Danger from {0} m/s. The switch also checks gusts against it.':
+    'Fare fra {0} m/s. Kontakten tjekker også vindstød mod den.',
+  'Danger at {0} m and above. The switch adds an amber band below it.':
+    'Fare ved {0} m og derover. Kontakten tilføjer et gult felt under den.',
   'Wind gust margin enabled': 'Vindstødsmargen slået til',
-  'Gust margin': 'Vindstødsmargen',
   'gusts up to {0} m/s rate Caution': 'vindstød op til {0} m/s vurderes Pas på',
   'gust margin': 'vindstødsmargen',
   'Max Wave': 'Maks bølge',
@@ -553,7 +554,6 @@ export const da: Record<string, string> = {
   '0 flat': '0 fladt',
   '1.5+ rough': '1,5+ uroligt',
   'Wave caution margin enabled': 'Bølgemargen slået til',
-  'Wave margin': 'Bølgemargen',
   'waves up to {0} m rate Caution': 'bølger op til {0} m vurderes Pas på',
   'wave caution margin': 'bølgemargen',
   'Min Water Temp': 'Min vandtemperatur',

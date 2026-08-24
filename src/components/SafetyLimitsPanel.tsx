@@ -105,6 +105,10 @@ interface ZoneBarProps {
   max: number;
   cautionStart: number;
   cautionEnd: number;
+  // When the caution band is switched off the rule goes straight from safe to
+  // danger, so the bar must not keep drawing an amber zone the verdict no
+  // longer has. The picture has to agree with the logic.
+  showCaution?: boolean;
   invert?: boolean;
   leftLabel: string;
   midLabel?: string;
@@ -117,14 +121,18 @@ interface ZoneBarProps {
 // used to look like a slider, and users tried to drag it. The steppers above
 // are the input; this only reads. Inverted for limits where danger is at the
 // low end (water temperature).
-function ZoneBar({ min, max, cautionStart, cautionEnd, invert = false, leftLabel, midLabel, rightLabel }: ZoneBarProps) {
+function ZoneBar({ min, max, cautionStart, cautionEnd, showCaution = true, invert = false, leftLabel, midLabel, rightLabel }: ZoneBarProps) {
   const pct = (v: number) => clampNumber(((v - min) / (max - min)) * 100, 0, 100, 0);
+  // Collapsing the band onto the danger point rather than hiding the bar: the
+  // danger boundary still exists and still moves with the margin, so it must
+  // stay visible. Only the amber stretch disappears.
+  const bandStart = showCaution ? cautionStart : cautionEnd;
   return (
     <div className="limit-zone">
       <div
         className={`zone-bar ${invert ? 'is-inverted' : ''}`}
         aria-hidden="true"
-        style={{ '--zone-a': `${pct(cautionStart)}%`, '--zone-b': `${pct(cautionEnd)}%` } as React.CSSProperties}
+        style={{ '--zone-a': `${pct(bandStart)}%`, '--zone-b': `${pct(cautionEnd)}%` } as React.CSSProperties}
       />
       <div className="zone-labels">
         <span>{leftLabel}</span>
@@ -280,10 +288,15 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
                 midLabel={t('danger from {0}', windCautionAt.toFixed(1))}
                 rightLabel={t('20+ gale')}
               />
-              <div className={`limit-caution-row has-toggle ${settings.enableWindSpeed && settings.enableWindGust ? '' : 'is-off'}`}>
+              {/* The stepper and the switch own different things. The stepper sets
+                  maxWindSpeedCaution - where AVERAGE wind becomes danger - which stays
+                  in force whatever the switch says. The switch only decides whether the
+                  gust reading is checked against it. Gating the stepper on the switch
+                  left a live danger threshold that could not be adjusted. */}
+              <div className={`limit-caution-row has-toggle ${settings.enableWindSpeed ? '' : 'is-off'}`}>
                 <div className="limit-caution-copy">
-                  <span className="limit-caution-name">{t('Gust margin')}</span>
-                  <span className="limit-caution-hint">{t('Danger from {0} m/s for gusts and average wind alike', windCautionAt.toFixed(1))}</span>
+                  <span className="limit-caution-name">{t('Danger margin')}</span>
+                  <span className="limit-caution-hint">{t('Danger from {0} m/s. The switch also checks gusts against it.', windCautionAt.toFixed(1))}</span>
                 </div>
                 <Stepper
                   compact
@@ -291,7 +304,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
                   min={1} max={10} step={0.5} decimals={1}
                   unit="+m/s" label={t('gust margin')}
                   onChange={margin => updateCriteria({ gustMargin: margin, maxWindSpeedCaution: settings.maxWindSpeedSafe + margin })}
-                  disabled={!settings.enableWindSpeed || !settings.enableWindGust}
+                  disabled={!settings.enableWindSpeed}
                 />
                 <ToggleSwitch
                   small
@@ -335,14 +348,18 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
                 min={0} max={1.5}
                 cautionStart={settings.maxWaveHeightSafe}
                 cautionEnd={waveCautionAt}
+                showCaution={settings.enableWaveHeight && (settings.enableWaveCaution ?? true)}
                 leftLabel={t('0 flat')}
                 midLabel={t('danger from {0}', waveCautionAt.toFixed(2))}
                 rightLabel={t('1.5+ rough')}
               />
-              <div className={`limit-caution-row has-toggle ${settings.enableWaveHeight && settings.enableWaveCaution ? '' : 'is-off'}`}>
+              {/* Same split as wind: the stepper sets the danger ceiling, which always
+                  applies while wave height is on; the switch only adds the amber band
+                  beneath it. With the switch off the rule goes green straight to red. */}
+              <div className={`limit-caution-row has-toggle ${settings.enableWaveHeight ? '' : 'is-off'}`}>
                 <div className="limit-caution-copy">
-                  <span className="limit-caution-name">{t('Wave margin')}</span>
-                  <span className="limit-caution-hint">{t('Danger at {0} m and above', waveCautionAt.toFixed(2))}</span>
+                  <span className="limit-caution-name">{t('Danger margin')}</span>
+                  <span className="limit-caution-hint">{t('Danger at {0} m and above. The switch adds an amber band below it.', waveCautionAt.toFixed(2))}</span>
                 </div>
                 <Stepper
                   compact
@@ -353,7 +370,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
                     waveCautionMargin: margin,
                     maxWaveHeightCaution: roundToDecimals(settings.maxWaveHeightSafe + margin, 2),
                   })}
-                  disabled={!settings.enableWaveHeight || !settings.enableWaveCaution}
+                  disabled={!settings.enableWaveHeight}
                 />
                 <ToggleSwitch
                   small
