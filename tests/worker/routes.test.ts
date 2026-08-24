@@ -447,6 +447,12 @@ describe('Worker route HTTP contract', () => {
     expect(body).toContain('<span class="frank-nameplate">FRANK</span>');
     expect(body).toContain('<span class="frank-location">Forecast worker</span>');
     expect(body).toContain('class="frank-display"');
+    expect(body).toContain('aria-label="Data generation target"');
+    expect(body).toContain(
+      `<span>Generation</span><strong>${CURRENT_RELEASE.dataGenerationId}</strong>`,
+    );
+    expect(body).not.toContain('aria-label="Status page operations"');
+    expect(body).not.toContain('<span>Auto refresh</span>');
     expect(body).toContain('class="pixel-sky"');
     expect(body).toContain("--font-heading:'Inter'");
     expect(body).toContain("--font-crt:'VT323'");
@@ -459,6 +465,34 @@ describe('Worker route HTTP contract', () => {
     expect(body).toContain('@media (max-width:720px)');
     expect(body).toContain('@media (max-width:480px)');
     expect(body).toContain('@media (max-width:360px)');
+    const narrowCssStart = body.indexOf('@media (max-width:360px)');
+    const narrowCssEnd = body.indexOf('@media (prefers-reduced-motion:reduce)');
+    expect(narrowCssStart).toBeGreaterThan(-1);
+    expect(narrowCssEnd).toBeGreaterThan(narrowCssStart);
+    const narrowCss = body.slice(narrowCssStart, narrowCssEnd);
+    expect(narrowCss).toContain("grid-template-areas:\n        'crt display'\n        'name location';");
+    expect(narrowCss).toContain('.operation-stamp { display:none }');
+    expect(narrowCss).not.toContain('.frank-cell-display { display:none }');
+    expect(narrowCss).not.toContain('grid-template-columns:minmax(0,1fr) auto;');
+    expect(narrowCss).not.toContain('.operation-stamp strong');
+    expect(body).toMatch(
+      /\.location-module-head \{[^}]*justify-content:flex-start;[^}]*gap:8px;/,
+    );
+    expect(body).not.toContain(
+      '.location-module-head { align-items:flex-start; flex-direction:column; gap:6px }',
+    );
+    expect(body).not.toContain('.generation-state { text-align:left }');
+    expect(body).toMatch(
+      /\.generation-state\.good \{\s*color:var\(--text-muted\);\s*font-weight:700;\s*\}/,
+    );
+    expect(body).toContain(`<div class="location-identity"><h3>${
+      locationById('horsens').areaName
+    }</h3></div>`);
+    expect(body).not.toContain('class="location-index"');
+    expect(body).not.toContain('.location-index {');
+    expect(body).not.toContain('.neutral {');
+    expect(body).not.toContain('.dim {');
+    expect(body).not.toContain('.mono {');
     expect(body.match(/data-source="weather"/g) ?? []).toHaveLength(LOCATIONS.length);
     expect(body.match(/data-source="water"/g) ?? []).toHaveLength(LOCATIONS.length);
     expect(body.match(/data-source="waves"/g) ?? []).toHaveLength(LOCATIONS.length);
@@ -475,6 +509,54 @@ describe('Worker route HTTP contract', () => {
     expect(body).not.toContain('<script');
     expect(body).not.toContain('@import');
     expect(body).not.toContain('url(');
+  });
+
+  it('renders exceptional cache states in one lowercase register', async () => {
+    const now = Date.parse('2026-08-20T18:00:00.000Z');
+    const location = locationById('horsens');
+    const missing: HealthLocationEntry = {
+      id: location.id,
+      areaName: location.areaName,
+      hasCache: false,
+      exactGenerationReady: false,
+      availabilitySource: 'none',
+    };
+    const initializing: HealthLocationEntry = {
+      ...missing,
+      initialization: {
+        schemaVersion: 2,
+        status: 'initializing',
+        locationId: location.id,
+        forecastConfigRevision: location.forecastConfigRevision,
+        lastAttemptAt: new Date(now).toISOString(),
+        retryAfterSeconds: 600,
+        provider: 'marine',
+        busy: false,
+      },
+    };
+    const available: HealthLocationEntry = {
+      ...missing,
+      hasCache: true,
+      exactGenerationReady: true,
+      availabilitySource: 'generation',
+      fetchedAt: new Date(now).toISOString(),
+      cacheHealth: {
+        status: 'current',
+        lastAttemptAt: new Date(now).toISOString(),
+      },
+    };
+    const [awaitingBody, initializingBody, storageBody] = await Promise.all([
+      statusResponse(buildHealthPayload([missing], false, now)).text(),
+      statusResponse(buildHealthPayload([initializing], false, now)).text(),
+      statusResponse(buildHealthPayload([available], true, now)).text(),
+    ]);
+    const cacheState = (body: string): string | undefined => body.match(
+      /<span>Cache state<\/span><strong class="[^"]+">([^<]+)<\/strong>/,
+    )?.[1];
+
+    expect(cacheState(awaitingBody)).toBe('awaiting data');
+    expect(cacheState(initializingBody)).toBe('initializing');
+    expect(cacheState(storageBody)).toBe('storage unavailable');
   });
 
   it('maps healthy, partial, and failed health to the exact FRANK face expressions', async () => {
@@ -512,7 +594,7 @@ describe('Worker route HTTP contract', () => {
     expect(failedBody).toContain('<rect x="4" y="10" width="1" height="1"/>');
   });
 
-  it('shows degraded sources and the busy provider in the human status table', async () => {
+  it('shows degraded sources and the busy provider in the human status cards', async () => {
     const horsens = cachedForecast();
     horsens.sources.cacheHealth = {
       ...horsens.sources.cacheHealth,
@@ -557,7 +639,11 @@ describe('Worker route HTTP contract', () => {
 
     expect(body).toContain('30 min old');
     expect(body.match(/6h 00m old/g) ?? []).toHaveLength(2);
-    expect(body).toContain('Model run 2026-08-20 12:00:00 UTC');
+    expect(body).toContain('Forecast issued 2026-08-20 17:30 UTC');
+    expect(body).not.toContain('Forecast issued 2026-08-20 17:30:00 UTC');
+    expect(body).toContain('Model run 2026-08-20 12:00 UTC');
+    expect(body).not.toContain('Model run 2026-08-20 12:00:00 UTC');
+    expect(body).toContain('Page rendered 2026-08-20 18:00:00 UTC');
     // The Warnings card must not invent a clock. It previously showed
     // `${formatAge(age.ageMs)} snapshot`, which was the Forecast age vital
     // relabelled as a warnings fact - two identical numbers, one of them
@@ -959,7 +1045,8 @@ describe('Worker route HTTP contract', () => {
 
     const status = await worker.fetch(request('/status'), runtime.env, runtime.ctx);
     const statusBody = await status.text();
-    expect(statusBody).toContain('INITIALIZING');
+    expect(statusBody).toContain('>initializing</strong>');
+    expect(statusBody).not.toContain('>INITIALIZING</strong>');
     expect(statusBody).toContain('initialization attempt ·');
     expect(statusBody).toContain('provider busy · marine');
     expect(statusBody).not.toContain('private detail');

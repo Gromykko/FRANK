@@ -201,7 +201,7 @@ function providerAgeMs(value: string | undefined, nowMs: number): number | null 
 function formatProviderTimestamp(value: string | undefined): string {
   const timestampMs = providerTimestampMs(value);
   return Number.isFinite(timestampMs)
-    ? new Date(timestampMs).toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC')
+    ? new Date(timestampMs).toISOString().replace('T', ' ').replace(/:\d{2}\.\d{3}Z$/, ' UTC')
     : 'run time not recorded';
 }
 
@@ -274,11 +274,11 @@ export function statusResponse(health: HealthPayload): Response {
       ? `initialization attempt · ${formatUtcTimestamp(initialization.lastAttemptAt)}`
       : cacheHealth.checkedBy ?? '—';
     const status = health.storageUnavailable
-      ? 'STORAGE UNAVAILABLE'
+      ? 'storage unavailable'
       : initialization
-        ? 'INITIALIZING'
+        ? 'initializing'
         : missing
-          ? 'AWAITING DATA'
+          ? 'awaiting data'
           : cacheHealth.status ?? 'unknown';
 
     const providerAppliesTo = (source: 'weather' | 'water' | 'waves'): boolean => {
@@ -415,7 +415,7 @@ export function statusResponse(health: HealthPayload): Response {
 
     return `<article class="location-module" data-location="${escapeHtml(location.id)}">
       <header class="location-module-head">
-        <div class="location-identity"><span class="location-index">${escapeHtml(location.id)}</span><h3>${escapeHtml(location.areaName)}</h3></div>
+        <div class="location-identity"><h3>${escapeHtml(location.areaName)}</h3></div>
         <span class="generation-state ${overallTone}">${escapeHtml(generationState)}</span>
       </header>
       <div class="location-vitals">
@@ -488,8 +488,8 @@ export function statusResponse(health: HealthPayload): Response {
     color-scheme:light;
     --font-heading:'Inter',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
     --font-body:'Inter',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-    /* No 'Inter' here: if the operator has it installed, every "mono" element -
-       all the run timestamps - silently renders proportional and the column
+    /* No 'Inter' here: if the operator has it installed, every monospaced value -
+       including all the run timestamps - silently renders proportional and the column
        stops aligning. Inter stays on --font-heading/--font-body. */
     --font-mono:ui-monospace,'SFMono-Regular',Consolas,monospace;
     --font-crt:'VT323','Courier New',ui-monospace,monospace;
@@ -797,31 +797,27 @@ export function statusResponse(health: HealthPayload): Response {
   .location-module-head {
     display:flex;
     align-items:center;
-    justify-content:space-between;
-    gap:16px;
+    justify-content:flex-start;
+    gap:8px;
     padding:11px 12px;
     border-bottom:1px solid var(--module-edge);
     background:color-mix(in srgb,var(--primary) 4%,var(--module-bg));
   }
   .location-identity { min-width:0 }
   .location-identity h3 {
-    margin:1px 0 0;
+    margin:0;
     font-size:.9375rem;
     line-height:1.2;
-  }
-  .location-index {
-    display:block;
-    color:var(--text-muted);
-    font:700 .625rem/1 var(--font-mono);
-    letter-spacing:.12em;
-    text-transform:uppercase;
   }
   .generation-state {
     flex:0 0 auto;
     font-size:.625rem;
     font-weight:800;
     letter-spacing:.09em;
-    text-align:right;
+  }
+  .generation-state.good {
+    color:var(--text-muted);
+    font-weight:700;
   }
   .location-vitals {
     display:grid;
@@ -918,9 +914,6 @@ export function statusResponse(health: HealthPayload): Response {
   .good { color:var(--color-safe-text) }
   .warn { color:var(--color-caution-text) }
   .bad { color:var(--color-danger-text) }
-  .neutral { color:var(--text-muted) }
-  .dim { color:var(--text-muted) }
-  .mono { font:var(--text-caption)/1.45 var(--font-mono); letter-spacing:.01em }
 
   .notes {
     margin-top:12px;
@@ -987,8 +980,6 @@ export function statusResponse(health: HealthPayload): Response {
     .operation-stamp { padding:7px 8px; font-size:.625rem }
     .operation-stamp strong { font-size:.6875rem }
     .frank-location { font-size:.6875rem; letter-spacing:.08em }
-    .location-module-head { align-items:flex-start; flex-direction:column; gap:6px }
-    .generation-state { text-align:left }
     .location-vitals { grid-template-columns:1fr 1fr }
     .location-vitals > div:nth-child(3) {
       grid-column:1/-1;
@@ -1003,19 +994,12 @@ export function statusResponse(health: HealthPayload): Response {
     .frank-device-columns {
       grid-template-columns:64px minmax(0,1fr);
       grid-template-areas:
-        'crt actions'
+        'crt display'
         'name location';
       column-gap:16px;
     }
-    .frank-cell-display { display:none }
     .frank-nameplate { font-size:.625rem; letter-spacing:.35em; text-indent:.35em }
-    .operation-stamp {
-      grid-template-columns:minmax(0,1fr) auto;
-      align-items:center;
-      gap:3px 8px;
-      padding:7px 9px;
-    }
-    .operation-stamp strong { margin:0; text-align:right }
+    .operation-stamp { display:none }
     .frank-location { justify-self:end }
   }
   @media (prefers-reduced-motion:reduce) {
@@ -1052,8 +1036,8 @@ export function statusResponse(health: HealthPayload): Response {
           <span class="frank-display-text">${escapeHtml(displayMessage)}</span>
         </div>
       </div>
-      <div class="operation-stamp" aria-label="Status page operations">
-        <span>Auto refresh</span><strong>30 seconds</strong>
+      <div class="operation-stamp" aria-label="Data generation target">
+        <span>Generation</span><strong>${escapeHtml(health.release.target.dataGenerationId)}</strong>
       </div>
       <span class="frank-nameplate">FRANK</span>
       <span class="frank-location">Forecast worker</span>
