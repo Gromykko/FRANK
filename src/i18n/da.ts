@@ -169,6 +169,8 @@ export const da: Record<string, string> = {
   'wind': 'vind',
   'waves': 'bølger',
   'water': 'vandstand',
+  'water level': 'vandstand',
+  'marine data': 'havdata',
   'waves & water': 'bølger & vandstand',
   'weather & waves': 'vejr & bølger',
   'weather & water': 'vejr & vandstand',
@@ -189,9 +191,16 @@ export const da: Record<string, string> = {
   'Retrying automatically': 'Prøver igen automatisk',
   '{0} from an earlier update · {1} busy': '{0} er ældre · {1} er optaget',
   '{0} from an earlier update · couldn’t refresh just now': '{0} fra en tidligere opdatering · kunne ikke opdatere lige nu',
+  '{0} from an earlier update': '{0} fra en tidligere opdatering',
   '{0} min': '{0} min',
   '{0} h': '{0} t',
   '{0} d': '{0} d',
+  'Wind updated {0} ago · {1} from {2} ago':
+    'Vind opdateret for {0}. siden · {1} opdateret for {2}. siden',
+  'Marine data updated {0} ago · wind from {1} ago':
+    'Havdata opdateret for {0}. siden · vind opdateret for {1}. siden',
+  'Wind from {0} ago · {1} from {2} ago':
+    'Vind opdateret for {0}. siden · {1} opdateret for {2}. siden',
   "You're offline, so FRANK is showing your last saved forecast from {0}. It will refresh on its own once you're back online.":
     'Du er offline, så FRANK viser din senest gemte prognose fra {0}. Den opdateres af sig selv, når du er online igen.',
   'FRANK is updating now; meanwhile it is showing the saved forecast from {0}, which is {1} old.':

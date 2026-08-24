@@ -4,7 +4,7 @@
 // new software contract.
 export const FORECAST_API_SCHEMA_VERSION = 1;
 export const SUPPORTED_FORECAST_API_SCHEMA_VERSIONS = [1] as const;
-export const FORECAST_MODEL_REVISION = 40;
+export const FORECAST_MODEL_REVISION = 41;
 export const ASSEMBLED_FORECAST_CACHE_SCHEMA_VERSION = 1;
 
 // Unlike the versions above, this one is a CROSS-RELEASE contract, not a
@@ -22,7 +22,7 @@ export const MARINE_INGREDIENT_CACHE_SCHEMA_VERSION = 1;
 // new generation in parallel, proves every public location is complete, and
 // only then receives production traffic. Never replace this with an eventually
 // consistent KV "active generation" pointer.
-export const FORECAST_DATA_GENERATION_ID = 'api1-model40';
+export const FORECAST_DATA_GENERATION_ID = 'api1-model41';
 
 // `payloadVersion` is the historical browser/Worker payload stamp. It remains
 // independent from the API, model and storage identities, but there is no
@@ -64,10 +64,10 @@ export type ForecastReleaseMetadata = ReleaseMetadata;
 export const AUDITED_PREVIOUS_FORECAST_GENERATIONS: readonly Readonly<ReleaseMetadata>[] = Object.freeze([
   Object.freeze({
     apiSchemaVersion: 1,
-    modelRevision: 39,
+    modelRevision: 40,
     assembledCacheSchema: 1,
     marineCacheSchema: 1,
-    dataGenerationId: 'api1-model39',
+    dataGenerationId: 'api1-model40',
     payloadVersion: 7,
   }),
 ]);

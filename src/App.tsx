@@ -27,7 +27,11 @@ import ForecastErrorScreen from './components/ForecastErrorScreen';
 import ForecastInitializingScreen from './components/ForecastInitializingScreen';
 import PrivacyNotice from './components/PrivacyNotice';
 import { getFrankPhrase } from './features/safety/frankPhrases';
-import { getSafetyDisplay, hasActiveSafetyChecks } from './features/safety/safetyDisplay';
+import {
+  getSafetyDisplay,
+  hasActiveSafetyChecks,
+  withSafetyInfoDisclosure,
+} from './features/safety/safetyDisplay';
 import { useSettings } from './hooks/useSettings';
 import { useTheme } from './hooks/useTheme';
 import { useOnline } from './hooks/useOnline';
@@ -202,15 +206,15 @@ export default function App() {
   const currentHourData = displayHourlyData[selectedHourIndex] ?? displayHourlyData[0];
   const safety = allAnalyses[selectedHourIndex] ?? allAnalyses[0]!;
   const activeSafetyChecks = hasActiveSafetyChecks(settings);
-  const {
-    rating: safetyDisplayRating,
-    reasons: safetyReasons,
-    usesLimitsOffFallback,
-  } = getSafetyDisplay(
+  const safetyDisplay = getSafetyDisplay(
     safety,
     activeSafetyChecks,
     t('Your personal limits are off. Use the raw forecast values and local judgement before launching.'),
   );
+  const {
+    rating: safetyDisplayRating,
+    usesLimitsOffFallback,
+  } = safetyDisplay;
   const safetyBadgeTitle = t(usesLimitsOffFallback ? 'Weather' : RATING_WORD[safetyDisplayRating]);
   const safetyBadgeSubtitle = t(usesLimitsOffFallback
     ? 'Limits are off — raw forecast only'
@@ -256,6 +260,7 @@ export default function App() {
   // All cache-status derivation (header line, expanded detail, page warnings)
   // lives in the pure, unit-tested cacheStatusView helper. Date.now() is
   // re-read each render — useForecast's 60s heartbeat keeps age labels fresh.
+  const presentationNowMs = Date.now();
   const {
     view: statusView,
     expandedDetail: cacheStatusExpandedDetail,
@@ -266,11 +271,15 @@ export default function App() {
     sources: weatherData.sources,
     refreshing,
     online,
-    nowMs: Date.now(),
+    nowMs: presentationNowMs,
     // Our own record of reaching the worker, not the worker's throttled stamp.
     workerContactedAtMs: getWorkerContactMs(),
     checkState,
   }, t);
+  const safetyReasons = withSafetyInfoDisclosure(
+    safetyDisplay,
+    statusView.degradedSourceDisclosure,
+  ).reasons;
   const { providerBusy, busyServiceName } = statusView;
   const cacheStatusClass = statusView.tone;
   const sourceLabel = statusView.label;

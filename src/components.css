@@ -2896,7 +2896,7 @@ button.legend-toggle.is-on {
 }
 
 /* Label on line 1, the (optional) caveat on line 2. The caveat can be long
-   ("waves & water from an earlier update · marine service busy") - stacking
+   ("Wind updated 5 min ago · marine data from 11 h ago") - stacking
    keeps it readable on a phone instead of truncating it to nothing. */
 .frank-cache-text {
   min-width: 0;
@@ -2919,7 +2919,7 @@ button.legend-toggle.is-on {
 
 .frank-cache-detail {
   /* This is the line that tells the user their numbers are partly stale
-     ("waves & water from an earlier update · marine service busy"). At 10px
+     ("Wind updated 5 min ago · marine data from 11 h ago"). At 10px
      with opacity 0.85 it measured 3.87:1 dark / 4.26:1 light — the app's own
      honesty caveat rendered below AA in both themes. */
   font-size: var(--text-caption);

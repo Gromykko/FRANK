@@ -154,6 +154,40 @@ describe('forecast payload trust boundary', () => {
     expect(isValidForecastPayload(mismatchedLegacyStamp, CURRENT_LOCATION)).toBe(false);
   });
 
+  it('accepts cache health with or without marine provenance and rejects malformed references', () => {
+    const withoutProvenance = weatherData([
+      hour(new Date(NOW + 60 * 60 * 1000).toISOString()),
+    ]);
+    expect(withoutProvenance.sources.cacheHealth).not.toHaveProperty('marineInstances');
+    expect(isValidForecastPayload(withoutProvenance, CURRENT_LOCATION)).toBe(true);
+
+    const withProvenance = structuredClone(withoutProvenance);
+    withProvenance.sources.cacheHealth!.marineInstances = {
+      water: { collection: 'dkss_idw', id: '2026-08-12T060000Z' },
+      waves: { collection: 'wam_nsb', id: '2026-08-12T060000Z' },
+    };
+    expect(isValidForecastPayload(withProvenance, CURRENT_LOCATION)).toBe(true);
+
+    const partial = structuredClone(withoutProvenance);
+    partial.sources.cacheHealth!.marineInstances = {
+      water: { collection: 'dkss_idw', id: 'unparseable-but-structurally-valid' },
+    };
+    expect(isValidForecastPayload(partial, CURRENT_LOCATION)).toBe(true);
+
+    for (const malformed of [
+      null,
+      [],
+      { water: null },
+      { water: {} },
+      { water: { collection: '', id: '2026-08-12T060000Z' } },
+      { waves: { collection: 'wam_nsb', id: '' } },
+    ]) {
+      const invalid = structuredClone(withoutProvenance);
+      Reflect.set(invalid.sources.cacheHealth!, 'marineInstances', malformed);
+      expect(isValidForecastPayload(invalid, CURRENT_LOCATION), JSON.stringify(malformed)).toBe(false);
+    }
+  });
+
   it('rejects partial rows while preserving revived NaN as an unavailable reading', () => {
     const unavailable = weatherData([hour(new Date(NOW + 60 * 60 * 1000).toISOString())]);
     unavailable.hourly[0].waveHeight = Number.NaN;

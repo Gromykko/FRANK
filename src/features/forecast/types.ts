@@ -148,6 +148,12 @@ export interface WeatherData {
       // MET Norway cache headers from the run the cache was built against.
       weatherExpires?: string;
       weatherLastModified?: string;
+      // DMI run provenance for the marine values in this assembled payload.
+      // Older cached payloads may omit it; either source may also be absent.
+      marineInstances?: {
+        water?: { collection: string; id: string };
+        waves?: { collection: string; id: string };
+      };
       checkedBy?: string;
       needsRebuild?: boolean;
       // A failed check where the provider was merely busy (429) vs a real

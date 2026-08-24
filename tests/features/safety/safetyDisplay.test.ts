@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { analyzeSafetyConditions } from '../../../src/features/safety/analyzeSafetyConditions';
-import { getSafetyDisplay, hasActiveSafetyChecks } from '../../../src/features/safety/safetyDisplay';
+import {
+  getSafetyDisplay,
+  hasActiveSafetyChecks,
+  withSafetyInfoDisclosure,
+} from '../../../src/features/safety/safetyDisplay';
 import { metSymbolToWmoCode } from '../../../src/features/forecast/weatherCodes';
 import { DEFAULT_SETTINGS } from '../../../src/features/safety/presets';
 import type { HourlyData } from '../../../src/features/forecast/types';
@@ -83,5 +87,23 @@ describe('raw-mode safety display', () => {
       reasons: [{ text: LIMITS_OFF, severity: 'caution' }],
       usesLimitsOffFallback: true,
     });
+  });
+
+  it('appends source-age disclosure without changing a byte of the rating or verdict reasons', () => {
+    const analysis = analyzeSafetyConditions(baseData, DEFAULT_SETTINGS);
+    const withoutDisclosure = getSafetyDisplay(analysis, true, LIMITS_OFF);
+    const disclosure = 'Wind updated 5 min ago · water level from 11 h ago';
+    const withDisclosure = withSafetyInfoDisclosure(withoutDisclosure, disclosure);
+
+    expect(withDisclosure.rating).toBe(withoutDisclosure.rating);
+    expect(withDisclosure.usesLimitsOffFallback).toBe(withoutDisclosure.usesLimitsOffFallback);
+    expect(withDisclosure.reasons.slice(0, withoutDisclosure.reasons.length))
+      .toEqual(withoutDisclosure.reasons);
+    expect(withDisclosure.reasons).toHaveLength(withoutDisclosure.reasons.length + 1);
+    expect(withDisclosure.reasons.at(-1)).toEqual({
+      severity: 'info',
+      text: disclosure,
+    });
+    expect(withSafetyInfoDisclosure(withoutDisclosure, null)).toBe(withoutDisclosure);
   });
 });

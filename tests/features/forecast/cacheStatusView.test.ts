@@ -319,6 +319,11 @@ describe('honesty under adverse conditions', () => {
     // Whether a provider is busy is a claim about now, and offline we cannot
     // know. What the recycled sources ARE is a fact about the bytes in hand.
     expect(offline.providerBusy).toBe(false);
+    expect(offline.detail).toBe(
+      'Showing your saved forecast from 09:00 · waves & water from an earlier update',
+    );
+    expect(offline.degradedSourceDisclosure).toBe('waves & water from an earlier update');
+    expect(offline.detail).not.toContain('busy');
   });
 
   it('reads calm when offline with nothing degraded', () => {
@@ -402,6 +407,138 @@ describe('main-page forecast freshness presentation', () => {
       lastAttemptAt: '',
     });
     expect(bothBusy.detail).toBe('weather, waves & water from an earlier update · services busy');
+  });
+});
+
+describe('per-source freshness disclosure', () => {
+  const NOW = Date.parse('2026-08-23T23:00:00.000Z');
+  const translateDa = (key: string, ...args: Array<string | number>) =>
+    interpolate(da[key] ?? key, ...args);
+  const sources = (
+    degradedSources: string[],
+    marineInstances?: NonNullable<Health['marineInstances']>,
+    weatherLastModified = '2026-08-23T22:55:00.000Z',
+  ) => ({
+    fetchedAt: '2026-08-23T22:58:00.000Z',
+    cacheHealth: {
+      status: 'current' as const,
+      lastAttemptAt: '2026-08-23T22:59:00.000Z',
+      degradedSources,
+      weatherLastModified,
+      ...(marineInstances ? { marineInstances } : {}),
+    },
+  }) as Parameters<typeof deriveCacheStatus>[0]['sources'];
+  const derive = (
+    degradedSources: string[],
+    marineInstances?: NonNullable<Health['marineInstances']>,
+    weatherLastModified?: string,
+    translate = interpolate,
+  ) => deriveCacheStatus({
+    sources: sources(degradedSources, marineInstances, weatherLastModified),
+    refreshing: false,
+    online: true,
+    nowMs: NOW,
+    workerContactedAtMs: NOW - 1_000,
+    checkState: 'succeeded',
+  }, translate);
+
+  it('names an eleven-hour-old water run beside the current wind age', () => {
+    const result = derive(['water'], {
+      water: { collection: 'dkss_idw', id: '2026-08-23T120000Z' },
+      waves: { collection: 'wam_nsb', id: '2026-08-23T220000Z' },
+    });
+
+    expect(result.view.detail).toBe(
+      'Wind updated 5 min ago · water level from 11 h ago',
+    );
+    expect(result.view.degradedSourceDisclosure).toBe(result.view.detail);
+    expect(result.view.detail.split(' · ')).toHaveLength(2);
+    expect(result.view.tone).toBe('watch');
+  });
+
+  it('collapses two stale marine sources to the older run in one clause', () => {
+    const result = derive(['water', 'waves'], {
+      water: { collection: 'dkss_idw', id: '2026-08-23T180000Z' },
+      waves: { collection: 'wam_nsb', id: '2026-08-23T120000Z' },
+    });
+
+    expect(result.view.detail).toBe(
+      'Wind updated 5 min ago · marine data from 11 h ago',
+    );
+    expect(result.view.detail).not.toMatch(/water level|waves/);
+    expect(result.view.detail.split(' · ')).toHaveLength(2);
+  });
+
+  it('inverts the comparison when weather is the retained source', () => {
+    const result = derive(
+      ['weather'],
+      {
+        water: { collection: 'dkss_idw', id: '2026-08-23T220000Z' },
+        waves: { collection: 'wam_nsb', id: '2026-08-23T210000Z' },
+      },
+      '2026-08-23T12:00:00.000Z',
+    );
+
+    expect(result.view.detail).toBe(
+      'Marine data updated 2 h ago · wind from 11 h ago',
+    );
+    expect(result.view.detail.split(' · ')).toHaveLength(2);
+  });
+
+  it('falls back honestly when marine provenance is absent, invalid, or future', () => {
+    const absent = derive(['water']);
+    const invalid = derive(['water'], {
+      water: { collection: 'dkss_idw', id: 'not-a-run' },
+    });
+    const future = derive(['water'], {
+      water: { collection: 'dkss_idw', id: '2026-08-24T000000Z' },
+    });
+
+    for (const result of [absent, invalid, future]) {
+      expect(result.view.detail).toBe(
+        'water from an earlier update · couldn’t refresh just now',
+      );
+      expect(result.view.degradedSourceDisclosure).toBe(result.view.detail);
+      expect(result.view.detail).not.toMatch(/NaN|0 min/);
+    }
+  });
+
+  it('uses proper Danish relative-age wording', () => {
+    const result = derive(['water'], {
+      water: { collection: 'dkss_idw', id: '2026-08-23T120000Z' },
+      waves: { collection: 'wam_nsb', id: '2026-08-23T220000Z' },
+    }, undefined, translateDa);
+
+    expect(result.view.detail).toBe(
+      'Vind opdateret for 5 min. siden · vandstand opdateret for 11 t. siden',
+    );
+  });
+
+  it('does not add a source disclosure to healthy or held-stale payloads', () => {
+    const instances = {
+      water: { collection: 'dkss_idw', id: '2026-08-23T120000Z' },
+      waves: { collection: 'wam_nsb', id: '2026-08-23T120000Z' },
+    };
+    const healthy = derive([], instances);
+    const stale = deriveCacheStatus({
+      sources: {
+        ...sources(['water'], instances),
+        cacheHealth: {
+          ...sources(['water'], instances).cacheHealth!,
+          status: 'stale',
+        },
+      },
+      refreshing: false,
+      online: true,
+      nowMs: NOW,
+      workerContactedAtMs: NOW - 1_000,
+      checkState: 'succeeded',
+    });
+
+    expect(healthy.view.degradedSourceDisclosure).toBe('');
+    expect(healthy.view.detail).toBe('');
+    expect(stale.view.degradedSourceDisclosure).toBe('');
+    expect(stale.view.detail).toBe('Showing saved forecast · 2 min old');
   });
 });
 

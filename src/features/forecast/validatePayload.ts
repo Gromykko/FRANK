@@ -216,6 +216,19 @@ function hasValidWarnings(value: unknown): boolean {
   });
 }
 
+function hasValidMarineInstance(value: unknown): boolean {
+  return isRecord(value)
+    && isNonEmptyString(value.collection)
+    && isNonEmptyString(value.id);
+}
+
+function hasValidMarineInstances(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!isRecord(value)) return false;
+  return (value.water === undefined || hasValidMarineInstance(value.water))
+    && (value.waves === undefined || hasValidMarineInstance(value.waves));
+}
+
 function hasValidCacheHealth(
   value: unknown,
   nowMs: number,
@@ -246,6 +259,7 @@ function hasValidCacheHealth(
       || weatherLastModifiedMs > fetchedAtMs + MAX_WEATHER_LAST_MODIFIED_AFTER_FETCH_MS
     ) return false;
   }
+  if (!hasValidMarineInstances(value.marineInstances)) return false;
   if (value.needsRebuild !== undefined && typeof value.needsRebuild !== 'boolean') return false;
   if (value.providerBusy !== undefined && typeof value.providerBusy !== 'boolean') return false;
   if (value.busyProvider !== undefined && !['weather', 'marine', 'services'].includes(value.busyProvider as string)) return false;

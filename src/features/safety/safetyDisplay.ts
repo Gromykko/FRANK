@@ -59,3 +59,16 @@ export function getSafetyDisplay(
     usesLimitsOffFallback: false,
   };
 }
+
+export function withSafetyInfoDisclosure(
+  display: SafetyDisplay,
+  text: string | null | undefined,
+): SafetyDisplay {
+  if (!text) return display;
+  // Presentation-only provenance is appended after every verdict decision,
+  // including the limits-off fallback. It cannot replace or escalate a reason.
+  return {
+    ...display,
+    reasons: [...display.reasons, { severity: 'info', text }],
+  };
+}
