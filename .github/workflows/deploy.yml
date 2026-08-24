@@ -102,8 +102,14 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      # Preview URLs are a persistent Worker-level setting. Manual dispatch is
-      # the explicit bootstrap/recovery path; normal pushes never sync triggers.
+      # Preview URLs are a persistent Worker-level setting and must exist
+      # BEFORE the candidate is warmed, which is why this runs pre-promotion.
+      # Manual dispatch is the explicit bootstrap/recovery path.
+      #
+      # Ongoing trigger sync is NOT this step's job: the promote job runs
+      # `wrangler triggers deploy` after promotion on every deploy, so cron
+      # schedules follow wrangler.jsonc without a manual run. This one stays
+      # only for first-time/recovery bootstrap. Both are idempotent.
       - name: Enable Worker version preview URLs (manual bootstrap)
         if: github.event_name == 'workflow_dispatch'
         run: npx wrangler triggers deploy
@@ -324,6 +330,27 @@ jobs:
         run: npx wrangler versions deploy "${CANDIDATE_VERSION_ID}@100%" --yes --message "Promote ${{ github.sha }}"
         env:
           CANDIDATE_VERSION_ID: ${{ needs.upload_candidate.outputs.version_id }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      # Cron schedules, routes and custom domains are Worker-LEVEL settings and
+      # are not carried by `versions deploy`, which only moves code. Without
+      # this step wrangler.jsonc can disagree with the live schedule
+      # indefinitely, and nothing catches it: production ran `*/5 * * * *` for
+      # an unknown period while the repo said `* * * * *` (found 2026-08-24),
+      # so every city refreshed every 20 minutes instead of every 4. The
+      # CRON_PERIOD_MS guard test cannot detect this because it compares the
+      # repo against itself, never against what is deployed.
+      #
+      # Runs AFTER promotion on purpose: a schedule applies to whatever version
+      # is live, so syncing earlier would drive the OLD code at the NEW cadence
+      # for the length of the deploy.
+      #
+      # Deliberately not continue-on-error. Silent trigger drift is the exact
+      # failure being fixed, so a sync failure must fail the run.
+      - name: Sync Worker triggers to wrangler.jsonc
+        run: npx wrangler triggers deploy
+        env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
