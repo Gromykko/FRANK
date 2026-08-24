@@ -18,7 +18,6 @@ import {
   withWorkerVersion,
 } from './http';
 import {
-  HEALTH_MAX_CHECK_AGE_MS,
   buildHealthPayload,
   healthResponse,
   statusResponse,
@@ -357,28 +356,11 @@ async function writeHeartbeat(
       && (scope.kind === 'scheduled' || attemptAtMs > previousFailureMs);
     const firstRecordedContact = attempt?.status === 'contacted'
       && !Number.isFinite(previousSuccessMs);
-    // A city contacts providers roughly every MET TTL (~30 min), but the
-    // throttle below only lets the heartbeat write every fifth tick. At a
-    // one-minute cron that discards about four in five contacts, and the city's
-    // stamp drifts past HEALTH_MAX_CHECK_AGE_MS while it is demonstrably
-    // healthy - a false "not checking" alarm (observed in production
-    // 2026-08-24: forecasts rebuilding every 30 min, check age reported 62 min).
-    //
-    // This was latent until the cron trigger was corrected to one minute. At
-    // the previous five-minute cadence elapsedTicks computed to exactly the
-    // throttle every tick, so the heartbeat wrote every time and no contact was
-    // ever dropped.
-    //
-    // Forcing at half the alarm threshold guarantees a contacted city can never
-    // cross it, and bounds the extra writes to one per city per 30 minutes.
-    const contactStampDrifting = attempt?.status === 'contacted'
-      && Number.isFinite(previousSuccessMs)
-      && attemptAtMs - previousSuccessMs >= HEALTH_MAX_CHECK_AGE_MS / 2;
     const heartbeatCategory: KvWriteCategory = newlyUnreachable || recovering
       ? 'heartbeat-anomaly'
       : 'heartbeat-cadence';
     const forceWrite = Boolean(
-      newlyUnreachable || recovering || firstRecordedContact || contactStampDrifting,
+      newlyUnreachable || recovering || firstRecordedContact,
     );
     // Scheduled cadence is global, while a warm has no tick of its own. Using
     // lastTickAt for a warm would suppress the exact repair this path exists
@@ -1190,20 +1172,29 @@ async function _refreshForecastCache(
       }
       if (options.cronOutcome) {
         markCronContacted(checkedCache.sources.cacheHealth?.lastAttemptAt);
+        const noExternalProviderAttempt = options.eventMemo !== undefined
+          && (options.eventMemo.externalSubrequestsStarted ?? 0) === 0;
+        const retryBackoffWithoutAttempt = canSkipProbe
+          && probeDecision.reason === 'retry-backoff'
+          && noExternalProviderAttempt;
+        const verifiedHealthyNoProbe = marineVerified
+          && degradedNow.length === 0
+          && (marineManifestVerified
+            || (canSkipProbe && probeDecision.reason === 'publication-window'));
         if (!contactEvidence.providerContacted
-          && marineVerified && degradedNow.length === 0 && (
-          marineManifestVerified
-          || (canSkipProbe && probeDecision.reason === 'publication-window')
-        )) {
+          && (retryBackoffWithoutAttempt || verifiedHealthyNoProbe)) {
           // DMI's documented publication window proves there is nothing to ask
           // for yet. A manifest-only result likewise carries another tick's
-          // verified global run. Both are healthy without a provider contact,
-          // so neither may mutate per-city success or failure history.
+          // verified global run. Retry-backoff is healthy here only when the
+          // skip gate held and the live counter proves no outbound attempt
+          // started; its existing data degradation remains independently visible.
+          // The same reason can coexist with recovery provider work. None of
+          // these no-contact outcomes may mutate per-city contact history.
           options.cronOutcome.status = 'healthy-no-probe';
         }
-        // Retry-backoff and a check with no successful provider result retain
-        // the default unreachable outcome. Its first transition persists
-        // immediately; unchanged repeats use the shared five-tick throttle.
+        // Any check that actually attempted providers but reached no successful
+        // result retains the default unreachable outcome. Its first transition
+        // persists immediately; unchanged repeats use the shared throttle.
       }
       return checkedCache;
     }

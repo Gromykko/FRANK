@@ -467,7 +467,7 @@ describe('Worker route HTTP contract', () => {
     expect(body).toContain('<div><h4>Water level</h4><span>DMI DKSS</span></div>');
     expect(body).toContain('<div><h4>Waves</h4><span>DMI WAM</span></div>');
     expect(body).toContain('<div><h4>Warnings</h4><span>MeteoAlarm</span></div>');
-    expect(body).toContain('No active warnings · polled with forecast');
+    expect(body).toContain('Polled with the forecast');
     expect(body).not.toContain('<table');
     expect(body).not.toContain('F · R · A · N · K');
     expect(body).not.toContain('backdrop-filter');
@@ -530,7 +530,7 @@ describe('Worker route HTTP contract', () => {
 
     expect(body).toContain('provider busy · marine');
     expect(horsensCard).toMatch(/class="source-card tone-warn" data-source="waves"[\s\S]*?Provider busy/);
-    expect(horsensCard).toMatch(/class="source-card tone-good" data-source="water"[\s\S]*?Current snapshot/);
+    expect(horsensCard).toMatch(/class="source-card tone-good" data-source="water"[\s\S]*?Current/);
   });
 
   it('shows real provider provenance ages without claiming MeteoAlarm health', async () => {
@@ -558,9 +558,15 @@ describe('Worker route HTTP contract', () => {
     expect(body).toContain('30 min old');
     expect(body.match(/6h 00m old/g) ?? []).toHaveLength(2);
     expect(body).toContain('Model run 2026-08-20 12:00:00 UTC');
-    expect(body).toContain('15 min snapshot');
-    expect(body).toContain('Advisory source');
+    // The Warnings card must not invent a clock. It previously showed
+    // `${formatAge(age.ageMs)} snapshot`, which was the Forecast age vital
+    // relabelled as a warnings fact - two identical numbers, one of them
+    // mislabelled. Warnings ride the forecast poll and have no age of their own.
+    expect(body).toContain('None active');
+    expect(body).toContain('Polled with the forecast');
+    expect(body).toContain('Advisory');
     expect(body).not.toContain('MeteoAlarm current');
+    expect(body).not.toMatch(/\d+\s*min snapshot/);
   });
 
   it('keeps scheduler, provider-contact, and forecast ages separate on /status', async () => {
@@ -591,7 +597,7 @@ describe('Worker route HTTP contract', () => {
       /<article class="location-module" data-location="horsens">[\s\S]*?<\/article>/,
     )?.[0] ?? '';
 
-    expect(body).toContain('Cron Heartbeat: Active · 5m ago');
+    expect(body).toContain('Cron heartbeat: live · 5m ago');
     expect(horsensCard).toMatch(/<span>Last check<\/span>[\s\S]*?>20 min<\/strong>/);
     expect(horsensCard).toContain('release-candidate');
     expect(horsensCard).toMatch(/<span>Forecast age<\/span>[\s\S]*?>45 min<\/strong>/);

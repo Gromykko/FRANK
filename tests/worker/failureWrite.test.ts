@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import locationData from '../../src/config/locations.json';
+import { FORECAST_SOURCE_POLICY } from '../../worker/forecastModel';
+import {
+  HEALTH_MAX_CHECK_AGE_MS,
+  assertHealthCheckAgeExceedsMetTtl,
+} from '../../worker/health';
 import {
   CRON_HEARTBEAT_THROTTLE_TICKS,
   assertHeartbeatThrottleCoprime,
@@ -165,6 +170,18 @@ describe('heartbeat schema and cadence guard', () => {
       CRON_HEARTBEAT_THROTTLE_TICKS,
       5,
     )).toThrow(/must be coprime/);
+  });
+
+  it('keeps the check-age alarm beyond the maximum healthy MET interval', () => {
+    expect(HEALTH_MAX_CHECK_AGE_MS).toBe(2 * 60 * 60 * 1000);
+    expect(() => assertHealthCheckAgeExceedsMetTtl(
+      HEALTH_MAX_CHECK_AGE_MS,
+      FORECAST_SOURCE_POLICY.metMaxTtlMs,
+    )).not.toThrow();
+    expect(() => assertHealthCheckAgeExceedsMetTtl(
+      FORECAST_SOURCE_POLICY.metMaxTtlMs,
+      FORECAST_SOURCE_POLICY.metMaxTtlMs,
+    )).toThrow(/must exceed MET max TTL/);
   });
 });
 

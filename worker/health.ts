@@ -6,13 +6,41 @@ import type {
   WorkerCacheHealth,
 } from './domain';
 import { CURRENT_RELEASE } from '../src/features/forecast/releaseContract';
+import { FORECAST_SOURCE_POLICY } from './forecastModel';
 import { htmlResponse, jsonResponse } from './http';
 
 // /health judges two clocks because "the Worker is dead" and "the data is
 // old" are different failures. The persisted check stamp is deliberately
-// coarse, so the liveness threshold leaves several scheduled ticks of room.
-export const HEALTH_MAX_CHECK_AGE_MS = 60 * 60 * 1000;
+// coarse. MET may legitimately defer the next provider contact for its full
+// 90-minute maximum TTL; two hours leaves another 30 minutes, comfortably
+// covering the current four-minute city rotation.
+export const HEALTH_MAX_CHECK_AGE_MS = 2 * 60 * 60 * 1000;
+
+export function assertHealthCheckAgeExceedsMetTtl(
+  maxCheckAgeMs: number,
+  metMaxTtlMs: number,
+): void {
+  if (!Number.isFinite(maxCheckAgeMs)
+    || maxCheckAgeMs <= 0
+    || !Number.isFinite(metMaxTtlMs)
+    || metMaxTtlMs <= 0
+    || maxCheckAgeMs <= metMaxTtlMs) {
+    throw new Error(
+      `Health check-age threshold (${maxCheckAgeMs} ms) must exceed MET max TTL (${metMaxTtlMs} ms).`,
+    );
+  }
+}
+
+assertHealthCheckAgeExceedsMetTtl(
+  HEALTH_MAX_CHECK_AGE_MS,
+  FORECAST_SOURCE_POLICY.metMaxTtlMs,
+);
+
 export const HEALTH_MAX_DATA_AGE_MS = 3 * 60 * 60 * 1000;
+// Beyond this the scheduler is not beating. It was previously an inline 10 in
+// two places and named nowhere, while the page asserted "Active" purely because
+// an age existed - so a cron dead for 47 minutes rendered "Active · 47m ago".
+export const HEARTBEAT_STALE_AFTER_MIN = 10;
 
 export function buildHealthPayload(
   entries: HealthLocationEntry[],
@@ -304,7 +332,13 @@ export function statusResponse(health: HealthPayload): Response {
       return {
         key, label, provider,
         tone: degraded || busy ? 'warn' : provenanceAgeMs === null ? 'neutral' : 'good',
-        state: busy ? 'Provider busy' : degraded ? 'Last-good fallback' : provenanceAgeMs === null ? 'Available' : 'Current snapshot',
+        // 'Current' not 'Current snapshot': when healthy the operator already
+        // has six other green signals, and "snapshot" had become a filler noun
+        // repeated across every source string. The badge stays rather than
+        // disappearing - it is the only thing separating "evaluated and good"
+        // from "this slot rendered blank", and keeping it prevents a layout
+        // shift the moment a source turns amber.
+        state: busy ? 'Provider busy' : degraded ? 'Last-good fallback' : provenanceAgeMs === null ? 'Age not recorded' : 'Current',
         value: provenanceAgeMs === null
           ? 'Snapshot available'
           : `${formatAge(provenanceAgeMs)} old`,
@@ -351,13 +385,18 @@ export function statusResponse(health: HealthPayload): Response {
               label: 'Warnings',
               provider: 'MeteoAlarm',
               tone: location.warningCount && location.warningCount > 0 ? 'warn' : 'neutral',
-              state: location.warningCount && location.warningCount > 0 ? 'Alert active' : 'Advisory source',
+              state: location.warningCount && location.warningCount > 0 ? 'Alert active' : 'Advisory',
+              // Was `${formatAge(age.ageMs)} snapshot` - the same value already
+              // shown in the Forecast age vital above, relabelled as a warnings
+              // fact. Warnings have no clock of their own; they ride the
+              // forecast poll, so state that instead of inventing an age.
               value: location.warningCount && location.warningCount > 0
                 ? `${location.warningCount} active ${location.warningCount === 1 ? 'warning' : 'warnings'}`
-                : `${formatAge(age.ageMs)} snapshot`,
-              detail: location.warningsSummary
-                ? escapeHtml(location.warningsSummary)
-                : 'No active warnings · polled with forecast',
+                : 'None active',
+              // Not escaped here: the shared card template escapes every detail,
+              // so escaping twice rendered an ampersand in a MeteoAlarm headline
+              // as &amp;amp;.
+              detail: location.warningsSummary ?? 'Polled with the forecast',
             },
     ];
     const sourceCards = sources.map((source) => `<section class="source-card tone-${source.tone}" data-source="${source.key}" role="listitem">
@@ -380,8 +419,12 @@ export function statusResponse(health: HealthPayload): Response {
         <span class="generation-state ${overallTone}">${escapeHtml(generationState)}</span>
       </header>
       <div class="location-vitals">
-        <div><span>Last check</span><strong class="${initialization ? 'warn' : missing ? 'bad' : level(age.checkAgeMs, HEALTH_MAX_CHECK_AGE_MS)}">${escapeHtml(formatAge(age.checkAgeMs))}</strong><small>${escapeHtml(checkDetail)}</small></div>
+        <!-- Forecast age leads: it describes the data an operator is judging.
+             Last check describes our polling, which can look alarming while the
+             forecast is perfectly current - the same inversion removed from the
+             main page in the forecast-age change. -->
         <div><span>Forecast age</span><strong class="${missing ? 'bad' : level(age.ageMs, HEALTH_MAX_DATA_AGE_MS)}">${escapeHtml(missing ? 'no forecast' : formatAge(age.ageMs))}</strong><small>last complete rebuild</small></div>
+        <div><span>Last check</span><strong class="${initialization ? 'warn' : missing ? 'bad' : level(age.checkAgeMs, HEALTH_MAX_CHECK_AGE_MS)}">${escapeHtml(formatAge(age.checkAgeMs))}</strong><small>${escapeHtml(checkDetail)}</small></div>
         <div><span>Cache state</span><strong class="${overallTone}">${escapeHtml(status)}</strong><small>${providerState ? escapeHtml(providerState) : 'prepared snapshot'}</small></div>
       </div>
       <div class="source-board" role="list" aria-label="${escapeHtml(`${location.areaName} source status`)}">${sourceCards}</div>
@@ -393,19 +436,46 @@ export function statusResponse(health: HealthPayload): Response {
     : health.ok
       ? 'caution'
       : 'danger';
+  // The heartbeat must never assert liveness it cannot support: printing
+  // "Active" whenever an age exists made a dead scheduler articulate rather
+  // than silent. The absolute tick time is dropped - no decision turns on it,
+  // and two ISO timestamps in one 12px line is the density problem.
+  const beatAgeMin = typeof health.cronHeartbeat?.ageMin === 'number'
+    ? health.cronHeartbeat.ageMin
+    : null;
+  const beatLive = beatAgeMin !== null && beatAgeMin <= HEARTBEAT_STALE_AFTER_MIN;
+  const beatText = beatAgeMin === null
+    ? 'Cron heartbeat: awaiting first tick'
+    : `Cron heartbeat: ${beatLive ? 'live' : 'STALLED'} · ${beatAgeMin}m ago`;
+
+  // "check required" named neither the problem nor the scale of it. The display
+  // is narrow, so this stays terse while saying what is actually wrong; the
+  // reason line underneath still carries the location names.
   const displayMessage = rating === 'safe'
     ? 'all locations current'
     : rating === 'caution'
       ? `${health.release.ready.length}/${health.locations.length} locations ready`
-      : 'check required';
+      : health.missing.length > 0
+        ? `${health.missing.length}/${health.locations.length} without forecast`
+        : health.stalled.length > 0
+          ? `${health.stalled.length}/${health.locations.length} not reporting`
+          : 'check required';
+  // "Release preparing" asserted the optimistic reading. The caution branch
+  // fires when a location serves a non-target generation, and the payload
+  // cannot distinguish a shadow warm in progress from one that fell back and
+  // stayed there. Naming the observable state points the operator at the
+  // FALLBACK badge they should go and look at.
   const statusLabel = rating === 'safe'
     ? 'All systems ready'
     : rating === 'caution'
-      ? 'Release preparing'
+      ? 'Fallback in use'
       : 'Operator attention';
+  // "independent provider cycles" read as an explanation but explained nothing.
+  // These two numbers are already computed and otherwise only appear buried in
+  // the collapsed notes.
   const statusDetail = rating === 'danger'
     ? `${statusLabel} · ${health.reason ?? health.stalled.join(', ')}`
-    : `${statusLabel} · independent provider cycles`;
+    : `${statusLabel} · oldest forecast ${health.oldestAgeMin ?? '?'}m · oldest check ${health.oldestCheckAgeMin ?? '?'}m`;
 
   return htmlResponse(`<!doctype html>
 <html lang="en"><head>
@@ -418,7 +488,10 @@ export function statusResponse(health: HealthPayload): Response {
     color-scheme:light;
     --font-heading:'Inter',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
     --font-body:'Inter',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-    --font-mono:'Inter',ui-monospace,'SFMono-Regular',Consolas,monospace;
+    /* No 'Inter' here: if the operator has it installed, every "mono" element -
+       all the run timestamps - silently renders proportional and the column
+       stops aligning. Inter stays on --font-heading/--font-body. */
+    --font-mono:ui-monospace,'SFMono-Regular',Consolas,monospace;
     --font-crt:'VT323','Courier New',ui-monospace,monospace;
     --text-instrument:.6875rem;
     --text-caption:.75rem;
@@ -552,24 +625,6 @@ export function statusResponse(health: HealthPayload): Response {
     margin-left:auto;
     font:700 var(--text-instrument)/1.4 var(--font-mono);
     letter-spacing:.02em;
-  }
-  .cron-heartbeat-tag {
-    display:inline-flex;
-    align-items:center;
-    gap:6px;
-    padding:4px 9px;
-    border-radius:var(--radius-sm);
-    border:1px solid var(--module-edge);
-    background:var(--module-bg);
-    font:700 var(--text-instrument)/1.3 var(--font-mono);
-    letter-spacing:.04em;
-    text-transform:uppercase;
-  }
-  .cron-heartbeat-tag i {
-    width:6px;
-    height:6px;
-    border-radius:50%;
-    background:currentColor;
   }
   .frank-device-columns {
     display:grid;
@@ -979,16 +1034,22 @@ export function statusResponse(health: HealthPayload): Response {
   <h1 class="sr-only">FRANK forecast worker status</h1>
   <header class="frank-device-shell rating-${rating}">
     <div class="frank-cache">
-      <span>System checked ${escapeHtml(formatUtcTimestamp(health.checkedAt))}</span>
-      <span class="cron-heartbeat-pill ${health.cronHeartbeat && typeof health.cronHeartbeat.ageMin === 'number' && health.cronHeartbeat.ageMin <= 10 ? 'good' : 'warn'}">
-        Cron Heartbeat: ${health.cronHeartbeat && typeof health.cronHeartbeat.ageMin === 'number' ? `Active · ${health.cronHeartbeat.ageMin}m ago (${escapeHtml(formatUtcTimestamp(health.cronHeartbeat.lastTickAt))})` : 'Awaiting first tick'}
-      </span>
+      <!-- "System checked" implied an upstream check had just happened. This is
+           Date.now() at render - always now, never a freshness guarantee. It
+           still earns its place: with the 30s meta refresh, a stamp that stops
+           advancing is proof the page itself is stale. -->
+      <span>Page rendered ${escapeHtml(formatUtcTimestamp(health.checkedAt))}</span>
+      <span class="cron-heartbeat-pill ${beatLive ? 'good' : 'warn'}">${escapeHtml(beatText)}</span>
     </div>
     <div class="frank-device-columns">
       <span class="frank-crt">${gertyStatusFace(rating)}</span>
       <div class="frank-cell-display">
-        <div class="frank-display" role="status" aria-label="${escapeHtml(statusDetail)}">
-          <span id="frank-status-label" class="frank-display-text">${escapeHtml(displayMessage)}</span>
+        <!-- No aria-label: on role="status" it becomes the accessible name and
+             replaces the content, so a screen reader got statusDetail and never
+             the status message itself. statusDetail is rendered visibly below.
+             The id was referenced by nothing. -->
+        <div class="frank-display" role="status">
+          <span class="frank-display-text">${escapeHtml(displayMessage)}</span>
         </div>
       </div>
       <div class="operation-stamp" aria-label="Status page operations">
@@ -1005,9 +1066,6 @@ export function statusResponse(health: HealthPayload): Response {
         <h2 id="locations-title">Forecast locations</h2>
         <p>${escapeHtml(statusDetail)}</p>
       </div>
-      <div class="cron-heartbeat-tag ${health.cronHeartbeat && typeof health.cronHeartbeat.ageMin === 'number' && health.cronHeartbeat.ageMin <= 10 ? 'good' : 'warn'}">
-        <i></i> <span>Heartbeat ${health.cronHeartbeat && typeof health.cronHeartbeat.ageMin === 'number' ? `${health.cronHeartbeat.ageMin}m ago` : 'pending'}</span>
-      </div>
     </div>
     <div class="locations-board">${locationCards}</div>
   </section>
@@ -1022,10 +1080,11 @@ export function statusResponse(health: HealthPayload): Response {
       Once a city has a recorded success, a healthy city can use that app-wide sample, so
       its displayed check remains accurate to roughly the five-minute throttle.</p>
 
-      <p>A city reads older than the others when its selected tick runs out of budget, a
-      marine retry-backoff declines to probe, or a provider refresh fails. Those outcomes
-      are recorded immediately and block that city from inheriting the healthy app-wide
-      tick; the first later success is also recorded immediately. Ordinary
+      <p>A city reads older than the others when its selected tick runs out of budget or a
+      provider refresh attempt fails. Those outcomes are recorded immediately and block
+      that city from inheriting the healthy app-wide tick; the first later success is also
+      recorded immediately. A retry-backoff that starts no provider request leaves the
+      city's contact history unchanged. Ordinary
       visits, page reloads and the in-app refresh button only read prepared storage snapshots;
       they do not contact providers or alter this clock.
       The alarm sits at ${escapeHtml(health.checkStaleAfterMin)} minutes.

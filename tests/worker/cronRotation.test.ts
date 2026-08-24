@@ -13,7 +13,6 @@ import {
   cronExecutionPolicy,
 } from '../../worker/execution';
 import { assembledForecastKey } from '../../worker/generation';
-import { HEALTH_MAX_CHECK_AGE_MS } from '../../worker/health';
 import worker, {
   CRON_HEARTBEAT_KEY,
   CRON_HEARTBEAT_THROTTLE_TICKS,
@@ -961,60 +960,117 @@ describe('scheduled city rotation', () => {
       ]);
   });
 
-  it('refreshes a drifting contact stamp inside the throttle, but still throttles a recent one', async () => {
-    // Regression: cities contact providers about every MET TTL (~30 min) while
-    // the heartbeat writes every fifth tick. At a one-minute cron that dropped
-    // roughly four in five contacts, so a healthy city's stamp drifted past
-    // HEALTH_MAX_CHECK_AGE_MS and /health reported "not checking" for cities
-    // that were rebuilding normally (observed in production 2026-08-24).
-    const succeedingProvider = async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.endsWith('/instances')) {
-        return Response.json({ instances: [{ id: DUE_MARINE_RUN }] });
-      }
-      throw new Error(`Unexpected provider URL: ${url}`);
+  it('keeps a zero-attempt retry-backoff out of unreachable history', async () => {
+    const { env, store, puts } = runtime(DUE_MARINE_RUN);
+    // Use a later full rotation so module-scoped recent-check state left by
+    // earlier same-city fixtures cannot hide the retry-backoff branch this test
+    // is meant to pin.
+    const scheduledTime = FIRST_TICK_MS + 14 * LOCATIONS.length * CRON_PERIOD_MS;
+    const location = tickOrder(scheduledTime)[0];
+    const forecastKey = assembledForecastKey(location);
+    const cached = JSON.parse(store.get(forecastKey)!) as ForecastData;
+    const previousSuccess = scheduledTime - 3 * CRON_PERIOD_MS;
+    cached.sources.cacheHealth = {
+      ...cached.sources.cacheHealth!,
+      lastAttemptAt: new Date(previousSuccess).toISOString(),
+      degradedSources: ['water'],
     };
+    const cachedBefore = JSON.stringify(cached);
+    store.set(forecastKey, cachedBefore);
+    store.set(CRON_HEARTBEAT_KEY, JSON.stringify({
+      schemaVersion: 2,
+      lastTickAt: new Date(
+        scheduledTime - CRON_HEARTBEAT_THROTTLE_TICKS * CRON_PERIOD_MS,
+      ).toISOString(),
+      locations: { [location.id]: new Date(previousSuccess).toISOString() },
+      unreachable: {},
+    }));
+    const provider = vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      new Error('Retry-backoff must not start a provider request.'),
+    );
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    const cases = [
-      [HEALTH_MAX_CHECK_AGE_MS / 2 + CRON_PERIOD_MS, 1],
-      [HEALTH_MAX_CHECK_AGE_MS / 2 - CRON_PERIOD_MS, 0],
-    ] as const;
-    for (const [index, [driftMs, expectedWrites]] of cases.entries()) {
-      const { env, store, puts } = runtime(DUE_MARINE_RUN);
-      // Distinct tick per case AND distinct from other tests: the worker's
-      // in-memory lastCheckAt map is module scope and survives between tests,
-      // so a reused scheduledTime would short-circuit the provider call.
-      const scheduledTime = FIRST_TICK_MS
-        + (40 + index) * LOCATIONS.length * CRON_PERIOD_MS;
-      const location = tickOrder(scheduledTime)[0];
-      const previousSuccess = scheduledTime - driftMs;
-      store.set(CRON_HEARTBEAT_KEY, JSON.stringify({
-        schemaVersion: 2,
-        // One tick ago: comfortably inside the five-tick throttle, so only the
-        // drifting stamp can justify a write.
-        lastTickAt: new Date(scheduledTime - CRON_PERIOD_MS).toISOString(),
-        locations: { [location.id]: new Date(previousSuccess).toISOString() },
-        unreachable: {},
+    vi.setSystemTime(scheduledTime);
+    await worker.scheduled(
+      { scheduledTime } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    expect(provider).not.toHaveBeenCalled();
+    expect(store.get(forecastKey)).toBe(cachedBefore);
+    expect(puts).not.toContain(forecastKey);
+    expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
+      schemaVersion: 2,
+      lastTickAt: new Date(scheduledTime).toISOString(),
+      locations: { [location.id]: new Date(previousSuccess).toISOString() },
+      unreachable: {},
+    });
+    expect(cronTickEvents(log.mock.calls)).toEqual([
+      expect.objectContaining({
+        locationId: location.id,
+        probeDecisionReason: 'retry-backoff',
+        canSkipProbe: true,
+        outcome: 'healthy-no-probe',
+        subrequestCount: 0,
+      }),
+    ]);
+  });
+
+  it('keeps retry-backoff unreachable when recovery attempts providers and fails', async () => {
+    const { env, store } = runtime(DUE_MARINE_RUN);
+    const scheduledTime = FIRST_TICK_MS + 15 * LOCATIONS.length * CRON_PERIOD_MS;
+    const location = tickOrder(scheduledTime)[0];
+    const forecastKey = assembledForecastKey(location);
+    const cached = JSON.parse(store.get(forecastKey)!) as ForecastData;
+    const previousSuccess = scheduledTime - 8 * CRON_PERIOD_MS;
+    cached.sources.cacheHealth = {
+      ...cached.sources.cacheHealth!,
+      status: 'stale',
+      lastAttemptAt: new Date(scheduledTime - 3 * CRON_PERIOD_MS).toISOString(),
+      degradedSources: ['water', 'waves'],
+    };
+    store.set(forecastKey, JSON.stringify(cached));
+    store.set(CRON_HEARTBEAT_KEY, JSON.stringify({
+      schemaVersion: 2,
+      lastTickAt: new Date(scheduledTime - CRON_PERIOD_MS).toISOString(),
+      locations: { [location.id]: new Date(previousSuccess).toISOString() },
+      unreachable: {},
+    }));
+    const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      new Response('provider busy', {
+        status: 429,
+        headers: { 'Retry-After': '1200' },
       }));
-      vi.spyOn(globalThis, 'fetch').mockImplementation(succeedingProvider);
-      vi.spyOn(console, 'log').mockImplementation(() => {});
-      vi.spyOn(console, 'warn').mockImplementation(() => {});
-      vi.spyOn(console, 'error').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
 
-      vi.setSystemTime(scheduledTime);
-      await worker.scheduled(
-        { scheduledTime } as ScheduledController,
-        env as Env,
-        {} as ExecutionContext,
-      );
+    vi.setSystemTime(scheduledTime);
+    await worker.scheduled(
+      { scheduledTime } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
 
-      expect(puts.filter((key) => key === CRON_HEARTBEAT_KEY)).toHaveLength(expectedWrites);
-      const stored = JSON.parse(store.get(CRON_HEARTBEAT_KEY)!);
-      expect(stored.locations[location.id]).toBe(new Date(
-        expectedWrites === 1 ? scheduledTime : previousSuccess,
-      ).toISOString());
-      vi.restoreAllMocks();
-    }
+    expect(provider).toHaveBeenCalled();
+    expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
+      schemaVersion: 2,
+      lastTickAt: new Date(scheduledTime).toISOString(),
+      locations: { [location.id]: new Date(previousSuccess).toISOString() },
+      unreachable: { [location.id]: new Date(scheduledTime).toISOString() },
+    });
+    const completed = cronTickEvents(log.mock.calls);
+    expect(completed).toEqual([
+      expect.objectContaining({
+        locationId: location.id,
+        probeDecisionReason: 'retry-backoff',
+        canSkipProbe: false,
+        outcome: 'unreachable',
+      }),
+    ]);
+    expect(completed[0]?.subrequestCount).toBe(provider.mock.calls.length);
+    expect(completed[0]?.subrequestCount).toBeGreaterThan(0);
   });
 
   it('records a city\'s first actual provider contact inside the normal throttle', async () => {
