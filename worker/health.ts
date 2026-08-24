@@ -192,6 +192,14 @@ function providerTimestampMs(value: string | undefined): number {
     : Number.NaN;
 }
 
+// A DMI run id ('2026-08-24T060000Z') as the cycle hour operators actually
+// speak in. Returns null rather than guessing when the id is unparseable.
+function formatRunHour(id: string | undefined): string | null {
+  const ms = providerTimestampMs(id);
+  if (!Number.isFinite(ms)) return null;
+  return `${String(new Date(ms).getUTCHours()).padStart(2, '0')}:00Z`;
+}
+
 function providerAgeMs(value: string | undefined, nowMs: number): number | null {
   const timestampMs = providerTimestampMs(value);
   const ageMs = nowMs - timestampMs;
@@ -467,6 +475,19 @@ export function statusResponse(health: HealthPayload): Response {
   // "Active" whenever an age exists made a dead scheduler articulate rather
   // than silent. The absolute tick time is dropped - no decision turns on it,
   // and two ISO timestamps in one 12px line is the density problem.
+  // DMI publishes on a six-hour cycle, so which run a city holds is the single
+  // most diagnostic fact here. Listed once when every city agrees; when they
+  // diverge each run is listed, because that divergence is precisely the
+  // failure worth seeing.
+  const marineRuns = (kind: 'water' | 'waves'): string => {
+    const hours = new Set(
+      health.locations
+        .map((entry) => formatRunHour(entry.cacheHealth?.marineInstances?.[kind]?.id))
+        .filter((hour): hour is string => hour !== null),
+    );
+    return hours.size === 0 ? 'run unknown' : [...hours].sort().join(' + ');
+  };
+
   const beatAgeMin = typeof health.cronHeartbeat?.ageMin === 'number'
     ? health.cronHeartbeat.ageMin
     : null;
@@ -508,7 +529,7 @@ export function statusResponse(health: HealthPayload): Response {
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="refresh" content="30">
+<meta http-equiv="refresh" content="60">
 <title>FRANK worker status</title>
 <style>
   :root {
@@ -524,37 +545,35 @@ export function statusResponse(health: HealthPayload): Response {
     --text-caption:.75rem;
     --text-ui:.8125rem;
     --text-body:.875rem;
-    /* Marine plotter dark, lifted verbatim from the app's own tokens in
-       src/index.css. This page used to be a light theme bolted onto a
-       dark-first app, which is the single biggest reason it read as a
-       different product. The app's rule applies here too: colour carries
-       MEANING only. Green is therefore a quiet hairline, never a word - when
-       every source is healthy, twelve green badges signal nothing. Amber and
-       red are the only saturated things on a working page. */
-    --bg-app:#0c1117;
-    --bg-gradient:linear-gradient(180deg,#122235 0%,#0c1622 42rem,#0c1117 78rem);
-    --pixel-cloud:rgba(178,211,235,.18);
-    --pixel-cloud-shade:rgba(80,130,171,.12);
-    --panel-bg:#161d27;
-    --panel-border:rgba(255,255,255,.06);
-    --module-bg:#1b2330;
-    --module-edge:rgba(255,255,255,.09);
-    --text-main:#e8ecf1;
-    --text-muted:#7a8ba0;
-    --primary:#4b9eff;
-    --color-safe:#34d399;
-    --color-caution:#fbbf24;
-    --color-danger:#f87171;
-    /* On the dark ground the fills are already legible as text, so unlike the
-       light theme these need no darker variants. */
-    --color-safe-text:var(--color-safe);
-    --color-caution-text:var(--color-caution);
-    --color-danger-text:var(--color-danger);
-    --shadow-lg:0 1px 3px rgba(0,0,0,.3);
+    /* Light instrument face. The app itself is dark-first, but this page is
+       read in daylight at a desk rather than on the water, and the operator
+       prefers it light. The palette still follows the app's rule: colour
+       carries MEANING only, so green is a hairline rather than a word and the
+       page is near-monochrome until something is actually wrong. */
+    --bg-app:#f5f7fa;
+    --bg-gradient:linear-gradient(180deg,#e5f2fc 0%,#eef7fd 38rem,#f5f7fa 78rem);
+    --pixel-cloud:rgba(255,255,255,.78);
+    --pixel-cloud-shade:rgba(104,151,188,.13);
+    --panel-bg:#f9fcff;
+    --panel-border:rgba(51,91,124,.13);
+    --module-bg:#f3f8fc;
+    --module-edge:rgba(51,91,124,.14);
+    --text-main:#1a2332;
+    --text-muted:#566577;
+    --primary:#1d6fd1;
+    --color-safe:#059669;
+    --color-caution:#d97706;
+    --color-danger:#dc2626;
+    /* On a light ground the fills are too pale to read as text, so text uses
+       darker shades. Measured against --panel-bg: 4.8:1, 4.6:1 and 6.4:1. */
+    --color-safe-text:#047857;
+    --color-caution-text:#b45309;
+    --color-danger-text:#b91c1c;
+    --shadow-lg:0 1px 2px rgba(46,78,107,.07);
     --radius-md:8px;
     --radius-sm:6px;
     --frank-housing:var(--panel-bg);
-    --frank-housing-edge:rgba(255,255,255,.10);
+    --frank-housing-edge:rgba(26,35,50,.16);
     --frank-housing-text:var(--text-main);
     --crt-screen:#0a0e14;
   }
@@ -1012,8 +1031,8 @@ export function statusResponse(health: HealthPayload): Response {
          noise. Hover a cell for that source's exact provenance stamp. -->
     <p class="board-legend">
       <span><b>Weather</b> MET Norway</span>
-      <span><b>Water</b> DMI DKSS</span>
-      <span><b>Waves</b> DMI WAM</span>
+      <span><b>Water</b> DMI DKSS ${escapeHtml(marineRuns('water'))}</span>
+      <span><b>Waves</b> DMI WAM ${escapeHtml(marineRuns('waves'))}</span>
       <span><b>Warnings</b> MeteoAlarm</span>
     </p>
   </section>
@@ -1062,16 +1081,16 @@ export function statusResponse(health: HealthPayload): Response {
       its card deliberately reports the prepared snapshot age instead of inventing a green
       upstream status.</p>
 
-      <p>This page reloads every 30 seconds and is meant for reading. The machine-readable
+      <p>This page reloads every 60 seconds and is meant for reading. The machine-readable
       alarm lives at <a href="/health">/health</a>, which returns 503 and a
       <code>reason</code> when either clock trips.</p>
     </div>
   </details>
 
   <!-- Least important fact on the page, so it sits last. It still earns a
-       place: this page reloads every 30 seconds, so a stamp that stops
+       place: this page reloads every 60 seconds, so a stamp that stops
        advancing is the proof the refresh itself has died. -->
-  <p class="page-stamp">Page rendered ${escapeHtml(formatUtcTimestamp(health.checkedAt))} · reloads every 30s</p>
+  <p class="page-stamp">Page rendered ${escapeHtml(formatUtcTimestamp(health.checkedAt))} · reloads every 60s</p>
 </main>
 </body></html>
 `);

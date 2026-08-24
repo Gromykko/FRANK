@@ -455,8 +455,8 @@ describe('Worker route HTTP contract', () => {
     expect(body).toContain('class="pixel-sky"');
     expect(body).toContain("--font-heading:'Inter'");
     expect(body).toContain("--font-crt:'VT323'");
-    expect(body).toContain('--bg-gradient:linear-gradient(180deg,#122235 0%,#0c1622 42rem,#0c1117 78rem)');
-    expect(body).toContain('--panel-bg:#161d27');
+    expect(body).toContain('--bg-gradient:linear-gradient(180deg,#e5f2fc 0%,#eef7fd 38rem,#f5f7fa 78rem)');
+    expect(body).toContain('--panel-bg:#f9fcff');
     expect(body).toContain('--crt-screen:#0a0e14');
     expect(body).toContain('class="instrument-panel"');
     expect(body.match(/class="board-group [^"]*" data-location=/g) ?? []).toHaveLength(LOCATIONS.length);
@@ -493,8 +493,11 @@ describe('Worker route HTTP contract', () => {
     // Provider attribution is stated once as a legend rather than repeated in
     // every location's card head.
     expect(body).toContain('<span><b>Weather</b> MET Norway</span>');
-    expect(body).toContain('<span><b>Water</b> DMI DKSS</span>');
-    expect(body).toContain('<span><b>Waves</b> DMI WAM</span>');
+    // The legend also names which six-hourly DMI run each source is on. When
+    // cities diverge onto different runs - the failure that took a night to
+    // diagnose - every run is listed, so the split is visible at a glance.
+    expect(body).toMatch(/<span><b>Water<\/b> DMI DKSS \d{2}:00Z<\/span>/);
+    expect(body).toMatch(/<span><b>Waves<\/b> DMI WAM \d{2}:00Z<\/span>/);
     expect(body).toContain('<span><b>Warnings</b> MeteoAlarm</span>');
     expect(body).toContain('Polled with the forecast');
     // A real data table now, with header cells and row scopes - not the layout
