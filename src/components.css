@@ -3540,7 +3540,7 @@ button.legend-toggle.is-on {
 
 /* Each bullet is coloured by that reason's OWN severity, so a caution-level
    note (e.g. the nighttime rule) shows amber even while the hour's overall
-   verdict is danger. Informational disclosures are explicitly neutral. */
+   verdict is danger. */
 .snapshot-reasons li.reason-safe::before {
   background: var(--color-safe);
 }
@@ -3551,10 +3551,6 @@ button.legend-toggle.is-on {
 
 .snapshot-reasons li.reason-danger::before {
   background: var(--color-danger);
-}
-
-.snapshot-reasons li.reason-info::before {
-  background: var(--text-muted);
 }
 
 /* Full descriptions can wrap on wider canvases. Phones render the compact,

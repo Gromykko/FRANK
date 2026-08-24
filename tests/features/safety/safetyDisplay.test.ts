@@ -3,7 +3,6 @@ import { analyzeSafetyConditions } from '../../../src/features/safety/analyzeSaf
 import {
   getSafetyDisplay,
   hasActiveSafetyChecks,
-  withSafetyInfoDisclosure,
 } from '../../../src/features/safety/safetyDisplay';
 import { metSymbolToWmoCode } from '../../../src/features/forecast/weatherCodes';
 import { DEFAULT_SETTINGS } from '../../../src/features/safety/presets';
@@ -89,21 +88,14 @@ describe('raw-mode safety display', () => {
     });
   });
 
-  it('appends source-freshness disclosure without changing a byte of the rating or verdict reasons', () => {
+  it('keeps degraded-source status text out of the verdict reasons', () => {
     const analysis = analyzeSafetyConditions(baseData, DEFAULT_SETTINGS);
-    const withoutDisclosure = getSafetyDisplay(analysis, true, LIMITS_OFF);
+    const display = getSafetyDisplay(analysis, true, LIMITS_OFF);
     const disclosure = "Wind updated 5 min ago · water level couldn't be refreshed";
-    const withDisclosure = withSafetyInfoDisclosure(withoutDisclosure, disclosure);
 
-    expect(withDisclosure.rating).toBe(withoutDisclosure.rating);
-    expect(withDisclosure.usesLimitsOffFallback).toBe(withoutDisclosure.usesLimitsOffFallback);
-    expect(withDisclosure.reasons.slice(0, withoutDisclosure.reasons.length))
-      .toEqual(withoutDisclosure.reasons);
-    expect(withDisclosure.reasons).toHaveLength(withoutDisclosure.reasons.length + 1);
-    expect(withDisclosure.reasons.at(-1)).toEqual({
-      severity: 'info',
-      text: disclosure,
-    });
-    expect(withSafetyInfoDisclosure(withoutDisclosure, null)).toBe(withoutDisclosure);
+    expect(display.rating).toBe(analysis.rating);
+    expect(display.usesLimitsOffFallback).toBe(false);
+    expect(display.reasons).toEqual(analysis.reasons);
+    expect(display.reasons.some((reason) => reason.text === disclosure)).toBe(false);
   });
 });

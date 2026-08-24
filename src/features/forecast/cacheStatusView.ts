@@ -16,8 +16,8 @@ export interface CacheStatusView {
   providerBusy: boolean;
   busyServiceName: string;
   degradedLabel: string;
-  // Informational only. Appends to the selected-hour reasons after the verdict
-  // is complete, so source freshness can never change the rating.
+  // Presentation-only status detail for a partial last-good build. It is never
+  // an input to the safety verdict.
   degradedSourceDisclosure: string;
 }
 

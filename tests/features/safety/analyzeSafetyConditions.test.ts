@@ -465,7 +465,7 @@ describe('custom wind direction sectors', () => {
     expect(at(135.6).rating).toBe('safe');    // displays as 136
   });
 
-  it('names an unmatched bearing without changing its flat-cap verdict or applying tide interaction', () => {
+  it('keeps an unmatched 2° bearing on the flat-cap verdict without adding disclosure or tide interaction', () => {
     const settings = {
       ...baseSettings,
       enableCustomWindDirs: true,
@@ -473,7 +473,7 @@ describe('custom wind direction sectors', () => {
     } as SafetySettings;
     const data = {
       ...baseData,
-      windDirection: 316,
+      windDirection: 2,
       windSpeed: 7.8,
       tideLevel: 0,
     };
@@ -483,23 +483,15 @@ describe('custom wind direction sectors', () => {
       { ...settings, enableCustomWindDirs: false },
       0.5,
     );
-    const disclosure = crossShore.reasons.find(
-      (reason) => reason.severity === 'info',
-    );
 
     expect(flatCapOnly.rating).toBe('caution');
-    expect(crossShore.rating).toBe(flatCapOnly.rating);
-    expect(crossShore.reasons.filter((reason) => reason.severity !== 'info'))
-      .toEqual(flatCapOnly.reasons);
-    expect(disclosure?.text).toContain('Cross-shore wind (316°)');
-    expect(disclosure?.text).toContain('no curated direction-specific cap');
-    expect(disclosure?.text).toContain('general wind limit is used');
-    expect(disclosure?.text).toContain('wind-against-water-level interaction is not evaluated');
-    expect(disclosure?.text).toContain('does not mean safer conditions');
+    expect(crossShore).toEqual(flatCapOnly);
+    expect(crossShore.reasons.some((reason) => /cross-shore|direction-specific cap/i.test(reason.text)))
+      .toBe(false);
     expect(crossShore.reasons.some((reason) => reason.text.includes('conflict'))).toBe(false);
   });
 
-  it('leaves a bearing inside a configured sector unchanged and adds no cross-shore disclosure', () => {
+  it('leaves a bearing inside a configured sector unchanged', () => {
     const settings = {
       ...baseSettings,
       enableCustomWindDirs: true,
@@ -528,47 +520,6 @@ describe('custom wind direction sectors', () => {
         },
       ],
     });
-  });
-
-  it('adds the disclosure only for cross-shore bearings and translates it into Danish', () => {
-    const settings = {
-      ...sectorSettings,
-      enableWindGust: false,
-    } as SafetySettings;
-    const informationReasons = (direction: number) => analyzeSafetyConditions(
-      { ...baseData, windDirection: direction, windSpeed: 3 },
-      settings,
-    ).reasons.filter((reason) => reason.severity === 'info');
-
-    for (const direction of [0, 44, 136, 180, 224, 316, 359]) {
-      expect(informationReasons(direction)).toHaveLength(1);
-    }
-    for (const direction of [45, 90, 135, 225, 270, 315]) {
-      expect(informationReasons(direction)).toHaveLength(0);
-    }
-
-    const translateDa = (key: string, ...args: (string | number)[]) =>
-      interpolate(da[key] ?? key, ...args);
-    const danish = analyzeSafetyConditions(
-      { ...baseData, windDirection: 180, windSpeed: 3 },
-      settings,
-      undefined,
-      translateDa,
-    );
-    const disclosure = danish.reasons.find((reason) => reason.severity === 'info');
-    expect(disclosure?.text).toContain('Sidevind (180°)');
-    expect(disclosure?.text).toContain('betyder ikke sikrere forhold');
-    expect(danish.reasons.some((reason) => reason.severity === 'safe')).toBe(true);
-
-    const windLimitOff = analyzeSafetyConditions(
-      { ...baseData, windDirection: 180, windSpeed: 3 },
-      { ...settings, enableWindSpeed: false },
-    );
-    const disabledDisclosure = windLimitOff.reasons.find(
-      (reason) => reason.severity === 'info',
-    );
-    expect(disabledDisclosure?.text).toContain('general wind limit is switched off');
-    expect(disabledDisclosure?.text).toContain('no wind-speed limit is being applied');
   });
 
   it('easterly caps: caution at safe cap, danger at caution cap (>= semantics)', () => {

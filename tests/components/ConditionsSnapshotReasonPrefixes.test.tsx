@@ -24,12 +24,10 @@ const data: HourlyData = {
   isDay: true,
 };
 
-const crossShoreDisclosure =
-  'Cross-shore wind (180°): missing local rules do not mean safer conditions.';
-
 const reasons: SafetyReason[] = [
   { severity: 'safe', text: 'Conditions are within your limits.' },
-  { severity: 'info', text: crossShoreDisclosure },
+  { severity: 'caution', text: 'Conditions need extra care.' },
+  { severity: 'danger', text: 'Conditions are dangerous.' },
 ];
 
 function renderReasons(danish = false) {
@@ -53,21 +51,24 @@ function renderReasons(danish = false) {
 }
 
 describe('ConditionsSnapshot reason prefixes', () => {
-  it('announces the cross-shore disclosure as a note while leaving a safe reason unprefixed', () => {
+  it('announces danger and caution while leaving a safe reason unprefixed', () => {
     const container = renderReasons();
-    const infoReason = container.querySelector('.reason-info');
     const safeReason = container.querySelector('.reason-safe');
+    const cautionReason = container.querySelector('.reason-caution');
+    const dangerReason = container.querySelector('.reason-danger');
 
-    expect(infoReason?.textContent).toContain(crossShoreDisclosure);
-    expect(infoReason?.querySelector('.sr-only')?.textContent).toBe('Note: ');
     expect(safeReason?.querySelector('.sr-only')?.textContent).toBe('');
+    expect(cautionReason?.querySelector('.sr-only')?.textContent).toBe('Caution: ');
+    expect(dangerReason?.querySelector('.sr-only')?.textContent).toBe('Danger: ');
     expect(container.querySelector('.snapshot-reasons-container')?.classList.contains('rating-safe'))
       .toBe(true);
   });
 
-  it('localises the neutral note prefix in Danish', () => {
+  it('localises the verdict prefixes in Danish', () => {
     const container = renderReasons(true);
 
-    expect(container.querySelector('.reason-info .sr-only')?.textContent).toBe('Bemærk: ');
+    expect(container.querySelector('.reason-safe .sr-only')?.textContent).toBe('');
+    expect(container.querySelector('.reason-caution .sr-only')?.textContent).toBe('Pas på: ');
+    expect(container.querySelector('.reason-danger .sr-only')?.textContent).toBe('Fare: ');
   });
 });

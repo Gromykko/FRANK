@@ -30,7 +30,6 @@ import { getFrankPhrase } from './features/safety/frankPhrases';
 import {
   getSafetyDisplay,
   hasActiveSafetyChecks,
-  withSafetyInfoDisclosure,
 } from './features/safety/safetyDisplay';
 import { useSettings } from './hooks/useSettings';
 import { useTheme } from './hooks/useTheme';
@@ -276,10 +275,7 @@ export default function App() {
     workerContactedAtMs: getWorkerContactMs(),
     checkState,
   }, t);
-  const safetyReasons = withSafetyInfoDisclosure(
-    safetyDisplay,
-    statusView.degradedSourceDisclosure,
-  ).reasons;
+  const safetyReasons = safetyDisplay.reasons;
   const { providerBusy, busyServiceName } = statusView;
   const cacheStatusClass = statusView.tone;
   const sourceLabel = statusView.label;

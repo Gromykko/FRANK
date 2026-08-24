@@ -85,11 +85,10 @@ const WEATHER_CODE_SEVERITY: Record<number, SafetyRating> = {
 };
 
 // Verdict-producing reasons carry the severity they produced, so the UI can
-// colour them independently from the hour's overall rating. An information
-// reason discloses which rule path was used without changing that verdict.
+// colour them independently from the hour's overall rating.
 export interface SafetyReason {
   text: string;
-  severity: SafetyRating | 'info';
+  severity: SafetyRating;
 }
 
 export interface SafetyAnalysis {
@@ -272,8 +271,7 @@ export function analyzeSafetyConditions(
 
   // Local wind sectors: one pass over the fjord's curated sectors. Each sector
   // the wind falls within applies its own safe/danger caps; onshore/offshore
-  // membership feeds the wind-against-water-level rule below. A valid bearing
-  // that matches none of the curated sectors is the cross-shore state.
+  // membership feeds the wind-against-water-level rule below.
   const hasWindDir = isBearing(data.windDirection);
   if (enableCustom && !hasWindDir) missing.push('wind direction');
   const hasSectorAssessment = enableCustom && hasWindSpeed && hasWindDir;
@@ -282,7 +280,6 @@ export function analyzeSafetyConditions(
     : [];
   let windIsOnshore = false;
   let windIsOffshore = false;
-  let windSectorMatched = false;
   // 359.6° rounds to 360, which is not a bearing — wrap it back to 0.
   // Rounded and wrapped once, then used for BOTH the sector test and the text.
   // Testing the raw bearing meant 44.6 deg printed as "45 deg NE" - the manual's
@@ -293,7 +290,6 @@ export function analyzeSafetyConditions(
   const windDir = ((Math.round(data.windDirection) % 360) + 360) % 360;
   for (const sector of sectors) {
     if (!inSector(windDir, sector.min, sector.max)) continue;
-    windSectorMatched = true;
     if (sector.exposure === 'onshore') windIsOnshore = true;
     else if (sector.exposure === 'offshore') windIsOffshore = true;
     // In user copy the upper boundary is always the DANGER cap — calling it a
@@ -311,8 +307,6 @@ export function analyzeSafetyConditions(
         translate(sector.label), windDir, sector.safeLimit.toFixed(1)));
     }
   }
-
-  const windIsCrossShore = hasSectorAssessment && !windSectorMatched;
 
   // Needs both water levels to tell rising from falling. Without them the rule
   // simply doesn't run — it's a refinement on top of the wind rules, not a
@@ -489,24 +483,6 @@ export function analyzeSafetyConditions(
           seaState,
           weatherDesc.toLowerCase(),
         ));
-  }
-
-  // This is a disclosure about absent local rules, not evidence for or against
-  // launching. Append it after the normal verdict reasons (including the safe
-  // all-clear) so identifying cross-shore never changes or replaces a verdict.
-  if (windIsCrossShore) {
-    reasons.push({
-      severity: 'info',
-      text: enableWindSpeed
-        ? translate(
-            'Cross-shore wind ({0}°): no curated direction-specific cap matches this bearing. The general wind limit is used, and the wind-against-water-level interaction is not evaluated. Missing those local rules does not mean safer conditions.',
-            windDir,
-          )
-        : translate(
-            'Cross-shore wind ({0}°): no curated direction-specific cap matches this bearing, and the wind-against-water-level interaction is not evaluated. The general wind limit is switched off, so no wind-speed limit is being applied. Missing those local rules does not mean safer conditions.',
-            windDir,
-          ),
-    });
   }
 
   return { rating, reasons };
