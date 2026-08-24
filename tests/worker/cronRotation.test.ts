@@ -10,6 +10,7 @@ import {
   CRON_PERIOD_MS,
   CRON_SUBREQUEST_CALL_GRAPH,
   CRON_TICK_BUDGET_MS,
+  cronExecutionPolicy,
 } from '../../worker/execution';
 import { assembledForecastKey } from '../../worker/generation';
 import worker, {
@@ -36,6 +37,28 @@ interface KvWriteEvent {
   category: string;
 }
 
+interface CronTickCompletedEvent {
+  event: 'cron_tick_completed';
+  locationId: string | null;
+  scheduledAt: string;
+  durationMs: number;
+  probeDecisionReason: string | null;
+  canSkipProbe: boolean | null;
+  outcome: string;
+  subrequestCount: number;
+  providerDeadlineReached: boolean;
+}
+
+function isCronTickCompletedEvent(value: unknown): value is CronTickCompletedEvent {
+  return typeof value === 'object'
+    && value !== null
+    && Reflect.get(value, 'event') === 'cron_tick_completed'
+    && typeof Reflect.get(value, 'scheduledAt') === 'string'
+    && typeof Reflect.get(value, 'durationMs') === 'number'
+    && typeof Reflect.get(value, 'subrequestCount') === 'number'
+    && typeof Reflect.get(value, 'providerDeadlineReached') === 'boolean';
+}
+
 function isKvWriteEvent(value: unknown): value is KvWriteEvent {
   return typeof value === 'object'
     && value !== null
@@ -49,6 +72,18 @@ function kvWriteEvents(calls: readonly (readonly unknown[])[]): KvWriteEvent[] {
     try {
       const value: unknown = JSON.parse(message);
       return isKvWriteEvent(value) ? [value] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function cronTickEvents(calls: readonly (readonly unknown[])[]): CronTickCompletedEvent[] {
+  return calls.flatMap(([message]) => {
+    if (typeof message !== 'string' || !message.startsWith('{')) return [];
+    try {
+      const value: unknown = JSON.parse(message);
+      return isCronTickCompletedEvent(value) ? [value] : [];
     } catch {
       return [];
     }
@@ -157,7 +192,7 @@ describe('scheduled city rotation', () => {
     const provider = vi.spyOn(globalThis, 'fetch').mockRejectedValue(
       new Error('A source fetch is not due in this fixture.'),
     );
-    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     const expectedCycle = Array.from({ length: LOCATIONS.length }, (_, index) => {
       const scheduledTime = FIRST_TICK_MS + index * CRON_PERIOD_MS;
@@ -184,6 +219,21 @@ describe('scheduled city rotation', () => {
     }
 
     expect(provider).not.toHaveBeenCalled();
+    const completed = cronTickEvents(log.mock.calls);
+    expect(completed).toHaveLength(LOCATIONS.length);
+    expect(completed).toEqual(expectedCycle.map((location, index) => ({
+      event: 'cron_tick_completed',
+      locationId: location.id,
+      scheduledAt: new Date(FIRST_TICK_MS + index * CRON_PERIOD_MS).toISOString(),
+      durationMs: 0,
+      probeDecisionReason: 'publication-window',
+      canSkipProbe: true,
+      outcome: 'healthy-no-probe',
+      subrequestCount: 0,
+      providerDeadlineReached: false,
+    })));
+    expect(log.mock.calls.some(([message]) =>
+      typeof message === 'string' && message.includes('cron tick done in'))).toBe(false);
   });
 
   it('does not read the run manifest or probe the catalogue when no marine run is due', async () => {
@@ -550,10 +600,11 @@ describe('scheduled city rotation', () => {
   it('treats a duplicate recent check as neutral instead of inventing an anomaly', async () => {
     const { env, store, puts } = runtime();
     const scheduledTime = FIRST_TICK_MS + 2 * LOCATIONS.length * CRON_PERIOD_MS;
+    const location = tickOrder(scheduledTime)[0];
     const provider = vi.spyOn(globalThis, 'fetch').mockRejectedValue(
       new Error('A source fetch is not due in this fixture.'),
     );
-    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.setSystemTime(scheduledTime);
 
     for (let duplicate = 0; duplicate < 2; duplicate += 1) {
@@ -572,13 +623,27 @@ describe('scheduled city rotation', () => {
       locations: {},
       unreachable: {},
     });
+    expect(cronTickEvents(log.mock.calls)).toEqual([
+      expect.objectContaining({
+        locationId: location.id,
+        probeDecisionReason: 'publication-window',
+        canSkipProbe: true,
+        outcome: 'healthy-no-probe',
+      }),
+      expect.objectContaining({
+        locationId: location.id,
+        probeDecisionReason: 'recent-check',
+        canSkipProbe: null,
+        outcome: 'healthy-no-probe',
+      }),
+    ]);
   });
 
   it('uses the raised catalogue ceiling and retains a current cache without position work', async () => {
     const { env, store } = runtime(DUE_MARINE_RUN);
     const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
       new Response('temporary provider failure', { status: 503 }));
-    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -606,6 +671,87 @@ describe('scheduled city rotation', () => {
     expect(heartbeat.locations).toEqual({});
     expect(heartbeat.unreachable).toEqual({
       horsens: new Date(scheduledTime).toISOString(),
+    });
+    expect(cronTickEvents(log.mock.calls)).toEqual([
+      expect.objectContaining({
+        locationId: 'horsens',
+        probeDecisionReason: 'due',
+        canSkipProbe: false,
+        outcome: 'unreachable',
+        subrequestCount: EXHAUSTED_FIRST_COLLECTION_REQUESTS,
+        providerDeadlineReached: false,
+      }),
+    ]);
+  });
+
+  it('reports when provider work reaches its reserved completion boundary', async () => {
+    const { env } = runtime(DUE_MARINE_RUN);
+    const scheduledTime = FIRST_TICK_MS + 7 * LOCATIONS.length * CRON_PERIOD_MS;
+    const location = tickOrder(scheduledTime)[0];
+    const policy = cronExecutionPolicy(
+      scheduledTime,
+      scheduledTime + CRON_TICK_BUDGET_MS,
+      1,
+    );
+    if (!policy) throw new Error('Expected a full cron policy.');
+    const providerDeadlineAt = policy.deadlineAt - policy.completionReserveMs;
+    const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      vi.setSystemTime(providerDeadlineAt);
+      throw new Error('Provider remained unavailable through its working window.');
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.setSystemTime(scheduledTime);
+
+    await worker.scheduled(
+      { scheduledTime } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(cronTickEvents(log.mock.calls)).toEqual([
+      expect.objectContaining({
+        locationId: location.id,
+        probeDecisionReason: 'due',
+        canSkipProbe: false,
+        outcome: 'unreachable',
+        subrequestCount: 1,
+        providerDeadlineReached: true,
+      }),
+    ]);
+  });
+
+  it('does not let a completion-log failure reject a healthy scheduled tick', async () => {
+    const { env, store } = runtime();
+    const scheduledTime = FIRST_TICK_MS + 9 * LOCATIONS.length * CRON_PERIOD_MS;
+    const provider = vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      new Error('A source fetch is not due in this fixture.'),
+    );
+    vi.spyOn(console, 'log').mockImplementation((message) => {
+      if (typeof message !== 'string' || !message.startsWith('{')) return;
+      const parsed: unknown = JSON.parse(message);
+      if (typeof parsed === 'object'
+        && parsed !== null
+        && Reflect.get(parsed, 'event') === 'cron_tick_completed') {
+        throw new Error('Logging sink unavailable.');
+      }
+    });
+    vi.setSystemTime(scheduledTime);
+
+    await expect(worker.scheduled(
+      { scheduledTime } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    )).resolves.toBeUndefined();
+
+    expect(provider).not.toHaveBeenCalled();
+    expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
+      schemaVersion: 2,
+      lastTickAt: new Date(scheduledTime).toISOString(),
+      locations: {},
+      unreachable: {},
     });
   });
 

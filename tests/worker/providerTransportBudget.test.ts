@@ -41,6 +41,20 @@ function fullCronPolicy() {
   return policy;
 }
 
+function structuredLogEvents(calls: readonly (readonly unknown[])[]): Record<string, unknown>[] {
+  return calls.flatMap(([message]) => {
+    if (typeof message !== 'string' || !message.startsWith('{')) return [];
+    try {
+      const value: unknown = JSON.parse(message);
+      return typeof value === 'object' && value !== null
+        ? [value as Record<string, unknown>]
+        : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
 afterEach(() => {
   globalThis.fetch = originalFetch;
   vi.restoreAllMocks();
@@ -134,7 +148,7 @@ describe('event external-subrequest budget', () => {
         headers: { 'Retry-After': '1200' },
       }));
     globalThis.fetch = fetchMock as typeof fetch;
-    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const eventMemo: EventMemo = new Map();
     eventMemo.externalSubrequestsStarted = CRON_MAX_CATALOGUE_EXTERNAL_SUBREQUESTS;
@@ -152,6 +166,67 @@ describe('event external-subrequest budget', () => {
       CRON_MARINE_POSITION_MAX_ATTEMPTS,
     );
     expect(fetchMock).toHaveBeenCalledOnce();
+    expect(structuredLogEvents(log.mock.calls)
+      .filter(({ event }) => event === 'upstream_attempt')).toEqual([
+      expect.objectContaining({
+        provider: 'marine',
+        source: 'DMI wam_nsb',
+        collection: 'wam_nsb',
+        attempt: 1,
+        requestStarted: true,
+        outcome: 'http-429',
+        httpStatus: 429,
+        retryAfterPresent: true,
+        retryAfterRaw: '1200',
+        retryAfterParsedSeconds: 1200,
+        retryAfterHonored: true,
+        retryAfterIgnored: false,
+        retryAfterDisposition: 'honored-stop',
+        marineBusyCircuitOpenOnEntry: false,
+        openedMarineBusyCircuit: false,
+      }),
+    ]);
+  });
+
+  it('records a valid Retry-After on the final attempt as honored without another retry', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response('Server is busy', {
+        status: 429,
+        headers: { 'Retry-After': '90' },
+      }));
+    globalThis.fetch = fetchMock as typeof fetch;
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(fetchJsonWithRetries(
+      marinePositionUrl('dkss_idw'),
+      'DMI dkss_idw',
+      executionPolicy({ maxAttempts: 1, marinePositionMaxAttempts: 1 }),
+      'marine',
+      new Map(),
+    )).rejects.toThrow(/temporarily unavailable/i);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(structuredLogEvents(log.mock.calls)
+      .filter(({ event }) => event === 'upstream_attempt')).toEqual([
+      expect.objectContaining({
+        provider: 'marine',
+        source: 'DMI dkss_idw',
+        collection: 'dkss_idw',
+        attempt: 1,
+        requestStarted: true,
+        outcome: 'http-429',
+        httpStatus: 429,
+        retryAfterPresent: true,
+        retryAfterRaw: '90',
+        retryAfterParsedSeconds: 90,
+        retryAfterHonored: true,
+        retryAfterIgnored: false,
+        retryAfterDisposition: 'honored-no-retry',
+        marineBusyCircuitOpenOnEntry: false,
+        openedMarineBusyCircuit: true,
+      }),
+    ]);
   });
 
   it('models manifest, successful-catalogue and exhausted-catalogue paths separately', async () => {
@@ -280,6 +355,59 @@ describe('event external-subrequest budget', () => {
 
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(eventMemo.externalSubrequestsStarted).toBe(1);
+  });
+
+  it('drains an HTTP error body without logging provider-controlled bytes', async () => {
+    const sentinel = 'WARM_TOKEN_SENTINEL_MUST_NOT_REACH_LOGS';
+    const response = new Response(sentinel, { status: 503 });
+    const bodyRead = vi.spyOn(response, 'text');
+    const fetchMock = vi.fn(async () => response);
+    globalThis.fetch = fetchMock as typeof fetch;
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(fetchJsonWithRetries(
+      marinePositionUrl('dkss_idw'),
+      'DMI dkss_idw',
+      executionPolicy({
+        maxAttempts: 1,
+        marinePositionMaxAttempts: 1,
+      }),
+      'marine',
+      new Map(),
+    )).rejects.toThrow(/temporarily unavailable/i);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(bodyRead).toHaveBeenCalledOnce();
+    const attempts = structuredLogEvents(log.mock.calls)
+      .filter(({ event }) => event === 'upstream_attempt');
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        provider: 'marine',
+        source: 'DMI dkss_idw',
+        httpStatus: 503,
+        outcome: 'http-503',
+      }),
+    ]);
+    const emitted = JSON.stringify([log.mock.calls, warn.mock.calls]);
+    expect(emitted).not.toContain(sentinel);
+    expect(emitted).not.toContain('providerMessage');
+    expect(emitted).not.toContain('upstream_http_error');
+  });
+
+  it('does not let attempt-log failure change a successful provider result', async () => {
+    globalThis.fetch = vi.fn(async () => Response.json({ features: [] })) as typeof fetch;
+    vi.spyOn(console, 'log').mockImplementation(() => {
+      throw new Error('Logging sink unavailable.');
+    });
+
+    await expect(fetchJsonWithRetries(
+      marinePositionUrl('dkss_idw'),
+      'DMI dkss_idw',
+      executionPolicy({ maxAttempts: 1, marinePositionMaxAttempts: 1 }),
+      'marine',
+      new Map(),
+    )).resolves.toEqual({ features: [] });
   });
 
   it('is shared by retry loops and stops fetches before the Free-plan ceiling', async () => {

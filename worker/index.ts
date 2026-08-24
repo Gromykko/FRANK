@@ -32,6 +32,7 @@ import {
   executionPolicy,
   isExecutionDeadlineError,
   remainingExecutionMs,
+  remainingProviderMs,
   rethrowIfDeadlineReached,
   rotateTickOrder,
 } from './execution';
@@ -162,6 +163,30 @@ export const CRON_HEARTBEAT_THROTTLE_TICKS = 5;
 // brownout cannot hold the invocation open past the runtime's patience.
 const HEARTBEAT_WRITE_BUDGET_MS = 3_000;
 export const CRON_HEARTBEAT_KEY = 'frank:system:cron-heartbeat';
+
+type CronOutcome = NonNullable<RefreshOptions['cronOutcome']>;
+
+function logCronTickCompleted(record: {
+  locationId: string | null;
+  scheduledAt: string;
+  durationMs: number;
+  probeDecisionReason: NonNullable<CronOutcome['probeDecisionReason']> | null;
+  canSkipProbe: boolean | null;
+  outcome: CronOutcome['status'] | 'deadline-skipped';
+  subrequestCount: number;
+  providerDeadlineReached: boolean;
+}): void {
+  // The completion record is diagnostic only: a logging failure must not turn
+  // a completed refresh or heartbeat into a failed scheduled invocation.
+  try {
+    console.log(JSON.stringify({
+      event: 'cron_tick_completed',
+      ...record,
+    }));
+  } catch {
+    // Best-effort observability only.
+  }
+}
 
 function greatestCommonDivisor(left: number, right: number): number {
   let a = Math.abs(left);
@@ -899,6 +924,8 @@ async function _refreshForecastCache(
   if (options.cronOutcome) {
     options.cronOutcome.status = 'unreachable';
     delete options.cronOutcome.attemptedAt;
+    delete options.cronOutcome.probeDecisionReason;
+    delete options.cronOutcome.canSkipProbe;
   }
   const policy = executionPolicy(options.executionPolicy);
   assertBeforeDeadline(policy, `refresh start for ${location.id}`);
@@ -920,7 +947,10 @@ async function _refreshForecastCache(
   const minIntervalMs = options.minIntervalMs ?? CRON_CHECK_MIN_INTERVAL_MS;
 
   if (cached && !shouldCheckInBackground(location, cached, minIntervalMs)) {
-    if (options.cronOutcome) options.cronOutcome.status = 'healthy-no-probe';
+    if (options.cronOutcome) {
+      options.cronOutcome.status = 'healthy-no-probe';
+      options.cronOutcome.probeDecisionReason = 'recent-check';
+    }
     if (options.force && !cachedNeedsRecovery) {
       // No provider was contacted here, so lastAttemptAt keeps its old value.
       return withCacheHealth(cached, 'current', {
@@ -985,6 +1015,10 @@ async function _refreshForecastCache(
       && !cachedNeedsRecovery
       && knownMarineWithinPolicy
       && !probeDecision.shouldProbe;
+    if (options.cronOutcome) {
+      options.cronOutcome.probeDecisionReason = probeDecision.reason;
+      options.cronOutcome.canSkipProbe = canSkipProbe;
+    }
 
     if (canSkipProbe) {
       latestMarine = knownMarine;
@@ -1677,6 +1711,10 @@ const worker = {
       : tickStartedAt;
     const eventMemo: EventMemo = new Map();
     let heartbeatAttempt: HeartbeatAttempt | null = null;
+    let scheduledLocationId: string | null = null;
+    let scheduledPolicy: ExecutionPolicy | null = null;
+    let scheduledOutcome: CronOutcome | null = null;
+    let providerDeadlineReached = false;
     try {
       // Workers Free allows only 10 ms active CPU per scheduled invocation;
       // network/KV waits are wall time, but still must not overlap later ticks.
@@ -1687,6 +1725,7 @@ const worker = {
       // Authenticated deployment warming remains a separate per-location path.
       const scheduledLocations = tickOrder(event?.scheduledTime).slice(0, 1);
       for (const location of scheduledLocations) {
+        scheduledLocationId = location.id;
         // Default to unsuccessful before any operation that can throw or run
         // out of budget. Only explicit healthy completion flips this outcome.
         heartbeatAttempt = {
@@ -1695,6 +1734,7 @@ const worker = {
           attemptedAt: new Date(Date.now()).toISOString(),
         };
         const policy = cronExecutionPolicy(Date.now(), tickDeadlineAt, 1);
+        scheduledPolicy = policy;
         if (!policy) {
           console.error(`Cron tick deadline reached; skipping ${location.id} until the next tick`);
           break;
@@ -1702,6 +1742,7 @@ const worker = {
         const cronOutcome: NonNullable<RefreshOptions['cronOutcome']> = {
           status: 'unreachable',
         };
+        scheduledOutcome = cronOutcome;
         try {
           const refreshed = await refreshForecastCache(env, location, {
             reason: 'cron',
@@ -1738,6 +1779,10 @@ const worker = {
         }
       }
     } finally {
+      // Snapshot at the provider boundary. Heartbeat I/O has its own budget and
+      // must not make a healthy provider phase look deadline-bound in the log.
+      providerDeadlineReached = scheduledPolicy !== null
+        && remainingProviderMs(scheduledPolicy) <= 0;
       // Bounded outside the refresh budget so a due heartbeat still gets a
       // chance to land when provider work runs long. Healthy ticks and repeated
       // failures usually return after the read; failure transitions and
@@ -1749,7 +1794,16 @@ const worker = {
         deadlineAt: Date.now() + HEARTBEAT_WRITE_BUDGET_MS,
         maxAttempts: 1,
       });
-      console.log(`cron tick done in ${Date.now() - tickStartedAt}ms`);
+      logCronTickCompleted({
+        locationId: scheduledLocationId,
+        scheduledAt: new Date(heartbeatTickAt).toISOString(),
+        durationMs: Date.now() - tickStartedAt,
+        probeDecisionReason: scheduledOutcome?.probeDecisionReason ?? null,
+        canSkipProbe: scheduledOutcome?.canSkipProbe ?? null,
+        outcome: scheduledOutcome?.status ?? 'deadline-skipped',
+        subrequestCount: eventMemo.externalSubrequestsStarted ?? 0,
+        providerDeadlineReached,
+      });
     }
   },
 } satisfies ExportedHandler<Env>;

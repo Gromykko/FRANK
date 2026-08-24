@@ -75,6 +75,14 @@ export interface RefreshOptions {
   cronOutcome?: {
     status: 'unreachable' | 'healthy-no-probe' | 'contacted';
     attemptedAt?: string;
+    probeDecisionReason?:
+      | 'invalid'
+      | 'expired'
+      | 'publication-window'
+      | 'retry-backoff'
+      | 'due'
+      | 'recent-check';
+    canSkipProbe?: boolean;
   };
 }
 

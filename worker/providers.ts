@@ -650,15 +650,20 @@ async function fetchMetWeather(
     try {
       response = await fetchWithTimeout(metForecastUrl(location), { headers }, policy, eventMemo);
     } catch (error) {
+      logUpstream(
+        `met:${location.id}`,
+        metStartedAt,
+        error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'error',
+      );
       throw transientProviderError(
         error,
         'weather',
         `MET Norway weather is temporarily unavailable for ${location.id}.`,
       ) ?? error;
     }
-    logUpstream(`met:${location.id}`, metStartedAt, response.status === 304 ? 'not-modified' : `http-${response.status}`);
 
     if (response.status === 304 && stored?.body) {
+      logUpstream(`met:${location.id}`, metStartedAt, 'not-modified');
       // Unchanged on MET's side: reuse the stored body. A 304 can still extend
       // the validity window through its own Expires header.
       if (contactEvidence) contactEvidence.providerContacted = true;
@@ -668,6 +673,11 @@ async function fetchMetWeather(
     }
 
     if (!response.ok) {
+      logUpstream(
+        `met:${location.id}`,
+        metStartedAt,
+        response.status === 304 ? 'not-modified' : `http-${response.status}`,
+      );
       const statusError = errorWithStatus(
         `MET Norway weather failed with HTTP ${response.status}`,
         response.status,
@@ -677,25 +687,34 @@ async function fetchMetWeather(
         'weather',
         `MET Norway weather is temporarily unavailable for ${location.id}.`,
       ) ?? statusError;
-      let providerMessage = '';
       try {
-        providerMessage = (await response.text()).slice(0, 180);
+        // Preserve the established body-consumption timing without retaining
+        // or logging provider-controlled bytes.
+        await response.text();
       } catch {
-        // Keep classification bound to the reached HTTP status.
+        // The reached status owns classification; draining is best-effort.
       }
-      console.warn({
-        event: 'upstream_http_error',
-        source: `met:${location.id}`,
-        status: response.status,
-        ...(providerMessage ? { providerMessage } : {}),
-      });
       throw classifiedError;
     }
 
-    const data: unknown = await response.json();
+    let data: unknown;
+    try {
+      data = await response.json();
+    } catch (error) {
+      logUpstream(
+        `met:${location.id}`,
+        metStartedAt,
+        error instanceof Error && error.name === 'TimeoutError'
+          ? 'timeout'
+          : 'invalid-response',
+      );
+      throw error;
+    }
     if (!isMetForecastResponse(data)) {
+      logUpstream(`met:${location.id}`, metStartedAt, 'invalid-response');
       throw new Error('MET Norway weather returned an invalid payload.');
     }
+    logUpstream(`met:${location.id}`, metStartedAt, 'ok');
     if (contactEvidence) contactEvidence.providerContacted = true;
     const lastModified = response.headers.get('Last-Modified');
     const expiresHeader = response.headers.get('Expires');

@@ -106,8 +106,8 @@ type RetryAfterDisposition =
   | 'absent'
   | 'honored-wait'
   | 'honored-stop'
+  | 'honored-no-retry'
   | 'ignored-invalid'
-  | 'no-retry'
   | 'ignored-status';
 
 interface UpstreamAttemptRecord {
@@ -129,7 +129,8 @@ interface UpstreamAttemptRecord {
 function emitUpstreamAttempt(record: UpstreamAttemptRecord): void {
   const retryAfterPresent = record.retryAfterRaw !== null;
   const honored = record.retryAfterDisposition === 'honored-wait'
-    || record.retryAfterDisposition === 'honored-stop';
+    || record.retryAfterDisposition === 'honored-stop'
+    || record.retryAfterDisposition === 'honored-no-retry';
   const ignored = record.retryAfterDisposition === 'ignored-invalid'
     || record.retryAfterDisposition === 'ignored-status';
   const retryAfterHonored = honored ? true : ignored ? false : null;
@@ -402,22 +403,15 @@ export async function fetchJsonWithRetries(
             : headerRetrySeconds === undefined
               ? 'ignored-invalid'
               : attempt === maxAttempts - 1
-                ? 'no-retry'
+                ? 'honored-no-retry'
                 : 'honored-wait',
       );
-      let providerMessage = '';
       try {
-        providerMessage = (await response.text()).slice(0, 180);
+        // Preserve the existing body-consumption timing without retaining or
+        // logging provider-controlled bytes.
+        await response.text();
       } catch {
-        // Diagnostics are best-effort; the reached status owns classification.
-      }
-      if (providerMessage) {
-        console.warn({
-          event: 'upstream_http_error',
-          source: label,
-          status: response.status,
-          providerMessage,
-        });
+        // The reached status owns classification; draining is best-effort.
       }
       // Non-429 4xx responses (e.g. 400, 404) are terminal.
       // 429 and 5xx responses retry within the execution policy budget and deadline.

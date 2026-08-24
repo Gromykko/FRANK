@@ -16,7 +16,11 @@ import {
 } from '../../src/features/forecast/releaseContract';
 import type { ForecastLocation } from '../../src/config/locationTypes';
 import type { ForecastData } from '../../worker/domain';
-import { assembledForecastKey, marineIngredientKey } from '../../worker/generation';
+import {
+  assembledForecastKey,
+  marineIngredientKey,
+  metRawKey,
+} from '../../worker/generation';
 import { ProviderUnavailableError } from '../../worker/providerAvailability';
 
 const NOW = Date.parse('2031-08-23T11:59:00.000Z');
@@ -53,8 +57,8 @@ function retainedMarineIngredient(
   };
 }
 
-function metResponse(): Response {
-  return Response.json({
+function metBody() {
+  return {
     properties: {
       timeseries: [{
         time: FORECAST_HOUR,
@@ -74,12 +78,82 @@ function metResponse(): Response {
         },
       }],
     },
-  }, {
+  };
+}
+
+function metResponse(): Response {
+  return Response.json(metBody(), {
     headers: {
       Expires: new Date(NOW + 60 * 60_000).toUTCString(),
       'Last-Modified': new Date(NOW).toUTCString(),
     },
   });
+}
+
+function upstreamAttemptEvents(
+  calls: readonly (readonly unknown[])[],
+): Record<string, unknown>[] {
+  return calls.flatMap(([message]) => {
+    if (typeof message !== 'string' || !message.startsWith('{')) return [];
+    try {
+      const value: unknown = JSON.parse(message);
+      return typeof value === 'object'
+        && value !== null
+        && Reflect.get(value, 'event') === 'upstream_attempt'
+        ? [value as Record<string, unknown>]
+        : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function loggingRuntime(location: ForecastLocation) {
+  const lastModified = new Date(NOW - 60 * 60_000).toUTCString();
+  const store = new Map<string, string>([
+    [
+      marineIngredientKey(location, 'water'),
+      JSON.stringify(retainedMarineIngredient(location, 'water')),
+    ],
+    [
+      marineIngredientKey(location, 'waves'),
+      JSON.stringify(retainedMarineIngredient(location, 'waves')),
+    ],
+    [
+      metRawKey(location),
+      JSON.stringify({
+        locationId: location.id,
+        forecastConfigRevision: location.forecastConfigRevision,
+        lastModified,
+        body: metBody(),
+      }),
+    ],
+  ]);
+  const env = {
+    FRANK_FORECAST_CACHE: {
+      async get(key: string, type?: string) {
+        const raw = store.get(key);
+        if (raw === undefined) return null;
+        return type === 'json' ? JSON.parse(raw) : raw;
+      },
+      async put(key: string, value: string) {
+        store.set(key, value);
+      },
+    },
+  };
+  return { env, store };
+}
+
+function resolvedMarineProbe(location: ForecastLocation) {
+  return {
+    instances: {
+      water: { collection: location.dmiCollections.water[0], id: RETAINED_RUN },
+      waves: { collection: location.dmiCollections.waves[0], id: RETAINED_RUN },
+    },
+    substituted: [],
+    catalogueContacted: true,
+    manifestResolved: [],
+  };
 }
 
 beforeEach(() => {
@@ -157,5 +231,99 @@ describe('built fallback provider-busy classification', () => {
     });
     expect(forecast.sources.cacheHealth).not.toHaveProperty('providerBusy');
     expect(forecast.sources.cacheHealth).not.toHaveProperty('busyProvider');
+  });
+});
+
+describe('provider attempt logging', () => {
+  it('records a MET timeout without logging its error message', async () => {
+    const scheduledTime = NOW;
+    const location = tickOrder(scheduledTime)[0];
+    const { env, store } = loggingRuntime(location);
+    const sentinel = 'MET_TIMEOUT_SECRET_SENTINEL';
+    const timeout = Object.assign(new Error(sentinel), { name: 'TimeoutError' });
+    fetchLatestMarineInstancesMock.mockResolvedValue(resolvedMarineProbe(location));
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('api.met.no/')) throw timeout;
+      if (url.includes('feeds.meteoalarm.org/')) {
+        return new Response('<feed></feed>', { status: 200 });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    }) as typeof fetch;
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await worker.scheduled(
+      { scheduledTime } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    expect(upstreamAttemptEvents(log.mock.calls)
+      .filter(({ source }) => source === `met:${location.id}`)).toEqual([
+      expect.objectContaining({
+        provider: 'weather',
+        source: `met:${location.id}`,
+        attempt: 1,
+        requestStarted: true,
+        outcome: 'timeout',
+        httpStatus: null,
+      }),
+    ]);
+    const stored = store.get(assembledForecastKey(location));
+    expect(stored).toBeDefined();
+    const forecast = JSON.parse(stored!) as ForecastData;
+    expect(forecast.sources.cacheHealth?.degradedSources).toEqual(['weather']);
+    const emitted = JSON.stringify([log.mock.calls, warn.mock.calls, error.mock.calls]);
+    expect(emitted).not.toContain(sentinel);
+    expect(emitted).not.toContain('providerMessage');
+  });
+
+  it('drains a MET HTTP error body without emitting a second body log', async () => {
+    const scheduledTime = NOW;
+    const location = tickOrder(scheduledTime)[0];
+    const { env, store } = loggingRuntime(location);
+    const sentinel = 'MET_RESPONSE_BODY_SECRET_SENTINEL';
+    const response = new Response(sentinel, { status: 503 });
+    const bodyRead = vi.spyOn(response, 'text');
+    fetchLatestMarineInstancesMock.mockResolvedValue(resolvedMarineProbe(location));
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('api.met.no/')) return response;
+      if (url.includes('feeds.meteoalarm.org/')) {
+        return new Response('<feed></feed>', { status: 200 });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    }) as typeof fetch;
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await worker.scheduled(
+      { scheduledTime } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    expect(bodyRead).toHaveBeenCalledOnce();
+    expect(upstreamAttemptEvents(log.mock.calls)
+      .filter(({ source }) => source === `met:${location.id}`)).toEqual([
+      expect.objectContaining({
+        provider: 'weather',
+        source: `met:${location.id}`,
+        attempt: 1,
+        outcome: 'http-503',
+        httpStatus: 503,
+      }),
+    ]);
+    const stored = store.get(assembledForecastKey(location));
+    expect(stored).toBeDefined();
+    const forecast = JSON.parse(stored!) as ForecastData;
+    expect(forecast.sources.cacheHealth?.degradedSources).toEqual(['weather']);
+    const emitted = JSON.stringify([log.mock.calls, warn.mock.calls, error.mock.calls]);
+    expect(emitted).not.toContain(sentinel);
+    expect(emitted).not.toContain('providerMessage');
+    expect(emitted).not.toContain('upstream_http_error');
   });
 });
