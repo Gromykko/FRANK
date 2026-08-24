@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_WARM_TOTAL_TIMEOUT_MS,
   WARM_LOCATION_IDS,
+  WARM_LOCATION_STAGGER_MS,
   warmWorkerLocations,
 } from '../../scripts/warm-worker.mjs';
 
@@ -30,25 +31,45 @@ function silentLogger() {
 }
 
 describe('deployment Worker warm-up', () => {
-  it('warms all four exact forecast URLs serially with bearer auth and no secret logging', async () => {
+  it('warms all four exact forecast URLs serially with staggered starts, bearer auth, and no secret logging', async () => {
+    let nowMs = 1_000;
     let inFlight = 0;
     let maximumInFlight = 0;
+    const requestStarts: number[] = [];
     const fetchImpl = vi.fn(async () => {
+      requestStarts.push(nowMs);
       inFlight += 1;
       maximumInFlight = Math.max(maximumInFlight, inFlight);
       await Promise.resolve();
       inFlight -= 1;
       return readyResponse();
     });
+    const sleepImpl = vi.fn(async (delayMs: number) => {
+      nowMs += delayMs;
+    });
     const logger = silentLogger();
 
-    await warmWorkerLocations({ baseUrl: `${BASE_URL}/`, token: TOKEN, fetchImpl, logger });
+    await warmWorkerLocations({
+      baseUrl: `${BASE_URL}/`,
+      token: TOKEN,
+      fetchImpl,
+      now: () => nowMs,
+      sleepImpl,
+      logger,
+    });
 
     expect(fetchImpl.mock.calls.map(([url]) => String(url))).toEqual(
       WARM_LOCATION_IDS.map((locationId) =>
         `${BASE_URL}/api/v1/forecast/${locationId}?warm=1`),
     );
     expect(maximumInFlight).toBe(1);
+    expect(requestStarts).toEqual(WARM_LOCATION_IDS.map((_, index) =>
+      1_000 + index * WARM_LOCATION_STAGGER_MS));
+    expect(sleepImpl.mock.calls).toEqual([
+      [WARM_LOCATION_STAGGER_MS],
+      [WARM_LOCATION_STAGGER_MS],
+      [WARM_LOCATION_STAGGER_MS],
+    ]);
     for (const [, init] of fetchImpl.mock.calls) {
       const request = init as RequestInit;
       expect(new Headers(request.headers).get('Authorization')).toBe(`Bearer ${TOKEN}`);
@@ -63,10 +84,12 @@ describe('deployment Worker warm-up', () => {
   it('honours Retry-After while warming the other cities before the retry', async () => {
     let nowMs = 1_000;
     let horsensAttempts = 0;
+    const requestStarts: Array<{ locationId: string; at: number }> = [];
     const fetchImpl = vi.fn(async (url: string) => {
       const locationId = locationIdFrom(url);
+      requestStarts.push({ locationId, at: nowMs });
       if (locationId === 'horsens' && horsensAttempts++ === 0) {
-        return initializingResponse('2');
+        return initializingResponse('10');
       }
       return readyResponse();
     });
@@ -81,7 +104,7 @@ describe('deployment Worker warm-up', () => {
       now: () => nowMs,
       sleepImpl,
       logger: silentLogger(),
-      totalTimeoutMs: 5_000,
+      totalTimeoutMs: 15_000,
     });
 
     expect(fetchImpl.mock.calls.map(([url]) => locationIdFrom(String(url)))).toEqual([
@@ -91,8 +114,14 @@ describe('deployment Worker warm-up', () => {
       'aarhus',
       'horsens',
     ]);
-    expect(sleepImpl).toHaveBeenCalledOnce();
-    expect(sleepImpl).toHaveBeenCalledWith(2_000);
+    expect(requestStarts.map(({ at }) => at)).toEqual([1_000, 2_000, 3_000, 4_000, 11_000]);
+    expect(requestStarts.at(-1)!.at - requestStarts[0].at).toBe(10_000);
+    expect(sleepImpl.mock.calls).toEqual([
+      [WARM_LOCATION_STAGGER_MS],
+      [WARM_LOCATION_STAGGER_MS],
+      [WARM_LOCATION_STAGGER_MS],
+      [7_000],
+    ]);
   });
 
   it('allows repeated authenticated initialization cooldowns inside the candidate gate', async () => {
@@ -127,7 +156,13 @@ describe('deployment Worker warm-up', () => {
       'aarhus',
       'aarhus',
     ]);
-    expect(sleepImpl.mock.calls).toEqual([[90_000], [90_000]]);
+    expect(sleepImpl.mock.calls).toEqual([
+      [WARM_LOCATION_STAGGER_MS],
+      [WARM_LOCATION_STAGGER_MS],
+      [WARM_LOCATION_STAGGER_MS],
+      [90_000],
+      [90_000],
+    ]);
   });
 
   it('fails the release when exactly one city cannot retry within the global deadline', async () => {
@@ -145,7 +180,7 @@ describe('deployment Worker warm-up', () => {
       now: () => nowMs,
       sleepImpl,
       logger: silentLogger(),
-      totalTimeoutMs: 2_500,
+      totalTimeoutMs: 5_500,
     })).rejects.toThrow('locations not ready: horsens');
 
     expect(fetchImpl.mock.calls.map(([url]) => locationIdFrom(String(url)))).toEqual([
@@ -155,7 +190,12 @@ describe('deployment Worker warm-up', () => {
       'aarhus',
       'horsens',
     ]);
-    expect(sleepImpl).toHaveBeenCalledWith(2_000);
+    expect(sleepImpl.mock.calls).toEqual([
+      [WARM_LOCATION_STAGGER_MS],
+      [WARM_LOCATION_STAGGER_MS],
+      [WARM_LOCATION_STAGGER_MS],
+      [WARM_LOCATION_STAGGER_MS],
+    ]);
   });
 
   it.each([

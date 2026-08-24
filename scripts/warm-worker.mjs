@@ -12,6 +12,7 @@ export const WARM_LOCATION_IDS = Object.freeze([
 // window still fits six worst-case serial passes across all four locations.
 export const DEFAULT_WARM_TOTAL_TIMEOUT_MS = 13 * 60_000;
 export const DEFAULT_WARM_REQUEST_TIMEOUT_MS = 30_000;
+export const WARM_LOCATION_STAGGER_MS = 1_000;
 
 function sleep(delayMs) {
   return new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -149,6 +150,8 @@ export async function warmWorkerLocations({
 
   const deadlineAt = now() + totalTimeoutMs;
   const pending = new Map(WARM_LOCATION_IDS.map((locationId) => [locationId, now()]));
+  const attemptedLocations = new Set();
+  let lastRequestStartedAt = Number.NEGATIVE_INFINITY;
 
   while (pending.size > 0) {
     const currentTime = now();
@@ -164,7 +167,16 @@ export async function warmWorkerLocations({
       continue;
     }
 
-    const locationId = dueLocations[0];
+    const locationId = dueLocations.find((id) => !attemptedLocations.has(id))
+      ?? dueLocations[0];
+    const nextRequestAt = lastRequestStartedAt + WARM_LOCATION_STAGGER_MS;
+    if (currentTime < nextRequestAt) {
+      await sleepImpl(Math.min(nextRequestAt - currentTime, deadlineAt - currentTime));
+      continue;
+    }
+
+    attemptedLocations.add(locationId);
+    lastRequestStartedAt = currentTime;
     const result = await requestLocation({
       baseUrl: resolvedBaseUrl,
       token: resolvedToken,

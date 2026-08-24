@@ -64,6 +64,11 @@ export const FORECAST_SOURCE_POLICY = Object.freeze({
   dmiOtherWamCompleteDelayMs: 3 * 60 * 60 * 1000,
   dmiPublicationCushionMs: 10 * 60 * 1000,
   dmiDueProbeBackoffMs: 20 * 60 * 1000,
+  // A failed contact is evidence about the call, not about DMI's schedule, so
+  // it must not arm the publication backoff. One rotation is the natural
+  // cadence; repeated identical failures are kept out of KV by
+  // shouldPersistFailureState.
+  dmiFailedProbeRetryMs: 4 * 60 * 1000,
 });
 
 export const FORECAST_PROVIDER_PARAMETERS = Object.freeze({
@@ -254,6 +259,7 @@ export function marineProbeDecision(
   } | null | undefined,
   lastAttemptAt?: string,
   nowMs = Date.now(),
+  previousMarineFailed = false,
 ): MarineProbeDecision {
   const waterRunMs = parseDmiInstanceMs(marineInstances?.water?.id);
   const wavesRunMs = parseDmiInstanceMs(marineInstances?.waves?.id);
@@ -297,7 +303,10 @@ export function marineProbeDecision(
   if (Number.isFinite(lastAttemptMs)
     && lastAttemptMs >= expectedAtMs
     && lastAttemptMs <= nowMs) {
-    const retryAtMs = lastAttemptMs + FORECAST_SOURCE_POLICY.dmiDueProbeBackoffMs;
+    const backoffMs = previousMarineFailed
+      ? FORECAST_SOURCE_POLICY.dmiFailedProbeRetryMs
+      : FORECAST_SOURCE_POLICY.dmiDueProbeBackoffMs;
+    const retryAtMs = lastAttemptMs + backoffMs;
     if (nowMs < retryAtMs) {
       return { shouldProbe: false, nextProbeAtMs: retryAtMs, reason: 'retry-backoff' };
     }

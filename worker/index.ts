@@ -971,10 +971,13 @@ async function _refreshForecastCache(
     // outside the 12-hour safety policy always bypass the schedule.
     const knownMarineWithinPolicy = marineInstancesWithinFallbackAge(knownMarine);
     const probeDecisionAt = Date.now();
+    const previousMarineFailed = (cachedHealth?.degradedSources ?? [])
+      .some((source) => source === 'water' || source === 'waves');
     const probeDecision = marineProbeDecision(
       knownMarine,
       cachedHealth?.lastAttemptAt,
       probeDecisionAt,
+      previousMarineFailed,
     );
     const canSkipProbe = Boolean(knownMarine?.water?.id && knownMarine?.waves?.id)
       && !options.force

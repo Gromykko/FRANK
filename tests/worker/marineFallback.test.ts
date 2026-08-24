@@ -8,6 +8,7 @@ import {
   shouldCheckInBackground,
 } from '../../worker/index';
 import { MARINE_INGREDIENT_CACHE_SCHEMA_VERSION } from '../../src/features/forecast/releaseContract';
+import { FORECAST_SOURCE_POLICY } from '../../worker/forecastModel';
 import { marineIngredientKey } from '../../worker/generation';
 
 // An in-memory stand-in for the KV binding (get(key,'json') / put(key,string)).
@@ -474,22 +475,50 @@ describe('marineProbeDecision (DMI publication schedule)', () => {
     ).nextProbeAtMs).toBe(Date.parse('2026-07-11T20:55:00Z'));
   });
 
-  it('backs off for 20 minutes after a due check returned no newer run', () => {
+  it('keeps the full publication backoff after a successful due check found no newer run', () => {
     const attemptedAt = Date.parse('2026-07-11T21:31:00Z');
+    const retryAt = attemptedAt + FORECAST_SOURCE_POLICY.dmiDueProbeBackoffMs;
     expect(marineProbeDecision(
       sharedRun,
       new Date(attemptedAt).toISOString(),
-      Date.parse('2026-07-11T21:40:00Z'),
+      retryAt - 1,
+      false,
     )).toEqual({
       shouldProbe: false,
-      nextProbeAtMs: Date.parse('2026-07-11T21:51:00Z'),
+      nextProbeAtMs: retryAt,
       reason: 'retry-backoff',
     });
     expect(marineProbeDecision(
       sharedRun,
       new Date(attemptedAt).toISOString(),
-      Date.parse('2026-07-11T21:51:00Z'),
+      retryAt,
+      false,
     ).shouldProbe).toBe(true);
+  });
+
+  it('retries a failed due probe after one city rotation instead of the publication backoff', () => {
+    const attemptedAt = Date.parse('2026-07-11T21:31:00Z');
+    const retryAt = attemptedAt + FORECAST_SOURCE_POLICY.dmiFailedProbeRetryMs;
+    expect(marineProbeDecision(
+      sharedRun,
+      new Date(attemptedAt).toISOString(),
+      retryAt - 1,
+      true,
+    )).toEqual({
+      shouldProbe: false,
+      nextProbeAtMs: retryAt,
+      reason: 'retry-backoff',
+    });
+    expect(marineProbeDecision(
+      sharedRun,
+      new Date(attemptedAt).toISOString(),
+      retryAt,
+      true,
+    )).toEqual({
+      shouldProbe: true,
+      nextProbeAtMs: expectedSharedRunAt,
+      reason: 'due',
+    });
   });
 
   it('does not mistake pre-window or future stamps for a completed due probe', () => {

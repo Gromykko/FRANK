@@ -689,9 +689,10 @@ describe('scheduled city rotation', () => {
       {} as ExecutionContext,
     );
 
-    // The first 503 established provider retry-backoff. That no-probe repeat is
-    // still an unchanged unreachable outcome, without another upstream burst.
-    expect(provider).toHaveBeenCalledTimes(EXHAUSTED_FIRST_COLLECTION_REQUESTS);
+    // The first 503 marks marine degraded, so one city rotation later the
+    // failed-contact backoff has elapsed and the catalogue is tried again. The
+    // repeated failure is still an unchanged unreachable heartbeat outcome.
+    expect(provider).toHaveBeenCalledTimes(2 * EXHAUSTED_FIRST_COLLECTION_REQUESTS);
     expect(puts.filter((key) => key === CRON_HEARTBEAT_KEY)).toHaveLength(1);
     expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
       schemaVersion: 2,
