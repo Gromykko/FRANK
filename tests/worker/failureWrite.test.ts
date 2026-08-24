@@ -206,7 +206,6 @@ describe('withCronAttempt', () => {
       beat({ horsens: at(15 * 60 * 1000) }, {}, at(60 * 1000)),
     );
     expect(attemptOf(result)).toBe(at(60 * 1000));
-    expect(result.sources.cronHeartbeat?.lastTickAt).toBe(at(60 * 1000));
   });
 
   it('keeps the older city success visible after a more recent unsuccessful tick', () => {
@@ -220,7 +219,6 @@ describe('withCronAttempt', () => {
       ),
     );
     expect(attemptOf(result)).toBe(at(15 * 60 * 1000));
-    expect(result.sources.cronHeartbeat).toBeUndefined();
   });
 
   it('pins an anomalous city to its last success even if failure state was stamped later', () => {
@@ -234,7 +232,6 @@ describe('withCronAttempt', () => {
       ),
     );
     expect(attemptOf(result)).toBe(at(15 * 60 * 1000));
-    expect(result.sources.cronHeartbeat).toBeUndefined();
   });
 
   it('fails closed when success and failure have the same timestamp', () => {
@@ -245,7 +242,6 @@ describe('withCronAttempt', () => {
       beat({ horsens: sameTick }, { horsens: sameTick }, at(60 * 1000)),
     );
     expect(attemptOf(result)).toBe(sameTick);
-    expect(result.sources.cronHeartbeat).toBeUndefined();
   });
 
   it('allows a later successful city tick to supersede an older failure', () => {
@@ -259,7 +255,6 @@ describe('withCronAttempt', () => {
       ),
     );
     expect(attemptOf(result)).toBe(at(60 * 1000));
-    expect(result.sources.cronHeartbeat?.lastTickAt).toBe(at(60 * 1000));
   });
 
   it('never moves a stamp backwards', () => {
@@ -275,7 +270,6 @@ describe('withCronAttempt', () => {
     const stale = at(THROTTLE_WINDOW_MS);
     const result = withCronAttempt(payload(stale), 'aarhus', beat({ horsens: at(0) }));
     expect(attemptOf(result)).toBe(stale);
-    expect(result.sources.cronHeartbeat).toBeUndefined();
   });
 
   // A clock fault must not blank the label this whole mechanism exists to fill:

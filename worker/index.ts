@@ -451,29 +451,9 @@ export function withCronAttempt<T extends ForecastData>(
     && Number.isFinite(heartbeatTickMs)
     && heartbeatTickMs >= successfulMs
     && heartbeatTickMs <= nowMs;
-  const cronHeartbeat = heartbeat && mayUseGlobalTick
-    ? {
-        lastTickAt: new Date(heartbeatTickMs).toISOString(),
-        ageMin: Math.round((nowMs - heartbeatTickMs) / 60_000),
-      }
-    : undefined;
-
-  // cronHeartbeat is app-wide storage, but it is exposed on a city payload only
-  // when that city is eligible to inherit it. Otherwise cacheStatusView would
-  // let the global tick hide this city's older successful stamp.
-  const { cronHeartbeat: _previousCronHeartbeat, ...sourcesWithoutHeartbeat } = data.sources;
-  let nextSources: ForecastData['sources'] = _previousCronHeartbeat
-    ? sourcesWithoutHeartbeat
-    : data.sources;
-  if (cronHeartbeat) {
-    nextSources = {
-      ...nextSources,
-      cronHeartbeat,
-    };
-  }
 
   if (!cacheHealth || !hasUsableSuccess || !successfulAt) {
-    return nextSources === data.sources ? data : { ...data, sources: nextSources };
+    return data;
   }
 
   if (hasActiveFailure) {
@@ -483,7 +463,7 @@ export function withCronAttempt<T extends ForecastData>(
     return {
       ...data,
       sources: {
-        ...nextSources,
+        ...data.sources,
         cacheHealth: { ...cacheHealth, lastAttemptAt: successfulAt },
       },
     };
@@ -495,13 +475,13 @@ export function withCronAttempt<T extends ForecastData>(
   const effectiveAttemptMs = mayUseGlobalTick ? heartbeatTickMs : successfulMs;
 
   if (Date.parse(cacheHealth.lastAttemptAt) >= effectiveAttemptMs) {
-    return nextSources === data.sources ? data : { ...data, sources: nextSources };
+    return data;
   }
 
   return {
     ...data,
     sources: {
-      ...nextSources,
+      ...data.sources,
       cacheHealth: { ...cacheHealth, lastAttemptAt: effectiveAttemptAt },
     },
   };

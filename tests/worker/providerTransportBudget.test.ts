@@ -55,6 +55,12 @@ function structuredLogEvents(calls: readonly (readonly unknown[])[]): Record<str
   });
 }
 
+function expectNoDerivedRetryAfterFields(record: Record<string, unknown> | undefined): void {
+  expect(record).not.toHaveProperty('retryAfterPresent');
+  expect(record).not.toHaveProperty('retryAfterHonored');
+  expect(record).not.toHaveProperty('retryAfterIgnored');
+}
+
 afterEach(() => {
   globalThis.fetch = originalFetch;
   vi.restoreAllMocks();
@@ -166,8 +172,9 @@ describe('event external-subrequest budget', () => {
       CRON_MARINE_POSITION_MAX_ATTEMPTS,
     );
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(structuredLogEvents(log.mock.calls)
-      .filter(({ event }) => event === 'upstream_attempt')).toEqual([
+    const attempts = structuredLogEvents(log.mock.calls)
+      .filter(({ event }) => event === 'upstream_attempt');
+    expect(attempts).toEqual([
       expect.objectContaining({
         provider: 'marine',
         source: 'DMI wam_nsb',
@@ -176,16 +183,15 @@ describe('event external-subrequest budget', () => {
         requestStarted: true,
         outcome: 'http-429',
         httpStatus: 429,
-        retryAfterPresent: true,
         retryAfterRaw: '1200',
+        retryAfterRawTruncated: false,
         retryAfterParsedSeconds: 1200,
-        retryAfterHonored: true,
-        retryAfterIgnored: false,
         retryAfterDisposition: 'honored-stop',
         marineBusyCircuitOpenOnEntry: false,
         openedMarineBusyCircuit: false,
       }),
     ]);
+    expectNoDerivedRetryAfterFields(attempts[0]);
   });
 
   it('records a valid Retry-After on the final attempt as honored without another retry', async () => {
@@ -207,8 +213,9 @@ describe('event external-subrequest budget', () => {
     )).rejects.toThrow(/temporarily unavailable/i);
 
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(structuredLogEvents(log.mock.calls)
-      .filter(({ event }) => event === 'upstream_attempt')).toEqual([
+    const attempts = structuredLogEvents(log.mock.calls)
+      .filter(({ event }) => event === 'upstream_attempt');
+    expect(attempts).toEqual([
       expect.objectContaining({
         provider: 'marine',
         source: 'DMI dkss_idw',
@@ -217,16 +224,15 @@ describe('event external-subrequest budget', () => {
         requestStarted: true,
         outcome: 'http-429',
         httpStatus: 429,
-        retryAfterPresent: true,
         retryAfterRaw: '90',
+        retryAfterRawTruncated: false,
         retryAfterParsedSeconds: 90,
-        retryAfterHonored: true,
-        retryAfterIgnored: false,
         retryAfterDisposition: 'honored-no-retry',
         marineBusyCircuitOpenOnEntry: false,
         openedMarineBusyCircuit: true,
       }),
     ]);
+    expectNoDerivedRetryAfterFields(attempts[0]);
   });
 
   it('models manifest, successful-catalogue and exhausted-catalogue paths separately', async () => {

@@ -271,26 +271,6 @@ function hasValidCacheHealth(
   return true;
 }
 
-function hasValidCronHeartbeat(
-  value: unknown,
-  nowMs: number,
-  sourceClockLeadToleranceMs: number,
-): boolean {
-  if (value === undefined) return true;
-  if (!isRecord(value)) return false;
-  const lastTickMs = timestampMs(value.lastTickAt);
-  if (
-    lastTickMs === null
-    || !isPlausibleSourceTimestamp(lastTickMs, nowMs, sourceClockLeadToleranceMs)
-  ) return false;
-  if (value.ageMin !== undefined && (
-    typeof value.ageMin !== 'number'
-    || !Number.isFinite(value.ageMin)
-    || value.ageMin < 0
-  )) return false;
-  return true;
-}
-
 // Sunrise/sunset and the per-row isDay flag are one derived contract. Checking
 // their shapes independently lets a corrupt cache mark midnight as daylight,
 // after which Daylight Only and the launch planner both trust the forged flag.
@@ -426,11 +406,6 @@ export function isValidForecastPayload(
       sources.cacheHealth,
       nowMs,
       fetchedAtMs,
-      sourceClockLeadToleranceMs,
-    )
-    || !hasValidCronHeartbeat(
-      sources.cronHeartbeat,
-      nowMs,
       sourceClockLeadToleranceMs,
     )
   ) return false;

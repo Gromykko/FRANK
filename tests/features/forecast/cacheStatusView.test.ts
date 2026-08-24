@@ -346,7 +346,6 @@ describe('main-page forecast freshness presentation', () => {
       sources: {
         fetchedAt: at(5 * 60_000),
         cacheHealth: { status: 'current', lastAttemptAt: at(60_000) },
-        cronHeartbeat: { lastTickAt: at(30_000), ageMin: 1 },
       } as never,
       refreshing: false,
       online: true,

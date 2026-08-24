@@ -127,14 +127,6 @@ interface UpstreamAttemptRecord {
 }
 
 function emitUpstreamAttempt(record: UpstreamAttemptRecord): void {
-  const retryAfterPresent = record.retryAfterRaw !== null;
-  const honored = record.retryAfterDisposition === 'honored-wait'
-    || record.retryAfterDisposition === 'honored-stop'
-    || record.retryAfterDisposition === 'honored-no-retry';
-  const ignored = record.retryAfterDisposition === 'ignored-invalid'
-    || record.retryAfterDisposition === 'ignored-status';
-  const retryAfterHonored = honored ? true : ignored ? false : null;
-  const retryAfterIgnored = ignored ? true : honored ? false : null;
   const loggedRetryAfterRaw = record.retryAfterRaw === null
     ? null
     : record.retryAfterRaw.slice(0, MAX_LOGGED_RETRY_AFTER_LENGTH);
@@ -151,13 +143,10 @@ function emitUpstreamAttempt(record: UpstreamAttemptRecord): void {
       outcome: record.outcome,
       httpStatus: record.httpStatus,
       elapsedMs: record.elapsedMs,
-      retryAfterPresent,
       retryAfterRaw: loggedRetryAfterRaw,
       retryAfterRawTruncated: record.retryAfterRaw !== null
         && record.retryAfterRaw.length > MAX_LOGGED_RETRY_AFTER_LENGTH,
       retryAfterParsedSeconds: record.retryAfterParsedSeconds,
-      retryAfterHonored,
-      retryAfterIgnored,
       retryAfterDisposition: record.retryAfterDisposition,
       marineBusyCircuitOpenOnEntry: record.marineBusyCircuitOpenOnEntry,
       openedMarineBusyCircuit: record.openedMarineBusyCircuit,
