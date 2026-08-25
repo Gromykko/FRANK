@@ -449,6 +449,7 @@ export function heldMarineFallback(
       series: seedSeries,
       instance: seedInstance ?? requestedInstance,
       fallback: true,
+      seedFallback: true,
       ...extra,
     };
   }
@@ -501,17 +502,45 @@ export function assembleForecastFromSources(
   const waterSeries = water.series;
   const waveSeries = wave.series;
   const effectiveInstances = { water: water.instance, waves: wave.instance };
+  // A failed refresh CALL is not the same thing as stale DATA. When a 429 sends
+  // us back to the run we already hold, and that run is still the newest one its
+  // own publication schedule says exists, nothing was lost: the retained
+  // ingredient is byte-identical to what the call would have returned. Reporting
+  // it as "from an earlier update" told every user their water level was old for
+  // the length of a DMI busy spell, while the figures on screen were exactly
+  // right - and did it only for water, because waves needed no request at all.
+  //
+  // A seed fallback stays degraded whatever the schedule says: that series is
+  // rebuilt from the cached payload's hourly rows and really has lost its tail.
+  // Weather has no run cycle of its own, so its rule is untouched.
+  const marineBehind = new Set(marineSourcesDueForProbe(effectiveInstances, nowMs));
+  const marineDegraded = (
+    source: MarineSeriesResult,
+    kind: MarineKind,
+  ): boolean => Boolean(
+    source.fallback
+    && source.degraded
+    && (source.seedFallback || marineBehind.has(kind)),
+  );
+  const weatherDegraded = Boolean(met.fallback && met.degraded);
+  const waterDegraded = marineDegraded(water, 'water');
+  const wavesDegraded = marineDegraded(wave, 'waves');
+
   const degradedSources = [
-    ...(met.fallback && met.degraded ? ['weather'] : []),
-    ...(water.fallback && water.degraded ? ['water'] : []),
-    ...(wave.fallback && wave.degraded ? ['waves'] : []),
+    ...(weatherDegraded ? ['weather'] : []),
+    ...(waterDegraded ? ['water'] : []),
+    ...(wavesDegraded ? ['waves'] : []),
   ];
-  const degradedBusy = [met, water, wave]
-    .some((source) => source.fallback && source.degraded && source.busy);
+  // Busy is a statement about the same fallback, so it travels with it. Leaving
+  // providerBusy set while degradedSources is empty would restore the banner
+  // this removes, by a different route.
+  const degradedBusy = (weatherDegraded && Boolean(met.busy))
+    || (waterDegraded && Boolean(water.busy))
+    || (wavesDegraded && Boolean(wave.busy));
   const degradedBusyProviders = new Set<BusyProvider>([
-    ...(met.fallback && met.degraded && met.busy ? ['weather' as const] : []),
-    ...(water.fallback && water.degraded && water.busy ? ['marine' as const] : []),
-    ...(wave.fallback && wave.degraded && wave.busy ? ['marine' as const] : []),
+    ...(weatherDegraded && met.busy ? ['weather' as const] : []),
+    ...(waterDegraded && water.busy ? ['marine' as const] : []),
+    ...(wavesDegraded && wave.busy ? ['marine' as const] : []),
   ]);
   const degradedBusyProvider: BusyProvider | undefined = degradedBusyProviders.size > 1
     ? 'services'

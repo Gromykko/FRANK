@@ -128,6 +128,11 @@ export interface MarineSeriesResult {
   degraded?: boolean;
   busy?: boolean;
   notReady?: boolean;
+  // The held series came from the cached payload's seed rather than the
+  // retained raw ingredient. deriveMarineSeedsFromPayload keeps only hourly
+  // rows, so that series is genuinely short - unlike the retained ingredient,
+  // which is byte-identical to what a successful fetch of the same run returns.
+  seedFallback?: boolean;
 }
 
 export interface MarineSeeds {

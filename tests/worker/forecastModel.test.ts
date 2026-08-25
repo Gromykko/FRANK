@@ -312,3 +312,101 @@ describe('mapMetPayload expiry clamping', () => {
     expect(expiryMs(Number.NaN)).toBe(FORECAST_SOURCE_POLICY.metDefaultTtlMs);
   });
 });
+
+// A 429 on the water position leg sends us back to the run we already hold. If
+// that run is still the newest one DMI's own schedule says exists, the bytes we
+// serve are identical to what the call would have returned - so the app must not
+// tell anyone their water level is "from an earlier update". Observed in
+// production 2026-08-25: every city reporting degraded water while holding the
+// same current run as waves, which needed no request and was never flagged.
+describe('a failed refresh call is not stale data', () => {
+  const HOUR_2 = '2026-08-20T12:00:00.000Z';
+  const CURRENT_RUN = '2026-08-20T120000Z';
+  // 02:00 + 6h cycle + 3h35 DKSS + 10m cushion = 11:45, so by 12:30 a newer run
+  // is genuinely due and this one IS behind.
+  const BEHIND_RUN = '2026-08-20T020000Z';
+
+  const assembleWithWater = (water: Record<string, unknown>) =>
+    assembleForecastFromSources(LOCATION, {
+      met: {
+        weatherSeries: [{
+          time: HOUR_2,
+          timeMs: Date.parse(HOUR_2),
+          tempAir: 17,
+          precipitation: 0,
+          symbolCode: 'clearsky_day',
+          weatherCode: 0,
+          windSpeed: 4,
+          windDirection: 90,
+          windGust: 6,
+        }],
+        blocks: [],
+        weatherExpires: '2026-08-20T13:00:00.000Z',
+        weatherLastModified: 'Thu, 20 Aug 2026 12:00:00 GMT',
+        fallback: false,
+        providerContacted: true,
+      },
+      water: {
+        series: [{
+          time: HOUR_2,
+          timeMs: Date.parse(HOUR_2),
+          tempWater: 15,
+          tideLevel: 0.1,
+          currentSpeed: 0.3,
+          currentDirection: 240,
+        }],
+        ...water,
+      },
+      wave: {
+        series: [{
+          time: HOUR_2,
+          timeMs: Date.parse(HOUR_2),
+          waveHeight: 0.4,
+          waveDirection: 110,
+          wavePeriod: 3.8,
+        }],
+        instance: { collection: 'wam_nsb', id: CURRENT_RUN },
+        fallback: false,
+        providerContacted: true,
+      },
+      warnings: [],
+    } as Parameters<typeof assembleForecastFromSources>[1], NOW);
+
+  it('does not degrade a busy fallback onto the newest run that is due', () => {
+    const result = assembleWithWater({
+      instance: { collection: 'dkss_idw', id: CURRENT_RUN },
+      fallback: true,
+      providerContacted: false,
+      degraded: true,
+      busy: true,
+    });
+    expect(result.degradedSources).toEqual([]);
+    // Busy must travel with it, or the same banner returns by another route.
+    expect(result.degradedBusy).toBe(false);
+    expect(result.degradedBusyProvider).toBeUndefined();
+  });
+
+  it('still degrades a seed fallback, whose series really has lost its tail', () => {
+    const result = assembleWithWater({
+      instance: { collection: 'dkss_idw', id: CURRENT_RUN },
+      fallback: true,
+      seedFallback: true,
+      providerContacted: false,
+      degraded: true,
+      busy: true,
+    });
+    expect(result.degradedSources).toEqual(['water']);
+    expect(result.degradedBusyProvider).toBe('marine');
+  });
+
+  it('still degrades a run a newer one was already due to replace', () => {
+    const result = assembleWithWater({
+      instance: { collection: 'dkss_idw', id: BEHIND_RUN },
+      fallback: true,
+      providerContacted: false,
+      degraded: true,
+      busy: true,
+    });
+    expect(result.degradedSources).toEqual(['water']);
+  });
+});
