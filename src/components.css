@@ -524,13 +524,16 @@
 }
 
 .timeline-legend-col {
-  /* Narrower than it looks like it should be, on purpose. The labels are flush
-     RIGHT against the chart, so the column's width is the size of the gap to
-     their left, not to their right: at 55px the shortest ("Vejr") floated 29px
-     clear of everything above and below it. 44px pulls the whole block left,
-     keeps the right edge the labels are aligned to, and lets the longer names
-     wrap their unit onto a second line - which they mostly did already. */
-  width: var(--timeline-legend-w, 44px);
+  /* The labels are flush RIGHT against the chart, so this width is really the
+     size of the gap to their LEFT. It has a floor, and the floor is the widest
+     word that CANNOT wrap: "Weather" is 46px, and at 44px it overflowed seven
+     pixels past the panel's own text margin, ending up left of the bullets and
+     the prose it should line up with. Danish never showed it - "Vejr" is 22px -
+     which is why measuring one language was not enough.
+     52px puts "Weather" at exactly the x the paragraph beneath the chart starts
+     from, with the units wrapping to a second line as before. Re-measure both
+     languages before changing it. */
+  width: var(--timeline-legend-w, 52px);
   padding-left: 0;
   flex-shrink: 0;
   display: flex;
@@ -559,7 +562,7 @@
 }
 
 .scrollable-timeline {
-  width: calc(100% - var(--timeline-legend-w, 44px));
+  width: calc(100% - var(--timeline-legend-w, 52px));
   padding-right: 0;
   cursor: grab;
   padding-bottom: 8px;
