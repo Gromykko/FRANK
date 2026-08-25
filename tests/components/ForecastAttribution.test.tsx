@@ -47,7 +47,7 @@ describe('ForecastAttribution', () => {
     await renderAttribution(true);
 
     expect(host.querySelector('.meteoalarm-delay-disclaimer')?.textContent).toBe(
-      'Time delays between this website and the http://www.meteoalarm.org website are possible. For the most up-to-date awareness information as published by the participating National Meteorological and Hydrological Services, please refer to http://www.meteoalarm.org.',
+      'Time delays between this website and the www.meteoalarm.org website are possible. For the most up-to-date awareness information as published by the participating National Meteorological and Hydrological Services, please refer to www.meteoalarm.org.',
     );
   });
 

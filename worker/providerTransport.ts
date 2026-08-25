@@ -22,7 +22,6 @@ import { errorWithStatus } from './validation';
 const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_BUSY_DELAY_MS = 1_200;
 const RETRY_BUSY_JITTER_MS = 600;
-const MAX_LOGGED_RETRY_AFTER_LENGTH = 120;
 export const MARINE_BUSY_DEFAULT_RETRY_SECONDS = 10 * 60;
 
 function isTestEnvironment(): boolean {
@@ -119,17 +118,18 @@ interface UpstreamAttemptRecord {
   outcome: string;
   httpStatus: number | null;
   elapsedMs: number;
-  retryAfterRaw: string | null;
-  retryAfterParsedSeconds: number | null;
+  // Only the disposition is logged. It already distinguishes no-header from
+  // malformed from honoured ('absent' | 'ignored-status' | 'ignored-invalid' |
+  // 'honored-wait' | 'honored-no-retry'), so the raw string and its parsed
+  // seconds were three always-null columns on every upstream attempt. DMI has
+  // never sent the header (12/12 429s, 2026-08-24); if the disposition ever
+  // stops reading 'absent', put them back.
   retryAfterDisposition: RetryAfterDisposition;
   marineBusyCircuitOpenOnEntry: boolean;
   openedMarineBusyCircuit: boolean;
 }
 
 function emitUpstreamAttempt(record: UpstreamAttemptRecord): void {
-  const loggedRetryAfterRaw = record.retryAfterRaw === null
-    ? null
-    : record.retryAfterRaw.slice(0, MAX_LOGGED_RETRY_AFTER_LENGTH);
   // Diagnostics must never become a provider-control dependency. These are
   // fixed, bounded scalars; no URL, response body, or error text enters them.
   try {
@@ -143,10 +143,6 @@ function emitUpstreamAttempt(record: UpstreamAttemptRecord): void {
       outcome: record.outcome,
       httpStatus: record.httpStatus,
       elapsedMs: record.elapsedMs,
-      retryAfterRaw: loggedRetryAfterRaw,
-      retryAfterRawTruncated: record.retryAfterRaw !== null
-        && record.retryAfterRaw.length > MAX_LOGGED_RETRY_AFTER_LENGTH,
-      retryAfterParsedSeconds: record.retryAfterParsedSeconds,
       retryAfterDisposition: record.retryAfterDisposition,
       marineBusyCircuitOpenOnEntry: record.marineBusyCircuitOpenOnEntry,
       openedMarineBusyCircuit: record.openedMarineBusyCircuit,
@@ -177,8 +173,6 @@ export function logUpstream(
     outcome,
     httpStatus: statusFromOutcome(outcome),
     elapsedMs: Date.now() - startedAt,
-    retryAfterRaw: null,
-    retryAfterParsedSeconds: null,
     retryAfterDisposition: 'absent',
     marineBusyCircuitOpenOnEntry: false,
     openedMarineBusyCircuit: false,
@@ -235,8 +229,6 @@ export async function fetchJsonWithRetries(
     startedAt: number,
     outcome: string,
     httpStatus: number | null,
-    retryAfterRaw: string | null = null,
-    retryAfterParsedSeconds: number | null = null,
     retryAfterDisposition: RetryAfterDisposition = 'absent',
     marineBusyCircuitOpenOnEntry = false,
   ): UpstreamAttemptRecord => ({
@@ -248,8 +240,6 @@ export async function fetchJsonWithRetries(
     outcome,
     httpStatus,
     elapsedMs: Date.now() - startedAt,
-    retryAfterRaw,
-    retryAfterParsedSeconds,
     retryAfterDisposition,
     marineBusyCircuitOpenOnEntry,
     openedMarineBusyCircuit: false,
@@ -264,8 +254,6 @@ export async function fetchJsonWithRetries(
           attempt,
           circuitCheckedAt,
           'circuit-open',
-          null,
-          null,
           null,
           'absent',
           true,
@@ -334,8 +322,6 @@ export async function fetchJsonWithRetries(
       startedAt,
       'error',
       response.status,
-      retryAfterRaw,
-      null,
       retryAfterRaw === null ? 'absent' : 'ignored-status',
     );
 
@@ -347,8 +333,6 @@ export async function fetchJsonWithRetries(
           startedAt,
           'ok',
           response.status,
-          retryAfterRaw,
-          null,
           retryAfterRaw === null ? 'absent' : 'ignored-status',
         ));
         return json;
@@ -383,8 +367,6 @@ export async function fetchJsonWithRetries(
         startedAt,
         `http-${response.status}`,
         response.status,
-        retryAfterRaw,
-        headerRetrySeconds ?? null,
         retryAfterRaw === null
           ? 'absent'
           : response.status !== 429
@@ -416,8 +398,6 @@ export async function fetchJsonWithRetries(
         startedAt,
         'invalid-response',
         response.status,
-        retryAfterRaw,
-        null,
         retryAfterRaw === null ? 'absent' : 'ignored-status',
       );
       // Retrying a syntactically invalid success body only repeats a provider

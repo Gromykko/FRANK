@@ -71,8 +71,8 @@ export const da: Record<string, string> = {
   'Weather data by MET Norway': 'Vejrdata fra MET Norway',
   ', waves & water by DMI ({0}) for {1}.': ', bølger & vandstand fra DMI ({0}) for {1}.',
   'Warnings by': 'Varsler fra',
-  'Time delays between this website and the http://www.meteoalarm.org website are possible. For the most up-to-date awareness information as published by the participating National Meteorological and Hydrological Services, please refer to http://www.meteoalarm.org.':
-    'Der kan forekomme tidsforsinkelser mellem denne hjemmeside og hjemmesiden http://www.meteoalarm.org. For de senest opdaterede varslingsoplysninger, som de deltagende nationale meteorologiske og hydrologiske tjenester har offentliggjort, henvises der til http://www.meteoalarm.org.',
+  'Time delays between this website and the www.meteoalarm.org website are possible. For the most up-to-date awareness information as published by the participating National Meteorological and Hydrological Services, please refer to www.meteoalarm.org.':
+    'Der kan forekomme tidsforsinkelser mellem denne hjemmeside og hjemmesiden www.meteoalarm.org. For de senest opdaterede varslingsoplysninger, som de deltagende nationale meteorologiske og hydrologiske tjenester har offentliggjort, henvises der til www.meteoalarm.org.',
   'Forecast built {0}. Worker checked {1}.': 'Prognose bygget {0}. Server tjekket {1}.',
   'Data and version': 'Data og version',
   'Technical data note': 'Teknisk datanote',
@@ -415,8 +415,10 @@ export const da: Record<string, string> = {
   'Launch window view': 'Visning af rovinduer',
   'List': 'Liste',
   'Calendar': 'Kalender',
-  'No windows match your criteria — there are safe hours, but not a long enough run for your minimum duration and water-level preference. Try another trip mode or loosen the Advanced settings.':
-    'Ingen vinduer matcher dine kriterier — der er sikre timer, men ikke et langt nok forløb til din minimumsvarighed og vandstandspræference. Prøv en anden turprofil, eller løsn de avancerede indstillinger.',
+  'There are safe hours, but never {0} in a row. Lower the minimum duration in Advanced settings, or try another trip mode.':
+    'Der er sikre timer, men aldrig {0} i træk. Sænk minimumsvarigheden under Avanceret, eller prøv en anden turprofil.',
+  'There are safe hours, but never {0} in a row at your preferred water level. Lower the minimum duration or clear the water-level preference in Advanced settings.':
+    'Der er sikre timer, men aldrig {0} i træk ved din foretrukne vandstand. Sænk minimumsvarigheden eller ryd vandstandspræferencen under Avanceret.',
   'No good windows in the forecast yet — conditions stay above your limits for now. Check back as it updates.':
     'Ingen gode vinduer i prognosen endnu — forholdene ligger over dine grænser for nu. Kig tilbage, når den opdateres.',
   'Your personal limits are switched off, so there is nothing to measure the forecast against and no window can be recommended. Turn a limit back on to see suggested windows.':

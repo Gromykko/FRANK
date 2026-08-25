@@ -90,6 +90,8 @@ describe('PaddlePlanner outlook ranges', () => {
             sunsets={[]}
             onSelectIndex={vi.fn()}
             startIndex={0}
+            minDuration={2}
+            waterLevelFiltered={false}
           />
         </LanguageProvider>,
       );
@@ -105,5 +107,42 @@ describe('PaddlePlanner outlook ranges', () => {
     expect(share).toHaveBeenCalledOnce();
     expect(share.mock.calls[0]?.[0]?.text)
       .toContain('Wind 2–5 m/s, waves 0.10–0.40 m.');
+  });
+});
+
+// The empty state used to say "your minimum duration" without ever naming it,
+// and blamed the water-level preference even when none was set.
+describe('PaddlePlanner empty state', () => {
+  const renderEmpty = async (waterLevelFiltered: boolean) => {
+    await act(async () => {
+      root.render(
+        <LanguageProvider>
+          <PaddlePlanner
+            data={[block('2026-08-25T06:00:00Z', 3, 0.2)]}
+            statuses={['safe']}
+            limitsOff={false}
+            windows={[]}
+            warnings={[]}
+            sunrises={[]}
+            sunsets={[]}
+            onSelectIndex={vi.fn()}
+            startIndex={0}
+            minDuration={3}
+            waterLevelFiltered={waterLevelFiltered}
+          />
+        </LanguageProvider>,
+      );
+    });
+    return host.querySelector('.launch-empty')?.textContent ?? '';
+  };
+
+  it('names the actual minimum duration', async () => {
+    const text = await renderEmpty(false);
+    expect(text).toContain('never 3 hrs in a row');
+    expect(text).not.toContain('water level');
+  });
+
+  it('blames the water level only when one is preferred', async () => {
+    expect(await renderEmpty(true)).toContain('at your preferred water level');
   });
 });

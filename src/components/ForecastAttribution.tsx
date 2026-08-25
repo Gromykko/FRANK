@@ -27,7 +27,7 @@ export default function ForecastAttribution({
       </p>
       {hasWarnings ? (
         <p className="footer-text meteoalarm-delay-disclaimer">
-          {t('Time delays between this website and the http://www.meteoalarm.org website are possible. For the most up-to-date awareness information as published by the participating National Meteorological and Hydrological Services, please refer to http://www.meteoalarm.org.')}
+          {t('Time delays between this website and the www.meteoalarm.org website are possible. For the most up-to-date awareness information as published by the participating National Meteorological and Hydrological Services, please refer to www.meteoalarm.org.')}
         </p>
       ) : null}
     </>
