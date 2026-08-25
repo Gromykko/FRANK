@@ -5,7 +5,7 @@ export const da: Record<string, string> = {
   // ── Shared verdict & rating words ──────────────────────────────────────────
   'Good to go': 'Klar til at ro',
   'Take care': 'Pas på',
-  'Rough': 'Bliv i land',
+  'Rough': 'Barskt',
   'safe': 'sikker',
   'caution': 'pas på',
   'danger': 'fare',
@@ -633,7 +633,7 @@ export const da: Record<string, string> = {
   'Take care:': 'Pas på:',
   'At or above the safe limit, but below (Max Wave + Wave Caution Margin).':
     'På eller over den sikre grænse, men under (maks bølge + bølgemargen).',
-  'Rough:': 'Bliv i land:',
+  'Rough:': 'Barskt:',
   'At or above the danger threshold (Max Wave + Wave Caution Margin). Waves big enough to tip you — best avoided.':
     'På eller over faretærsklen (maks bølge + bølgemargen). Bølger store nok til at vælte dig — bedst at undgå.',
   'If the caution margin toggle is off, the caution band disappears: waves rate Safe all the way up to the danger threshold.':
@@ -714,7 +714,7 @@ export const da: Record<string, string> = {
     'Mange klubber forbyder roning mellem solnedgang og solopgang uden lanterner og tilladelse, så når denne regel er slået til, markeres timeprognoser uden for dagslys som Pas på (slå den fra, hvis natroning er i orden for dig). En blok i langtidsudsigten markeres som Pas på, medmindre hele perioden ligger i dagslys. Rovinduer håndteres separat: perioder uden en hel time i dagslys udelades, og delvise perioder viser kun deres længste sammenhængende del i dagslys.',
   '10. Launch Windows': '10. Rovinduer',
   'A launch window is an unbroken run of Good-to-go hours — an hour rated Take care or Rough breaks the run:':
-    'Et rovindue er en ubrudt række af Klar til at ro-timer — en time vurderet Pas på eller Bliv i land bryder rækken:',
+    'Et rovindue er en ubrudt række af Klar til at ro-timer — en time vurderet Pas på eller Barskt bryder rækken:',
   'Minimum duration:': 'Minimumsvarighed:',
   'runs shorter than your Min Duration setting are not shown.': 'forløb kortere end din min varighed vises ikke.',
   'Day boundaries:': 'Døgngrænser:',

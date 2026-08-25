@@ -2604,12 +2604,37 @@ button.legend-toggle.is-on {
 }
 
 /* The device face goes monochrome when there is no verdict to display. */
-/* Dimmed amber, not grey. Grey reads as a dead or faulty screen; GERTY's face
-   is amber in every mood, and the closed lids - not the colour - are what say
-   FRANK is off duty. Mixed well down from --crt-caution so it cannot be
-   mistaken for an actual caution verdict. */
+/* Amber, not grey: grey reads as a dead or faulty screen, and GERTY's face is
+   amber in every mood. Mixed at 45% it was legible on paper and murky in
+   practice, so it sits at 70% - clearly readable, still visibly quieter than a
+   real caution verdict, which the wandering eyes and absent verdict word
+   already separate it from. */
 .frank-device-shell.rating-none {
-  --frank-phosphor: color-mix(in srgb, var(--crt-caution) 45%, var(--text-muted));
+  --frank-phosphor: color-mix(in srgb, var(--crt-caution) 70%, var(--text-muted));
+}
+
+/* Off duty, FRANK looks around instead of at you. Stepped rather than eased, so
+   it moves like a pixel device rather than a cartoon, and slow enough that it
+   reads as idling rather than scanning. Nine seconds per cycle with long holds
+   is deliberately below the threshold where motion competes for attention. */
+@keyframes frank-eyes-wander {
+  0%, 20%   { transform: translate(0, 0); }
+  25%, 42%  { transform: translate(1px, 0); }
+  47%, 62%  { transform: translate(-1px, 0); }
+  67%, 82%  { transform: translate(0, -1px); }
+  87%, 100% { transform: translate(0, 0); }
+}
+
+.frank-device-shell.rating-none .gerty-eyes {
+  animation: frank-eyes-wander 9s steps(1, end) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Still looking away, just not moving. */
+  .frank-device-shell.rating-none .gerty-eyes {
+    animation: none;
+    transform: translate(1px, 0);
+  }
 }
 .frank-device-shell.rating-safe { --frank-phosphor: var(--crt-safe); }
 .frank-device-shell.rating-caution { --frank-phosphor: var(--crt-caution); }
@@ -2696,13 +2721,23 @@ button.legend-toggle.is-on {
 .frank-display-text {
   display: block;
   max-width: 100%;
-  font-size: 18px;
-  line-height: 1;
+  /* 22px, not 18. This is the only line on the glass now, set in a condensed
+     pixel face on a dark ground, so it reads smaller than its number suggests.
+     WCAG has no minimum size, but its contrast threshold relaxes above 18.66px
+     bold / 24px regular - staying under that is a reason to be generous here,
+     not frugal. */
+  font-size: 22px;
+  line-height: 1.15;
   text-align: center;
   white-space: normal;
   overflow-wrap: anywhere;
-  opacity: 0.82;
-  text-shadow: 0 0 8px color-mix(in srgb, currentColor 60%, transparent);
+  /* Lit, not printed. The character-by-character reveal was a costume; the
+     phosphor bloom is what actually makes it read as a screen, and it is the
+     same treatment the face carries so the two look like one device. */
+  opacity: 0.92;
+  text-shadow:
+    0 0 6px color-mix(in srgb, currentColor 70%, transparent),
+    0 0 18px color-mix(in srgb, currentColor 35%, transparent);
 }
 
 /* Button cluster column: centered in the same band as the CRT and display. */
@@ -3156,9 +3191,16 @@ button.legend-toggle.is-on {
      two rows taller than it needed to be on the smallest screens. */
   .frank-device-columns {
     grid-template-columns: 56px minmax(0, 1fr) auto;
+    /* The location switcher shares the third column with the buttons, and it is
+       the wider of the two - so it, not the buttons, was sizing that column.
+       The cluster then centred inside the surplus and left a 23px gap on its
+       left against 13px on the right, which reads as the glass being shoved
+       left. Letting the location span the last two columns hands the third back
+       to the buttons, so the gaps either side of the glass match and the glass
+       itself gets the width the location was holding. */
     grid-template-areas:
-      'crt  display actions'
-      'name .       location';
+      'crt  display  actions'
+      'name location location';
     column-gap: 10px;
   }
 
@@ -3520,22 +3562,6 @@ button.legend-toggle.is-on {
   font-weight: 600;
   letter-spacing: 0.01em;
 }
-
-/* The verdict word, coloured by the container's rating class - the same
-   phosphor the device face uses, so the two agree without repeating. */
-.snapshot-verdict {
-  font-family: var(--font-mono);
-  font-size: var(--text-instrument);
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  margin-bottom: 2px;
-}
-
-.snapshot-reasons-container.rating-safe .snapshot-verdict { color: var(--color-safe); }
-.snapshot-reasons-container.rating-caution .snapshot-verdict { color: var(--color-caution); }
-.snapshot-reasons-container.rating-danger .snapshot-verdict { color: var(--color-danger); }
-.snapshot-reasons-container.rating-none .snapshot-verdict { color: var(--text-muted); }
 
 .snapshot-reasons-container {
   padding: 12px 0 0;

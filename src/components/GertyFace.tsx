@@ -4,36 +4,6 @@ import type { DisplayStatus } from '../features/safety/analyzeSafetyConditions';
 // 16x16 pixel grid so the face sits on the same pixel raster as the screen's
 // scanlines. Every lit pixel renders in currentColor, so the face picks up
 // the badge's phosphor rating color.
-// Closed lids for the no-verdict mode. FRANK is not broken and not warning
-// about anything - it has been asked not to have an opinion - and a face with
-// its eyes shut says that at a glance, where a greyed-out open-eyed stare read
-// as "disabled". In Moon, GERTY's emoticon is always the same amber; only the
-// expression changes, so the colour carries no meaning and the face carries it
-// all. Paired with the flat 'none' mouth below.
-//
-// Drawn as a downward arc per eye, not a flat bar. Two straight dashes over a
-// straight mouth is the "-_-" emoticon, which reads as annoyed or disapproving
-// - the opposite of the intent. Curving the lids turns the same three shapes
-// into "u_u": resting, not judging.
-const EYES_CLOSED = [
-  '................',
-  '................',
-  '................',
-  '................',
-  '................',
-  '...x..x..x..x...',
-  '....xx....xx....',
-  '................',
-  '................',
-  '................',
-  '................',
-  '................',
-  '................',
-  '................',
-  '................',
-  '................',
-];
-
 const EYES = [
   '................',
   '................',
@@ -151,9 +121,11 @@ export default function GertyFace({ rating }: { rating: DisplayStatus }) {
       aria-hidden="true"
       focusable="false"
     >
-      <g className="gerty-eyes">
-        {gridRects(rating === 'none' ? EYES_CLOSED : EYES)}
-      </g>
+      {/* Off duty keeps its eyes OPEN and lets them wander (see .gerty-eyes in
+          components.css). Shut lids read as a blink caught mid-frame, or worse
+          as a fault; a face glancing away says "not watching this for you"
+          while still obviously switched on. */}
+      <g className="gerty-eyes">{gridRects(EYES)}</g>
       {gridRects(MOUTHS[rating])}
     </svg>
   );

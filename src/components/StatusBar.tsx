@@ -6,12 +6,6 @@ import { FlagDK, FlagUK } from './FlagIcons';
 import { useLang } from '../i18n';
 import type { DisplayStatus } from '../features/safety/analyzeSafetyConditions';
 
-// The personality line prints one character at a time, the way the device it
-// is pretending to be would. Purely decorative: the span is aria-hidden and the
-// verdict beside it is what carries meaning, so nobody waits on an animation to
-// learn whether it is safe to paddle. Reduced-motion users get the finished
-// line immediately.
-const TYPE_MS_PER_CHAR = 32;
 // Matches the device shell's own breakpoint in components.css.
 const NARROW_SCREEN = '(max-width: 480px)';
 
@@ -34,28 +28,6 @@ function useNarrowScreen(): boolean {
   return narrow;
 }
 
-function useTypedOut(text: string): string {
-  const [shown, setShown] = useState('');
-
-  useEffect(() => {
-    const reduced = typeof window.matchMedia === 'function'
-      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reduced || text.length === 0) {
-      setShown(text);
-      return undefined;
-    }
-    setShown('');
-    let index = 0;
-    const timer = window.setInterval(() => {
-      index += 1;
-      setShown(text.slice(0, index));
-      if (index >= text.length) window.clearInterval(timer);
-    }, TYPE_MS_PER_CHAR);
-    return () => window.clearInterval(timer);
-  }, [text]);
-
-  return shown;
-}
 
 interface StatusBarProps {
   // DisplayStatus: 'none' when every check is off, so the bar renders
@@ -99,7 +71,6 @@ export default function StatusBar({
 }: StatusBarProps) {
   const { lang, setLang, t } = useLang();
   const narrow = useNarrowScreen();
-  const typedPhrase = useTypedOut(narrow ? srTitle : phrase);
 
   return (
     <header className="frank-device">
@@ -159,7 +130,7 @@ export default function StatusBar({
                   className={`frank-display-text ${narrow ? 'is-verdict' : ''}`}
                   aria-hidden="true"
                 >
-                  {typedPhrase}
+                  {narrow ? srTitle : phrase}
                 </span>
               </div>
             </div>
