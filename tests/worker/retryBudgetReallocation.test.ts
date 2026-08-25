@@ -11,8 +11,6 @@ import type { EventMemo, MarineInstances } from '../../worker/domain';
 import {
   CRON_CONCURRENT_EXTERNAL_SUBREQUEST_RESERVE,
   CRON_EXTERNAL_SUBREQUEST_PATHS,
-  CRON_MARINE_CATALOGUE_MAX_ATTEMPTS,
-  CRON_MAX_CATALOGUE_EXTERNAL_SUBREQUESTS,
   CRON_SUBREQUEST_CALL_GRAPH,
   CRON_TICK_BUDGET_MS,
   EVENT_EXTERNAL_SUBREQUEST_BUDGET,
@@ -53,6 +51,16 @@ function fullCronPolicy() {
   if (!policy) throw new Error('Expected one full cron policy.');
   return { ...policy, retryDelayMs: 0, retryBusyDelayMs: 0 };
 }
+
+// The static CRON_*_MAX_ATTEMPTS values are upper bounds. Since attempts are
+// budgeted at their real ~6s cost (minus the completion reserve), the policy
+// usually grants fewer, and a simulation keyed to the ceiling describes a run
+// that cannot happen. Derive from the policy instead.
+const CATALOGUE_ATTEMPTS = fullCronPolicy().marineCatalogueMaxAttempts;
+const MAX_CATALOGUE_SUBREQUESTS =
+  CRON_SUBREQUEST_CALL_GRAPH.marineKinds
+  * CRON_SUBREQUEST_CALL_GRAPH.instanceCollectionsPerKind
+  * CATALOGUE_ATTEMPTS;
 
 function runManifest(entries: Record<string, unknown> | null) {
   return {
@@ -157,7 +165,7 @@ describe('live retry-budget reallocation', () => {
       if (!collection) throw new Error(`Unexpected provider URL: ${url}`);
       const attempt = (attempts.get(collection) ?? 0) + 1;
       attempts.set(collection, attempt);
-      if (attempt < CRON_MARINE_CATALOGUE_MAX_ATTEMPTS) {
+      if (attempt < CATALOGUE_ATTEMPTS) {
         return new Response('temporary provider failure', { status: 503 });
       }
       const isFallbackCollection = collection === WATER[1] || collection === WAVES[1];
@@ -175,7 +183,7 @@ describe('live retry-budget reallocation', () => {
     const consumed = eventMemo.externalSubrequestsStarted ?? 0;
     const adjusted = reallocateMarinePositionAttempts(fullCronPolicy(), eventMemo);
 
-    expect(consumed).toBe(CRON_MAX_CATALOGUE_EXTERNAL_SUBREQUESTS);
+    expect(consumed).toBe(MAX_CATALOGUE_SUBREQUESTS);
     expect(adjusted.marinePositionMaxAttempts).toBeGreaterThanOrEqual(1);
     expect(adjusted.marinePositionMaxAttempts).toBeLessThan(
       CRON_EXTERNAL_SUBREQUEST_PATHS.manifestHit.marinePositionAttemptsPerLeg,
@@ -195,7 +203,7 @@ describe('live retry-budget reallocation', () => {
       const attempt = (attempts.get(collection) ?? 0) + 1;
       attempts.set(collection, attempt);
       const isFirstCollection = collection === WATER[0] || collection === WAVES[0];
-      if (isFirstCollection && attempt === CRON_MARINE_CATALOGUE_MAX_ATTEMPTS) {
+      if (isFirstCollection && attempt === CATALOGUE_ATTEMPTS) {
         return Response.json({ instances: [] });
       }
       return new Response('temporary provider failure', { status: 503 });
@@ -211,7 +219,7 @@ describe('live retry-budget reallocation', () => {
     )).rejects.toThrow(/temporarily unavailable/i);
 
     expect(eventMemo.externalSubrequestsStarted).toBe(
-      CRON_MAX_CATALOGUE_EXTERNAL_SUBREQUESTS,
+      MAX_CATALOGUE_SUBREQUESTS,
     );
     expect(calls.some((url) => /\/position(?:\?|$)/.test(url))).toBe(false);
     expect(
@@ -231,7 +239,7 @@ describe('live retry-budget reallocation', () => {
         const attempt = (attempts.get(collection) ?? 0) + 1;
         attempts.set(collection, attempt);
         const isFirstCollection = collection === WATER[0] || collection === WAVES[0];
-        if (isFirstCollection && attempt === CRON_MARINE_CATALOGUE_MAX_ATTEMPTS) {
+        if (isFirstCollection && attempt === CATALOGUE_ATTEMPTS) {
           return Response.json({ instances: [] });
         }
         return new Response('temporary provider failure', { status: 503 });
@@ -266,7 +274,7 @@ describe('live retry-budget reallocation', () => {
     )).rejects.toThrow();
 
     expect(resolution.substituted).toEqual(['water', 'waves']);
-    expect(consumedByCatalogue).toBe(CRON_MAX_CATALOGUE_EXTERNAL_SUBREQUESTS);
+    expect(consumedByCatalogue).toBe(MAX_CATALOGUE_SUBREQUESTS);
     expect(positionCalls).toHaveLength(
       CRON_SUBREQUEST_CALL_GRAPH.concurrentPositionLegs
       * adjusted.marinePositionMaxAttempts,

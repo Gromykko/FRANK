@@ -270,12 +270,24 @@ export function cronExecutionPolicy(
     Math.floor(remainingMs / locationsRemaining),
   );
   if (locationBudgetMs <= 0) return null;
+  const completionReserveMs = Math.min(
+    CRON_COMPLETION_RESERVE_MS,
+    Math.floor(locationBudgetMs / 5),
+  );
+  // Attempts may only spend what is NOT held back to finish the location, which
+  // is what executionPolicy already does for its own derivation
+  // (deadline - now - reserve). Dividing the whole location budget counted time
+  // the retry loop never gets, so the count overshot by one attempt.
+  //
   // 1_800 here was the more optimistic of the two estimates and governed the
   // path that runs every minute, so it produced the deep retry ladders seen in
   // telemetry (attempts 8, 9, 12, 15 - all refusals, no data).
   const timeBoundAttempts = Math.max(
     1,
-    Math.floor(locationBudgetMs / ESTIMATED_PROVIDER_ATTEMPT_MS),
+    Math.floor(
+      Math.max(0, locationBudgetMs - completionReserveMs)
+        / ESTIMATED_PROVIDER_ATTEMPT_MS,
+    ),
   );
   const maxAttempts = Math.min(
     CRON_PROVIDER_MAX_ATTEMPTS,
@@ -295,10 +307,7 @@ export function cronExecutionPolicy(
     maxAttempts,
     marineCatalogueMaxAttempts,
     marinePositionMaxAttempts,
-    completionReserveMs: Math.min(
-      CRON_COMPLETION_RESERVE_MS,
-      Math.floor(locationBudgetMs / 5),
-    ),
+    completionReserveMs,
   });
 }
 

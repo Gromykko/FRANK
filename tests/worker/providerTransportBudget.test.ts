@@ -67,11 +67,14 @@ afterEach(() => {
 });
 
 describe('event external-subrequest budget', () => {
-  it('accepts a marine position response after seven headerless 429s', async () => {
+  it('accepts a marine position response that arrives on the last allowed attempt', async () => {
+    // Pinned to the boundary rather than a fixed 8, so it keeps testing "the
+    // final permitted attempt still counts" whatever the budget grants.
+    const allowed = fullCronPolicy().marinePositionMaxAttempts;
     let attempt = 0;
     const fetchMock = vi.fn(async () => {
       attempt += 1;
-      if (attempt <= 7) {
+      if (attempt < allowed) {
         return new Response('Server is busy', { status: 429 });
       }
       return Response.json({ features: [] });
@@ -88,7 +91,7 @@ describe('event external-subrequest budget', () => {
       new Map(),
     )).resolves.toEqual({ features: [] });
 
-    expect(fetchMock).toHaveBeenCalledTimes(8);
+    expect(fetchMock).toHaveBeenCalledTimes(allowed);
   });
 
   it('lets a marine position leg exhaust its larger cap after repeated headerless 429s', async () => {
@@ -131,7 +134,7 @@ describe('event external-subrequest budget', () => {
     expect(CRON_MARINE_CATALOGUE_MAX_ATTEMPTS).toBeGreaterThan(
       CRON_PROVIDER_MAX_ATTEMPTS,
     );
-    expect(fetchMock).toHaveBeenCalledTimes(CRON_MARINE_CATALOGUE_MAX_ATTEMPTS);
+    expect(fetchMock).toHaveBeenCalledTimes(fullCronPolicy().marineCatalogueMaxAttempts);
   });
 
   it('keeps a non-marine retry-loop stage at the ordinary ceiling', async () => {

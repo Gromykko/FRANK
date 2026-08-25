@@ -6,7 +6,6 @@ import { buildSunSchedule } from '../../src/features/forecast/sun';
 import { FORECAST_PAYLOAD_VERSION } from '../../src/features/forecast/types';
 import type { ForecastData } from '../../worker/domain';
 import {
-  CRON_MARINE_CATALOGUE_MAX_ATTEMPTS,
   CRON_PERIOD_MS,
   CRON_SUBREQUEST_CALL_GRAPH,
   CRON_TICK_BUDGET_MS,
@@ -28,9 +27,15 @@ const LOCATIONS = locationData as ForecastLocation[];
 const FIRST_TICK_MS = Date.parse('2026-08-20T16:00:00.000Z');
 const MARINE_RUN = '2026-08-20T160000Z';
 const DUE_MARINE_RUN = '2026-08-20T060000Z';
+// The static CRON_*_MAX_ATTEMPTS values are upper bounds. Since attempts are
+// budgeted at their real ~6s cost (minus the completion reserve), the policy
+// usually grants fewer, and a simulation keyed to the ceiling describes a run
+// that cannot happen. Derive from the policy instead.
+const CRON_EFFECTIVE_CATALOGUE_ATTEMPTS =
+  cronExecutionPolicy(0, CRON_TICK_BUDGET_MS, 1)!.marineCatalogueMaxAttempts;
 const EXHAUSTED_FIRST_COLLECTION_REQUESTS =
   CRON_SUBREQUEST_CALL_GRAPH.marineKinds
-  * CRON_MARINE_CATALOGUE_MAX_ATTEMPTS;
+  * CRON_EFFECTIVE_CATALOGUE_ATTEMPTS;
 
 interface KvWriteEvent {
   event: 'kv_write';
