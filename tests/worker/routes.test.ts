@@ -190,6 +190,7 @@ const authorizedWarmRequest = (path: string, token = WARM_TOKEN, method = 'GET')
 const originalFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -725,6 +726,67 @@ describe('Worker route HTTP contract', () => {
     expect(waterCell).toContain('<span class="cell-note">expected 15:20 UTC</span>');
     expect(waterCell).not.toContain('due 15:20 UTC');
     expect(card).not.toMatch(/tone-warn" data-source="water"/);
+  });
+
+  it('shows a newer manifest run as neutral operator evidence until it is accepted', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(WARM_BUILD_NOW);
+    const location = locationById('horsens');
+    const held = cachedForecast(location.id);
+    held.sources.fetchedAt = new Date(WARM_BUILD_NOW - 5 * 60_000).toISOString();
+    held.sources.cacheHealth!.lastAttemptAt = held.sources.fetchedAt;
+    held.sources.cacheHealth!.marineInstances!.water = {
+      collection: location.dmiCollections.water[0],
+      id: WARM_RETAINED_RUN,
+    };
+    const runtime = makeRuntime({
+      seed: {
+        [assembledForecastKey(location)]: held,
+        [DMI_RUN_MANIFEST_KEY]: warmManifest(location, WARM_CURRENT_RUN),
+      },
+    });
+
+    const response = await worker.fetch(request('/status'), runtime.env, runtime.ctx);
+    const body = await response.text();
+    const horsensCard = body.match(
+      /<tbody class="board-group[^"]*" data-location="horsens">[\s\S]*?<\/tbody>/,
+    )?.[0] ?? '';
+
+    expect(response.status).toBe(200);
+    expect(runtime.gets.filter((key) => key === DMI_RUN_MANIFEST_KEY)).toHaveLength(1);
+    expect(horsensCard).toContain('Catalogue candidate 06:00Z discovered');
+    expect(horsensCard).toContain('complete position series not yet accepted');
+    expect(horsensCard).toMatch(/class="num " data-source="water"/);
+    expect(horsensCard).not.toMatch(/tone-warn" data-source="water"/);
+
+    held.sources.cacheHealth!.marineInstances!.water = {
+      collection: location.dmiCollections.water[0],
+      id: WARM_CURRENT_RUN,
+    };
+    const accepted = makeRuntime({
+      seed: {
+        [assembledForecastKey(location)]: held,
+        [DMI_RUN_MANIFEST_KEY]: warmManifest(location, WARM_CURRENT_RUN),
+      },
+    });
+    const acceptedBody = await (
+      await worker.fetch(request('/status'), accepted.env, accepted.ctx)
+    ).text();
+    expect(acceptedBody).not.toContain('Catalogue candidate 06:00Z discovered');
+  });
+
+  it('keeps run-manifest candidates out of the machine health route', async () => {
+    const location = locationById('horsens');
+    const runtime = makeRuntime({
+      seed: { [DMI_RUN_MANIFEST_KEY]: warmManifest(location, WARM_CURRENT_RUN) },
+    });
+
+    const response = await worker.fetch(request('/health'), runtime.env, runtime.ctx);
+    const body = await response.text();
+
+    expect(runtime.gets).not.toContain(DMI_RUN_MANIFEST_KEY);
+    expect(body).not.toContain('discoveredAt');
+    expect(body).not.toContain('run found');
   });
 
   it('clamps a not-yet-released marine run to a nonnegative age', async () => {

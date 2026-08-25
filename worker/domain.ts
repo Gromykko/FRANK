@@ -140,9 +140,9 @@ export interface MarineSeriesResult {
   degraded?: boolean;
   busy?: boolean;
   notReady?: boolean;
-  // A malformed candidate or generic provider failure is evidence of an
-  // immediate problem, rather than ordinary publication lag. It must remain
-  // visible even before the source-specific publication grace expires.
+  // A malformed candidate or other explicitly recognised hard failure is an
+  // immediate problem rather than ordinary publication lag. Typed transient
+  // provider failures use the bounded source-specific grace instead.
   degradationIsImmediate?: boolean;
   // PROOF that this held series comes from the COLLECTION the failed request
   // asked for. Deliberately positive and absent by default: anything unable to

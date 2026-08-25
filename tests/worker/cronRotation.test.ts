@@ -392,7 +392,7 @@ describe('scheduled city rotation', () => {
     const checked = JSON.parse(store.get(forecastKey)!) as ForecastData;
     expect(checked.sources.cacheHealth).toMatchObject({
       status: 'current',
-      degradedSources: ['water', 'waves'],
+      degradedSources: ['waves'],
       lastAttemptAt: previousAttemptAt,
     });
     expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
@@ -485,7 +485,7 @@ describe('scheduled city rotation', () => {
         declaredEndMs: declaredEndMsForRun('2026-08-20T120000Z'),
       },
     });
-    expect(checked.sources.cacheHealth?.degradedSources).toEqual(['water']);
+    expect(checked.sources.cacheHealth?.degradedSources).toBeUndefined();
     expect(checked.sources.cacheHealth?.providerBusy).toBeUndefined();
     expect(checked.sources.cacheHealth?.message).toBeUndefined();
     expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
@@ -498,15 +498,15 @@ describe('scheduled city rotation', () => {
 
   it.each([
     {
-      name: 'generic failure is visible as soon as the run is due',
+      name: 'transient failure remains neutral inside publication grace',
       scheduledAt: '2026-08-20T15:40:00.000Z',
       waterResponse: () => new Response('temporary provider failure', {
         status: 503,
         headers: { 'Retry-After': '1200' },
       }),
-      expectedDegraded: ['water'],
+      expectedDegraded: undefined,
       expectedBusy: false,
-      expectedMessage: 'Marine service unavailable',
+      expectedMessage: undefined,
     },
     {
       name: 'verified 429 remains neutral inside publication grace',
@@ -520,8 +520,19 @@ describe('scheduled city rotation', () => {
       expectedMessage: undefined,
     },
     {
-      name: 'verified 429 becomes busy at the exact grace boundary',
-      scheduledAt: '2026-08-20T15:50:00.000Z',
+      name: 'transient failure becomes unavailable at the exact grace boundary',
+      scheduledAt: '2026-08-20T16:20:00.000Z',
+      waterResponse: () => new Response('temporary provider failure', {
+        status: 503,
+        headers: { 'Retry-After': '1200' },
+      }),
+      expectedDegraded: ['water'],
+      expectedBusy: false,
+      expectedMessage: 'Marine service unavailable',
+    },
+    {
+      name: 'verified 429 becomes busy after the exact grace boundary',
+      scheduledAt: '2026-08-20T16:21:00.000Z',
       waterResponse: () => new Response('busy', {
         status: 429,
         headers: { 'Retry-After': '1200' },

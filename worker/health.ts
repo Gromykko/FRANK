@@ -334,6 +334,34 @@ interface SourceStatusView {
   detail: string;
 }
 
+export interface StatusMarineCandidate {
+  collection: string;
+  id: string;
+  discoveredAt: string;
+}
+
+export type StatusMarineCandidates = Partial<Record<
+  string,
+  Partial<Record<'water' | 'waves', StatusMarineCandidate>>
+>>;
+
+function marineCandidateState(
+  candidate: StatusMarineCandidate | undefined,
+  accepted: { id?: string } | null | undefined,
+): string | null {
+  const candidateMs = providerTimestampMs(candidate?.id);
+  const acceptedMs = providerTimestampMs(accepted?.id);
+  if (!Number.isFinite(candidateMs)
+    || !Number.isFinite(acceptedMs)
+    || candidateMs <= acceptedMs) {
+    return null;
+  }
+  const candidateClock = formatUtcClock(candidateMs);
+  return candidateClock
+    ? `Catalogue candidate ${candidateClock}Z discovered · complete position series not yet accepted`
+    : null;
+}
+
 // The status page cannot import React or the app stylesheet, so this is a
 // deliberately exact HTML rendering of src/components/GertyFace.tsx. Keep the
 // 16x16 pixel coordinates and cropped viewBox in lock-step with that component.
@@ -356,7 +384,10 @@ function gertyStatusFace(rating: FrankStatusRating): string {
 
 // Human diagnostic panel. It intentionally shares buildHealthPayload with the
 // machine alarm, always returns 200, and is self-contained under a strict CSP.
-export function statusResponse(health: HealthPayload): Response {
+export function statusResponse(
+  health: HealthPayload,
+  marineCandidates: StatusMarineCandidates = {},
+): Response {
   const byId = new Map(health.ages.map((age) => [age.id, age]));
   const level = (ms: number, budget: number): 'bad' | 'warn' | 'good' =>
     (ms > budget ? 'bad' : ms > budget * 0.75 ? 'warn' : 'good');
@@ -373,6 +404,7 @@ export function statusResponse(health: HealthPayload): Response {
       checkAgeMs: Number.POSITIVE_INFINITY,
     };
     const cacheHealth: Partial<WorkerCacheHealth> = location.cacheHealth ?? {};
+    const locationCandidates = marineCandidates[location.id] ?? {};
     const degradedSources = new Set(cacheHealth.degradedSources ?? []);
     const missing = !location.hasCache;
     const initialization = missing ? location.initialization : undefined;
@@ -457,6 +489,13 @@ export function statusResponse(health: HealthPayload): Response {
         : key === 'waves'
           ? cacheHealth.marineInstances?.waves
           : undefined;
+      // The shared manifest proves only that the catalogue listed a newer run.
+      // It does not prove that this coordinate returned a complete, acceptable
+      // position series, so the operator note is deliberately neutral and the
+      // accepted provenance remains the source of truth for health and age.
+      const candidateState = key === 'weather'
+        ? null
+        : marineCandidateState(locationCandidates[key], marineInstance);
       // MET records an observed issue time. DMI records the model's subject
       // hour, so its comparable age is derived from that run plus the published
       // completion delay for the collection.
@@ -495,9 +534,13 @@ export function statusResponse(health: HealthPayload): Response {
           ? `${operationalState} · ${provenanceFault.state}`
           : provenanceFault.state
         : operationalState
-          ?? (awaitingRun
-            ? marineWaitingState(marineInstance, nowMs)
-            : sourceAgeMs === null ? 'Age not recorded' : HEALTHY_SOURCE_STATE);
+          ? candidateState
+            ? `${operationalState} · ${candidateState}`
+            : operationalState
+          : candidateState
+            ?? (awaitingRun
+              ? marineWaitingState(marineInstance, nowMs)
+              : sourceAgeMs === null ? 'Age not recorded' : HEALTHY_SOURCE_STATE);
       return {
         key, label, provider,
         tone: degraded || busy || provenanceFault

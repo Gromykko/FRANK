@@ -321,7 +321,7 @@ describe('fetchLatestMarineInstances (split resolution)', () => {
     expect(result.catalogueContacted).toBe(true);
   });
 
-  it('keeps a generic mixed catalogue failure distinct from a verified 429', async () => {
+  it('keeps a transient mixed catalogue failure distinct from a verified 429', async () => {
     globalThis.fetch = (async (url: string) => {
       if (String(url).includes('dkss_idw')) {
         return { ok: false, status: 503, text: async () => 'Unavailable' };
@@ -337,7 +337,7 @@ describe('fetchLatestMarineInstances (split resolution)', () => {
     );
 
     expect(result.substituted).toEqual(['water']);
-    expect(result.substitutionCauses).toEqual({ water: 'unavailable' });
+    expect(result.substitutionCauses).toEqual({ water: 'transient' });
     expect(result.catalogueContacted).toBe(true);
   });
 

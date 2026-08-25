@@ -42,8 +42,6 @@ export const da: Record<string, string> = {
   'built {0}': 'bygget {0}',
   'The forecast is briefly out of date while FRANK updates behind the scenes. Please check back in a few minutes.':
     'Prognosen er kortvarigt forældet, mens FRANK opdaterer i baggrunden. Kig tilbage om et par minutter.',
-  "{0} has been busy for a while, so the forecast hasn't updated since {1}. FRANK keeps retrying automatically — you are seeing the last good forecast.":
-    '{0} har været optaget et stykke tid, så prognosen er ikke opdateret siden {1}. FRANK prøver igen automatisk — du ser den seneste gode prognose.',
   'The forecast could not be refreshed. You are seeing data from {0} — {1} old, so treat it with extra caution. FRANK retries by itself roughly every 10 minutes.':
     'Prognosen kunne ikke opdateres. Du ser data fra {0} — {1} gamle, så brug dem med ekstra forsigtighed. FRANK prøver selv igen cirka hvert 10. minut.',
   // Offline AND old: the age warning still fires (a paddler on the water needs
@@ -161,47 +159,27 @@ export const da: Record<string, string> = {
   'Offline': 'Offline',
   'Showing your saved forecast from {0}': 'Viser din gemte prognose fra {0}',
   'Showing your older saved forecast from {0}': 'Viser din ældre gemte prognose fra {0}',
-  'Weather service': 'Vejrtjenesten',
-  'Waves & water service': 'Bølge- og vandstandstjenesten',
-  'Wave service': 'Bølgetjenesten',
-  'Water level service': 'Vandstandstjenesten',
-  'Forecast services': 'Prognosetjenesterne',
-  'weather': 'vejr',
   'wind': 'vind',
   'waves': 'bølger',
-  'water': 'vandstand',
-  'water level': 'vandstand',
-  'marine data': 'havdata',
-  'waves & water': 'bølger & vandstand',
-  'weather & waves': 'vejr & bølger',
-  'weather & water': 'vejr & vandstand',
-  'weather, waves & water': 'vejr, bølger & vandstand',
-  'services': 'tjenesterne',
-  'weather service': 'vejrtjenesten',
-  'marine service': 'havtjenesten',
-  'wave service': 'bølgetjenesten',
-  'water level service': 'vandstandstjenesten',
   'Refreshing…': 'Opdaterer…',
   'Preparing update…': 'Klargør opdatering…',
   'Saved forecast · {0}': 'Gemt prognose · {0}',
   'Showing saved forecast · {0} old': 'Viser gemt prognose · {0} gammel',
   'Needs a new check': 'Skal tjekkes igen',
   'Checking…': 'Tjekker…',
-  '{0} busy': '{0} er optaget',
   'Couldn’t refresh': 'Kunne ikke opdatere',
   'Retrying automatically': 'Prøver igen automatisk',
-  '{0} from an earlier update · {1} busy': '{0} er ældre · {1} er optaget',
-  '{0} from an earlier update · couldn’t refresh just now': '{0} fra en tidligere opdatering · kunne ikke opdatere lige nu',
-  '{0} from an earlier update': '{0} fra en tidligere opdatering',
+  'Water-level forecast update delayed': 'Opdateringen af vandstandsprognosen er forsinket',
+  'Wave forecast update delayed': 'Opdateringen af bølgeprognosen er forsinket',
+  'Marine forecast update delayed': 'Opdateringen af havprognosen er forsinket',
+  'Wind forecast update delayed': 'Opdateringen af vindprognosen er forsinket',
+  'Wind and water-level forecast updates delayed': 'Opdateringen af vind- og vandstandsprognoserne er forsinket',
+  'Wind and wave forecast updates delayed': 'Opdateringen af vind- og bølgeprognoserne er forsinket',
+  'Wind and marine forecast updates delayed': 'Opdateringen af vind- og havprognoserne er forsinket',
+  'Showing your saved forecast from {0} · {1}': 'Viser din gemte prognose fra {0} · {1}',
   '{0} min': '{0} min',
   '{0} h': '{0} t',
   '{0} d': '{0} d',
-  "Wind updated {0} ago · {1} couldn't be refreshed":
-    'Vind opdateret for {0}. siden · {1} kunne ikke opdateres',
-  "Marine data is current · wind couldn't be refreshed":
-    'Havdata er aktuelle · vindprognosen kunne ikke opdateres',
-  "Wind and {0} couldn't be refreshed":
-    'Hverken vind eller {0} kunne opdateres',
   "You're offline, so FRANK is showing your last saved forecast from {0}. It will refresh on its own once you're back online.":
     'Du er offline, så FRANK viser din senest gemte prognose fra {0}. Den opdateres af sig selv, når du er online igen.',
   'FRANK is updating now; meanwhile it is showing the saved forecast from {0}, which is {1} old.':
@@ -210,14 +188,9 @@ export const da: Record<string, string> = {
     'FRANK har kontakt med prognosetjenesten, som klargør en komplet opdatering. FRANK prøver igen automatisk; imens ser du den gemte prognose fra {0}.',
   'The saved forecast from {0} needs a new check.':
     'Den gemte prognose fra {0} skal tjekkes igen.',
-  '{0} is busy right now, so the forecast could not be refreshed. FRANK is retrying automatically; you are seeing the last good forecast from {1}.':
-    '{0} er optaget lige nu, så prognosen kunne ikke opdateres. FRANK prøver igen automatisk; du ser den seneste gode prognose fra {1}.',
   'The forecast could not be refreshed; FRANK is retrying automatically. You are seeing the last good forecast from {0}.':
     'Prognosen kunne ikke opdateres; FRANK prøver igen automatisk. Du ser den seneste gode prognose fra {0}.',
-  'Forecast from {0}; {1} is from an earlier update while its service was busy. FRANK is retrying automatically.':
-    'Prognose fra {0}; {1} er fra en tidligere opdatering, mens tjenesten var optaget. FRANK prøver igen automatisk.',
-  'Forecast from {0}; {1} is from an earlier update (could not refresh just now). FRANK is retrying automatically.':
-    'Prognose fra {0}; {1} er fra en tidligere opdatering (kunne ikke opdatere lige nu). FRANK prøver igen automatisk.',
+  'Forecast from {0}. {1}.': 'Prognose fra {0}. {1}.',
   'Checking for a newer forecast': 'Tjekker efter en nyere prognose',
   'Forecast from {0}': 'Prognose fra {0}',
   ' Last issue: {0}': ' Seneste fejl: {0}',
@@ -422,8 +395,6 @@ export const da: Record<string, string> = {
     'Ingen gode vinduer i prognosen endnu — forholdene ligger over dine grænser for nu. Kig tilbage, når den opdateres.',
   'Your personal limits are switched off, so there is nothing to measure the forecast against and no window can be recommended. Turn a limit back on to see suggested windows.':
     'Dine personlige grænser er slået fra, så der er intet at måle prognosen op imod, og intet vindue kan anbefales. Slå en grænse til igen for at se foreslåede vinduer.',
-  'Showing your saved forecast from {0} · {1} from an earlier update':
-    'Viser din gemte prognose fra {0} · {1} er fra en tidligere opdatering',
   'Nothing you are still checking flagged this — {0}, {1}, {2}. Not checked: {3}.':
     'Intet af det, du stadig tjekker, gav udslag — {0}, {1}, {2}. Ikke tjekket: {3}.',
   'Nothing you are still checking flagged the outlook — {0}, {1}, {2}. Not checked: {3}.':

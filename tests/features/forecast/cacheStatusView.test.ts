@@ -48,17 +48,18 @@ describe('getCacheStatusView', () => {
     expect(v.tone).toBe('watch');
   });
 
-  it('a busy MARINE provider (no cache) is calm amber and names the service, no "hours old"', () => {
+  it('a stale forecast stays cause-neutral even when operator state records a busy marine provider', () => {
     const v = view({ status: 'stale', providerBusy: true, busyProvider: 'marine', lastAttemptAt: '' });
-    expect(v.label).toBe('Waves & water service busy');
+    expect(v.label).toBe('Couldn’t refresh');
     expect(v.detail).toBe('Retrying automatically');
     expect(v.tone).toBe('watch');
-    expect(v.detail).not.toMatch(/old/);
+    expect(`${v.label} ${v.detail}`).not.toMatch(/service|provider|busy|429|DMI|MET/i);
   });
 
-  it('a busy WEATHER provider names the weather service', () => {
+  it('does not expose a busy weather provider in the paddler-facing status', () => {
     const v = view({ status: 'stale', providerBusy: true, busyProvider: 'weather', lastAttemptAt: '' });
-    expect(v.label).toBe('Weather service busy');
+    expect(v.label).toBe('Couldn’t refresh');
+    expect(`${v.label} ${v.detail}`).not.toMatch(/weather|service|provider|busy|429|DMI|MET/i);
   });
 
   it('a genuine (non-busy) failure with data present is amber "Couldn’t refresh", never red', () => {
@@ -68,15 +69,19 @@ describe('getCacheStatusView', () => {
     expect(v.tone).toBe('watch');
   });
 
-  it('a partial build from a non-busy error says "couldn’t refresh just now", not "busy"', () => {
+  it('a partial build names the delayed forecast source without exposing the provider cause', () => {
     const v = view({ status: 'current', degradedSources: ['water', 'waves'], providerBusy: false, lastAttemptAt: '' });
-    expect(v.detail).toBe('waves & water from an earlier update · couldn’t refresh just now');
+    expect(v.detail).toBe('Marine forecast update delayed');
 
-    const wavesOnly = view({ status: 'current', degradedSources: ['waves'], providerBusy: false, lastAttemptAt: '' });
-    expect(wavesOnly.detail).toBe('waves from an earlier update · couldn’t refresh just now');
+    const wavesOnly = view({ status: 'current', degradedSources: ['waves'], providerBusy: true, lastAttemptAt: '' });
+    expect(wavesOnly.detail).toBe('Wave forecast update delayed');
 
     const waterOnly = view({ status: 'current', degradedSources: ['water'], providerBusy: false, lastAttemptAt: '' });
-    expect(waterOnly.detail).toBe('water from an earlier update · couldn’t refresh just now');
+    expect(waterOnly.detail).toBe('Water-level forecast update delayed');
+
+    for (const detail of [v.detail, wavesOnly.detail, waterOnly.detail]) {
+      expect(detail).not.toMatch(/service|provider|busy|429|retry|DMI|MET/i);
+    }
   });
 
   it('a routine refresh is a neutral one-liner - "Refreshing…", no second line, no amber', () => {
@@ -314,15 +319,13 @@ describe('honesty under adverse conditions', () => {
 
     expect(online.partiallyDegraded).toBe(true);
     expect(offline.partiallyDegraded).toBe(true);
-    expect(offline.degradedLabel).toBe(online.degradedLabel);
     expect(offline.tone).not.toBe('neutral');
-    // Whether a provider is busy is a claim about now, and offline we cannot
-    // know. What the recycled sources ARE is a fact about the bytes in hand.
-    expect(offline.providerBusy).toBe(false);
+    expect(offline).not.toHaveProperty('providerBusy');
+    expect(offline).not.toHaveProperty('busyServiceName');
     expect(offline.detail).toBe(
-      'Showing your saved forecast from 09:00 · waves & water from an earlier update',
+      'Showing your saved forecast from 09:00 · Marine forecast update delayed',
     );
-    expect(offline.degradedSourceDisclosure).toBe('waves & water from an earlier update');
+    expect(offline.degradedSourceDisclosure).toBe('Marine forecast update delayed');
     expect(offline.detail).not.toContain('busy');
   });
 
@@ -361,7 +364,7 @@ describe('main-page forecast freshness presentation', () => {
     expect(result.showRefreshWarning).toBe(false);
   });
 
-  it('keeps degraded sources named and amber without a check-age label', () => {
+  it('keeps delayed sources named and amber without exposing provider diagnostics', () => {
     const busy = view({
       status: 'current',
       degradedSources: ['water', 'waves'],
@@ -373,7 +376,7 @@ describe('main-page forecast freshness presentation', () => {
       tone: 'watch',
       partiallyDegraded: true,
     });
-    expect(busy.detail).toBe('waves & water from an earlier update · marine service busy');
+    expect(busy.detail).toBe('Marine forecast update delayed');
 
     const wavesOnlyBusy = view({
       status: 'current',
@@ -381,7 +384,7 @@ describe('main-page forecast freshness presentation', () => {
       providerBusy: true,
       lastAttemptAt: '',
     });
-    expect(wavesOnlyBusy.detail).toBe('waves from an earlier update · wave service busy');
+    expect(wavesOnlyBusy.detail).toBe('Wave forecast update delayed');
 
     const waterOnlyBusy = view({
       status: 'current',
@@ -389,7 +392,7 @@ describe('main-page forecast freshness presentation', () => {
       providerBusy: true,
       lastAttemptAt: '',
     });
-    expect(waterOnlyBusy.detail).toBe('water from an earlier update · water level service busy');
+    expect(waterOnlyBusy.detail).toBe('Water-level forecast update delayed');
 
     const weatherBusy = view({
       status: 'current',
@@ -397,7 +400,7 @@ describe('main-page forecast freshness presentation', () => {
       providerBusy: true,
       lastAttemptAt: '',
     });
-    expect(weatherBusy.detail).toBe('weather from an earlier update · weather service busy');
+    expect(weatherBusy.detail).toBe('Wind forecast update delayed');
 
     const bothBusy = view({
       status: 'current',
@@ -405,7 +408,17 @@ describe('main-page forecast freshness presentation', () => {
       providerBusy: true,
       lastAttemptAt: '',
     });
-    expect(bothBusy.detail).toBe('weather, waves & water from an earlier update · services busy');
+    expect(bothBusy.detail).toBe('Wind and marine forecast updates delayed');
+
+    for (const detail of [
+      busy.detail,
+      wavesOnlyBusy.detail,
+      waterOnlyBusy.detail,
+      weatherBusy.detail,
+      bothBusy.detail,
+    ]) {
+      expect(detail).not.toMatch(/service|provider|busy|429|retry|DMI|MET/i);
+    }
   });
 });
 
@@ -449,44 +462,44 @@ describe('per-source freshness disclosure', () => {
     {
       name: 'water only',
       degradedSources: ['water'],
-      english: "Wind updated 5 min ago · water level couldn't be refreshed",
-      danish: 'Vind opdateret for 5 min. siden · vandstand kunne ikke opdateres',
+      english: 'Water-level forecast update delayed',
+      danish: 'Opdateringen af vandstandsprognosen er forsinket',
     },
     {
       name: 'waves only',
       degradedSources: ['waves'],
-      english: "Wind updated 5 min ago · waves couldn't be refreshed",
-      danish: 'Vind opdateret for 5 min. siden · bølger kunne ikke opdateres',
+      english: 'Wave forecast update delayed',
+      danish: 'Opdateringen af bølgeprognosen er forsinket',
     },
     {
       name: 'water and waves',
       degradedSources: ['water', 'waves'],
-      english: "Wind updated 5 min ago · marine data couldn't be refreshed",
-      danish: 'Vind opdateret for 5 min. siden · havdata kunne ikke opdateres',
+      english: 'Marine forecast update delayed',
+      danish: 'Opdateringen af havprognosen er forsinket',
     },
     {
       name: 'weather only',
       degradedSources: ['weather'],
-      english: "Marine data is current · wind couldn't be refreshed",
-      danish: 'Havdata er aktuelle · vindprognosen kunne ikke opdateres',
+      english: 'Wind forecast update delayed',
+      danish: 'Opdateringen af vindprognosen er forsinket',
     },
     {
       name: 'weather and water',
       degradedSources: ['weather', 'water'],
-      english: "Wind and water level couldn't be refreshed",
-      danish: 'Hverken vind eller vandstand kunne opdateres',
+      english: 'Wind and water-level forecast updates delayed',
+      danish: 'Opdateringen af vind- og vandstandsprognoserne er forsinket',
     },
     {
       name: 'weather and waves',
       degradedSources: ['weather', 'waves'],
-      english: "Wind and waves couldn't be refreshed",
-      danish: 'Hverken vind eller bølger kunne opdateres',
+      english: 'Wind and wave forecast updates delayed',
+      danish: 'Opdateringen af vind- og bølgeprognoserne er forsinket',
     },
     {
       name: 'weather, water, and waves',
       degradedSources: ['weather', 'water', 'waves'],
-      english: "Wind and marine data couldn't be refreshed",
-      danish: 'Hverken vind eller havdata kunne opdateres',
+      english: 'Wind and marine forecast updates delayed',
+      danish: 'Opdateringen af vind- og havprognoserne er forsinket',
     },
   ];
 
@@ -501,27 +514,27 @@ describe('per-source freshness disclosure', () => {
     expect(englishResult.view.detail).toBe(english);
     expect(danishResult.view.detail).toBe(danish);
     expect(englishResult.view.degradedSourceDisclosure).toBe(englishResult.view.detail);
-    expect(englishResult.view.detail.split(' · ').length).toBeLessThanOrEqual(2);
     expect(englishResult.view.tone).toBe('watch');
+    expect(englishResult.expandedDetail).toContain(english);
+    expect(danishResult.expandedDetail).toContain(danish);
+    expect(englishResult.view.detail).not.toMatch(/service|provider|busy|429|retry|DMI|MET/i);
+    expect(englishResult.expandedDetail).not.toMatch(/service|provider|busy|429|retry|DMI|MET/i);
   });
 
-  it('never renders a duration or run clock beside marine data', () => {
-    const details = degradedCases.flatMap(({ degradedSources }) => [
-      derive(degradedSources, marineInstances).view.detail,
-      derive(degradedSources, marineInstances, undefined, translateDa).view.detail,
-    ]);
-    const marineLabel = /water level|waves|marine data|vandstand|bølger|havdata/iu;
-    const marineDuration = /\b\d+\s*(?:min|h|t|d)\b/iu;
+  it('never turns a delayed marine update into a duration or model-run claim', () => {
+    const details = degradedCases
+      .filter(({ degradedSources }) => degradedSources.includes('water') || degradedSources.includes('waves'))
+      .flatMap(({ degradedSources }) => [
+        derive(degradedSources, marineInstances).view.detail,
+        derive(degradedSources, marineInstances, undefined, translateDa).view.detail,
+      ]);
 
     for (const detail of details) {
-      expect(detail).not.toMatch(/\b\d{1,2}[:.]\d{2}\b|\brun\b|kørsl/iu);
-      const marineClauses = detail.split(' · ').filter((clause) => marineLabel.test(clause));
-      expect(marineClauses.length).toBeGreaterThan(0);
-      for (const clause of marineClauses) expect(clause).not.toMatch(marineDuration);
+      expect(detail).not.toMatch(/\b\d+(?:\s*(?:min|h|t|d)|[:.]\d{2})\b|\brun\b|kørsl/iu);
     }
   });
 
-  it('falls back honestly when marine provenance is absent, invalid, or future', () => {
+  it('does not make delayed-update copy depend on provider provenance', () => {
     const absent = derive(['water']);
     const invalid = derive(['water'], {
       water: { collection: 'dkss_idw', id: 'not-a-run' },
@@ -531,11 +544,9 @@ describe('per-source freshness disclosure', () => {
     });
 
     for (const result of [absent, invalid, future]) {
-      expect(result.view.detail).toBe(
-        'water from an earlier update · couldn’t refresh just now',
-      );
+      expect(result.view.detail).toBe('Water-level forecast update delayed');
       expect(result.view.degradedSourceDisclosure).toBe(result.view.detail);
-      expect(result.view.detail).not.toMatch(/NaN|0 min/);
+      expect(result.view.detail).not.toMatch(/NaN|service|provider|busy|429|retry|DMI|MET/i);
     }
 
     const missingWeather = derive(['weather'], marineInstances, null);
@@ -559,24 +570,18 @@ describe('per-source freshness disclosure', () => {
       waves: { collection: 'wam_nsb', id: '2026-08-24T100000Z' },
     });
 
-    expect(missingWeather.view.detail).toBe(
-      'weather from an earlier update · couldn’t refresh just now',
-    );
+    expect(missingWeather.view.detail).toBe('Wind forecast update delayed');
     for (const result of [
       missingMarineForCurrentClaim,
       invalidMarineForCurrentClaim,
       futureMarineForCurrentClaim,
     ]) {
-      expect(result.view.detail).toBe(
-        'weather from an earlier update · couldn’t refresh just now',
-      );
+      expect(result.view.detail).toBe('Wind forecast update delayed');
     }
-    expect(invalidMarineInCombinedClaim.view.detail).toBe(
-      'weather & water from an earlier update · couldn’t refresh just now',
-    );
-    expect(futureMarineInCombinedClaim.view.detail).toBe(
-      'weather & waves from an earlier update · couldn’t refresh just now',
-    );
+    expect(invalidMarineInCombinedClaim.view.detail)
+      .toBe('Wind and water-level forecast updates delayed');
+    expect(futureMarineInCombinedClaim.view.detail)
+      .toBe('Wind and wave forecast updates delayed');
   });
 
   it('does not add a source disclosure to healthy or held-stale payloads', () => {

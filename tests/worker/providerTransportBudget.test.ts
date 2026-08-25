@@ -17,7 +17,11 @@ import {
   reallocateMarinePositionAttempts,
 } from '../../worker/execution';
 import { dmiForecastUrl } from '../../worker/forecastModel';
-import { fetchJsonWithRetries } from '../../worker/providerTransport';
+import { ProviderUnavailableError } from '../../worker/providerAvailability';
+import {
+  fetchJsonWithRetries,
+  MARINE_BUSY_DEFAULT_RETRY_SECONDS,
+} from '../../worker/providerTransport';
 import type { EventMemo } from '../../worker/domain';
 
 const originalFetch = globalThis.fetch;
@@ -61,8 +65,21 @@ function expectNoDerivedRetryAfterFields(record: Record<string, unknown> | undef
   expect(record).not.toHaveProperty('retryAfterIgnored');
 }
 
+async function rejectedProviderError(
+  promise: Promise<unknown>,
+): Promise<ProviderUnavailableError> {
+  try {
+    await promise;
+    throw new Error('Expected provider request to reject.');
+  } catch (error) {
+    if (!(error instanceof ProviderUnavailableError)) throw error;
+    return error;
+  }
+}
+
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -234,6 +251,144 @@ describe('event external-subrequest budget', () => {
       }),
     ]);
     expectNoDerivedRetryAfterFields(attempts[0]);
+  });
+
+  it('preserves a verified marine 429 when a terminal timeout reaches the deadline', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-26T00:00:00Z'));
+    const terminalTimeout = new Error('terminal timeout marker');
+    terminalTimeout.name = 'TimeoutError';
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('Server is busy', { status: 429 }))
+      .mockRejectedValueOnce(terminalTimeout);
+    globalThis.fetch = fetchMock as typeof fetch;
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const rejected = rejectedProviderError(fetchJsonWithRetries(
+      marinePositionUrl('dkss_idw'),
+      'DMI mixed timeout',
+      executionPolicy({
+        deadlineAt: Date.now() + 100,
+        maxAttempts: 3,
+        marinePositionMaxAttempts: 3,
+        retryBusyDelayMs: 0,
+        retryDelayMs: 1_000,
+      }),
+      'marine',
+      new Map(),
+    ));
+    await vi.runAllTimersAsync();
+    const error = await rejected;
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(error.busy).toBe(true);
+    expect(error.retryAfterSeconds).toBe(MARINE_BUSY_DEFAULT_RETRY_SECONDS);
+    expect(error.cause).toBeInstanceOf(ProviderUnavailableError);
+    const terminal = error.cause as ProviderUnavailableError;
+    expect(terminal.busy).toBe(false);
+    expect(terminal.cause).toBe(terminalTimeout);
+
+    const attempts = structuredLogEvents(log.mock.calls)
+      .filter(({ event, source }) => event === 'upstream_attempt'
+        && source === 'DMI mixed timeout');
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        attempt: 1,
+        outcome: 'http-429',
+        httpStatus: 429,
+        openedMarineBusyCircuit: false,
+      }),
+      expect.objectContaining({
+        attempt: 2,
+        outcome: 'timeout',
+        httpStatus: null,
+        // The deadline-ended path did not open the circuit before this fix;
+        // preserving 429 evidence must not silently change that control flow.
+        openedMarineBusyCircuit: false,
+      }),
+    ]);
+  });
+
+  it('preserves a verified marine 429 when the terminal retry is a 5xx', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('Server is busy', { status: 429 }))
+      .mockResolvedValueOnce(new Response('Service unavailable', { status: 503 }));
+    globalThis.fetch = fetchMock as typeof fetch;
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const error = await rejectedProviderError(fetchJsonWithRetries(
+      marinePositionUrl('wam_nsb'),
+      'DMI mixed 5xx',
+      executionPolicy({
+        maxAttempts: 2,
+        marinePositionMaxAttempts: 2,
+        retryBusyDelayMs: 0,
+        retryDelayMs: 0,
+      }),
+      'marine',
+      new Map(),
+    ));
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(error.busy).toBe(true);
+    expect(error.cause).toBeInstanceOf(ProviderUnavailableError);
+    const terminal = error.cause as ProviderUnavailableError;
+    expect(terminal.busy).toBe(false);
+    expect(terminal.cause).toMatchObject({ status: 503 });
+
+    const attempts = structuredLogEvents(log.mock.calls)
+      .filter(({ event, source }) => event === 'upstream_attempt'
+        && source === 'DMI mixed 5xx');
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        attempt: 1,
+        outcome: 'http-429',
+        httpStatus: 429,
+        openedMarineBusyCircuit: false,
+      }),
+      expect.objectContaining({
+        attempt: 2,
+        outcome: 'http-503',
+        httpStatus: 503,
+        openedMarineBusyCircuit: true,
+      }),
+    ]);
+  });
+
+  it('keeps a pure terminal marine timeout non-busy', async () => {
+    const terminalTimeout = new Error('pure timeout marker');
+    terminalTimeout.name = 'TimeoutError';
+    const fetchMock = vi.fn().mockRejectedValueOnce(terminalTimeout);
+    globalThis.fetch = fetchMock as typeof fetch;
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const error = await rejectedProviderError(fetchJsonWithRetries(
+      marinePositionUrl('dkss_idw'),
+      'DMI pure timeout',
+      executionPolicy({ maxAttempts: 1, marinePositionMaxAttempts: 1 }),
+      'marine',
+      new Map(),
+    ));
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(error.busy).toBe(false);
+    expect(error.retryAfterSeconds).toBeUndefined();
+    expect(error.cause).toBe(terminalTimeout);
+
+    const attempts = structuredLogEvents(log.mock.calls)
+      .filter(({ event, source }) => event === 'upstream_attempt'
+        && source === 'DMI pure timeout');
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        attempt: 1,
+        outcome: 'timeout',
+        httpStatus: null,
+        openedMarineBusyCircuit: false,
+      }),
+    ]);
   });
 
   it('models manifest, successful-catalogue and exhausted-catalogue paths separately', async () => {

@@ -267,9 +267,9 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
   });
 
   it('samples busy-response grace when the provider outcome arrives', async () => {
-    vi.setSystemTime('2026-07-11T15:49:59.999Z');
+    vi.setSystemTime('2026-07-11T16:19:59.999Z');
     globalThis.fetch = (async () => {
-      vi.setSystemTime('2026-07-11T15:50:00.000Z');
+      vi.setSystemTime('2026-07-11T16:20:00.000Z');
       return new Response('Server is busy', { status: 429 });
     }) as typeof fetch;
     const envelope = retainedEnvelope('2026-07-11T060000Z');
@@ -292,7 +292,7 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
   });
 
   it('discloses a verified busy response once the publication grace expires', async () => {
-    vi.setSystemTime('2026-07-11T15:50:00Z');
+    vi.setSystemTime('2026-07-11T16:20:00Z');
     stubFetchBusy();
     const envelope = retainedEnvelope('2026-07-11T060000Z');
     const env = makeEnv({ [CURRENT_INGREDIENT_KEY]: envelope });
@@ -325,7 +325,7 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     expect(result.series).toEqual(envelope.series);
   });
 
-  it('does not hide a generic provider failure inside the publication grace', async () => {
+  it('keeps a typed transient provider failure neutral inside the publication grace', async () => {
     globalThis.fetch = (async () => new Response('Temporary upstream failure', {
       status: 503,
     })) as typeof fetch;
@@ -344,12 +344,27 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
       { maxAttempts: 1 },
     );
 
-    expect(result).toMatchObject({
-      fallback: true,
-      degraded: true,
-      degradationIsImmediate: true,
-    });
-    expect(result.busy).toBe(false);
+    expect(result).toMatchObject({ fallback: true, notReady: true });
+    expect(result.degraded).toBeUndefined();
+    expect(result.busy).toBeUndefined();
+  });
+
+  it('never hides an invalid success payload inside the publication grace', async () => {
+    globalThis.fetch = (async () => Response.json({ features: 'not-an-array' })) as typeof fetch;
+    const envelope = retainedEnvelope('2026-07-11T060000Z');
+    const env = makeEnv({ [CURRENT_INGREDIENT_KEY]: envelope });
+
+    await expect(fetchMarineSeriesWithFallback(
+      env,
+      LOCATION,
+      'water',
+      WATER_INSTANCE,
+      ['x'],
+      identityMap,
+      undefined,
+      undefined,
+      { maxAttempts: 1 },
+    )).rejects.toThrow();
   });
 
   it('records a validated empty response even when no held run can be served', async () => {
@@ -380,7 +395,7 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
   });
 
   it('uses a seed only as disclosed degradation after the publication grace', async () => {
-    vi.setSystemTime('2026-07-11T15:50:00Z');
+    vi.setSystemTime('2026-07-11T16:20:00Z');
     stubFetchBusy();
     const seed = [{ time: '2026-07-11T09:00:00Z', timeMs: Date.parse('2026-07-11T09:00:00Z'), tideLevel: 0.3 }];
 

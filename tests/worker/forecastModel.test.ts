@@ -268,7 +268,7 @@ describe('generation-owned forecast model', () => {
       waterLag,
       false,
       ['water'],
-      Date.parse('2026-08-20T21:50:00.000Z'),
+      Date.parse('2026-08-20T22:20:00.000Z'),
     )).toEqual(['water']);
     expect(degradedMarineSourcesAfterProbe(
       waterLag,
@@ -282,7 +282,7 @@ describe('generation-owned forecast model', () => {
       waterLag,
       false,
       ['water'],
-      Date.parse('2026-08-20T21:49:59.999Z'),
+      Date.parse('2026-08-20T22:19:59.999Z'),
       false,
       { water: 'busy' },
     )).toEqual([]);
@@ -290,7 +290,7 @@ describe('generation-owned forecast model', () => {
       waterLag,
       false,
       ['water'],
-      Date.parse('2026-08-20T21:50:00.000Z'),
+      Date.parse('2026-08-20T22:20:00.000Z'),
       false,
       { water: 'busy' },
     )).toEqual(['water']);
@@ -298,10 +298,28 @@ describe('generation-owned forecast model', () => {
       waterLag,
       false,
       ['water'],
-      Date.parse('2026-08-20T21:49:59.999Z'),
+      Date.parse('2026-08-20T22:19:59.999Z'),
       false,
       { water: 'not-ready' },
     )).toEqual([]);
+    expect(degradedMarineSourcesAfterProbe(
+      waterLag,
+      true,
+      [],
+      Date.parse('2026-08-20T22:19:59.999Z'),
+      false,
+      {},
+      true,
+    )).toEqual([]);
+    expect(degradedMarineSourcesAfterProbe(
+      waterLag,
+      true,
+      [],
+      Date.parse('2026-08-20T22:20:00.000Z'),
+      false,
+      {},
+      true,
+    )).toEqual(['water']);
     expect(degradedMarineSourcesAfterProbe(
       waterLag,
       true,
@@ -314,19 +332,19 @@ describe('generation-owned forecast model', () => {
     }, Date.parse('2026-08-21T00:00:00Z'))).toEqual(['water', 'waves']);
   });
 
-  it('separates the early probe gate from the 30-minute user-visible grace', () => {
+  it('separates the early probe gate from the fixed one-hour user-visible grace', () => {
     const held = {
       water: { collection: 'dkss_idw', id: '2026-08-20T120000Z' },
       waves: { collection: 'wam_nsb', id: '2026-08-20T120000Z' },
     };
-    expect(FORECAST_SOURCE_POLICY.dmiPublicationGraceMs).toBe(30 * 60 * 1000);
+    expect(FORECAST_SOURCE_POLICY.dmiPublicationGraceMs).toBe(60 * 60 * 1000);
     expect(marineSourcesDueForProbe(held, Date.parse('2026-08-20T20:35:00Z')))
       .toEqual(['waves']);
-    expect(marineSourcesOverdueForRefresh(held, Date.parse('2026-08-20T21:14:59.999Z')))
+    expect(marineSourcesOverdueForRefresh(held, Date.parse('2026-08-20T21:44:59.999Z')))
       .toEqual([]);
-    expect(marineSourcesOverdueForRefresh(held, Date.parse('2026-08-20T21:15:00Z')))
+    expect(marineSourcesOverdueForRefresh(held, Date.parse('2026-08-20T21:45:00Z')))
       .toEqual(['waves']);
-    expect(marineSourcesOverdueForRefresh(held, Date.parse('2026-08-20T21:50:00Z')))
+    expect(marineSourcesOverdueForRefresh(held, Date.parse('2026-08-20T22:20:00Z')))
       .toEqual(['water', 'waves']);
   });
 
@@ -343,7 +361,7 @@ describe('generation-owned forecast model', () => {
       ...previous,
       water: { collection: 'dkss_idw', id: '2026-08-20T120000Z' },
     };
-    const afterTwelveRunGrace = Date.parse('2026-08-20T16:00:00.000Z');
+    const afterTwelveRunGrace = Date.parse('2026-08-20T16:20:00.000Z');
 
     expect(marineSourcesMissingExpectedAdvance(
       previous,
@@ -403,7 +421,7 @@ describe('mapMetPayload expiry clamping', () => {
 describe('a failed refresh call is not stale data', () => {
   const HOUR_2 = '2026-08-20T12:00:00.000Z';
   const CURRENT_RUN = '2026-08-20T120000Z';
-  // 00:00 + 6h cycle + 3h20 DKSS + 30m publication grace = 09:50, so by 12:30
+  // 00:00 + 6h cycle + 3h20 DKSS + 60m publication grace = 10:20, so by 12:30
   // a newer run is genuinely overdue and this one IS behind.
   const BEHIND_RUN = '2026-08-20T000000Z';
 

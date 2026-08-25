@@ -107,12 +107,15 @@ export const FORECAST_SOURCE_POLICY = Object.freeze({
   // DMI calls its completion times "usual" rather than an SLA and explicitly
   // says the network load changes them. Across the 32 collection-runs measured
   // on 2026-08-23..25, the worst terminal STAC item arrived about 18 minutes
-  // after the published time. Thirty minutes covers that observation, the next
-  // four-minute city rotation, and one additional failed rotation. During this
-  // bounded publication window the previous independently complete run remains
-  // honest; after it, an unavailable candidate is disclosed as degradation.
+  // after the published time. One hour is deliberately anchored to the
+  // collection's expected completion time, never to first discovery or a
+  // failed retry, so repeated failures cannot slide the window forward. During
+  // it, a previous independently complete same-collection run remains honest
+  // across ordinary transient provider failures; contract, provenance, code,
+  // and storage failures stay visible immediately. After it, an unavailable
+  // candidate is disclosed as degradation.
   // https://www.dmi.dk/friedata/dokumentation/data/forecast-data-availability
-  dmiPublicationGraceMs: 30 * 60 * 1000,
+  dmiPublicationGraceMs: 60 * 60 * 1000,
 });
 
 export const FORECAST_PROVIDER_PARAMETERS = Object.freeze({
@@ -593,7 +596,8 @@ export function degradedMarineSourcesAfterProbe(
   substituted: readonly MarineKind[] = [],
   nowMs = Date.now(),
   marineProbeBusy = false,
-  substitutionCauses: Partial<Record<MarineKind, 'not-ready' | 'busy' | 'unavailable'>> = {},
+  substitutionCauses: Partial<Record<MarineKind, 'not-ready' | 'busy' | 'transient' | 'unavailable'>> = {},
+  marineProbeTransient = false,
 ): MarineKind[] {
   const substitutedSet = new Set(substituted);
   const due = new Set(marineSourcesDueForProbe(marineInstances, nowMs));
@@ -601,12 +605,17 @@ export function degradedMarineSourcesAfterProbe(
   // A combined probe may ask both catalogues because ONE source is due. A
   // failed carry-over for the other source is not degradation while that
   // source remains inside its own collection's publication schedule. A
-  // verified 429 is also normalised during the bounded grace; generic failures
-  // are not evidence about publication and remain immediately visible.
+  // typed transient provider failures are also normalised during the bounded
+  // grace: a failed call is not evidence that a proven retained run became
+  // stale. Unrecognised failures remain immediately visible because they may
+  // be contract, code, storage, or provenance faults rather than publication
+  // noise.
   const kinds: readonly MarineKind[] = ['water', 'waves'];
   return kinds.filter((kind) => {
     if (marineProbeFailed) {
-      return marineProbeBusy ? overdue.has(kind) : due.has(kind);
+      return marineProbeBusy || marineProbeTransient
+        ? overdue.has(kind)
+        : due.has(kind);
     }
     if (!substitutedSet.has(kind)) return false;
     return substitutionCauses[kind] === 'unavailable'
@@ -907,10 +916,10 @@ export function assembleForecastFromSources(
   const effectiveInstances = { water: water.instance, waves: wave.instance };
   // A failed refresh CALL is not the same thing as stale DATA. During the
   // bounded publication grace, an exact complete retained run remains the
-  // newest run we can honestly serve while the candidate is incomplete or DMI
-  // returns a verified 429. Reporting it as "from an earlier update" before its
-  // own schedule expires would confuse ordinary incremental publication with a
-  // stale forecast.
+  // newest run we can honestly serve while the candidate is incomplete or a
+  // call fails with a typed transient provider error. Reporting it as delayed
+  // before its own schedule expires would confuse ordinary incremental
+  // publication with a stale forecast.
   //
   // The suppression is gated on PROVABLE provenance, not on the absence of a
   // known-bad marker. Anything unable to show it is serving the collection that
@@ -938,9 +947,9 @@ export function assembleForecastFromSources(
     ...(waterDegraded ? ['water'] : []),
     ...(wavesDegraded ? ['waves'] : []),
   ];
-  // Busy is a statement about the same fallback, so it travels with it. Leaving
-  // providerBusy set while degradedSources is empty would restore the banner
-  // this removes, by a different route.
+  // Busy is an operator diagnosis about the same fallback, so it travels with
+  // that fallback. Leaving providerBusy set while degradedSources is empty
+  // would claim an outage cause without identifying any affected source.
   const degradedBusy = (weatherDegraded && Boolean(met.busy))
     || (waterDegraded && Boolean(water.busy))
     || (wavesDegraded && Boolean(wave.busy));

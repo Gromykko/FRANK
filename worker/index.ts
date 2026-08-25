@@ -23,6 +23,7 @@ import {
   HEARTBEAT_STALE_AFTER_MIN,
   statusResponse,
 } from './health';
+import type { StatusMarineCandidates } from './health';
 import {
   CRON_HEARTBEAT_THROTTLE_TICKS,
   CRON_PERIOD_MS,
@@ -65,6 +66,7 @@ import {
   degradedMarineSourcesAfterProbe,
   degradedSourcesAfterProbe,
   deriveMarineSeedsFromPayload,
+  dmiCollectionListKey,
   fetchLatestInstanceForCollections,
   fetchLatestMarineInstances,
   fetchMarineSeriesWithFallback,
@@ -75,6 +77,7 @@ import {
   marineInstancesEqual,
   marineInstancesWithinFallbackAge,
   readRetainedMarineInstances,
+  readDmiRunManifestCandidates,
 } from './providers';
 import type { MarineSubstitutionCause } from './providers';
 import { isRecord } from './validation';
@@ -1000,6 +1003,7 @@ async function _refreshForecastCache(
     let marineSubstitutionCauses: Partial<Record<MarineKind, MarineSubstitutionCause>> = {};
     let marineManifestResolved: readonly MarineKind[] = [];
     let marineProbeBusy = false;
+    let marineProbeTransient = false;
     const knownMarine = cachedHealth?.marineInstances
       ?? await readRetainedMarineInstances(env, location, policy);
     // DMI's official completion windows determine when a newer marine run can
@@ -1074,6 +1078,7 @@ async function _refreshForecastCache(
         // schema, code, deadline, or storage error containing those words must
         // stay on the generic failure path rather than receive calm 429 copy.
         marineProbeBusy = isProviderUnavailableError(probeError) && probeError.busy;
+        marineProbeTransient = isProviderUnavailableError(probeError);
       }
     }
 
@@ -1089,6 +1094,7 @@ async function _refreshForecastCache(
         probeOutcomeAt,
         marineProbeBusy,
         marineSubstitutionCauses,
+        marineProbeTransient,
       ),
       ...marineSourcesMissingExpectedAdvance(
         knownMarine,
@@ -1102,7 +1108,8 @@ async function _refreshForecastCache(
       (marineProbeFailed && marineProbeBusy)
       || marineSubstitutionCauses[kind] === 'busy');
     const marineUnavailableNeedsDisclosure = degradedMarineProbeSources.some((kind) =>
-      marineSubstitutionCauses[kind] === 'unavailable');
+      marineSubstitutionCauses[kind] === 'unavailable'
+      || marineSubstitutionCauses[kind] === 'transient');
     const dueMarineSources = marineSourcesDueForProbe(knownMarine, probeDecisionAt);
     const marineManifestVerified = !contactEvidence.providerContacted
       && dueMarineSources.length > 0
@@ -1299,9 +1306,9 @@ async function _refreshForecastCache(
       weatherExpires: built.weatherExpires,
       weatherLastModified: built.weatherLastModified,
       checkedBy: options.reason ?? 'refresh',
-      // Names the sources riding on last-good data (weather/water/waves) so
-      // the client can show a calm "from an earlier update" note. Busy copy is
-      // reserved for a provider boundary that verified an HTTP 429.
+      // Names the sources riding on last-good data (weather/water/waves). The
+      // client says only which forecast update is delayed; provider cause and
+      // verified-429 evidence remain operator diagnostics.
       ...(degradedSources.length ? { degradedSources } : {}),
       ...((built.degradedBusy || marineBusyNeedsDisclosure)
         ? { providerBusy: true }
@@ -1672,8 +1679,36 @@ async function handleHealthRequest(env: Env): Promise<Response> {
   return healthResponse(await loadHealthPayload(env));
 }
 
+async function loadStatusMarineCandidates(env: Env): Promise<StatusMarineCandidates> {
+  const collectionLists = FORECAST_LOCATIONS.flatMap((location) => [
+    location.dmiCollections.water,
+    location.dmiCollections.waves,
+  ]);
+  const byCollectionList = await readDmiRunManifestCandidates(
+    env.FRANK_FORECAST_CACHE,
+    collectionLists,
+    responseKvReadPolicy(),
+  );
+  const byLocation: StatusMarineCandidates = {};
+  for (const location of FORECAST_LOCATIONS) {
+    const water = byCollectionList[dmiCollectionListKey(location.dmiCollections.water)];
+    const waves = byCollectionList[dmiCollectionListKey(location.dmiCollections.waves)];
+    if (water || waves) {
+      byLocation[location.id] = {
+        ...(water ? { water } : {}),
+        ...(waves ? { waves } : {}),
+      };
+    }
+  }
+  return byLocation;
+}
+
 async function handleStatusRequest(env: Env): Promise<Response> {
-  return statusResponse(await loadHealthPayload(env));
+  const [health, marineCandidates] = await Promise.all([
+    loadHealthPayload(env),
+    loadStatusMarineCandidates(env),
+  ]);
+  return statusResponse(health, marineCandidates);
 }
 
 function isWarmQueryRequested(url: URL): boolean {

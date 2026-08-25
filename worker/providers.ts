@@ -133,6 +133,7 @@ export const DMI_RUN_MANIFEST_SCHEMA_VERSION = 1;
 const DMI_INSTANCE_PROBE_MEMO_PREFIX = 'instance-probe:';
 const DMI_RUN_MANIFEST_KV_BUDGET_MS = 1_000;
 
+type DmiRunManifestReadStore = Pick<KVNamespace, 'get'>;
 type DmiRunManifestStore = Pick<KVNamespace, 'get' | 'put'>;
 
 class DmiCatalogueNotReadyError extends ProviderUnavailableError {
@@ -145,11 +146,13 @@ class DmiCatalogueNotReadyError extends ProviderUnavailableError {
   }
 }
 
-export type MarineSubstitutionCause = 'not-ready' | 'busy' | 'unavailable';
+export type MarineSubstitutionCause = 'not-ready' | 'busy' | 'transient' | 'unavailable';
 
-interface DmiRunManifestEntry extends MarineInstance {
+export interface DmiRunManifestCandidate extends MarineInstance {
   discoveredAt: string;
 }
+
+type DmiRunManifestEntry = DmiRunManifestCandidate;
 
 type DmiRunManifestState =
   | { kind: 'missing' }
@@ -259,7 +262,7 @@ function dmiRunManifestEntryState(
 }
 
 async function readDmiRunManifest(
-  store: DmiRunManifestStore,
+  store: DmiRunManifestReadStore,
   policy: ExecutionPolicy,
 ): Promise<DmiRunManifestState> {
   try {
@@ -281,6 +284,31 @@ async function readDmiRunManifest(
     // degrades to the pre-manifest catalogue probe, never to assumed currency.
     return { kind: 'unusable' };
   }
+}
+
+// Operator diagnostics may name a catalogue candidate without making it part
+// of the forecast contract. Return only entries that pass the same schema,
+// collection, age, and discovery-freshness checks used by refresh adoption.
+// A missing/corrupt/slow manifest remains an empty diagnostic, never a health
+// or serving decision.
+export async function readDmiRunManifestCandidates(
+  store: DmiRunManifestReadStore,
+  collectionLists: readonly (readonly string[])[],
+  policyInput?: ExecutionPolicyInput,
+  nowMs = Date.now(),
+): Promise<Record<string, DmiRunManifestCandidate>> {
+  const manifest = await readDmiRunManifest(store, executionPolicy(policyInput));
+  const candidates: Record<string, DmiRunManifestCandidate> = {};
+  for (const collections of collectionLists) {
+    const state = dmiRunManifestEntryState(manifest, collections, nowMs);
+    if (state.kind !== 'valid'
+      || !isMarineRunWithinFallbackAge(state.entry, nowMs)
+      || nowMs - state.discoveredAtMs > FORECAST_SOURCE_POLICY.dmiRunCycleMs) {
+      continue;
+    }
+    candidates[dmiCollectionListKey(collections)] = { ...state.entry };
+  }
+  return candidates;
 }
 
 function manifestInstanceForCollections(
@@ -581,10 +609,11 @@ export interface MarineInstanceProbe {
   // own publication schedule; a not-yet-due sibling is not degraded merely
   // because the other kind caused this combined probe.
   substituted: MarineKind[];
-  // Why each carried-over id was needed. Publication lag and a verified 429
-  // are normalised only through the bounded publication grace; an ordinary
-  // provider failure is visible immediately because it says nothing about
-  // whether DMI is still publishing this run.
+  // Why each carried-over id was needed. Publication lag and failures typed at
+  // the provider boundary as transient (verified 429, 5xx, network, timeout)
+  // are normalised only through the bounded publication grace. Unrecognised
+  // failures remain immediately visible because they may be contract, code,
+  // storage, or provenance faults rather than publication noise.
   substitutionCauses?: Partial<Record<MarineKind, MarineSubstitutionCause>>;
   // True only when this invocation resolved at least one usable catalogue run.
   // A valid empty catalogue is still provider-contact evidence, but cannot
@@ -662,9 +691,10 @@ export async function fetchLatestMarineInstances(
   ): MarineSubstitutionCause => {
     if (result.status === 'fulfilled') return 'unavailable';
     if (result.reason instanceof DmiCatalogueNotReadyError) return 'not-ready';
-    return isProviderUnavailableError(result.reason) && result.reason.busy
-      ? 'busy'
-      : 'unavailable';
+    if (isProviderUnavailableError(result.reason)) {
+      return result.reason.busy ? 'busy' : 'transient';
+    }
+    return 'unavailable';
   };
   if (!water && fallbackInstances?.water && isMarineRunWithinFallbackAge(fallbackInstances.water)) {
     water = fallbackInstances.water;
@@ -1120,11 +1150,13 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
   } catch (error) {
     rethrowIfDeadlineReached(error, policy, `${kind} retained fallback for ${location.id}`);
     if (!isProviderUnavailableError(error)) throw error;
-    // A verified 429 during DMI's bounded publication window is not evidence
-    // that the previous complete run is stale. Keep the operational 429 in the
-    // upstream-attempt log, but do not turn normal publishing into user-facing
-    // degradation. Generic 5xx/network failures remain visible immediately.
-    if (error.busy && marineCandidateIsWithinPublicationGrace(instance)) {
+    // A typed transient provider failure during DMI's bounded publication
+    // window is evidence about this call, not evidence that the previous
+    // independently complete run became stale. Keep the precise operational
+    // cause in upstream-attempt logs, but do not turn ordinary publication
+    // noise into user-facing degradation. Malformed responses and other hard
+    // failures never enter this typed branch.
+    if (marineCandidateIsWithinPublicationGrace(instance)) {
       const pending = fallbackToCompleteHeld({ providerContacted: false, notReady: true });
       if (pending) return pending;
     }
@@ -1132,7 +1164,6 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
       providerContacted: false,
       degraded: true,
       busy: error.busy,
-      degradationIsImmediate: !error.busy,
     });
     if (held) return held;
     throw error;

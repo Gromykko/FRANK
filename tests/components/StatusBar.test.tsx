@@ -75,7 +75,7 @@ describe('StatusBar status presentation', () => {
   });
 
   it('keeps degraded-source detail visible in the status bar', () => {
-    const detail = "Wind updated 5 min ago · marine data couldn't be refreshed";
+    const detail = 'Marine forecast update delayed';
     const html = renderToStaticMarkup(
       <LanguageProvider>
         <StatusBar

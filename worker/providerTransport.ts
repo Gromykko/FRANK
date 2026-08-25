@@ -221,6 +221,7 @@ export async function fetchJsonWithRetries(
   let lastError: Error | undefined;
   let serverRetryAfterMs: number | undefined;
   let sawBusyRefusal = false;
+  let lastBusyError: ProviderUnavailableError | undefined;
   let pendingFinalAttemptRecord: UpstreamAttemptRecord | null = null;
   const requestPolicy = requestAttemptPolicy(url, provider, policy);
   const { maxAttempts } = requestPolicy;
@@ -244,6 +245,25 @@ export async function fetchJsonWithRetries(
     marineBusyCircuitOpenOnEntry,
     openedMarineBusyCircuit: false,
   });
+  const terminalProviderError = (error: Error): Error => {
+    if (!lastBusyError
+      || !(error instanceof ProviderUnavailableError)
+      || error.busy) {
+      return error;
+    }
+
+    // A later timeout or 5xx is the most useful terminal diagnostic, but it
+    // does not erase the verified 429 seen earlier in this same retry chain.
+    // Keep that terminal error as the cause while carrying the provider's
+    // already-verified busy classification and Retry-After guidance forward.
+    return new ProviderUnavailableError(
+      error.provider,
+      error.message,
+      error,
+      true,
+      lastBusyError.retryAfterSeconds,
+    );
+  };
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const circuitCheckedAt = Date.now();
@@ -268,7 +288,7 @@ export async function fetchJsonWithRetries(
       }
     }
     if (remainingProviderMs(policy) <= 0) {
-      if (lastError) throw lastError;
+      if (lastError) throw terminalProviderError(lastError);
       throw deadlineError(`${label} attempt ${attempt + 1} (completion reserve reached)`, 'provider');
     }
     assertBeforeProviderDeadline(policy, `${label} attempt ${attempt + 1}`);
@@ -303,7 +323,7 @@ export async function fetchJsonWithRetries(
         try {
           await delayWithinDeadline(retryDelay(attempt, false, policy), policy, `${label} retry`);
         } catch (delayErr) {
-          if (lastError) throw lastError;
+          if (lastError) throw terminalProviderError(lastError);
           throw delayErr;
         }
       }
@@ -359,6 +379,9 @@ export async function fetchJsonWithRetries(
         `${label} is temporarily unavailable.`,
         askedToWaitSeconds,
       ) ?? statusError;
+      if (lastError instanceof ProviderUnavailableError && lastError.busy) {
+        lastBusyError = lastError;
+      }
       // Capture the request timing at the same point as the former bare log:
       // headers and Retry-After have arrived, but body draining and retry waits
       // have not inflated the provider's response time.
@@ -451,7 +474,7 @@ export async function fetchJsonWithRetries(
           currentAttemptRecord.retryAfterDisposition = 'honored-stop';
         }
         emitUpstreamAttempt(currentAttemptRecord);
-        if (lastError) throw lastError;
+        if (lastError) throw terminalProviderError(lastError);
         throw delayErr;
       }
       emitUpstreamAttempt(currentAttemptRecord);
@@ -487,5 +510,5 @@ export async function fetchJsonWithRetries(
   }
 
   if (!lastError) throw new Error(`${label} failed`);
-  throw lastError;
+  throw terminalProviderError(lastError);
 }

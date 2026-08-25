@@ -13,9 +13,6 @@ export interface CacheStatusView {
   tone: 'fresh' | 'watch' | 'neutral';
   // A partial (last-good) build that is otherwise current.
   partiallyDegraded: boolean;
-  providerBusy: boolean;
-  busyServiceName: string;
-  degradedLabel: string;
   // Presentation-only status detail for a partial last-good build. It is never
   // an input to the safety verdict.
   degradedSourceDisclosure: string;
@@ -34,20 +31,41 @@ export interface CacheStatusInput {
   // The Worker answered with the explicit FORECAST_INITIALIZING contract while
   // the browser still has a usable saved forecast to render.
   preparing?: boolean;
-  // Derived from provider provenance when every required timestamp is valid.
-  // Omit it to retain the honest "from an earlier update" fallback.
-  degradedFreshnessDetail?: string;
 }
 
 // Turns the worker's cacheHealth into the header's label/detail/tone. Pure and
-// unit-tested so the exact user-facing wording is pinned (a busy provider must
-// read calmly, never as a red "Refresh failed", and never lead with an
-// alarming "hours old"). Kept out of App.tsx, which can't be driven into these
-// states in a test (the build embeds a static forecast cache).
+// unit-tested so the exact user-facing wording is pinned. A partial update names
+// the delayed forecast source, not the provider's operational failure mode;
+// provider diagnostics belong on /status. Kept out of App.tsx, which can't be
+// driven into these states in a test (the build embeds a static forecast cache).
 // How far ahead of this browser's clock a worker timestamp may sit before we
 // stop believing it. Comfortably over ordinary clock drift and request latency,
 // far under any staleness window.
 const CLOCK_LEAD_TOLERANCE_MS = 5 * 60 * 1000;
+
+function delayedForecastUpdate(
+  degraded: readonly string[],
+  translate: Translate,
+): string {
+  const hasWater = degraded.includes('water');
+  const hasWaves = degraded.includes('waves');
+  const hasWeather = degraded.includes('weather');
+
+  if (hasWeather && hasWater && hasWaves) {
+    return translate('Wind and marine forecast updates delayed');
+  }
+  if (hasWeather && hasWater) {
+    return translate('Wind and water-level forecast updates delayed');
+  }
+  if (hasWeather && hasWaves) {
+    return translate('Wind and wave forecast updates delayed');
+  }
+  if (hasWeather) return translate('Wind forecast update delayed');
+  if (hasWater && hasWaves) return translate('Marine forecast update delayed');
+  if (hasWater) return translate('Water-level forecast update delayed');
+  if (hasWaves) return translate('Wave forecast update delayed');
+  return '';
+}
 
 export function getCacheStatusView({
   refreshing,
@@ -57,64 +75,17 @@ export function getCacheStatusView({
   forecastAgeLabel,
   needsVerification,
   preparing,
-  degradedFreshnessDetail,
 }: CacheStatusInput, translate: Translate = interpolate): CacheStatusView {
   const status = cacheHealth?.status;
   const isStale = status === 'stale' || status === 'fallback';
   const isPending = status === 'pending';
-  const providerBusy = Boolean(cacheHealth?.providerBusy);
-
   const degraded = cacheHealth?.degradedSources ?? [];
-  const hasWater = degraded.includes('water');
-  const hasWaves = degraded.includes('waves');
-  const hasWeather = degraded.includes('weather');
 
-  const busyServiceName = translate(cacheHealth?.busyProvider === 'weather'
-    ? 'Weather service'
-    : cacheHealth?.busyProvider === 'marine'
-      ? (hasWaves && !hasWater
-        ? 'Wave service'
-        : hasWater && !hasWaves
-          ? 'Water level service'
-          : 'Waves & water service')
-      : 'Forecast services');
-
-  const degradedLabel = hasWeather && hasWaves && hasWater
-    ? translate('weather, waves & water')
-    : hasWeather && hasWaves
-      ? translate('weather & waves')
-      : hasWeather && hasWater
-        ? translate('weather & water')
-        : hasWaves && hasWater
-          ? translate('waves & water')
-          : hasWeather
-            ? translate('weather')
-            : hasWaves
-              ? translate('waves')
-              : hasWater
-                ? translate('water')
-                : '';
-  // The named cause on the partial line ("· marine service busy" etc.).
-  const causeService = translate(hasWeather && (hasWaves || hasWater)
-    ? 'services'
-    : hasWeather
-      ? 'weather service'
-      : hasWaves && hasWater
-        ? 'marine service'
-        : hasWaves
-          ? 'wave service'
-          : hasWater
-            ? 'water level service'
-            : 'services');
-  const hasDegraded = degradedLabel !== '';
+  const degradedUpdateDetail = delayedForecastUpdate(degraded, translate);
+  const hasDegraded = degradedUpdateDetail !== '';
   const partiallyDegraded = !isStale && !refreshing && !isPending && hasDegraded;
-  const degradedFallback = providerBusy
-    ? translate('{0} from an earlier update · {1} busy', degradedLabel, causeService)
-    : translate('{0} from an earlier update · couldn’t refresh just now', degradedLabel);
   const degradedSourceDisclosure = (status === 'current' || status === 'fresh') && hasDegraded
-    ? degradedFreshnessDetail || (offline
-      ? translate('{0} from an earlier update', degradedLabel)
-      : degradedFallback)
+    ? degradedUpdateDetail
     : '';
 
   // Offline takes precedence for the LABEL. But offline is not by itself a
@@ -122,30 +93,25 @@ export function getCacheStatusView({
   // reads as calm neutral.
   //
   // Degradation still has to survive the trip. This block used to hard-code
-  // partiallyDegraded/degradedLabel to empty, so a forecast carrying recycled
+  // partial-degradation state to empty, so a forecast carrying recycled
   // wave and water data rendered amber with "waves & water from an earlier
   // update" online, and neutral "Showing your saved forecast" the moment the
   // signal dropped. Losing connectivity visually IMPROVED the data, at the
   // fjord, for exactly the two readings that feed the safety verdict.
   //
-  // providerBusy stays false deliberately: whether a provider is busy is a
-  // statement about right now, and offline we cannot know. What the recycled
-  // sources are is a fact about the bytes in hand, and that we do know.
+  // The delayed source is a fact about the bytes in hand. Provider cause is an
+  // operator diagnostic and is deliberately never projected into this view.
   if (offline) {
     const staleOrDegraded = isStale || hasDegraded;
     return {
       label: translate('Offline'),
       detail: hasDegraded
-        ? degradedFreshnessDetail
-          || translate('Showing your saved forecast from {0} · {1} from an earlier update', forecastAtLabel, degradedLabel)
+        ? translate('Showing your saved forecast from {0} · {1}', forecastAtLabel, degradedUpdateDetail)
         : isStale
           ? translate('Showing your older saved forecast from {0}', forecastAtLabel)
           : translate('Showing your saved forecast from {0}', forecastAtLabel),
       tone: staleOrDegraded ? 'watch' : 'neutral',
       partiallyDegraded: hasDegraded,
-      providerBusy: false,
-      busyServiceName: '',
-      degradedLabel,
       degradedSourceDisclosure,
     };
   }
@@ -173,7 +139,7 @@ export function getCacheStatusView({
         : isPending
           ? translate('Checking…')
           : isStale
-            ? (providerBusy ? translate('{0} busy', busyServiceName) : translate('Couldn’t refresh'))
+            ? translate('Couldn’t refresh')
             : translate('Forecast from {0}', forecastAtLabel);
 
   const detail = refreshing
@@ -195,9 +161,8 @@ export function getCacheStatusView({
               ? translate('Showing saved forecast · {0} old', forecastAgeLabel)
               : translate('Retrying automatically'))
             : partiallyDegraded
-              // One calm line, capped at two clauses. With valid provenance it
-              // contrasts the current and retained sources; otherwise it keeps
-              // the established cause wording without inventing an age.
+              // One calm, source-specific line. It deliberately names neither
+              // the provider nor an inferred operational cause.
               ? degradedSourceDisclosure
               : '';
 
@@ -206,9 +171,6 @@ export function getCacheStatusView({
     detail,
     tone,
     partiallyDegraded,
-    providerBusy,
-    busyServiceName,
-    degradedLabel,
     degradedSourceDisclosure,
   };
 }
@@ -237,95 +199,6 @@ function formatRelativeAge(ms: number, translate: Translate): string {
   const hours = Math.round(minutes / 60);
   if (hours < 48) return translate('{0} h', hours);
   return translate('{0} d', Math.round(hours / 24));
-}
-
-function hasUsableDmiRunProvenance(value: string | undefined, nowMs: number): boolean {
-  if (typeof value !== 'string') return false;
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(value);
-  if (!match) return false;
-  const [, year, month, day, hour, minute, second] = match;
-  const parsed = Date.UTC(
-    Number(year),
-    Number(month) - 1,
-    Number(day),
-    Number(hour),
-    Number(minute),
-    Number(second),
-  );
-  if (!Number.isFinite(parsed) || parsed > nowMs) return false;
-  const roundTrip = new Date(parsed);
-  return roundTrip.getUTCFullYear() === Number(year)
-    && roundTrip.getUTCMonth() === Number(month) - 1
-    && roundTrip.getUTCDate() === Number(day)
-    && roundTrip.getUTCHours() === Number(hour)
-    && roundTrip.getUTCMinutes() === Number(minute)
-    && roundTrip.getUTCSeconds() === Number(second);
-}
-
-function sourceAgeMs(timestampMs: number | null, nowMs: number): number | null {
-  if (timestampMs === null || !Number.isFinite(timestampMs) || timestampMs > nowMs) return null;
-  return nowMs - timestampMs;
-}
-
-function degradedFreshnessDetail(
-  cacheHealth: WeatherData['sources']['cacheHealth'],
-  nowMs: number,
-  translate: Translate,
-): string | null {
-  if (cacheHealth?.status !== 'current' && cacheHealth?.status !== 'fresh') return null;
-  const degraded = new Set(cacheHealth.degradedSources ?? []);
-  const weatherDegraded = degraded.has('weather');
-  const waterDegraded = degraded.has('water');
-  const wavesDegraded = degraded.has('waves');
-  if (!weatherDegraded && !waterDegraded && !wavesDegraded) return null;
-
-  // MET's HTTP Last-Modified is a publication clock, so this age means time
-  // since MET published the response rather than time since its model run.
-  const weatherAgeMs = sourceAgeMs(
-    cacheHealth.weatherLastModified === undefined
-      ? null
-      : Date.parse(cacheHealth.weatherLastModified),
-    nowMs,
-  );
-  // Weather-degraded branches keep this validity gate even when they do not
-  // print the age, so missing or unparseable provenance retains the established
-  // generic fallback instead of gaining a more specific claim.
-  // Marine provenance is only a trust gate for the more specific disclosure.
-  // Its schedule is not meaningful as a lay-reader age, so no timestamp or
-  // duration derived from these IDs reaches presentation.
-  const waterProvenanceUsable = hasUsableDmiRunProvenance(
-    cacheHealth.marineInstances?.water?.id,
-    nowMs,
-  );
-  const wavesProvenanceUsable = hasUsableDmiRunProvenance(
-    cacheHealth.marineInstances?.waves?.id,
-    nowMs,
-  );
-  const marineDegradedCount = Number(waterDegraded) + Number(wavesDegraded);
-  const marineLabel = translate(marineDegradedCount === 2
-    ? 'marine data'
-    : waterDegraded
-      ? 'water level'
-      : 'waves');
-  const degradedMarineProvenanceUsable = (!waterDegraded || waterProvenanceUsable)
-    && (!wavesDegraded || wavesProvenanceUsable);
-
-  if (weatherDegraded && marineDegradedCount > 0) {
-    if (weatherAgeMs === null || !degradedMarineProvenanceUsable) return null;
-    return translate("Wind and {0} couldn't be refreshed", marineLabel);
-  }
-
-  if (weatherDegraded) {
-    if (weatherAgeMs === null || !waterProvenanceUsable || !wavesProvenanceUsable) return null;
-    return translate("Marine data is current · wind couldn't be refreshed");
-  }
-
-  if (weatherAgeMs === null || !degradedMarineProvenanceUsable) return null;
-  return translate(
-    "Wind updated {0} ago · {1} couldn't be refreshed",
-    formatRelativeAge(weatherAgeMs, translate),
-    marineLabel,
-  );
 }
 
 export interface DerivedCacheStatus {
@@ -464,9 +337,8 @@ export function deriveCacheStatus(args: {
     forecastAgeLabel: formatRelativeAge(cacheAgeMs, translate),
     needsVerification,
     preparing: isInitializing,
-    degradedFreshnessDetail: degradedFreshnessDetail(cacheHealth, nowMs, translate) ?? undefined,
   }, translate);
-  const { providerBusy, busyServiceName, partiallyDegraded, degradedLabel } = view;
+  const { partiallyDegraded } = view;
 
   const fetchedAtFull = formatDateTime(sources.fetchedAt);
   const expandedDetail = !online
@@ -480,13 +352,9 @@ export function deriveCacheStatus(args: {
     : needsVerification
       ? translate('The saved forecast from {0} needs a new check.', fetchedAtFull)
     : isStale
-      ? (providerBusy
-        ? translate('{0} is busy right now, so the forecast could not be refreshed. FRANK is retrying automatically; you are seeing the last good forecast from {1}.', busyServiceName, fetchedAtFull)
-        : translate('The forecast could not be refreshed; FRANK is retrying automatically. You are seeing the last good forecast from {0}.', fetchedAtFull))
+      ? translate('The forecast could not be refreshed; FRANK is retrying automatically. You are seeing the last good forecast from {0}.', fetchedAtFull)
       : partiallyDegraded
-        ? (providerBusy
-          ? translate('Forecast from {0}; {1} is from an earlier update while its service was busy. FRANK is retrying automatically.', fetchedAtFull, degradedLabel)
-          : translate('Forecast from {0}; {1} is from an earlier update (could not refresh just now). FRANK is retrying automatically.', fetchedAtFull, degradedLabel))
+        ? translate('Forecast from {0}. {1}.', fetchedAtFull, view.degradedSourceDisclosure)
         : isPending
           ? translate('Checking for a newer forecast')
           : translate('Forecast from {0}', fetchedAtFull);

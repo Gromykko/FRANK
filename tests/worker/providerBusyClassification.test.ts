@@ -212,8 +212,8 @@ describe('built fallback provider-busy classification', () => {
   });
 
   it('classifies a catalogue 429 at the time its response crosses the grace boundary', async () => {
-    const scheduledTime = Date.parse('2031-08-23T09:49:59.999Z');
-    const graceBoundary = Date.parse('2031-08-23T09:50:00.000Z');
+    const scheduledTime = Date.parse('2031-08-23T10:19:59.999Z');
+    const graceBoundary = Date.parse('2031-08-23T10:20:00.000Z');
     const location = tickOrder(scheduledTime)[0];
     const store = new Map<string, string>([
       [

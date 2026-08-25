@@ -280,7 +280,6 @@ export default function App() {
     checkState,
   }, t);
   const safetyReasons = safetyDisplay.reasons;
-  const { providerBusy, busyServiceName } = statusView;
   const cacheStatusClass = statusView.tone;
   const sourceLabel = statusView.label;
   const cacheStatusDetail = statusView.detail;
@@ -346,8 +345,6 @@ export default function App() {
               // correctly said "Offline". Nothing is failing; there is simply no
               // connection to try over.
               <span>{t('You have been offline for a while, so this forecast is from {0} — {1} old. Treat it with extra caution; it will update by itself once you are back online.', formatDateTime(weatherData.sources.fetchedAt), forecastAgeLabel)}</span>
-            ) : providerBusy ? (
-              <span>{t("{0} has been busy for a while, so the forecast hasn't updated since {1}. FRANK keeps retrying automatically — you are seeing the last good forecast.", busyServiceName, formatDateTime(weatherData.sources.fetchedAt))}</span>
             ) : (
               <span>{t('The forecast could not be refreshed. You are seeing data from {0} — {1} old, so treat it with extra caution. FRANK retries by itself roughly every 10 minutes.', formatDateTime(weatherData.sources.fetchedAt), forecastAgeLabel)}</span>
             )}

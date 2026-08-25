@@ -30,8 +30,8 @@ const LOCATION = locationData[0] as ForecastLocation;
 const COLLECTION = LOCATION.dmiCollections.water[0];
 const OLD_RUN_ID = '2026-08-25T000000Z';
 const CANDIDATE_RUN_ID = '2026-08-25T060000Z';
-const INSIDE_GRACE_MS = Date.parse('2026-08-25T09:49:59.999Z');
-const GRACE_END_MS = Date.parse('2026-08-25T09:50:00.000Z');
+const INSIDE_GRACE_MS = Date.parse('2026-08-25T10:19:59.999Z');
+const GRACE_END_MS = Date.parse('2026-08-25T10:20:00.000Z');
 
 function makeEnv(initial?: Record<string, unknown>) {
   const values = new Map<string, string>(
