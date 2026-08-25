@@ -197,12 +197,55 @@ function providerTimestampMs(value: string | undefined): number {
     : Number.NaN;
 }
 
-// A DMI run id ('2026-08-24T060000Z') as the cycle hour operators actually
-// speak in. Returns null rather than guessing when the id is unparseable.
 function providerAgeMs(value: string | undefined, nowMs: number): number | null {
   const timestampMs = providerTimestampMs(value);
   const ageMs = nowMs - timestampMs;
   return Number.isFinite(timestampMs) && ageMs >= 0 ? ageMs : null;
+}
+
+function marineReleaseAgeMs(
+  instance: { collection?: string; id?: string } | null | undefined,
+  nowMs: number,
+): number | null {
+  const dueAtMs = marineRunDueAtMs(instance);
+  if (!Number.isFinite(dueAtMs)) return null;
+
+  // marineRunDueAtMs is run + cycle + completion delay - lead. Removing the
+  // cycle and restoring the lead leaves run + DMI's published completion
+  // delay: an estimated release clock comparable to MET's issue clock. DMI can
+  // publish a few minutes either side of that estimate, so a run collected
+  // just before it is clamped to zero rather than shown with a negative age.
+  const releaseAtMs = dueAtMs
+    - FORECAST_SOURCE_POLICY.dmiRunCycleMs
+    + FORECAST_SOURCE_POLICY.dmiPublicationLeadMs;
+  return Number.isFinite(releaseAtMs)
+    ? Math.max(0, nowMs - releaseAtMs)
+    : null;
+}
+
+function formatUtcClock(timestampMs: number): string | null {
+  return Number.isFinite(timestampMs)
+    ? new Date(timestampMs).toISOString().slice(11, 16)
+    : null;
+}
+
+function marineWaitingState(
+  instance: { collection?: string; id?: string } | null | undefined,
+  nowMs: number,
+): string {
+  const heldRunMs = providerTimestampMs(instance?.id);
+  const awaitedRunMs = heldRunMs + FORECAST_SOURCE_POLICY.dmiRunCycleMs;
+  // Restore the publication lead that opens the probe gate early. This is the
+  // provider's expected completion time, not FRANK's earlier polling time.
+  const expectedAtMs = marineRunDueAtMs(instance)
+    + FORECAST_SOURCE_POLICY.dmiPublicationLeadMs;
+  const awaitedRun = formatUtcClock(awaitedRunMs);
+  const expectedAt = formatUtcClock(expectedAtMs);
+  if (!awaitedRun || !expectedAt) return 'Next run expected';
+
+  return nowMs <= expectedAtMs
+    ? `Waiting for ${awaitedRun}Z run · expected ${expectedAt} UTC`
+    : `Waiting for ${awaitedRun}Z run · due ${expectedAt} UTC, ${formatAge(nowMs - expectedAtMs)} ago`;
 }
 
 interface MarineProvenanceFault {
@@ -248,9 +291,10 @@ function marineProvenanceFault(
 
   const ageMs = nowMs - runMs;
   if (ageMs > FORECAST_SOURCE_POLICY.marineFallbackMaxAgeMs) {
+    const releaseAgeMs = marineReleaseAgeMs(instance, nowMs);
     return {
       state: 'Run expired',
-      value: formatAge(ageMs),
+      value: formatAge(releaseAgeMs ?? ageMs),
       detail: 'The model run exceeds the marine fallback age limit.',
     };
   }
@@ -357,12 +401,9 @@ export function statusResponse(health: HealthPayload): Response {
           ? 'awaiting data'
           : cacheHealth.status ?? 'unknown';
 
-    // DMI publishes on a six-hour cycle, so a healthy city routinely holds a
-    // run several hours old and the raw age read as an alarm when nothing was
-    // wrong. The question that matters is whether a NEWER run should already
-    // be in hand - which is exactly the publication gate the refresh path
-    // evaluates before its separate operational retry backoff, so the two use
-    // one answer about what "late" means.
+    // The same publication gate used by refresh decides when this neutral
+    // waiting note appears. It opens before DMI's expected completion, while
+    // the numeric cell below separately reports estimated age since release.
     const marineRunOverdue = new Set(
       missing ? [] : marineSourcesDueForProbe(cacheHealth.marineInstances, nowMs),
     );
@@ -411,12 +452,17 @@ export function statusResponse(health: HealthPayload): Response {
 
       const degraded = degradedSources.has(key);
       const busy = providerAppliesTo(key);
-      const provenanceAgeMs = providerAgeMs(provenance, nowMs);
       const marineInstance = key === 'water'
         ? cacheHealth.marineInstances?.water
         : key === 'waves'
           ? cacheHealth.marineInstances?.waves
           : undefined;
+      // MET records an observed issue time. DMI records the model's subject
+      // hour, so its comparable age is derived from that run plus the published
+      // completion delay for the collection.
+      const sourceAgeMs = key === 'weather'
+        ? providerAgeMs(provenance, nowMs)
+        : marineReleaseAgeMs(marineInstance, nowMs);
       const provenanceFault = key === 'weather'
         ? null
         : marineProvenanceFault(marineInstance, nowMs);
@@ -435,17 +481,7 @@ export function statusResponse(health: HealthPayload): Response {
       // (12h from a run published at +3h20) has already expired the run through
       // a different path. It would have been dead code pretending to be a guard.
       //
-      // Elapsed time is measured from DMI's published completion - the gate plus
-      // the lead we subtracted - so the first minutes of waiting, which are
-      // deliberately BEFORE publication, do not read as lateness.
       const awaitingRun = key !== 'weather' && marineRunOverdue.has(key);
-      const behindMs = awaitingRun
-        ? nowMs - (marineRunDueAtMs(cacheHealth.marineInstances?.[key])
-          + FORECAST_SOURCE_POLICY.dmiPublicationLeadMs)
-        : Number.NaN;
-      const behindBy = Number.isFinite(behindMs) && behindMs > 0
-        ? ` · ${formatAge(behindMs)}`
-        : '';
       const provenanceDetail = provenance
         ? `${provenanceLabel} ${formatProviderTimestamp(provenance)}`
         : `${provenanceLabel} not recorded`;
@@ -460,13 +496,13 @@ export function statusResponse(health: HealthPayload): Response {
           : provenanceFault.state
         : operationalState
           ?? (awaitingRun
-            ? `Next run expected${behindBy}`
-            : provenanceAgeMs === null ? 'Age not recorded' : HEALTHY_SOURCE_STATE);
+            ? marineWaitingState(marineInstance, nowMs)
+            : sourceAgeMs === null ? 'Age not recorded' : HEALTHY_SOURCE_STATE);
       return {
         key, label, provider,
         tone: degraded || busy || provenanceFault
           ? 'warn'
-          : provenanceAgeMs === null ? 'neutral' : 'good',
+          : sourceAgeMs === null ? 'neutral' : 'good',
         // 'Current' not 'Current snapshot': when healthy the operator already
         // has six other green signals, and "snapshot" had become a filler noun
         // repeated across every source string. The badge stays rather than
@@ -474,14 +510,11 @@ export function statusResponse(health: HealthPayload): Response {
         // from "this slot rendered blank", and keeping it prevents a layout
         // shift the moment a source turns amber.
         state: sourceState,
-        // Every numeric column on this board is an age, so these are too. A run
-        // stamp here read as a different kind of measurement mid-row, and the
-        // run identity is already stated twice: once in the provider legend and
-        // once in this cell's own title. What the age lacked was context, not
-        // replacement - the state and tone above supply it, so a six-hour-old
-        // run that is still the newest one due now sits plain and uncoloured.
+        // Every numeric column on this board is age since release: observed MET
+        // issue time or estimated DMI completion time. The exact model run stays
+        // available in both the provider legend and this cell's title.
         value: provenanceFault?.value
-          ?? (provenanceAgeMs === null ? 'not recorded' : formatAge(provenanceAgeMs)),
+          ?? (sourceAgeMs === null ? 'not recorded' : formatAge(sourceAgeMs)),
         detail: provenanceFault?.detail ?? provenanceDetail,
       };
     };
@@ -1210,11 +1243,13 @@ export function statusResponse(health: HealthPayload): Response {
       for this immutable data generation. Only those operational paths may start provider
       work.</p>
 
-      <p>MET shows the age of its forecast issue; DKSS and WAM show the age of their model
-      runs. Amber means FRANK is serving last-good data or the relevant provider was busy.
-      MeteoAlarm is advisory and currently has no separately persisted provider clock, so
-      its card deliberately reports the prepared snapshot age instead of inventing a green
-      upstream status.</p>
+      <p>MET shows age since its observed forecast issue. DKSS and WAM show estimated age
+      since release, derived from each model run and DMI's published completion delay; DMI
+      can publish a few minutes either side of that estimate. The exact model run remains in
+      the provider legend and each cell title. Amber means FRANK is serving last-good data or
+      the relevant provider was busy. MeteoAlarm is advisory and has no separately persisted
+      provider clock, so its card shows no numeric age rather than inventing an upstream
+      status.</p>
 
       <p>This page reloads every 60 seconds and is meant for reading. The machine-readable
       alarm lives at <a href="/health">/health</a>, which returns 503 and a

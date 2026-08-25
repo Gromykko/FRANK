@@ -653,7 +653,7 @@ describe('Worker route HTTP contract', () => {
     }
   });
 
-  it('says a newer run is expected, without colouring it, and shows how long', async () => {
+  it('names an overdue run and its expected publication time without colouring it', async () => {
     // 2026-08-20T00:00Z run, read at 11:30Z. DKSS publishes the next one at
     // 00:00 + 6h + 3h20 = 09:20Z, so by 11:30 we have been waiting 2h10 for a
     // run that exists - which is a fact worth stating, not a fault worth
@@ -680,21 +680,83 @@ describe('Worker route HTTP contract', () => {
 
     const body = await statusResponse(buildHealthPayload(entries, false, now)).text();
     const card = body.match(/<tbody class="board-group[^"]*" data-location="horsens">[\s\S]*?<\/tbody>/)?.[0] ?? '';
+    const waterCell = card.match(/<td class="num " data-source="water"[\s\S]*?<\/td>/)?.[0] ?? '';
 
     // Waiting for the next run is ordinary operation - we hold a valid run and
     // the rotation picks the new one up within minutes - so it carries no tone.
     // Only provider-busy and last-good fallback, which mean something is
     // actually broken, colour a cell.
-    expect(card).toContain('Next run expected');
+    expect(waterCell).toContain('Waiting for 06:00Z run · due 09:20 UTC, 2h 10m ago');
     expect(card).not.toContain('Run overdue');
     expect(card).not.toMatch(/tone-warn" data-source="water"/);
     expect(card).not.toMatch(/tone-warn" data-source="waves"/);
-    // Measured from DMI's published completion (00:00Z + 6h + 3h20 = 09:20),
-    // not from the gate, which deliberately opens ten minutes earlier: the
-    // first minutes of waiting are early, not late.
-    expect(card).toContain('2h 10m');
-    // The value cell still reports the run's own age, like every other column.
-    expect(card).toContain('11h 30m');
+    // The value uses the held run's estimated release (00:00Z + 3h20), while
+    // the note separately labels lateness against the awaited 06:00Z run.
+    expect(waterCell).toContain('8h 10m');
+  });
+
+  it('names an awaited run before its expected publication time without colouring it', async () => {
+    // The 06:00Z DKSS run opens its next gate at 15:10Z, ten minutes before
+    // DMI's published completion estimate for the awaited 12:00Z run.
+    const now = Date.parse('2026-08-20T15:15:00.000Z');
+    const entries: HealthLocationEntry[] = [{
+      id: 'horsens',
+      areaName: 'Horsens Fjord',
+      hasCache: true,
+      exactGenerationReady: true,
+      availabilitySource: 'generation',
+      fetchedAt: '2026-08-20T15:10:00.000Z',
+      cacheHealth: {
+        status: 'current',
+        lastAttemptAt: '2026-08-20T15:12:00.000Z',
+        weatherLastModified: '2026-08-20T15:00:00.000Z',
+        marineInstances: {
+          water: { collection: 'dkss_idw', id: '2026-08-20T060000Z' },
+          waves: { collection: 'wam_nsb', id: '2026-08-20T120000Z' },
+        },
+      },
+    }];
+
+    const body = await statusResponse(buildHealthPayload(entries, false, now)).text();
+    const card = body.match(/<tbody class="board-group[^"]*" data-location="horsens">[\s\S]*?<\/tbody>/)?.[0] ?? '';
+    const waterCell = card.match(/<td class="num " data-source="water"[\s\S]*?<\/td>/)?.[0] ?? '';
+
+    expect(waterCell).toContain('Waiting for 12:00Z run · expected 15:20 UTC');
+    expect(waterCell).not.toContain('due 15:20 UTC');
+    expect(card).not.toMatch(/tone-warn" data-source="water"/);
+  });
+
+  it('clamps a not-yet-released marine run to a nonnegative age', async () => {
+    // The 12:00Z DKSS run is valid provenance at 15:15Z, while its published
+    // completion estimate is still five minutes away at 15:20Z.
+    const now = Date.parse('2026-08-20T15:15:00.000Z');
+    const entries: HealthLocationEntry[] = [{
+      id: 'horsens',
+      areaName: 'Horsens Fjord',
+      hasCache: true,
+      exactGenerationReady: true,
+      availabilitySource: 'generation',
+      fetchedAt: '2026-08-20T15:10:00.000Z',
+      cacheHealth: {
+        status: 'current',
+        lastAttemptAt: '2026-08-20T15:12:00.000Z',
+        weatherLastModified: '2026-08-20T15:00:00.000Z',
+        marineInstances: {
+          water: { collection: 'dkss_idw', id: '2026-08-20T120000Z' },
+          waves: { collection: 'wam_nsb', id: '2026-08-20T120000Z' },
+        },
+      },
+    }];
+
+    const body = await statusResponse(buildHealthPayload(entries, false, now)).text();
+    const card = body.match(/<tbody class="board-group[^"]*" data-location="horsens">[\s\S]*?<\/tbody>/)?.[0] ?? '';
+    const waterCell = card.match(/<td class="num " data-source="water"[\s\S]*?<\/td>/)?.[0] ?? '';
+    const waterValue = waterCell.match(/<span class="cell-value">([^<]*)<\/span>/)?.[1];
+
+    expect(waterValue).toBe('0 min');
+    expect(waterValue).not.toMatch(/^-|NaN/);
+    expect(waterCell).not.toContain('Run time in future');
+    expect(waterCell).not.toContain('Age not recorded');
   });
 
   it('warns on each invalid marine provenance class instead of calling it an expected run', async () => {
@@ -761,12 +823,18 @@ describe('Worker route HTTP contract', () => {
       if (faultCase.degraded) {
         expect(waterCell, faultCase.name).toContain('Last-good fallback');
       }
+      expect(waterCell, faultCase.name).not.toContain('Waiting for');
       expect(waterCell, faultCase.name).not.toContain('Next run expected');
+      if (faultCase.name === 'expired run id') {
+        // Even a faulted known collection keeps the release clock: 05:59Z plus
+        // DKSS's 3h20 completion delay is an estimated 09:19Z release.
+        expect(waterCell).toContain('<span class="cell-value">8h 41m</span>');
+      }
       expect(body, faultCase.name).not.toContain('NaN');
     }
   });
 
-  it('shows real provider provenance ages without claiming MeteoAlarm health', async () => {
+  it('shows comparable provider release ages without claiming MeteoAlarm health', async () => {
     const now = Date.parse('2026-08-20T18:00:00.000Z');
     const entries: HealthLocationEntry[] = [{
       id: 'horsens',
@@ -789,12 +857,14 @@ describe('Worker route HTTP contract', () => {
     const body = await statusResponse(buildHealthPayload(entries, false, now)).text();
 
     expect(body).toContain('30 min');
-    // A 12:00Z run at 18:00 is the newest one due (DKSS completes +3h35, WAM
-    // +2h50), so neither marine cell is toned - but both still report an AGE,
-    // because every numeric column on this board is one. The run identity is
-    // the legend's job and the cell title's, not the value's.
+    // A 12:00Z run at 18:00 is the newest one due. Its release-clock ages are
+    // 2h40 for DKSS (published completion +3h20) and 3h15 for WAM NSB (+2h45).
+    // The run identity remains the legend's job and the cell title's.
     const provenanceCard = body.match(/<tbody class="board-group[^"]*" data-location="horsens">[\s\S]*?<\/tbody>/)?.[0] ?? '';
-    expect(provenanceCard.match(/6h 00m/g) ?? []).toHaveLength(2);
+    const waterCell = provenanceCard.match(/<td class="num " data-source="water"[\s\S]*?<\/td>/)?.[0] ?? '';
+    const wavesCell = provenanceCard.match(/<td class="num " data-source="waves"[\s\S]*?<\/td>/)?.[0] ?? '';
+    expect(waterCell).toContain('<span class="cell-value">2h 40m</span>');
+    expect(wavesCell).toContain('<span class="cell-value">3h 15m</span>');
     expect(provenanceCard).not.toMatch(/cell-value">\d{2}:\d{2}Z/);
     expect(provenanceCard).toMatch(/class="num " data-source="water"/);
     expect(provenanceCard).toMatch(/class="num " data-source="waves"/);
