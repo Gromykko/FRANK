@@ -101,13 +101,11 @@ test('the complete dashboard stays inside every supported viewport', async ({ pa
     expect(target.height).toBeGreaterThanOrEqual(44);
   }
 
-  // The glass carries one line now: FRANK's one-liner where there is room for
-  // it, the verdict itself where there is not. The verdict in words always
-  // reads above the conditions that produced it, at every width.
+  // The glass carries exactly one line: FRANK's one-liner where there is room
+  // for it, the verdict itself where there is not.
   const display = page.locator('.frank-display');
   await expect(display).toBeVisible();
   await expect(display.locator('.frank-display-text')).toBeVisible();
-  await expect(page.locator('.snapshot-verdict')).toBeVisible();
   const displayLayout = await display.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
     const phrase = element.querySelector<HTMLElement>('.frank-display-text');
@@ -149,9 +147,11 @@ test('the explicit safety verdict survives every phone breakpoint', async ({ pag
 
   // The rule this test defends is unchanged: on a phone the verdict must be
   // readable in WORDS, never implied by a colour or hidden behind a screen
-  // reader. What moved is where it is stated. The glass drops the one-liner at
-  // these widths and shows the verdict itself, and the snapshot repeats it in
-  // words above the reasons - so it now survives in two places, not one.
+  // reader. What moved is where it is stated - the glass drops the one-liner at
+  // these widths and shows the verdict itself. It was briefly repeated above the
+  // reasons as well, which on a phone meant saying it twice on the screen with
+  // least room to say anything, so the panel copy is gone and the glass is the
+  // single place it appears.
   for (const width of [320, 384, 393, 480]) {
     await page.setViewportSize({ width, height: 900 });
     const display = page.locator('.frank-display');
@@ -161,9 +161,6 @@ test('the explicit safety verdict survives every phone breakpoint', async ({ pag
     await expect(verdictOnGlass, `verdict on the glass at ${width}px`).toBeVisible();
     const glassText = (await verdictOnGlass.textContent())?.trim() ?? '';
     expect(glassText.length, `verdict text at ${width}px`).toBeGreaterThan(0);
-
-    const snapshotVerdict = page.locator('.snapshot-verdict');
-    await expect(snapshotVerdict, `verdict above reasons at ${width}px`).toBeVisible();
 
     // Legible, and not clipped by the housing it sits in.
     const shape = await display.evaluate((element) => {

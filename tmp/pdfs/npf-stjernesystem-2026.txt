@@ -1,0 +1,90 @@
+                                               Gradering av farvann og forhold sammenholdt
+                                                                              STJERNESYSTEMET
+*       Svært skjermet farvann. Eksempel er et lite havnebasseng eller liten bukt.
+        Vind opp til og med Beaufort styrke 1. Flau vind.
+        Sjøgang 1. Småkruset sjø med bølger opp til 0,1 meter i snitt. Ingen strøm. Ingen annen trafikk.
+        Introduksjonskurset blir gjennomført på denne typen farvann.
+**      Skjermet farvann. Eksempel på dette er indre skjærgård.
+        Vind opp til og med Beaufort styrke 2. Svak vind ved vannflaten Sjøgang 2. Smul sjø med bølger opp til 0,5 meter i snitt.
+        Kun små krusninger ved grunner og skjær. Svært lite strøm. Lite annen trafikk. Grunnkurset blir gjennomført på denne typen farvann.
+
+***     Noe eksponert farvann. Eksempel er farvann nær land med små øyer og skjær utenfor.
+        Vind opp til og med Beaufort styrke 4. Laber bris ved vannflaten. Sjøgang 3. Sval sjø med bølgehøyde 0,5 m og 1,25 m i
+        snitt.
+        Små brytninger ved grunner og skjær. Strøm og dønninger kan skape litt drag i sjøen. Annen trafikk må påregnes.
+        Teknikkurs og Aktivitetslederkurs blir gjennomført på denne typen farvann.
+
+****    Eksponert farvann. Eksempel er farvann nær land uten små øyer eller skjær utenfor.
+        Vind opp til og med Beaufort styrke 5. Frisk bris ved vannflaten. Sjøgang 4. Noe sjø med bølgehøyde 1,25 m – 2,5 m i
+        snitt.
+        Brytninger ved grunner og skjær. Strøm og dønninger kan skape drag og uregelmessige formasjoner i sjøen. Ved væromslag kan vind og sjøgang endre seg
+        raskt. Annen trafikk må påregnes.
+        Videregåendekurs og veilederkurs blir gjennomført på denne typen farvann.
+
+***** Svært eksponert farvann. Eksempel er lange kryssinger i rom sjø, eller utsatt farvann langs land.
+      Vind opp til og med Beaufort styrke 6. Liten kuling ved vannflaten. Sjøgang 5 (2,5 m – 4 m). Kraftige brytninger ved grunner og
+      skjær.
+      Strøm og dønninger kan skape kraftig drag og kraftige, uregelmessige formasjoner i sjøen. Ved væromslag kan vind og sjøgang endre seg raskt. Annen trafikk
+      må påregnes. Veilederkurs blir gjennomført på denne typen farvann.
+Sjøgang
+
+Sjøgang er gjennomsnittlig høyde av bølgene. Formasjoner på sjøen bør vektlegges, mens det ikke bør legges for stor vekt på brenninger ved
+skjær og grunner. Bølger kommer i "grupper", eller "sett", som kan være høyere enn det rene gjennomsnittet målt over en lengre tidsperiode.
+Generelt bør det fokuseres på de høyeste bølgene, og snitthøyden for disse.
+
+
+                                                  Navn (NOR)                             Navn (ENG)
+                                                                      Høyde
+
+                                  0                havblikk              0m             calm (glassy)
+
+                                  1           småkruset sjø                             calm (rippled)
+                                                                     0 - 0,1 m
+                                                   smul sjø                           smooth (wavelets)
+                                  2                                  0,1 - 0,5 m
+                                                   svak sjø                                 slight
+                                  3                                  0,5 - 1,25 m
+                                                   noe sjø                                moderate
+                                  4                                  1,25 - 2,5 m
+                                                   mye sjø                                  rough
+                                  5                                  2,5 - 4 m
+                                                   høy sjø                               very rough
+                                  6                                   4-6m
+                                                  svært hav                                  high
+                                  7                                   6-9m
+                                            veldig opprørt hav                            very high
+                                  8                                   9 - 14 m
+                                        overordentlig opprørt hav                        phenomenal
+                                  9                                  over 14 m
+                                  Kilde: met.no
+ Tabellen viser effekten av vindstyrkene på sjøen ved de forskjellige beaufortstyrkene.
+
+  Beaufort (F) Benevnelse m/s             Knop Virkninger på sjøen
+
+  0             Stille        0,0-0,2     0-1     Sjøen er speilblank (havblikk).
+
+  1             Flau vind     0,3-1,5     1-3     Vindretning sees av røykens drift.
+
+  2             Svak vind     1,6-3,3     4-6     Små korte, men tydelige bølger med glatte kammer som ikke brekker.
+
+                                                  Småbølgene begynner å toppe seg, det dannes skum, som ser ut som glass. En og
+  3             Lett bris     3,4-5,4     7-10    annen skumskavl kan forekomme.
+
+  4             Laber bris    5,5-7,9     11-16 Bølgene blir lengre, endel skumskavler.
+
+                                                  Middelstore bølger som har mer utpreget langstrakt form og med mange
+  5             Frisk bris    8,0-10,7    17-21
+                                                  skumskavler. Sjøsprøyt fra toppene kan forekomme.
+
+  6             Liten Kuling 10,8-13,8    22-27 Store bølger begynner å danne seg. Skumskavlene er større overalt. Gjerne noe
+                                                sjøsprøyt.
+                                                  Sjøen hoper seg opp og hvitt skum fra bølgetopper som brekker, begynner å blåse i
+  7             Stiv kuling   13,9-17,1   28-33
+                                                  strimer i vindretningen.
+
+                                                Middels høye bølger av større lengde. Bølgekammene er ved å brytes opp til sjørokk,
+  8             Sterk kuling 17,2-20,7    34-40 som driver i tydelige markerte strimer med vinden.
+
+
+Kilde: met.no
+

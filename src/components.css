@@ -535,17 +535,23 @@
   z-index: 10;
 }
 
+/* Left-aligned, not right. Ragging them to the grid's edge started every label
+   at a different x depending on its length, so the column read as drifting and
+   nothing lined up with the prose below the chart. Flush left puts every label
+   - and the paragraph under the table - on one vertical. The wrapped units line
+   is allowed to be short; a ragged RIGHT edge inside a 55px column is invisible,
+   a ragged left one is what the eye actually follows. */
 .timeline-legend-label {
   height: 32px;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   padding-right: 4px;
   font-size: var(--text-instrument);
   font-weight: 700;
   color: var(--text-muted);
   border-top: 1px solid var(--panel-border);
-  text-align: right;
+  text-align: left;
 }
 
 .timeline-legend-label.tall {
