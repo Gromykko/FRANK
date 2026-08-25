@@ -128,15 +128,21 @@ export interface MarineSeriesResult {
   degraded?: boolean;
   busy?: boolean;
   notReady?: boolean;
-  // PROOF that this held series is the same run, from the same collection, the
-  // failed request asked for - the only case where a failed call costs nothing.
-  // Deliberately positive and deliberately absent by default: anything that
-  // cannot prove equivalence is treated as degraded. The raw ingredient key is
-  // per kind+location only (marineIngredientKey), so a retained envelope may
-  // legitimately hold a DIFFERENT collection or run than the one requested;
-  // dkss_idw and dkss_nsbs are different model areas, and a matching run
-  // timestamp does not make their values interchangeable.
-  sameRunAsRequested?: boolean;
+  // PROOF that this held series comes from the COLLECTION the failed request
+  // asked for. Deliberately positive and absent by default: anything unable to
+  // prove it is treated as degraded.
+  //
+  // Collection, not run. An exact collection+run match never reaches a fallback
+  // at all - fetchMarineSeries returns it early as fallback:false - so a marker
+  // demanding both could never be true in production, which made an earlier
+  // version of this dead code that read like a guard. What DOES arrive here is
+  // an older run of the right collection, and whether that is stale is already
+  // judged separately by its own publication schedule.
+  //
+  // The distinction that still matters is the model area: dkss_idw and
+  // dkss_nsbs are different grids and resolutions, so a matching timestamp does
+  // not make their values interchangeable.
+  sameCollectionAsRequested?: boolean;
 }
 
 export interface MarineSeeds {

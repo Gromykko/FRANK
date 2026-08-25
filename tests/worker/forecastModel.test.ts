@@ -374,7 +374,7 @@ describe('a failed refresh call is not stale data', () => {
     const result = assembleWithWater({
       instance: { collection: 'dkss_idw', id: CURRENT_RUN },
       fallback: true,
-      sameRunAsRequested: true,
+      sameCollectionAsRequested: true,
       providerContacted: false,
       degraded: true,
       busy: true,
@@ -389,7 +389,7 @@ describe('a failed refresh call is not stale data', () => {
     const result = assembleWithWater({
       instance: { collection: 'dkss_idw', id: CURRENT_RUN },
       fallback: true,
-      // No sameRunAsRequested: a seed rebuild, a sibling collection, or an
+      // No sameCollectionAsRequested: a seed rebuild, a sibling collection, or an
       // empty stored series all arrive looking exactly like this.
       providerContacted: false,
       degraded: true,
@@ -403,7 +403,7 @@ describe('a failed refresh call is not stale data', () => {
     const result = assembleWithWater({
       instance: { collection: 'dkss_idw', id: BEHIND_RUN },
       fallback: true,
-      sameRunAsRequested: true,
+      sameCollectionAsRequested: true,
       providerContacted: false,
       degraded: true,
       busy: true,
@@ -435,25 +435,28 @@ describe('heldMarineFallback proves equivalence rather than assuming it', () => 
     { providerContacted: false, degraded: true, busy: true }, NOW,
   );
 
-  it('claims equivalence only for the same collection and run', () => {
-    expect(held(envelope())?.sameRunAsRequested).toBe(true);
+  // The reachable case. An exact collection+run match never gets here at all -
+  // fetchMarineSeries returns it early as fallback:false - so this helper only
+  // ever sees a substitution of some kind, and the one that is harmless is an
+  // OLDER RUN of the right collection. Whether that run is stale is judged
+  // separately, by its own publication schedule.
+  it('claims the collection for an older run of the same collection', () => {
+    expect(held(envelope({ id: '2026-08-20T060000Z' }))?.sameCollectionAsRequested).toBe(true);
   });
 
   it('refuses it for the sibling collection at the same timestamp', () => {
-    expect(held(envelope({ collection: 'dkss_nsbs' }))?.sameRunAsRequested).toBe(false);
-  });
-
-  it('refuses it for a different run of the same collection', () => {
-    expect(held(envelope({ id: '2026-08-20T060000Z' }))?.sameRunAsRequested).toBe(false);
+    // dkss_idw and dkss_nsbs are different model areas; a matching run
+    // timestamp does not make their values interchangeable.
+    expect(held(envelope({ collection: 'dkss_nsbs' }))?.sameCollectionAsRequested).toBe(false);
   });
 
   it('refuses it for an empty stored series', () => {
-    expect(held(envelope({ series: [] }))?.sameRunAsRequested).toBe(false);
+    expect(held(envelope({ series: [] }))?.sameCollectionAsRequested).toBe(false);
   });
 
   it('never claims it on the seed tier', () => {
     const result = held(null);
     expect(result?.fallback).toBe(true);
-    expect(result?.sameRunAsRequested).toBeUndefined();
+    expect(result?.sameCollectionAsRequested).toBeUndefined();
   });
 });
