@@ -588,6 +588,16 @@ export function statusResponse(health: HealthPayload): Response {
     // Tone is applied ONLY when a cell is not good. Twelve green badges on a
     // healthy page carry no signal; the app's own rule is that colour means
     // something. Here the page is quiet when nothing is wrong.
+    // "Waiting for 18:00Z run · expected 21:20 UTC" set on one nowrap line made
+    // its column wider than the six numbers it sits under, which stretched the
+    // whole board. Broken at its own separator it splits about evenly, and the
+    // break lands where the sentence already pauses rather than wherever the
+    // column happens to run out.
+    const noteLines = (state: string): string => state
+      .split(' · ')
+      .map((line) => `<span class="cell-note">${escapeHtml(line)}</span>`)
+      .join('');
+
     const cell = (source: typeof sources[number]): string =>
       // The exact provenance stamp ("Model run 2026-08-20 12:00 UTC") is what
       // an operator checks against DMI's run table, so it must not be lost -
@@ -597,7 +607,7 @@ export function statusResponse(health: HealthPayload): Response {
       `<td class="num ${source.tone === 'warn' || source.tone === 'bad' ? `tone-${source.tone}` : ''}" data-source="${source.key}" title="${escapeHtml(source.detail)}">`
       + `<span class="cell-value">${escapeHtml(source.value)}</span>`
       + (source.state !== HEALTHY_SOURCE_STATE
-        ? `<span class="cell-note">${escapeHtml(source.state)}</span>`
+        ? noteLines(source.state)
         : '')
       + '</td>';
 
@@ -1013,7 +1023,10 @@ export function statusResponse(health: HealthPayload): Response {
   .cell-note {
     display:block;
     margin-top:3px;
-    white-space:nowrap;
+    /* Each note line may still wrap if a column is narrow enough; what it must
+       not do is force the column wider to stay on one line. */
+    white-space:normal;
+    overflow-wrap:anywhere;
     color:var(--text-muted);
     font:var(--text-instrument)/1.3 var(--font-mono);
   }

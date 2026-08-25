@@ -683,7 +683,10 @@ describe('Worker route HTTP contract', () => {
     // the rotation picks the new one up within minutes - so it carries no tone.
     // Only provider-busy and last-good fallback, which mean something is
     // actually broken, colour a cell.
-    expect(waterCell).toContain('Waiting for 06:00Z run · due 09:20 UTC, 2h 10m ago');
+    // Rendered as two note lines rather than one long nowrap string, which used
+    // to make this column wider than the numbers above it and stretch the board.
+    expect(waterCell).toContain('<span class="cell-note">Waiting for 06:00Z run</span>');
+    expect(waterCell).toContain('<span class="cell-note">due 09:20 UTC, 2h 10m ago</span>');
     expect(card).not.toContain('Run overdue');
     expect(card).not.toMatch(/tone-warn" data-source="water"/);
     expect(card).not.toMatch(/tone-warn" data-source="waves"/);
@@ -718,7 +721,8 @@ describe('Worker route HTTP contract', () => {
     const card = body.match(/<tbody class="board-group[^"]*" data-location="horsens">[\s\S]*?<\/tbody>/)?.[0] ?? '';
     const waterCell = card.match(/<td class="num " data-source="water"[\s\S]*?<\/td>/)?.[0] ?? '';
 
-    expect(waterCell).toContain('Waiting for 12:00Z run · expected 15:20 UTC');
+    expect(waterCell).toContain('<span class="cell-note">Waiting for 12:00Z run</span>');
+    expect(waterCell).toContain('<span class="cell-note">expected 15:20 UTC</span>');
     expect(waterCell).not.toContain('due 15:20 UTC');
     expect(card).not.toMatch(/tone-warn" data-source="water"/);
   });
