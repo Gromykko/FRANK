@@ -524,7 +524,13 @@
 }
 
 .timeline-legend-col {
-  width: 55px;
+  /* Narrower than it looks like it should be, on purpose. The labels are flush
+     RIGHT against the chart, so the column's width is the size of the gap to
+     their left, not to their right: at 55px the shortest ("Vejr") floated 29px
+     clear of everything above and below it. 44px pulls the whole block left,
+     keeps the right edge the labels are aligned to, and lets the longer names
+     wrap their unit onto a second line - which they mostly did already. */
+  width: var(--timeline-legend-w, 44px);
   padding-left: 0;
   flex-shrink: 0;
   display: flex;
@@ -535,23 +541,17 @@
   z-index: 10;
 }
 
-/* Left-aligned, not right. Ragging them to the grid's edge started every label
-   at a different x depending on its length, so the column read as drifting and
-   nothing lined up with the prose below the chart. Flush left puts every label
-   - and the paragraph under the table - on one vertical. The wrapped units line
-   is allowed to be short; a ragged RIGHT edge inside a 55px column is invisible,
-   a ragged left one is what the eye actually follows. */
 .timeline-legend-label {
   height: 32px;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: flex-end;
   padding-right: 4px;
   font-size: var(--text-instrument);
   font-weight: 700;
   color: var(--text-muted);
   border-top: 1px solid var(--panel-border);
-  text-align: left;
+  text-align: right;
 }
 
 .timeline-legend-label.tall {
@@ -559,7 +559,7 @@
 }
 
 .scrollable-timeline {
-  width: calc(100% - 55px);
+  width: calc(100% - var(--timeline-legend-w, 44px));
   padding-right: 0;
   cursor: grab;
   padding-bottom: 8px;
