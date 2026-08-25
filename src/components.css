@@ -3215,6 +3215,27 @@ button.legend-toggle.is-on {
   .frank-location {
     justify-self: end;
   }
+}
+
+/* Below about 360px - iPhone SE first generation and similar - three columns
+   stop fitting: the glass collapses to roughly 70px, too narrow for even a
+   short verdict without wrapping to three lines. Give it its own row back
+   there. The instrument row is the better shape, not the only acceptable one. */
+@media (max-width: 359px) {
+  .frank-device-columns {
+    grid-template-columns: 56px minmax(0, 1fr);
+    grid-template-areas:
+      'display display'
+      'crt     actions'
+      'name    location';
+  }
+
+  .frank-cell-display {
+    padding: 0 0 8px;
+    border-right: 0;
+    border-bottom: 1px solid var(--frank-housing-edge);
+    border-left: 0;
+  }
 
   /* Four uppercase labels across four 1fr tracks: wide tracking made
      "CUSTOM" overrun its cell at 320px, so phones keep tighter tracking. */

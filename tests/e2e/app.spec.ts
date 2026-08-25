@@ -101,21 +101,35 @@ test('the complete dashboard stays inside every supported viewport', async ({ pa
     expect(target.height).toBeGreaterThanOrEqual(44);
   }
 
+  // The glass carries one line now: FRANK's one-liner where there is room for
+  // it, the verdict itself where there is not. The verdict in words always
+  // reads above the conditions that produced it, at every width.
   const display = page.locator('.frank-display');
   await expect(display).toBeVisible();
-  await expect(display.locator('.frank-display-verdict')).toBeVisible();
-  await expect(display.locator('.frank-display-subtitle')).toBeVisible();
+  await expect(display.locator('.frank-display-text')).toBeVisible();
+  await expect(page.locator('.snapshot-verdict')).toBeVisible();
   const displayLayout = await display.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
     const phrase = element.querySelector<HTMLElement>('.frank-display-text');
     const phraseStyle = phrase ? getComputedStyle(phrase) : null;
     return {
       width: bounds.width,
+      viewport: document.documentElement.clientWidth,
+      text: phrase?.textContent?.trim() ?? '',
+      clipped: phrase ? phrase.scrollWidth > phrase.clientWidth + 1 : true,
       animationName: phraseStyle?.animationName,
       whiteSpace: phraseStyle?.whiteSpace,
     };
   });
-  expect(displayLayout.width).toBeGreaterThanOrEqual(220);
+  // A share of the row rather than a fixed pixel width: the glass is
+  // deliberately narrower on a phone, where it sits between the face and the
+  // buttons instead of spanning its own row. What must hold at every size is
+  // that it keeps a real share of the instrument row and does not clip.
+  expect(displayLayout.width).toBeGreaterThanOrEqual(displayLayout.viewport * 0.3);
+  expect(displayLayout.text.length).toBeGreaterThan(0);
+  expect(displayLayout.clipped).toBe(false);
+  // The typing is driven in JS, not a CSS animation, and must never be one:
+  // a marquee would make the reader wait to find out what the device says.
   expect(displayLayout.animationName).toBe('none');
   expect(displayLayout.whiteSpace).not.toBe('nowrap');
 
@@ -133,19 +147,43 @@ test('the explicit safety verdict survives every phone breakpoint', async ({ pag
   await expect(page.locator('.app-footer')).toBeVisible();
   await page.evaluate(async () => { await document.fonts.ready; });
 
+  // The rule this test defends is unchanged: on a phone the verdict must be
+  // readable in WORDS, never implied by a colour or hidden behind a screen
+  // reader. What moved is where it is stated. The glass drops the one-liner at
+  // these widths and shows the verdict itself, and the snapshot repeats it in
+  // words above the reasons - so it now survives in two places, not one.
   for (const width of [320, 384, 393, 480]) {
     await page.setViewportSize({ width, height: 900 });
     const display = page.locator('.frank-display');
     await expect(display, `status display at ${width}px`).toBeVisible();
-    await expect(display.locator('.frank-display-verdict')).toBeVisible();
-    await expect(display.locator('.frank-display-subtitle')).toBeVisible();
+
+    const verdictOnGlass = display.locator('.frank-display-text.is-verdict');
+    await expect(verdictOnGlass, `verdict on the glass at ${width}px`).toBeVisible();
+    const glassText = (await verdictOnGlass.textContent())?.trim() ?? '';
+    expect(glassText.length, `verdict text at ${width}px`).toBeGreaterThan(0);
+
+    const snapshotVerdict = page.locator('.snapshot-verdict');
+    await expect(snapshotVerdict, `verdict above reasons at ${width}px`).toBeVisible();
+
+    // Legible, and not clipped by the housing it sits in.
     const shape = await display.evaluate((element) => {
-      const bounds = element.getBoundingClientRect();
-      return { width: bounds.width, height: bounds.height };
+      const phrase = element.querySelector<HTMLElement>('.frank-display-text');
+      return {
+        height: element.getBoundingClientRect().height,
+        fontPx: phrase ? Number.parseFloat(getComputedStyle(phrase).fontSize) : 0,
+        clipped: phrase ? phrase.scrollWidth > phrase.clientWidth + 1 : true,
+      };
     });
-    expect(shape.width).toBeGreaterThanOrEqual(220);
-    expect(shape.height).toBeGreaterThanOrEqual(76);
+    expect(shape.height, `display height at ${width}px`).toBeGreaterThanOrEqual(56);
+    expect(shape.fontPx, `verdict size at ${width}px`).toBeGreaterThanOrEqual(14);
+    expect(shape.clipped, `verdict clipped at ${width}px`).toBe(false);
   }
+
+  const phoneOverflowPx = await page.evaluate(() => (
+    Math.max(document.body.scrollWidth, document.documentElement.scrollWidth)
+      - document.documentElement.clientWidth
+  ));
+  expect(phoneOverflowPx).toBeLessThanOrEqual(1);
 });
 
 test('zero ready locations produce one calm app-wide preparation screen', async ({ page }, testInfo) => {
