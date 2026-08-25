@@ -1,9 +1,61 @@
+import { useEffect, useState } from 'react';
 import { Moon, RefreshCw, Sun } from 'lucide-react';
 import GertyFace from './GertyFace';
 import LocationSwitcher from './LocationSwitcher';
 import { FlagDK, FlagUK } from './FlagIcons';
 import { useLang } from '../i18n';
 import type { DisplayStatus } from '../features/safety/analyzeSafetyConditions';
+
+// The personality line prints one character at a time, the way the device it
+// is pretending to be would. Purely decorative: the span is aria-hidden and the
+// verdict beside it is what carries meaning, so nobody waits on an animation to
+// learn whether it is safe to paddle. Reduced-motion users get the finished
+// line immediately.
+const TYPE_MS_PER_CHAR = 32;
+// Matches the device shell's own breakpoint in components.css.
+const NARROW_SCREEN = '(max-width: 480px)';
+
+// The glass is a different size on a phone, so it says a different thing. Wide,
+// it has room for FRANK's one-liner on a single line. Narrow, that same line
+// wrapped to three or four rows of tiny text, so it shows the verdict instead -
+// which is the part worth reading at a glance anyway.
+function useNarrowScreen(): boolean {
+  const [narrow, setNarrow] = useState(false);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return undefined;
+    const query = window.matchMedia(NARROW_SCREEN);
+    const update = () => setNarrow(query.matches);
+    update();
+    query.addEventListener('change', update);
+    return () => query.removeEventListener('change', update);
+  }, []);
+
+  return narrow;
+}
+
+function useTypedOut(text: string): string {
+  const [shown, setShown] = useState('');
+
+  useEffect(() => {
+    const reduced = typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduced || text.length === 0) {
+      setShown(text);
+      return undefined;
+    }
+    setShown('');
+    let index = 0;
+    const timer = window.setInterval(() => {
+      index += 1;
+      setShown(text.slice(0, index));
+      if (index >= text.length) window.clearInterval(timer);
+    }, TYPE_MS_PER_CHAR);
+    return () => window.clearInterval(timer);
+  }, [text]);
+
+  return shown;
+}
 
 interface StatusBarProps {
   // DisplayStatus: 'none' when every check is off, so the bar renders
@@ -46,6 +98,8 @@ export default function StatusBar({
   onToggleTheme,
 }: StatusBarProps) {
   const { lang, setLang, t } = useLang();
+  const narrow = useNarrowScreen();
+  const typedPhrase = useTypedOut(narrow ? srTitle : phrase);
 
   return (
     <header className="frank-device">
@@ -94,9 +148,19 @@ export default function StatusBar({
                 {/* The explicit safety verdict is the primary visible answer.
                     The personality line is secondary and never makes a user
                     wait for a scrolling animation to discover the decision. */}
-                <span className="frank-display-verdict">{srTitle}</span>
-                <span className="frank-display-subtitle">{srSubtitle}</span>
-                <span className="frank-display-text" aria-hidden="true">{phrase}</span>
+                {/* Both kept for screen readers, both dropped from the glass.
+                    The device says one thing now, in its own voice; the verdict
+                    itself reads above the conditions that justify it, which is
+                    where someone looks for the reasoning anyway. Three stacked
+                    messages here wrapped to five lines on a phone. */}
+                <span className="sr-only">{srTitle}</span>
+                <span className="sr-only">{srSubtitle}</span>
+                <span
+                  className={`frank-display-text ${narrow ? 'is-verdict' : ''}`}
+                  aria-hidden="true"
+                >
+                  {typedPhrase}
+                </span>
               </div>
             </div>
 

@@ -10,14 +10,19 @@ import type { DisplayStatus } from '../features/safety/analyzeSafetyConditions';
 // as "disabled". In Moon, GERTY's emoticon is always the same amber; only the
 // expression changes, so the colour carries no meaning and the face carries it
 // all. Paired with the flat 'none' mouth below.
+//
+// Drawn as a downward arc per eye, not a flat bar. Two straight dashes over a
+// straight mouth is the "-_-" emoticon, which reads as annoyed or disapproving
+// - the opposite of the intent. Curving the lids turns the same three shapes
+// into "u_u": resting, not judging.
 const EYES_CLOSED = [
   '................',
   '................',
   '................',
   '................',
   '................',
-  '................',
-  '...xxxx..xxxx...',
+  '...x..x..x..x...',
+  '....xx....xx....',
   '................',
   '................',
   '................',

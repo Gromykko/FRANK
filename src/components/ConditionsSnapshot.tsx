@@ -183,6 +183,10 @@ export default function ConditionsSnapshot({
         {/* RATING_WORD, not t(rating): the raw keys translate to a second
             vocabulary ("sikker/pas på/fare") that the status bar never uses. */}
         <span className="sr-only">{t('Overall rating: {0}.', t(RATING_WORD[rating]))}</span>
+        {/* The verdict in words, which used to live only on the device display.
+            It reads better here: directly above the reasons that produced it,
+            rather than competing with FRANK's one-liner for the same glass. */}
+        <div className="snapshot-verdict" aria-hidden="true">{t(RATING_WORD[rating])}</div>
         <div className="snapshot-time-anchor">{t('Conditions for {0}:', timeAnchor)}</div>
         <ul className="snapshot-reasons">
           {reasons.map((reason) => (

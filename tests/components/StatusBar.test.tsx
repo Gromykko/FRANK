@@ -31,7 +31,13 @@ describe('StatusBar status presentation', () => {
     expect(announcement?.textContent).toBe('Opdaterer prognosen.');
   });
 
-  it('shows the explicit verdict without a marquee or screen-reader-only fallback', () => {
+  // This asserted the opposite for good reason: the verdict must never hide
+  // behind an animation, and a screen-reader-only verdict is not a verdict. The
+  // rule still holds - what changed is WHERE it is stated. The glass now carries
+  // FRANK's one-liner alone, and the verdict reads in words above the conditions
+  // that produced it (ConditionsSnapshot, .snapshot-verdict), which is nearer
+  // the reasoning anyway. Both remain announced here for screen readers.
+  it('leaves the glass to the phrase and keeps the verdict announced', () => {
     const html = renderToStaticMarkup(
       <LanguageProvider>
         <StatusBar
@@ -55,9 +61,15 @@ describe('StatusBar status presentation', () => {
 
     const document = new DOMParser().parseFromString(html, 'text/html');
     const display = document.querySelector('.frank-display');
-    expect(display?.querySelector('.frank-display-verdict')?.textContent).toBe('Pas på');
-    expect(display?.querySelector('.frank-display-subtitle')?.textContent).toBe('Hold ekstra øje');
-    expect(display?.querySelector('.sr-only')).toBeNull();
+    // Nothing but the phrase is painted on the glass.
+    expect(display?.querySelector('.frank-display-verdict')).toBeNull();
+    expect(display?.querySelector('.frank-display-subtitle')).toBeNull();
+    // ...but neither line is lost: both stay in the live region.
+    const announced = [...(display?.querySelectorAll('.sr-only') ?? [])]
+      .map((el) => el.textContent);
+    expect(announced).toContain('Pas på');
+    expect(announced).toContain('Hold ekstra øje');
+    // The verdict still must not depend on an animation finishing.
     expect(display?.classList.contains('is-marquee')).toBe(false);
     expect(display?.querySelector('.frank-display-measure')).toBeNull();
   });

@@ -2705,25 +2705,6 @@ button.legend-toggle.is-on {
   text-shadow: 0 0 8px color-mix(in srgb, currentColor 60%, transparent);
 }
 
-.frank-display-verdict {
-  font-size: 26px;
-  font-weight: 700;
-  line-height: 0.9;
-  text-transform: uppercase;
-  text-shadow: 0 0 8px color-mix(in srgb, currentColor 60%, transparent);
-}
-
-.frank-display-subtitle {
-  max-width: 100%;
-  font-family: var(--font-sans);
-  font-size: var(--text-instrument);
-  line-height: 1.15;
-  letter-spacing: 0.02em;
-  text-align: center;
-  overflow-wrap: anywhere;
-  opacity: 0.9;
-}
-
 /* Button cluster column: centered in the same band as the CRT and display. */
 .frank-actions {
   grid-area: actions;
@@ -3169,37 +3150,51 @@ button.legend-toggle.is-on {
     padding: 10px 12px 12px;
   }
 
+  /* One instrument row, same as the desktop shape: face, glass, buttons. The
+     display used to span its own full-width row above them, which left a band
+     of dead housing between the face and the button cluster and made the shell
+     two rows taller than it needed to be on the smallest screens. */
   .frank-device-columns {
-    grid-template-columns: 64px minmax(0, 1fr);
+    grid-template-columns: 56px minmax(0, 1fr) auto;
     grid-template-areas:
-      'display display'
-      'crt     actions'
-      'name    location';
-    column-gap: 16px;
+      'crt  display actions'
+      'name .       location';
+    column-gap: 10px;
   }
 
-  /* Slightly smaller CRT keeps the second instrument row balanced beneath the
-     full-width verdict display. */
   .frank-crt {
-    width: 64px;
-    height: 64px;
+    width: 56px;
+    height: 56px;
   }
 
   .frank-crt .gerty-face {
-    width: 42px;
-    height: 42px;
+    width: 38px;
+    height: 38px;
   }
 
   .frank-cell-display {
-    padding: 0 0 10px;
-    border-right: 0;
-    border-bottom: 1px solid var(--frank-housing-edge);
-    border-left: 0;
+    padding: 0 10px;
+    border-right: 1px solid var(--frank-housing-edge);
+    border-bottom: 0;
+    border-left: 1px solid var(--frank-housing-edge);
   }
 
+  /* A small square-ish screen rather than a wide strip: the phrase wraps inside
+     it as it prints, which is what makes the typing read as a device rather
+     than as a caption. Height tracks the CRT so the row sits level. */
+  /* Sized to the CRT beside it. The glass shows the short verdict at this
+     width, not the one-liner, so it needs presence rather than room to wrap. */
   .frank-display {
-    min-height: 76px;
-    padding: 6px 10px;
+    min-height: 56px;
+    padding: 6px 8px;
+  }
+
+  .frank-display-text.is-verdict {
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
   }
 
   .frank-actions {
@@ -3207,9 +3202,14 @@ button.legend-toggle.is-on {
     align-self: center;
   }
 
+  /* Keep the triangle. Laid out in one flat row it was the widest thing in the
+     instrument row and squeezed the glass to about ninety pixels; two-up-one-
+     down gives that width back to the display, where the text actually needs
+     it, and matches the desktop shape. */
   .frank-device .header-btn-cluster {
-    width: auto;
-    flex-wrap: nowrap;
+    width: calc(44px * 2 + 6px);
+    flex-wrap: wrap;
+    gap: 6px;
   }
 
   .frank-location {
@@ -3499,6 +3499,22 @@ button.legend-toggle.is-on {
   font-weight: 600;
   letter-spacing: 0.01em;
 }
+
+/* The verdict word, coloured by the container's rating class - the same
+   phosphor the device face uses, so the two agree without repeating. */
+.snapshot-verdict {
+  font-family: var(--font-mono);
+  font-size: var(--text-instrument);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+
+.snapshot-reasons-container.rating-safe .snapshot-verdict { color: var(--color-safe); }
+.snapshot-reasons-container.rating-caution .snapshot-verdict { color: var(--color-caution); }
+.snapshot-reasons-container.rating-danger .snapshot-verdict { color: var(--color-danger); }
+.snapshot-reasons-container.rating-none .snapshot-verdict { color: var(--text-muted); }
 
 .snapshot-reasons-container {
   padding: 12px 0 0;
