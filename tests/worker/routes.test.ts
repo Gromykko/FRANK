@@ -619,6 +619,38 @@ describe('Worker route HTTP contract', () => {
     expect(horsensCard).not.toMatch(/data-source="water"[^>]*>(?:(?!<\/td>)[\s\S])*?Provider busy/);
   });
 
+  it('keeps every value cell on the board a duration', async () => {
+    const now = Date.parse('2026-08-20T18:00:00.000Z');
+    const entries: HealthLocationEntry[] = [{
+      id: 'horsens',
+      areaName: 'Horsens Fjord',
+      hasCache: true,
+      exactGenerationReady: true,
+      availabilitySource: 'generation',
+      fetchedAt: '2026-08-20T17:45:00.000Z',
+      cacheHealth: {
+        status: 'current',
+        lastAttemptAt: '2026-08-20T17:50:00.000Z',
+        weatherLastModified: '2026-08-20T17:30:00.000Z',
+        marineInstances: {
+          water: { collection: 'dkss_idw', id: '2026-08-20T120000Z' },
+          waves: { collection: 'wam_nsb', id: '2026-08-20T120000Z' },
+        },
+      },
+    }];
+    const body = await statusResponse(buildHealthPayload(entries, false, now)).text();
+    const card = body.match(/<tbody class="board-group[^"]*" data-location="horsens">[\s\S]*?<\/tbody>/)?.[0] ?? '';
+
+    // One column reading "00:00Z" while its neighbours read "16 min" makes the
+    // row scan as two different measurements. Every value is an age, a dash, or
+    // an explicit "not recorded" - never a clock stamp.
+    const values = [...card.matchAll(/<span class="cell-value">([^<]*)<\/span>/g)].map((m) => m[1].trim());
+    expect(values.length).toBeGreaterThanOrEqual(6);
+    for (const value of values) {
+      expect(value).toMatch(/^(\d+h \d+m|\d+ min|—|not recorded|initializing)$/);
+    }
+  });
+
   it('calls a marine run overdue once a newer one is due, and shows how far behind', async () => {
     // 2026-08-20T00:00Z run, read at 12:30Z. The next run (06:00Z) completed at
     // 06:00 + 3h35 + 10m cushion = 09:45Z, so by 12:30 we are demonstrably
@@ -676,13 +708,16 @@ describe('Worker route HTTP contract', () => {
 
     expect(body).toContain('30 min');
     // A 12:00Z run at 18:00 is the newest one due (DKSS completes +3h35, WAM
-    // +2h50, and the next cycle only lands at 18:00 + its own delay), so both
-    // marine cells name their run rather than reporting an alarming 6h age.
-    // Scoped to the cells: the provider legend prints run hours too.
+    // +2h50), so neither marine cell is toned - but both still report an AGE,
+    // because every numeric column on this board is one. The run identity is
+    // the legend's job and the cell title's, not the value's.
     const provenanceCard = body.match(/<tbody class="board-group[^"]*" data-location="horsens">[\s\S]*?<\/tbody>/)?.[0] ?? '';
-    expect(provenanceCard).toMatch(/data-source="water"(?:(?!<\/td>)[\s\S])*?12:00Z/);
-    expect(provenanceCard).toMatch(/data-source="waves"(?:(?!<\/td>)[\s\S])*?12:00Z/);
-    expect(provenanceCard).not.toContain('6h 00m');
+    expect(provenanceCard.match(/6h 00m/g) ?? []).toHaveLength(2);
+    expect(provenanceCard).not.toMatch(/cell-value">\d{2}:\d{2}Z/);
+    expect(provenanceCard).toMatch(/class="num " data-source="water"/);
+    expect(provenanceCard).toMatch(/class="num " data-source="waves"/);
+    // The run is still named where it belongs.
+    expect(provenanceCard).toContain('Model run 2026-08-20 12:00 UTC');
     expect(body).toContain('Forecast issued 2026-08-20 17:30 UTC');
     expect(body).not.toContain('Forecast issued 2026-08-20 17:30:00 UTC');
     expect(body).toContain('Model run 2026-08-20 12:00 UTC');

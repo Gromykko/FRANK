@@ -352,10 +352,7 @@ export function statusResponse(health: HealthPayload): Response {
       const degraded = degradedSources.has(key);
       const busy = providerAppliesTo(key);
       const provenanceAgeMs = providerAgeMs(provenance, nowMs);
-      // Weather has no run cycle: MET keeps its age reading, which is the
-      // honest measure there.
       const runOverdue = key !== 'weather' && marineRunOverdue.has(key);
-      const runHour = key === 'weather' ? null : formatRunHour(provenance);
       const provenanceDetail = provenance
         ? `${provenanceLabel} ${formatProviderTimestamp(provenance)}`
         : `${provenanceLabel} not recorded`;
@@ -377,14 +374,15 @@ export function statusResponse(health: HealthPayload): Response {
             : runOverdue
               ? 'Run overdue'
               : provenanceAgeMs === null ? 'Age not recorded' : 'Current',
-        // On the newest run that is due, the run hour answers "which run is
-        // this?" and the age answers nothing. Once a run IS overdue the age
-        // becomes the measure of how far behind we are, so it comes back.
+        // Every numeric column on this board is an age, so these are too. A run
+        // stamp here read as a different kind of measurement mid-row, and the
+        // run identity is already stated twice: once in the provider legend and
+        // once in this cell's own title. What the age lacked was context, not
+        // replacement - the state and tone above supply it, so a six-hour-old
+        // run that is still the newest one due now sits plain and uncoloured.
         value: provenanceAgeMs === null
           ? 'not recorded'
-          : runOverdue || runHour === null
-            ? formatAge(provenanceAgeMs)
-            : runHour,
+          : formatAge(provenanceAgeMs),
         detail: provenanceDetail,
       };
     };
