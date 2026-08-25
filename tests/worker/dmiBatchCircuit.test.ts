@@ -414,4 +414,77 @@ describe('scheduled DMI retries and location isolation', () => {
       checkedBy: 'cron-deferred',
     });
   });
+
+  it('clears a warm fallback label on the first publication-window check', async () => {
+    const allCurrent = new Set(LOCATIONS.map(({ id }) => id));
+    const { env, store, puts } = runtime(allCurrent);
+    const kolding = LOCATIONS.find(({ id }) => id === 'kolding');
+    if (!kolding) throw new Error('Missing Kolding test location');
+
+    const recoveryTick = NOW + 34 * 60_000;
+    const previousAttemptAt = new Date(recoveryTick - 5 * 60_000).toISOString();
+    const warmFallback = forecast(store, kolding);
+    const fetchedAt = warmFallback.sources.fetchedAt;
+    const hourly = warmFallback.hourly;
+    warmFallback.sources.cacheHealth = {
+      ...warmFallback.sources.cacheHealth,
+      status: 'current',
+      lastAttemptAt: previousAttemptAt,
+      checkedBy: 'deployment-warm',
+      degradedSources: ['water', 'waves'],
+      message: 'Provider partly unavailable; using last good data for: water, waves.',
+    };
+    store.set(assembledForecastKey(kolding), JSON.stringify(warmFallback));
+
+    const provider = vi.spyOn(globalThis, 'fetch').mockRejectedValue(
+      new Error('A publication-window recovery must not call a provider.'),
+    );
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    vi.setSystemTime(recoveryTick);
+    await worker.scheduled(
+      { scheduledTime: recoveryTick } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    expect(provider).not.toHaveBeenCalled();
+    expect(puts.filter((key) => key === assembledForecastKey(kolding))).toHaveLength(1);
+    const recovered = forecast(store, kolding);
+    expect(recovered.sources.fetchedAt).toBe(fetchedAt);
+    expect(recovered.hourly).toEqual(hourly);
+    expect(recovered.sources.cacheHealth).toMatchObject({
+      status: 'current',
+      checkedBy: 'cron',
+      lastAttemptAt: previousAttemptAt,
+    });
+    expect(recovered.sources.cacheHealth).not.toHaveProperty('degradedSources');
+    expect(recovered.sources.cacheHealth).not.toHaveProperty('providerBusy');
+    expect(recovered.sources.cacheHealth).not.toHaveProperty('busyProvider');
+    expect(recovered.sources.cacheHealth).not.toHaveProperty('message');
+    const completionEvents = log.mock.calls.flatMap(([message]) => {
+      if (typeof message !== 'string' || !message.startsWith('{')) return [];
+      try {
+        const value: unknown = JSON.parse(message);
+        return typeof value === 'object'
+          && value !== null
+          && Reflect.get(value, 'event') === 'cron_tick_completed'
+          ? [value]
+          : [];
+      } catch {
+        return [];
+      }
+    });
+    expect(completionEvents).toEqual([
+      expect.objectContaining({
+        locationId: kolding.id,
+        probeDecisionReason: 'publication-window',
+        canSkipProbe: true,
+        outcome: 'healthy-no-probe',
+        subrequestCount: 0,
+      }),
+    ]);
+  });
 });

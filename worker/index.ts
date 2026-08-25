@@ -1209,6 +1209,19 @@ async function _refreshForecastCache(
               ? 'Marine service unavailable; using the last completed marine data.'
               : undefined,
       });
+      // A publication-window skip is schedule proof, not a provider recovery:
+      // no newer run is due, and the retained assembled forecast is already
+      // the generation's accepted current cache. Persist this one deployment-warm
+      // all-clear immediately so a forced warm failure cannot leave fallback copy
+      // behind. Unlike a 429/200 flap, the exception is one-shot: this write changes
+      // checkedBy
+      // to cron, so later provider recovery still uses the normal throttle.
+      const deploymentWarmPublicationRecovery = cachedHealth?.status === 'current'
+        && cachedHealth.checkedBy === 'deployment-warm'
+        && previousMarineFailed
+        && canSkipProbe
+        && probeDecision.reason === 'publication-window'
+        && !degradedNow.some((source) => source === 'water' || source === 'waves');
       // The heartbeat now carries eligible scheduled-check freshness in one object,
       // so re-writing this whole forecast just to advance a timestamp is pure
       // cost: it was ~57 writes/city/day against an allowance of 1,000, and the
@@ -1216,7 +1229,8 @@ async function _refreshForecastCache(
       // still earns a write is a CHANGE in what the health says.
       if (probeDecision.reason !== 'retry-backoff'
         && healthChanged(cachedHealth, checkedCache.sources.cacheHealth)
-        && shouldPersistFailureState(cachedHealth, checkedCache.sources.cacheHealth)) {
+        && (deploymentWarmPublicationRecovery
+          || shouldPersistFailureState(cachedHealth, checkedCache.sources.cacheHealth))) {
         // Best-effort, like the rebuild write below. This is the one path that
         // has already CONFIRMED the forecast is current, so letting a failed
         // write escape would fall into the catch below and rebuild the response
