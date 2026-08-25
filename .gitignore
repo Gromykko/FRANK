@@ -45,3 +45,6 @@ blob-report/
 # Stray screenshots at repo root
 /*.png
 /dmi_*.json
+
+# Scratch space for research downloads and one-off artefacts.
+tmp/
