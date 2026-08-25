@@ -6,7 +6,8 @@ import { CURRENT_RELEASE } from '../../src/features/forecast/releaseContract';
 import { FORECAST_PAYLOAD_VERSION } from '../../src/features/forecast/types';
 import { buildSunSchedule } from '../../src/features/forecast/sun';
 import type { ForecastData } from '../../worker/domain';
-import { assembledForecastKey } from '../../worker/generation';
+import { assembledForecastKey, marineIngredientKey } from '../../worker/generation';
+import { completeMarineEnvelope } from './marineTestData';
 
 const LOCATIONS = locationData as ForecastLocation[];
 const NOW = Date.parse('2026-08-20T16:00:00.000Z');
@@ -100,11 +101,11 @@ function runtime(
   return { env, store, puts };
 }
 
-function metResponse(): Response {
+function metResponse(time = HOUR): Response {
   return Response.json({
     properties: {
       timeseries: [{
-        time: HOUR,
+        time,
         data: {
           instant: {
             details: {
@@ -263,39 +264,30 @@ describe('scheduled DMI retries and location isolation', () => {
     const cached = forecast(store, location);
     cached.sources.cacheHealth!.weatherExpires = new Date(NOW - 1).toISOString();
     cached.sources.cacheHealth!.marineInstances = {
-      water: { collection: 'dkss_idw', id: '2026-08-20T160000Z' },
-      waves: { collection: 'wam_nsb', id: '2026-08-20T160000Z' },
+      water: { collection: 'dkss_idw', id: NEW_RUN },
+      waves: { collection: 'wam_nsb', id: NEW_RUN },
     };
     store.set(assembledForecastKey(location), JSON.stringify(cached));
+    store.set(
+      marineIngredientKey(location, 'water'),
+      JSON.stringify(completeMarineEnvelope(location, 'water', NEW_RUN, 'dkss_idw')),
+    );
+    store.set(
+      marineIngredientKey(location, 'waves'),
+      JSON.stringify(completeMarineEnvelope(location, 'waves', NEW_RUN, 'wam_nsb')),
+    );
     store.set(CRON_HEARTBEAT_KEY, JSON.stringify({
       schemaVersion: 2,
       lastTickAt: new Date(scheduledTime - 60_000).toISOString(),
       locations: { [location.id]: new Date(previousSuccess).toISOString() },
       unreachable: { [location.id]: new Date(scheduledTime - 4 * 60_000).toISOString() },
     }));
-    const nonOverlappingHour = '2026-08-21T17:00:00.000Z';
+    const nonOverlappingHour = '2026-08-20T04:00:00.000Z';
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes('api.met.no/')) return metResponse();
+      if (url.includes('api.met.no/')) return metResponse(nonOverlappingHour);
       if (url.includes('feeds.meteoalarm.org/')) {
         return new Response('<feed></feed>', { status: 200 });
-      }
-      if (url.includes('/instances/')) {
-        const properties = url.includes('/collections/dkss_')
-          ? {
-              step: nonOverlappingHour,
-              'sea-mean-deviation': 0,
-              'water-temperature': 16,
-              'current-u': 0,
-              'current-v': 0,
-            }
-          : {
-              step: nonOverlappingHour,
-              'significant-wave-height': 0.1,
-              'mean-wave-dir': 180,
-              'mean-wave-period': 3,
-            };
-        return Response.json({ features: [{ properties }] });
       }
       throw new Error(`Unexpected provider URL: ${url}`);
     }) as typeof fetch;

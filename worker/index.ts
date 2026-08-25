@@ -70,11 +70,13 @@ import {
   fetchMarineSeriesWithFallback,
   isMarineRunWithinFallbackAge,
   marineProbeDecision,
+  marineSourcesMissingExpectedAdvance,
   marineSourcesDueForProbe,
   marineInstancesEqual,
   marineInstancesWithinFallbackAge,
   readRetainedMarineInstances,
 } from './providers';
+import type { MarineSubstitutionCause } from './providers';
 import { isRecord } from './validation';
 import {
   RELEASE_IDENTITY,
@@ -995,9 +997,9 @@ async function _refreshForecastCache(
     // degraded rather than re-dating unverified water/wave data.
     let marineProbeFailed = false;
     let marineSubstituted: readonly MarineKind[] = [];
+    let marineSubstitutionCauses: Partial<Record<MarineKind, MarineSubstitutionCause>> = {};
     let marineManifestResolved: readonly MarineKind[] = [];
     let marineProbeBusy = false;
-    let marineCatalogueContacted = false;
     const knownMarine = cachedHealth?.marineInstances
       ?? await readRetainedMarineInstances(env, location, policy);
     // DMI's official completion windows determine when a newer marine run can
@@ -1042,17 +1044,18 @@ async function _refreshForecastCache(
           contactEvidence,
         );
         latestMarine = probe.instances;
-        marineCatalogueContacted = probe.catalogueContacted;
         marineManifestResolved = probe.manifestResolved;
         // A carried-over run id is not a verified one. Reporting it as a clean
         // probe let a DMI catalogue outage read as a fully current forecast for
         // as long as the ids stayed within their fallback age.
         marineSubstituted = probe.substituted;
+        marineSubstitutionCauses = probe.substitutionCauses ?? {};
         if (probe.substituted.length > 0) {
           console.warn(JSON.stringify({
             event: 'marine_instance_substituted',
             locationId: location.id,
             substituted: probe.substituted,
+            causes: marineSubstitutionCauses,
           }));
         }
       } catch (probeError) {
@@ -1074,14 +1077,34 @@ async function _refreshForecastCache(
       }
     }
 
-    const degradedMarineProbeSources = degradedMarineSourcesAfterProbe(
-      knownMarine,
-      marineProbeFailed,
-      marineSubstituted,
-      probeDecisionAt,
-    );
+    // The scheduling decision belongs to probeDecisionAt, but freshness must
+    // be judged when the catalogue/manifest outcome actually arrives. A slow
+    // request may cross the exact publication-grace boundary while in flight.
+    const probeOutcomeAt = Date.now();
+    const degradedMarineProbeSources = [...new Set<MarineKind>([
+      ...degradedMarineSourcesAfterProbe(
+        knownMarine,
+        marineProbeFailed,
+        marineSubstituted,
+        probeOutcomeAt,
+        marineProbeBusy,
+        marineSubstitutionCauses,
+      ),
+      ...marineSourcesMissingExpectedAdvance(
+        knownMarine,
+        latestMarine,
+        probeOutcomeAt,
+      ),
+    ])];
+    const marineProbeNeedsDisclosure = marineProbeFailed
+      && degradedMarineProbeSources.length > 0;
+    const marineBusyNeedsDisclosure = degradedMarineProbeSources.some((kind) =>
+      (marineProbeFailed && marineProbeBusy)
+      || marineSubstitutionCauses[kind] === 'busy');
+    const marineUnavailableNeedsDisclosure = degradedMarineProbeSources.some((kind) =>
+      marineSubstitutionCauses[kind] === 'unavailable');
     const dueMarineSources = marineSourcesDueForProbe(knownMarine, probeDecisionAt);
-    const marineManifestVerified = !marineCatalogueContacted
+    const marineManifestVerified = !contactEvidence.providerContacted
       && dueMarineSources.length > 0
       && dueMarineSources.every((kind) => marineManifestResolved.includes(kind));
 
@@ -1092,7 +1115,7 @@ async function _refreshForecastCache(
     const marineUnchanged = marineInstancesEqual(cachedHealth?.marineInstances, latestMarine);
     const latestMarineWithinPolicy = marineInstancesWithinFallbackAge(latestMarine);
 
-    if (marineProbeFailed && cached) {
+    if (marineProbeNeedsDisclosure && cached) {
       // We could not verify whether DMI has published a newer run. Do not use
       // unexpired MET as permission to call the combined forecast current, and
       // do not rebuild/re-date it from unverified marine ingredients. Keep the
@@ -1107,8 +1130,8 @@ async function _refreshForecastCache(
           false,
           degradedMarineProbeSources,
         ),
-        ...(marineProbeBusy ? { providerBusy: true, busyProvider: 'marine' } : {}),
-        message: marineProbeBusy
+        ...(marineBusyNeedsDisclosure ? { providerBusy: true, busyProvider: 'marine' } : {}),
+        message: marineBusyNeedsDisclosure
           ? 'Marine service busy; keeping the last completed forecast.'
           : 'Marine service unavailable; keeping the last completed forecast.',
       });
@@ -1130,7 +1153,7 @@ async function _refreshForecastCache(
       hasCurrentForecastWindow(cached) &&
       marineUnchanged &&
       latestMarineWithinPolicy &&
-      !marineProbeFailed &&
+      !marineProbeNeedsDisclosure &&
       !weatherStale;
 
     if (!latestMarine) {
@@ -1159,7 +1182,13 @@ async function _refreshForecastCache(
         false,
         degradedMarineProbeSources,
       );
-      const marineVerified = degradedMarineProbeSources.length === 0;
+      const retainedNonMarineBusyProvider = cachedHealth?.providerBusy
+        && cachedHealth.busyProvider !== 'marine'
+        ? cachedHealth.busyProvider
+        : undefined;
+      const activeBusyProvider = marineBusyNeedsDisclosure
+        ? 'marine' as const
+        : retainedNonMarineBusyProvider;
 
       const checkedCache = withCacheHealth(cached, 'current', {
         marineInstances: latestMarine,
@@ -1167,12 +1196,18 @@ async function _refreshForecastCache(
         // manifest-only verification contacted a provider in this invocation.
         // Preserve the actual contact stamp; in the backoff case, restamping
         // would also slide that window forward indefinitely.
-        preserveAttemptAt: canSkipProbe || marineManifestVerified,
+        preserveAttemptAt: canSkipProbe || marineManifestVerified || marineProbeFailed,
         checkedBy: options.reason ?? 'check',
         degradedSources: degradedNow.length > 0 ? degradedNow : undefined,
-        providerBusy: marineVerified ? undefined : cachedHealth?.providerBusy,
-        busyProvider: marineVerified ? undefined : cachedHealth?.busyProvider,
-        message: marineVerified ? undefined : cachedHealth?.message,
+        providerBusy: activeBusyProvider ? true : undefined,
+        busyProvider: activeBusyProvider,
+        message: retainedNonMarineBusyProvider
+          ? cachedHealth?.message
+          : marineBusyNeedsDisclosure
+            ? 'Marine service busy; using the last completed marine data.'
+            : marineUnavailableNeedsDisclosure
+              ? 'Marine service unavailable; using the last completed marine data.'
+              : undefined,
       });
       // The heartbeat now carries eligible scheduled-check freshness in one object,
       // so re-writing this whole forecast just to advance a timestamp is pure
@@ -1202,19 +1237,17 @@ async function _refreshForecastCache(
         const retryBackoffWithoutAttempt = canSkipProbe
           && probeDecision.reason === 'retry-backoff'
           && noExternalProviderAttempt;
-        const verifiedHealthyNoProbe = marineVerified
-          && degradedNow.length === 0
-          && (marineManifestVerified
+        const completedWithoutProviderAttempt = noExternalProviderAttempt
+          && (retryBackoffWithoutAttempt
+            || marineManifestVerified
             || (canSkipProbe && probeDecision.reason === 'publication-window'));
-        if (!contactEvidence.providerContacted
-          && (retryBackoffWithoutAttempt || verifiedHealthyNoProbe)) {
-          // DMI's documented publication window proves there is nothing to ask
-          // for yet. A manifest-only result likewise carries another tick's
-          // verified global run. Retry-backoff is healthy here only when the
-          // skip gate held and the live counter proves no outbound attempt
-          // started; its existing data degradation remains independently visible.
-          // The same reason can coexist with recovery provider work. None of
-          // these no-contact outcomes may mutate per-city contact history.
+        if (!contactEvidence.providerContacted && completedWithoutProviderAttempt) {
+          // Reachability and data freshness are independent. The documented
+          // publication window, a retry backoff, or a manifest-only result can
+          // complete with zero outbound attempts even while degradedSources
+          // truthfully says the retained run is overdue. That is a healthy
+          // no-probe scheduler outcome, not evidence that a provider was tried
+          // and unreachable, so it must not renew the city's failure stamp.
           options.cronOutcome.status = 'healthy-no-probe';
         }
         // Any check that actually attempted providers but reached no successful
@@ -1245,7 +1278,7 @@ async function _refreshForecastCache(
     contactEvidence.providerContacted ||= built.providerContacted;
     const fallbackNotes: string[] = [
       ...degradedSources,
-      ...(marineProbeFailed ? ['marine run schedule'] : []),
+      ...(marineProbeNeedsDisclosure ? ['marine run schedule'] : []),
     ];
     const fresh = withCacheHealth(built.forecast, 'current', {
       marineInstances: built.marineInstances ?? latestMarine,
@@ -1256,8 +1289,10 @@ async function _refreshForecastCache(
       // the client can show a calm "from an earlier update" note. Busy copy is
       // reserved for a provider boundary that verified an HTTP 429.
       ...(degradedSources.length ? { degradedSources } : {}),
-      ...((built.degradedBusy || marineProbeBusy) ? { providerBusy: true } : {}),
-      ...(marineProbeBusy
+      ...((built.degradedBusy || marineBusyNeedsDisclosure)
+        ? { providerBusy: true }
+        : {}),
+      ...(marineBusyNeedsDisclosure
         ? { busyProvider: 'marine' as const }
         : built.degradedBusyProvider
           ? { busyProvider: built.degradedBusyProvider }
@@ -1305,7 +1340,13 @@ async function _refreshForecastCache(
       const busy = providerFailure?.busy ?? false;
       const busyProvider = providerFailure?.provider;
       const failedCache = withCacheHealth(cached, 'stale', {
-        marineInstances: latestMarine ?? previousMarine,
+        // `latestMarine` is only a catalogue candidate until the build proves
+        // its position series complete. Relabelling the retained payload here
+        // would attach that fresh id to old hourly rows; on the next tick those
+        // rows could then masquerade as an in-policy seed. Keep the provenance
+        // of the bytes we are actually serving and use needsRebuild, below, to
+        // remember that a newer candidate still needs a successful handover.
+        marineInstances: previousMarine,
         needsRebuild: options.forceRebuild || newMarineNeedsRebuild,
         checkedBy: options.reason ?? 'failed-check',
         ...(busy && busyProvider ? { providerBusy: true, busyProvider } : {}),

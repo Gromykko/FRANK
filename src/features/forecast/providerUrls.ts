@@ -5,8 +5,6 @@
 // and worker resolve them differently (dev proxy vs direct), and only the bare
 // coordinate is taken so this never drags in the client-only location config.
 
-export const FORECAST_HOURS = 132;
-
 export const WAM_PARAMETERS = [
   'significant-wave-height',
   'mean-wave-dir',
@@ -26,32 +24,26 @@ export interface Coordinate {
   longitude: number;
 }
 
-// 6h back (so the current hour always has context) to the forecast horizon.
-export function getDmiDateRange(nowMs: number = Date.now()): string {
-  const start = new Date(nowMs - 6 * 60 * 60 * 1000);
-  const end = new Date(nowMs + FORECAST_HOURS * 60 * 60 * 1000);
-  return `${start.toISOString()}/${end.toISOString()}`;
-}
-
-// DMI forecastedr position query; `instanceId` pins a specific model run (the
-// worker's marine-fallback mechanism), omitted for "latest".
+// DMI forecastedr position query. Production always pins both the model run
+// and its deterministic interval; there is deliberately no wall-clock default
+// that could make two checks of one run request different slices.
 export function buildDmiUrl(
   base: string,
   collection: string,
   parameters: string[],
   coordinate: Coordinate,
-  instanceId?: string
+  instanceId: string,
+  dateRange: string,
 ): string {
   const query = new URLSearchParams({
     coords: `POINT(${coordinate.longitude} ${coordinate.latitude})`,
     crs: 'crs84',
     'parameter-name': parameters.join(','),
-    datetime: getDmiDateRange(),
+    datetime: dateRange,
     f: 'GeoJSON',
   });
 
-  const instancePath = instanceId ? `/instances/${encodeURIComponent(instanceId)}` : '';
-  return `${base}/collections/${collection}${instancePath}/position?${query.toString()}`;
+  return `${base}/collections/${collection}/instances/${encodeURIComponent(instanceId)}/position?${query.toString()}`;
 }
 
 export function buildDmiInstancesUrl(base: string, collection: string): string {

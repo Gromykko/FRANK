@@ -11,9 +11,6 @@ vi.mock('../../worker/providers', async (importOriginal) => {
 });
 
 import worker, { tickOrder } from '../../worker/index';
-import {
-  MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
-} from '../../src/features/forecast/releaseContract';
 import type { ForecastLocation } from '../../src/config/locationTypes';
 import type { ForecastData } from '../../worker/domain';
 import {
@@ -22,42 +19,20 @@ import {
   metRawKey,
 } from '../../worker/generation';
 import { ProviderUnavailableError } from '../../worker/providerAvailability';
+import { completeMarineEnvelope } from './marineTestData';
 
 const NOW = Date.parse('2031-08-23T11:59:00.000Z');
 const FORECAST_HOUR = '2031-08-23T13:00:00.000Z';
 const RETAINED_RUN = '2031-08-23T000000Z';
+const CURRENT_LOGGING_RUN = '2031-08-23T060000Z';
 const originalFetch = globalThis.fetch;
 
 function retainedMarineIngredient(
   location: ForecastLocation,
   kind: 'water' | 'waves',
+  runId = RETAINED_RUN,
 ) {
-  const seriesEndMs = Date.parse(FORECAST_HOUR);
-  return {
-    schemaVersion: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
-    locationId: location.id,
-    forecastConfigRevision: location.forecastConfigRevision,
-    collection: location.dmiCollections[kind][0],
-    id: RETAINED_RUN,
-    seriesEndMs,
-    declaredEndMs: seriesEndMs,
-    series: kind === 'water'
-      ? [{
-          time: FORECAST_HOUR,
-          timeMs: Date.parse(FORECAST_HOUR),
-          tempWater: 16,
-          tideLevel: 0,
-          currentSpeed: 0,
-          currentDirection: 0,
-        }]
-      : [{
-          time: FORECAST_HOUR,
-          timeMs: Date.parse(FORECAST_HOUR),
-          waveHeight: 0.1,
-          waveDirection: 180,
-          wavePeriod: 3,
-        }],
-  };
+  return completeMarineEnvelope(location, kind, runId);
 }
 
 function metBody() {
@@ -116,11 +91,11 @@ function loggingRuntime(location: ForecastLocation) {
   const store = new Map<string, string>([
     [
       marineIngredientKey(location, 'water'),
-      JSON.stringify(retainedMarineIngredient(location, 'water')),
+      JSON.stringify(retainedMarineIngredient(location, 'water', CURRENT_LOGGING_RUN)),
     ],
     [
       marineIngredientKey(location, 'waves'),
-      JSON.stringify(retainedMarineIngredient(location, 'waves')),
+      JSON.stringify(retainedMarineIngredient(location, 'waves', CURRENT_LOGGING_RUN)),
     ],
     [
       metRawKey(location),
@@ -150,8 +125,8 @@ function loggingRuntime(location: ForecastLocation) {
 function resolvedMarineProbe(location: ForecastLocation) {
   return {
     instances: {
-      water: { collection: location.dmiCollections.water[0], id: RETAINED_RUN },
-      waves: { collection: location.dmiCollections.waves[0], id: RETAINED_RUN },
+      water: { collection: location.dmiCollections.water[0], id: CURRENT_LOGGING_RUN },
+      waves: { collection: location.dmiCollections.waves[0], id: CURRENT_LOGGING_RUN },
     },
     substituted: [],
     catalogueContacted: true,
@@ -234,6 +209,78 @@ describe('built fallback provider-busy classification', () => {
     });
     expect(forecast.sources.cacheHealth).not.toHaveProperty('providerBusy');
     expect(forecast.sources.cacheHealth).not.toHaveProperty('busyProvider');
+  });
+
+  it('classifies a catalogue 429 at the time its response crosses the grace boundary', async () => {
+    const scheduledTime = Date.parse('2031-08-23T09:49:59.999Z');
+    const graceBoundary = Date.parse('2031-08-23T09:50:00.000Z');
+    const location = tickOrder(scheduledTime)[0];
+    const store = new Map<string, string>([
+      [
+        marineIngredientKey(location, 'water'),
+        JSON.stringify(retainedMarineIngredient(location, 'water', RETAINED_RUN)),
+      ],
+      [
+        marineIngredientKey(location, 'waves'),
+        JSON.stringify(retainedMarineIngredient(location, 'waves', CURRENT_LOGGING_RUN)),
+      ],
+    ]);
+    const env = {
+      FRANK_FORECAST_CACHE: {
+        async get(key: string, type?: string) {
+          const raw = store.get(key);
+          if (raw === undefined) return null;
+          return type === 'json' ? JSON.parse(raw) : raw;
+        },
+        async put(key: string, value: string) {
+          store.set(key, value);
+        },
+      },
+    };
+    fetchLatestMarineInstancesMock.mockImplementation(async () => {
+      vi.setSystemTime(graceBoundary);
+      throw new ProviderUnavailableError(
+        'marine',
+        'DMI marine catalogue returned a verified 429.',
+        undefined,
+        true,
+      );
+    });
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('api.met.no/')) {
+        return Response.json(metBody(), {
+          headers: {
+            Expires: new Date(graceBoundary + 60 * 60_000).toUTCString(),
+            'Last-Modified': new Date(graceBoundary).toUTCString(),
+          },
+        });
+      }
+      if (url.includes('feeds.meteoalarm.org/')) {
+        return new Response('<feed></feed>', { status: 200 });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    }) as typeof fetch;
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    vi.setSystemTime(scheduledTime);
+    await worker.scheduled(
+      { scheduledTime } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    const stored = store.get(assembledForecastKey(location));
+    expect(stored).toBeDefined();
+    const forecast = JSON.parse(stored!) as ForecastData;
+    expect(forecast.sources.cacheHealth).toMatchObject({
+      status: 'current',
+      degradedSources: ['water'],
+      providerBusy: true,
+      busyProvider: 'marine',
+    });
   });
 });
 

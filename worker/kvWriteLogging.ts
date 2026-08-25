@@ -16,10 +16,12 @@ type KvWriter = Pick<KVNamespace, 'put'>;
 export interface RawMarineCoverageLog {
   marineKind: 'water' | 'waves';
   seriesPointCount: number;
+  seriesStartMs: number | null;
   seriesEndMs: number | null;
-  declaredEndMs: number | null;
-  coverageStatus: 'complete' | 'partial' | 'unknown';
-  coverageGapMs: number | null;
+  expectedPointCount: number;
+  expectedStartMs: number;
+  expectedEndMs: number;
+  coverageStatus: 'complete';
 }
 
 export async function putKvWithLog(

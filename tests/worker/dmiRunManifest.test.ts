@@ -365,7 +365,7 @@ describe('shared DMI run manifest', () => {
     expect(store.puts).toHaveLength(0);
   });
 
-  it('catalogue-probes and enriches a model-53 manifest entry whose declared end is absent', async () => {
+  it('adopts a current manifest by collection and run id without requiring extent', async () => {
     const withoutCoverage = (collection: string) => ({
       collection,
       id: OLD_RUN,
@@ -388,18 +388,17 @@ describe('shared DMI run manifest', () => {
 
     const result = await resolveMarine(store, known);
 
-    expect(result.catalogueContacted).toBe(true);
-    expect(result.manifestResolved).toEqual([]);
-    expect(result.instances).toEqual(OLD_INSTANCES);
-    expect(calls.filter((url) => url.endsWith('/instances'))).toHaveLength(2);
-    expect(store.puts).toHaveLength(1);
-    expect(JSON.parse(store.puts[0].value)).toEqual({
-      schemaVersion: DMI_RUN_MANIFEST_SCHEMA_VERSION,
-      entries: bothEntries(OLD_RUN),
+    expect(result.catalogueContacted).toBe(false);
+    expect(result.manifestResolved).toEqual(['water', 'waves']);
+    expect(result.instances).toEqual({
+      water: { collection: 'dkss_idw', id: OLD_RUN },
+      waves: { collection: 'wam_nsb', id: OLD_RUN },
     });
+    expect(calls.filter((url) => url.endsWith('/instances'))).toHaveLength(0);
+    expect(store.puts).toHaveLength(0);
   });
 
-  it('seeds a missing manifest only when an equal known run gains coverage evidence', async () => {
+  it('does not seed a missing manifest from an unchanged known run', async () => {
     const store = trackedManifestStore();
     const calls = stubCatalogue({
       dkss_idw: OLD_RUN,
@@ -416,14 +415,10 @@ describe('shared DMI run manifest', () => {
 
     expect(result.instances).toEqual(OLD_INSTANCES);
     expect(calls.filter((url) => url.endsWith('/instances'))).toHaveLength(2);
-    expect(store.puts).toHaveLength(1);
-    expect(JSON.parse(store.puts[0].value)).toEqual({
-      schemaVersion: DMI_RUN_MANIFEST_SCHEMA_VERSION,
-      entries: bothEntries(OLD_RUN),
-    });
+    expect(store.puts).toHaveLength(0);
   });
 
-  it('never regresses an equal run to a shorter declared end', async () => {
+  it('does not treat a same-run extent difference as a new manifest identity', async () => {
     const shorterEndMs = parseDmiInstanceMs(OLD_RUN) + 24 * 60 * 60_000;
     const shortEntry = (collection: string) => ({
       collection,
@@ -444,15 +439,14 @@ describe('shared DMI run manifest', () => {
 
     const result = await resolveMarine(store, OLD_INSTANCES);
 
-    expect(result.catalogueContacted).toBe(true);
-    expect(result.manifestResolved).toEqual([]);
-    expect(result.instances).toEqual(OLD_INSTANCES);
-    expect(calls.filter((url) => url.endsWith('/instances'))).toHaveLength(2);
-    expect(store.puts).toHaveLength(1);
-    expect(JSON.parse(store.puts[0].value)).toEqual({
-      schemaVersion: DMI_RUN_MANIFEST_SCHEMA_VERSION,
-      entries: bothEntries(OLD_RUN),
+    expect(result.catalogueContacted).toBe(false);
+    expect(result.manifestResolved).toEqual(['water', 'waves']);
+    expect(result.instances).toEqual({
+      water: { collection: 'dkss_idw', id: OLD_RUN, declaredEndMs: shorterEndMs },
+      waves: { collection: 'wam_nsb', id: OLD_RUN, declaredEndMs: shorterEndMs },
     });
+    expect(calls.filter((url) => url.endsWith('/instances'))).toHaveLength(0);
+    expect(store.puts).toHaveLength(0);
   });
 
   it('does not seed a missing manifest with the unchanged run a city already knows', async () => {
@@ -596,6 +590,10 @@ describe('shared DMI run manifest', () => {
       initial: manifestJson(bothEntries('2026-08-20T000000Z')),
     },
     {
+      name: 'off-cycle run',
+      initial: manifestJson(bothEntries('2026-08-20T150000Z')),
+    },
+    {
       name: 'read failure',
       initial: manifestJson(bothEntries(OLD_RUN)),
       getError: new Error('KV unavailable'),
@@ -635,12 +633,55 @@ describe('shared DMI run manifest', () => {
     expect(calls.filter((url) => url.endsWith('/instances'))).toHaveLength(2);
   });
 
+  it('never lets an older catalogue response rewind the city or shared manifest', async () => {
+    const store = trackedManifestStore();
+    const calls = stubCatalogue({
+      dkss_idw: OLD_RUN,
+      dkss_nsbs: OLD_RUN,
+      wam_nsb: OLD_RUN,
+      wam_dw: OLD_RUN,
+    });
+    const warning = vi.mocked(console.warn);
+    warning.mockImplementation(() => {
+      throw new Error('logging unavailable');
+    });
+    const knownNewer: MarineInstances = {
+      water: runInstance('dkss_idw', NEW_RUN),
+      waves: runInstance('wam_nsb', NEW_RUN),
+    };
+    const result = await resolveMarine(store, knownNewer, LOCATION);
+
+    expect(result.instances).toEqual(knownNewer);
+    expect(result.catalogueContacted).toBe(true);
+    expect(store.puts).toHaveLength(0);
+    expect(calls.filter((url) => url.endsWith('/instances'))).toHaveLength(2);
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('dmi_catalogue_regression_ignored'));
+  });
+
+  it('lets a valid catalogue recover from forged future known provenance', async () => {
+    const store = trackedManifestStore();
+    const calls = stubCatalogue();
+    const futureKnown: MarineInstances = {
+      water: runInstance('dkss_idw', '2026-08-20T180000Z'),
+      waves: runInstance('wam_nsb', '2026-08-20T180000Z'),
+    };
+
+    const result = await resolveMarine(store, futureKnown, LOCATION);
+
+    expect(result.instances).toEqual({
+      water: runInstance('dkss_idw', NEW_RUN),
+      waves: runInstance('wam_nsb', NEW_RUN),
+    });
+    expect(result.catalogueContacted).toBe(true);
+    expect(calls.filter((url) => url.endsWith('/instances'))).toHaveLength(2);
+  });
+
   it('keeps differently ordered collection lists isolated and preserves both entries', async () => {
     const reversedWater = [...WATER].reverse();
     const store = trackedManifestStore(manifestJson(bothEntries(NEW_RUN)));
     const calls = stubCatalogue({
       dkss_idw: NEW_RUN,
-      dkss_nsbs: '2026-08-20T150000Z',
+      dkss_nsbs: NEW_RUN,
       wam_nsb: NEW_RUN,
       wam_dw: NEW_RUN,
     });
@@ -652,7 +693,7 @@ describe('shared DMI run manifest', () => {
     const result = await resolveMarine(store, OLD_INSTANCES, location);
 
     expect(result.instances).toEqual({
-      water: runInstance('dkss_nsbs', '2026-08-20T150000Z'),
+      water: runInstance('dkss_nsbs', NEW_RUN),
       waves: runInstance('wam_nsb', NEW_RUN),
     });
     expect(calls.filter((url) => url.endsWith('/instances'))).toHaveLength(1);
@@ -665,7 +706,7 @@ describe('shared DMI run manifest', () => {
       manifestEntry('dkss_idw', NEW_RUN),
     );
     expect(written.entries[dmiCollectionListKey(reversedWater)]).toEqual(
-      manifestEntry('dkss_nsbs', '2026-08-20T150000Z'),
+      manifestEntry('dkss_nsbs', NEW_RUN),
     );
   });
 

@@ -19,9 +19,9 @@ export interface MarineRunRef {
 export interface MarineInstance {
   collection: string;
   id: string;
-  // Parsed from the catalogue's declared temporal interval. Optional because
-  // older manifests and malformed/partial catalogue metadata must remain
-  // representable as unknown rather than being mistaken for complete.
+  // Parsed from the catalogue's temporal interval for diagnostics only. DMI
+  // grows a run one time step at a time, so this value is not proof that the
+  // pinned EDR response contains the model's independently documented range.
   declaredEndMs?: number;
 }
 
@@ -120,10 +120,13 @@ export interface MarineIngredientEnvelope
   schemaVersion: number;
   locationId: string;
   forecastConfigRevision: number;
-  // Coverage evidence recorded by the sole production constructor. Null is an
-  // explicit unknown and therefore never proves a complete retained run.
-  seriesEndMs: number | null;
-  declaredEndMs: number | null;
+  marineKind: MarineKind;
+  // Independently derived from the strict run id and DMI's documented model
+  // horizon. Schema v3 only stores a series after every inclusive hourly point
+  // between these two boundaries has passed the safety-reading checks.
+  expectedStartMs: number;
+  expectedEndMs: number;
+  seriesEndMs: number;
   series: SeriesPoint[];
 }
 
@@ -137,6 +140,10 @@ export interface MarineSeriesResult {
   degraded?: boolean;
   busy?: boolean;
   notReady?: boolean;
+  // A malformed candidate or generic provider failure is evidence of an
+  // immediate problem, rather than ordinary publication lag. It must remain
+  // visible even before the source-specific publication grace expires.
+  degradationIsImmediate?: boolean;
   // PROOF that this held series comes from the COLLECTION the failed request
   // asked for. Deliberately positive and absent by default: anything unable to
   // prove it is treated as degraded.

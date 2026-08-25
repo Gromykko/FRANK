@@ -79,6 +79,13 @@ export const FORECAST_SOURCE_POLICY = Object.freeze({
   dmiDkssCompleteDelayMs: (3 * 60 + 20) * 60 * 1000,
   dmiWamNsbCompleteDelayMs: (2 * 60 + 45) * 60 * 1000,
   dmiOtherWamCompleteDelayMs: 3 * 60 * 60 * 1000,
+  // DMI documents DKSS as a five-day hourly forecast and WAM as a 5.5-day
+  // hourly forecast. Pinned EDR requests use these independent contracts, not
+  // the catalogue interval that grows while a run is being published.
+  // https://www.dmi.dk/friedata/dokumentation/data/forecast-data-storm-surge-model-dkss
+  // https://www.dmi.dk/friedata/dokumentation/data/forecast-data-wave-model-wam
+  dmiDkssForecastHorizonHours: 120,
+  dmiWamForecastHorizonHours: 132,
   // A LEAD, not a cushion - the sign is the point. The old 10-minute cushion
   // pushed the gate later so one probe would likely land after publication;
   // this pulls it earlier so we are already waiting when the run appears.
@@ -97,6 +104,15 @@ export const FORECAST_SOURCE_POLICY = Object.freeze({
   // cadence; repeated identical failures are kept out of KV by
   // shouldPersistFailureState.
   dmiFailedProbeRetryMs: 4 * 60 * 1000,
+  // DMI calls its completion times "usual" rather than an SLA and explicitly
+  // says the network load changes them. Across the 32 collection-runs measured
+  // on 2026-08-23..25, the worst terminal STAC item arrived about 18 minutes
+  // after the published time. Thirty minutes covers that observation, the next
+  // four-minute city rotation, and one additional failed rotation. During this
+  // bounded publication window the previous independently complete run remains
+  // honest; after it, an unavailable candidate is disclosed as degradation.
+  // https://www.dmi.dk/friedata/dokumentation/data/forecast-data-availability
+  dmiPublicationGraceMs: 30 * 60 * 1000,
 });
 
 export const FORECAST_PROVIDER_PARAMETERS = Object.freeze({
@@ -111,6 +127,38 @@ export interface MarineProbeDecision {
   nextProbeAtMs: number;
   reason: 'invalid' | 'expired' | 'publication-window' | 'retry-backoff' | 'due';
 }
+
+export interface MarineRunContract {
+  kind: MarineKind;
+  collection: string;
+  runStartMs: number;
+  expectedEndMs: number;
+  horizonHours: number;
+  expectedPointCount: number;
+}
+
+export interface MarineCoverageAssessment extends MarineRunContract {
+  status: 'complete' | 'partial' | 'invalid';
+  sourceFeatureCount: number;
+  seriesPointCount: number;
+  seriesStartMs: number | null;
+  seriesEndMs: number | null;
+  missingPointCount: number;
+  extraPointCount: number;
+  duplicatePointCount: number;
+  gridMismatchCount: number;
+  timestampMismatchCount: number;
+  invalidRequiredValueCount: number;
+}
+
+const SUPPORTED_DKSS_COLLECTIONS: ReadonlySet<string> = new Set([
+  'dkss_idw',
+  'dkss_nsbs',
+]);
+const SUPPORTED_WAM_COLLECTIONS: ReadonlySet<string> = new Set([
+  'wam_nsb',
+  'wam_dw',
+]);
 
 interface BuildSourceResults {
   met: MetResult;
@@ -160,11 +208,15 @@ export function isMarineIngredientEnvelope(
     && value.forecastConfigRevision === location.forecastConfigRevision
     && typeof value.collection === 'string'
     && typeof value.id === 'string'
-    && (value.seriesEndMs === null
-      || (typeof value.seriesEndMs === 'number' && Number.isFinite(value.seriesEndMs)))
-    && (value.declaredEndMs === null
-      || (typeof value.declaredEndMs === 'number' && Number.isFinite(value.declaredEndMs)))
-    && Array.isArray(value.series);
+    && (value.marineKind === 'water' || value.marineKind === 'waves')
+    && typeof value.expectedStartMs === 'number'
+    && Number.isFinite(value.expectedStartMs)
+    && typeof value.expectedEndMs === 'number'
+    && Number.isFinite(value.expectedEndMs)
+    && typeof value.seriesEndMs === 'number'
+    && Number.isFinite(value.seriesEndMs)
+    && Array.isArray(value.series)
+    && value.series.every((point) => typeof point === 'object' && point !== null);
 }
 
 export function featureCollectionFromJson<TFeature>(
@@ -180,14 +232,20 @@ export function dmiForecastUrl(
   collection: string,
   parameters: string[],
   location: Pick<ForecastLocation, 'coordinate'>,
-  instanceId?: string,
+  instanceId: string,
 ): string {
+  const contract = marineRunContract(collection, instanceId);
+  if (contract === null) {
+    throw new Error(`DMI ${collection} run id cannot define an exact forecast interval.`);
+  }
+  const dateRange = `${new Date(contract.runStartMs).toISOString()}/${new Date(contract.expectedEndMs).toISOString()}`;
   return buildDmiUrl(
     FORECAST_SOURCE_POLICY.dmiBaseUrl,
     collection,
     parameters,
     location.coordinate,
     instanceId,
+    dateRange,
   );
 }
 
@@ -234,14 +292,154 @@ export function parseDmiInstanceMs(id: unknown): number {
   return iso ? utcTimestampFromParts(iso.slice(1)) : Number.NaN;
 }
 
+export function marineRunContract(
+  collection: unknown,
+  id: unknown,
+): MarineRunContract | null {
+  if (typeof collection !== 'string') return null;
+  const normalized = collection.toLowerCase();
+  const kind: MarineKind | null = SUPPORTED_DKSS_COLLECTIONS.has(normalized)
+    ? 'water'
+    : SUPPORTED_WAM_COLLECTIONS.has(normalized)
+      ? 'waves'
+      : null;
+  if (kind === null) return null;
+
+  const runStartMs = parseDmiInstanceMs(id);
+  if (!Number.isFinite(runStartMs)) return null;
+  const run = new Date(runStartMs);
+  if (run.getUTCMinutes() !== 0
+    || run.getUTCSeconds() !== 0
+    || run.getUTCMilliseconds() !== 0
+    || ![0, 6, 12, 18].includes(run.getUTCHours())) {
+    return null;
+  }
+
+  const horizonHours = kind === 'water'
+    ? FORECAST_SOURCE_POLICY.dmiDkssForecastHorizonHours
+    : FORECAST_SOURCE_POLICY.dmiWamForecastHorizonHours;
+  return {
+    kind,
+    collection,
+    runStartMs,
+    expectedEndMs: runStartMs + horizonHours * 60 * 60 * 1000,
+    horizonHours,
+    // EDR datetime ranges are inclusive at both ends, so a +120h DKSS run has
+    // 121 points and a +132h WAM run has 133.
+    expectedPointCount: horizonHours + 1,
+  };
+}
+
+function seriesPointRecord(value: unknown): Partial<SeriesPoint> | null {
+  return typeof value === 'object' && value !== null
+    ? value as Partial<SeriesPoint>
+    : null;
+}
+
+function hasRequiredMarineReadings(
+  kind: MarineKind,
+  point: Partial<SeriesPoint> | null,
+): boolean {
+  if (point === null) return false;
+  return kind === 'water'
+    ? Number.isFinite(point.tideLevel) && Number.isFinite(point.tempWater)
+    : Number.isFinite(point.waveHeight);
+}
+
+export function assessMarineRunCoverage(
+  kind: MarineKind,
+  instance: Pick<MarineInstance, 'collection' | 'id'>,
+  series: readonly unknown[],
+  sourceFeatureCount = series.length,
+): MarineCoverageAssessment | null {
+  const contract = marineRunContract(instance.collection, instance.id);
+  if (!contract || contract.kind !== kind) return null;
+
+  const seen = new Map<number, number>();
+  const expectedTimes = new Set<number>(
+    Array.from(
+      { length: contract.expectedPointCount },
+      (_, index) => contract.runStartMs + index * 60 * 60 * 1000,
+    ),
+  );
+  let gridMismatchCount = 0;
+  let timestampMismatchCount = 0;
+  let invalidRequiredValueCount = 0;
+  let extraPointCount = 0;
+  for (let index = 0; index < series.length; index += 1) {
+    const point = seriesPointRecord(series[index]);
+    const parsedTimeMs = parseDmiInstanceMs(point?.time);
+    const timeMs = point?.timeMs;
+    if (!Number.isFinite(parsedTimeMs)
+      || !Number.isFinite(timeMs)
+      || parsedTimeMs !== timeMs) {
+      timestampMismatchCount += 1;
+    }
+    if (typeof timeMs === 'number' && Number.isFinite(timeMs)) {
+      seen.set(timeMs, (seen.get(timeMs) ?? 0) + 1);
+    }
+    const expectedTimeMs = contract.runStartMs + index * 60 * 60 * 1000;
+    if (typeof timeMs === 'number'
+      && Number.isFinite(timeMs)
+      && !expectedTimes.has(timeMs)) {
+      extraPointCount += 1;
+    }
+    if (index >= contract.expectedPointCount || timeMs !== expectedTimeMs) {
+      gridMismatchCount += 1;
+    }
+    if (index < contract.expectedPointCount && !hasRequiredMarineReadings(kind, point)) {
+      invalidRequiredValueCount += 1;
+    }
+  }
+
+  const duplicatePointCount = [...seen.values()]
+    .reduce((count, occurrences) => count + Math.max(0, occurrences - 1), 0);
+  const missingPointCount = [...expectedTimes]
+    .reduce((count, expectedTimeMs) => count + (seen.has(expectedTimeMs) ? 0 : 1), 0);
+  const firstPoint = seriesPointRecord(series[0]);
+  const firstTimeMs = firstPoint?.timeMs;
+  const seriesStartMs = typeof firstTimeMs === 'number' && Number.isFinite(firstTimeMs)
+    ? firstTimeMs
+    : null;
+  const lastPoint = seriesPointRecord(series[series.length - 1]);
+  const lastTimeMs = lastPoint?.timeMs;
+  const seriesEndMs = typeof lastTimeMs === 'number' && Number.isFinite(lastTimeMs)
+    ? lastTimeMs
+    : null;
+  const featureCountMismatch = !Number.isInteger(sourceFeatureCount)
+    || sourceFeatureCount < 0
+    || sourceFeatureCount !== series.length;
+  const invalid = featureCountMismatch
+    || timestampMismatchCount > 0
+    || gridMismatchCount > 0
+    || duplicatePointCount > 0
+    || extraPointCount > 0
+    || invalidRequiredValueCount > 0;
+  return {
+    ...contract,
+    status: invalid
+      ? 'invalid'
+      : series.length === contract.expectedPointCount
+        ? 'complete'
+        : 'partial',
+    sourceFeatureCount,
+    seriesPointCount: series.length,
+    seriesStartMs,
+    seriesEndMs,
+    missingPointCount,
+    extraPointCount,
+    duplicatePointCount,
+    gridMismatchCount,
+    timestampMismatchCount,
+    invalidRequiredValueCount,
+  };
+}
+
 export function isMarineRunWithinFallbackAge(
   instance: MarineRunRef | null | undefined,
   nowMs = Date.now(),
 ): boolean {
-  const runMs = parseDmiInstanceMs(instance?.id);
-  if (!Number.isFinite(runMs)) return false;
-  const ageMs = nowMs - runMs;
-  return ageMs >= 0 && ageMs <= FORECAST_SOURCE_POLICY.marineFallbackMaxAgeMs;
+  return marineFallbackRejection(instance, nowMs) === null;
 }
 
 export function marineInstancesWithinFallbackAge(
@@ -256,9 +454,9 @@ export function marineFallbackRejection(
   instance: MarineRunRef | null | undefined,
   nowMs = Date.now(),
 ): 'invalid' | 'future' | 'expired' | null {
-  const runMs = parseDmiInstanceMs(instance?.id);
-  if (!Number.isFinite(runMs)) return 'invalid';
-  const ageMs = nowMs - runMs;
+  const contract = marineRunContract(instance?.collection, instance?.id);
+  if (!contract) return 'invalid';
+  const ageMs = nowMs - contract.runStartMs;
   if (ageMs < 0) return 'future';
   return ageMs > FORECAST_SOURCE_POLICY.marineFallbackMaxAgeMs ? 'expired' : null;
 }
@@ -281,13 +479,46 @@ function dmiCompleteDelayMs(collection: unknown): number {
 export function marineRunDueAtMs(
   instance: MarineRunRef | null | undefined,
 ): number {
-  const runMs = parseDmiInstanceMs(instance?.id);
+  const contract = marineRunContract(instance?.collection, instance?.id);
   const completeDelayMs = dmiCompleteDelayMs(instance?.collection);
-  if (!Number.isFinite(runMs) || !Number.isFinite(completeDelayMs)) return Number.NaN;
-  return runMs
+  if (!contract || !Number.isFinite(completeDelayMs)) return Number.NaN;
+  return contract.runStartMs
     + FORECAST_SOURCE_POLICY.dmiRunCycleMs
     + completeDelayMs
     - FORECAST_SOURCE_POLICY.dmiPublicationLeadMs;
+}
+
+// User-visible freshness is deliberately later than the probe gate. DMI says
+// the completion figures are usual times and publishes one step at a time, so
+// a retained complete run is not called degraded until the next run has passed
+// its own documented completion time plus the bounded publication grace.
+export function marineRunDegradedAtMs(
+  instance: MarineRunRef | null | undefined,
+): number {
+  const contract = marineRunContract(instance?.collection, instance?.id);
+  const completeDelayMs = dmiCompleteDelayMs(instance?.collection);
+  if (!contract || !Number.isFinite(completeDelayMs)) return Number.NaN;
+  return contract.runStartMs
+    + FORECAST_SOURCE_POLICY.dmiRunCycleMs
+    + completeDelayMs
+    + FORECAST_SOURCE_POLICY.dmiPublicationGraceMs;
+}
+
+export function marineCandidateGraceEndsAtMs(
+  instance: MarineRunRef | null | undefined,
+): number {
+  const contract = marineRunContract(instance?.collection, instance?.id);
+  const completeDelayMs = dmiCompleteDelayMs(instance?.collection);
+  if (!contract || !Number.isFinite(completeDelayMs)) return Number.NaN;
+  return contract.runStartMs + completeDelayMs + FORECAST_SOURCE_POLICY.dmiPublicationGraceMs;
+}
+
+export function marineCandidateIsWithinPublicationGrace(
+  instance: MarineRunRef | null | undefined,
+  nowMs = Date.now(),
+): boolean {
+  const graceEndsAtMs = marineCandidateGraceEndsAtMs(instance);
+  return Number.isFinite(graceEndsAtMs) && nowMs < graceEndsAtMs;
 }
 
 export function marineSourcesDueForProbe(
@@ -312,20 +543,76 @@ export function marineSourcesDueForProbe(
   });
 }
 
+export function marineSourcesOverdueForRefresh(
+  marineInstances: {
+    water?: MarineRunRef;
+    waves?: MarineRunRef;
+  } | null | undefined,
+  nowMs = Date.now(),
+): MarineKind[] {
+  const kinds: readonly MarineKind[] = ['water', 'waves'];
+  return kinds.filter((kind) => {
+    const instance = marineInstances?.[kind];
+    const runMs = parseDmiInstanceMs(instance?.id);
+    const degradedAtMs = marineRunDegradedAtMs(instance);
+    if (!Number.isFinite(runMs)
+      || !Number.isFinite(degradedAtMs)
+      || runMs > nowMs
+      || nowMs - runMs > FORECAST_SOURCE_POLICY.marineFallbackMaxAgeMs) {
+      return true;
+    }
+    return nowMs >= degradedAtMs;
+  });
+}
+
+export function marineSourcesMissingExpectedAdvance(
+  previous: Partial<MarineInstances> | null | undefined,
+  observed: Partial<MarineInstances> | null | undefined,
+  nowMs = Date.now(),
+): MarineKind[] {
+  const overdue = new Set(marineSourcesOverdueForRefresh(previous, nowMs));
+  const observedOverdue = new Set(marineSourcesOverdueForRefresh(observed, nowMs));
+  const kinds: readonly MarineKind[] = ['water', 'waves'];
+  return kinds.filter((kind) => {
+    if (!overdue.has(kind)) return false;
+    const previousRunMs = parseDmiInstanceMs(previous?.[kind]?.id);
+    const observedRunMs = parseDmiInstanceMs(observed?.[kind]?.id);
+    return !Number.isFinite(previousRunMs)
+      || !Number.isFinite(observedRunMs)
+      || observedRunMs <= previousRunMs
+      // Advancing one run is not enough when the returned run is itself past
+      // its own publication grace. A badly lagged catalogue must not turn an
+      // overdue 00Z city green merely by moving it to an already-overdue 06Z.
+      || observedOverdue.has(kind);
+  });
+}
+
 export function degradedMarineSourcesAfterProbe(
   marineInstances: Partial<MarineInstances> | null | undefined,
   marineProbeFailed: boolean,
   substituted: readonly MarineKind[] = [],
   nowMs = Date.now(),
+  marineProbeBusy = false,
+  substitutionCauses: Partial<Record<MarineKind, 'not-ready' | 'busy' | 'unavailable'>> = {},
 ): MarineKind[] {
-  const unavailable = new Set<MarineKind>(
-    marineProbeFailed ? ['water', 'waves'] : substituted,
-  );
+  const substitutedSet = new Set(substituted);
+  const due = new Set(marineSourcesDueForProbe(marineInstances, nowMs));
+  const overdue = new Set(marineSourcesOverdueForRefresh(marineInstances, nowMs));
   // A combined probe may ask both catalogues because ONE source is due. A
   // failed carry-over for the other source is not degradation while that
-  // source remains inside its own collection's publication schedule.
-  return marineSourcesDueForProbe(marineInstances, nowMs)
-    .filter((kind) => unavailable.has(kind));
+  // source remains inside its own collection's publication schedule. A
+  // verified 429 is also normalised during the bounded grace; generic failures
+  // are not evidence about publication and remain immediately visible.
+  const kinds: readonly MarineKind[] = ['water', 'waves'];
+  return kinds.filter((kind) => {
+    if (marineProbeFailed) {
+      return marineProbeBusy ? overdue.has(kind) : due.has(kind);
+    }
+    if (!substitutedSet.has(kind)) return false;
+    return substitutionCauses[kind] === 'unavailable'
+      ? due.has(kind)
+      : overdue.has(kind);
+  });
 }
 
 export function marineProbeDecision(
@@ -388,6 +675,7 @@ export function marineProbeDecision(
 
 export function latestInstanceFromResponse(
   data: unknown,
+  collection: string,
 ): Pick<MarineInstance, 'id' | 'declaredEndMs'> | undefined {
   if (!isRecord(data) || !Array.isArray(data.instances)) {
     throw new Error('DMI instance response did not contain an instances array.');
@@ -397,7 +685,8 @@ export function latestInstanceFromResponse(
   let bestMs = -Infinity;
   for (const instance of data.instances) {
     const id = isRecord(instance) ? instance.id : undefined;
-    const timeMs = parseDmiInstanceMs(id);
+    const contract = marineRunContract(collection, id);
+    const timeMs = contract?.runStartMs ?? Number.NaN;
     if (typeof id === 'string' && Number.isFinite(timeMs) && timeMs >= bestMs) {
       const extent = isRecord(instance.extent) ? instance.extent : undefined;
       const temporal = extent && isRecord(extent.temporal) ? extent.temporal : undefined;
@@ -456,10 +745,8 @@ export function marineInstancesEqual(
       && right
       && left.water?.collection === right.water?.collection
       && left.water?.id === right.water?.id
-      && left.water?.declaredEndMs === right.water?.declaredEndMs
       && left.waves?.collection === right.waves?.collection
       && left.waves?.id === right.waves?.id
-      && left.waves?.declaredEndMs === right.waves?.declaredEndMs
   );
 }
 
@@ -511,35 +798,24 @@ export function currentMarineIngredient(
     && Array.isArray(stored.series)
     && stored.series.length > 0
     && isMarineRunWithinFallbackAge(stored, nowMs)
+    && marineIngredientHasCompleteCoverage(stored)
     ? stored
     : null;
 }
 
 export function marineIngredientHasCompleteCoverage(
   stored: MarineIngredientEnvelope | null | undefined,
-  requiredDeclaredEndMs?: number,
 ): boolean {
   if (!stored) return false;
-  const { seriesEndMs, declaredEndMs } = stored;
-  if (typeof seriesEndMs !== 'number'
-    || !Number.isFinite(seriesEndMs)
-    || typeof declaredEndMs !== 'number'
-    || !Number.isFinite(declaredEndMs)) {
-    return false;
-  }
-  const actualSeriesEndMs = stored.series.reduce(
-    (latest, point) => Number.isFinite(point?.timeMs)
-      ? Math.max(latest, point.timeMs)
-      : latest,
-    Number.NEGATIVE_INFINITY,
+  const assessment = assessMarineRunCoverage(
+    stored.marineKind,
+    stored,
+    stored.series,
   );
-  const requiredEndMs = typeof requiredDeclaredEndMs === 'number'
-    && Number.isFinite(requiredDeclaredEndMs)
-    ? requiredDeclaredEndMs
-    : null;
-  return actualSeriesEndMs === seriesEndMs
-    && seriesEndMs >= declaredEndMs
-    && (requiredEndMs === null || declaredEndMs >= requiredEndMs);
+  return assessment?.status === 'complete'
+    && stored.expectedStartMs === assessment.runStartMs
+    && stored.expectedEndMs === assessment.expectedEndMs
+    && stored.seriesEndMs === assessment.seriesEndMs;
 }
 
 export function heldMarineFallback(
@@ -547,7 +823,10 @@ export function heldMarineFallback(
   seedSeries: SeriesPoint[] | undefined,
   seedInstance: MarineInstance | undefined,
   requestedInstance: MarineInstance,
-  extra: Pick<MarineSeriesResult, 'providerContacted' | 'degraded' | 'busy' | 'notReady'>,
+  extra: Pick<
+    MarineSeriesResult,
+    'providerContacted' | 'degraded' | 'busy' | 'notReady' | 'degradationIsImmediate'
+  >,
   nowMs = Date.now(),
 ): MarineSeriesResult | null {
   if (currentStored && isMarineRunWithinFallbackAge(currentStored, nowMs)) {
@@ -556,20 +835,13 @@ export function heldMarineFallback(
       instance: {
         collection: currentStored.collection,
         id: currentStored.id,
-        ...(typeof currentStored.declaredEndMs === 'number'
-          && Number.isFinite(currentStored.declaredEndMs)
-          ? { declaredEndMs: currentStored.declaredEndMs }
-          : {}),
       },
       fallback: true,
-      // Collection identity is not enough: DMI publishes a run one time step
-      // at a time. Only the recorded series boundary reaching the catalogue's
-      // declared end proves that a held run is equivalent to a fresh response.
+      // Collection identity is not enough by itself. Recompute the independent
+      // full-run proof here before claiming the retained bytes are equivalent
+      // to the requested model area; callers may pass an arbitrary envelope.
       sameCollectionAsRequested: currentStored.collection === requestedInstance.collection
-        && marineIngredientHasCompleteCoverage(
-          currentStored,
-          requestedInstance.declaredEndMs,
-        ),
+        && marineIngredientHasCompleteCoverage(currentStored),
       ...extra,
     };
   }
@@ -633,13 +905,12 @@ export function assembleForecastFromSources(
   const waterSeries = water.series;
   const waveSeries = wave.series;
   const effectiveInstances = { water: water.instance, waves: wave.instance };
-  // A failed refresh CALL is not the same thing as stale DATA. When a 429 sends
-  // us back to the run we already hold, and that run is still the newest one its
-  // own publication schedule says exists, nothing was lost: the retained
-  // ingredient is byte-identical to what the call would have returned. Reporting
-  // it as "from an earlier update" told every user their water level was old for
-  // the length of a DMI busy spell, while the figures on screen were exactly
-  // right - and did it only for water, because waves needed no request at all.
+  // A failed refresh CALL is not the same thing as stale DATA. During the
+  // bounded publication grace, an exact complete retained run remains the
+  // newest run we can honestly serve while the candidate is incomplete or DMI
+  // returns a verified 429. Reporting it as "from an earlier update" before its
+  // own schedule expires would confuse ordinary incremental publication with a
+  // stale forecast.
   //
   // The suppression is gated on PROVABLE provenance, not on the absence of a
   // known-bad marker. Anything unable to show it is serving the collection that
@@ -647,14 +918,16 @@ export function assembleForecastFromSources(
   // and a stored series without proven full coverage alike. Whether the RUN is old is a separate
   // question, answered just above by its own publication schedule.
   // Weather has no run cycle of its own, so its rule is untouched.
-  const marineBehind = new Set(marineSourcesDueForProbe(effectiveInstances, nowMs));
+  const marineBehind = new Set(marineSourcesOverdueForRefresh(effectiveInstances, nowMs));
   const marineDegraded = (
     source: MarineSeriesResult,
     kind: MarineKind,
   ): boolean => Boolean(
     source.fallback
     && source.degraded
-    && (!source.sameCollectionAsRequested || marineBehind.has(kind)),
+    && (source.degradationIsImmediate
+      || !source.sameCollectionAsRequested
+      || marineBehind.has(kind)),
   );
   const weatherDegraded = Boolean(met.fallback && met.degraded);
   const waterDegraded = marineDegraded(water, 'water');

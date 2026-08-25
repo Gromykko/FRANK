@@ -11,7 +11,7 @@ import {
   CRON_TICK_BUDGET_MS,
   cronExecutionPolicy,
 } from '../../worker/execution';
-import { assembledForecastKey } from '../../worker/generation';
+import { assembledForecastKey, marineIngredientKey } from '../../worker/generation';
 import worker, {
   CRON_HEARTBEAT_KEY,
   CRON_HEARTBEAT_THROTTLE_TICKS,
@@ -22,10 +22,11 @@ import {
   DMI_RUN_MANIFEST_SCHEMA_VERSION,
   dmiCollectionListKey,
 } from '../../worker/providers';
+import { completeMarineEnvelope, completeMarineSeries } from './marineTestData';
 
 const LOCATIONS = locationData as ForecastLocation[];
 const FIRST_TICK_MS = Date.parse('2026-08-20T16:00:00.000Z');
-const MARINE_RUN = '2026-08-20T160000Z';
+const MARINE_RUN = '2026-08-20T120000Z';
 const DUE_MARINE_RUN = '2026-08-20T060000Z';
 const DUE_MARINE_DECLARED_END_MS = Date.parse('2026-08-25T06:00:00.000Z');
 const DECLARED_RUN_SPAN_MS = 5 * 24 * 60 * 60_000;
@@ -336,12 +337,14 @@ describe('scheduled city rotation', () => {
     });
   });
 
-  it('does not report an equal manifest-only run as a fresh city contact', async () => {
+  it('discloses an equal manifest-only run after grace without inventing contact', async () => {
     const { env, store, gets, puts } = runtime(DUE_MARINE_RUN);
     const scheduledTime = FIRST_TICK_MS + 3 * LOCATIONS.length * CRON_PERIOD_MS;
     const location = tickOrder(scheduledTime)[0];
     const forecastKey = assembledForecastKey(location);
     const cachedBefore = store.get(forecastKey)!;
+    const previousAttemptAt = (JSON.parse(cachedBefore) as ForecastData)
+      .sources.cacheHealth?.lastAttemptAt;
     const previousSuccess = scheduledTime - 8 * CRON_PERIOD_MS;
     const previousFailure = scheduledTime - 4 * CRON_PERIOD_MS;
     store.set(CRON_HEARTBEAT_KEY, JSON.stringify({
@@ -384,8 +387,14 @@ describe('scheduled city rotation', () => {
 
     expect(gets.filter((key) => key === DMI_RUN_MANIFEST_KEY)).toHaveLength(1);
     expect(provider).not.toHaveBeenCalled();
-    expect(store.get(forecastKey)).toBe(cachedBefore);
-    expect(puts).not.toContain(forecastKey);
+    expect(store.get(forecastKey)).not.toBe(cachedBefore);
+    expect(puts).toContain(forecastKey);
+    const checked = JSON.parse(store.get(forecastKey)!) as ForecastData;
+    expect(checked.sources.cacheHealth).toMatchObject({
+      status: 'current',
+      degradedSources: ['water', 'waves'],
+      lastAttemptAt: previousAttemptAt,
+    });
     expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
       schemaVersion: 2,
       lastTickAt: new Date(scheduledTime).toISOString(),
@@ -476,7 +485,7 @@ describe('scheduled city rotation', () => {
         declaredEndMs: declaredEndMsForRun('2026-08-20T120000Z'),
       },
     });
-    expect(checked.sources.cacheHealth?.degradedSources).toBeUndefined();
+    expect(checked.sources.cacheHealth?.degradedSources).toEqual(['water']);
     expect(checked.sources.cacheHealth?.providerBusy).toBeUndefined();
     expect(checked.sources.cacheHealth?.message).toBeUndefined();
     expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
@@ -487,7 +496,318 @@ describe('scheduled city rotation', () => {
     });
   });
 
-  it('keeps a due manifest hit healthy when only its ahead sibling catalogue fails', async () => {
+  it.each([
+    {
+      name: 'generic failure is visible as soon as the run is due',
+      scheduledAt: '2026-08-20T15:40:00.000Z',
+      waterResponse: () => new Response('temporary provider failure', {
+        status: 503,
+        headers: { 'Retry-After': '1200' },
+      }),
+      expectedDegraded: ['water'],
+      expectedBusy: false,
+      expectedMessage: 'Marine service unavailable',
+    },
+    {
+      name: 'verified 429 remains neutral inside publication grace',
+      scheduledAt: '2026-08-20T15:41:00.000Z',
+      waterResponse: () => new Response('busy', {
+        status: 429,
+        headers: { 'Retry-After': '1200' },
+      }),
+      expectedDegraded: undefined,
+      expectedBusy: false,
+      expectedMessage: undefined,
+    },
+    {
+      name: 'verified 429 becomes busy at the exact grace boundary',
+      scheduledAt: '2026-08-20T15:50:00.000Z',
+      waterResponse: () => new Response('busy', {
+        status: 429,
+        headers: { 'Retry-After': '1200' },
+      }),
+      expectedDegraded: ['water'],
+      expectedBusy: true,
+      expectedMessage: 'Marine service busy',
+    },
+    {
+      name: 'valid empty catalogue remains neutral inside publication grace',
+      scheduledAt: '2026-08-20T15:43:00.000Z',
+      waterResponse: () => Response.json({ instances: [] }),
+      expectedDegraded: undefined,
+      expectedBusy: false,
+      expectedMessage: undefined,
+    },
+  ])('$name', async ({
+    scheduledAt,
+    waterResponse,
+    expectedDegraded,
+    expectedBusy,
+    expectedMessage,
+  }) => {
+    const scheduledTime = Date.parse(scheduledAt);
+    const { env, store } = runtime({
+      water: DUE_MARINE_RUN,
+      waves: '2026-08-20T120000Z',
+    });
+    const location = tickOrder(scheduledTime)[0];
+    const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/instances') && url.includes('/collections/dkss_')) {
+        return waterResponse();
+      }
+      if (url.endsWith('/instances') && url.includes('/collections/wam_')) {
+        return Response.json({ instances: [catalogueInstance('2026-08-20T120000Z')] });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.setSystemTime(scheduledTime);
+
+    await worker.scheduled(
+      { scheduledTime } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    const checked = JSON.parse(store.get(assembledForecastKey(location))!) as ForecastData;
+    expect(checked.sources.cacheHealth?.degradedSources).toEqual(expectedDegraded);
+    expect(checked.sources.cacheHealth?.providerBusy).toBe(expectedBusy || undefined);
+    expect(checked.sources.cacheHealth?.busyProvider)
+      .toBe(expectedBusy ? 'marine' : undefined);
+    if (expectedMessage) {
+      expect(checked.sources.cacheHealth?.message).toContain(expectedMessage);
+    } else {
+      expect(checked.sources.cacheHealth?.message).toBeUndefined();
+    }
+    expect(provider.mock.calls.some(([input]) => String(input).includes('/collections/dkss_')))
+      .toBe(true);
+    expect(provider.mock.calls.some(([input]) => String(input).includes('/collections/wam_')))
+      .toBe(true);
+  });
+
+  it('keeps a partial run invisible and retries it on the next city rotation', async () => {
+    const firstTick = Date.parse('2026-08-20T15:44:00.000Z');
+    const secondTick = firstTick + LOCATIONS.length * CRON_PERIOD_MS;
+    const location = tickOrder(firstTick)[0];
+    expect(tickOrder(secondTick)[0].id).toBe(location.id);
+    const { env, store, puts } = runtime({
+      water: DUE_MARINE_RUN,
+      waves: '2026-08-20T120000Z',
+    });
+    const waterKey = marineIngredientKey(location, 'water');
+    const wavesKey = marineIngredientKey(location, 'waves');
+    store.set(
+      waterKey,
+      JSON.stringify(completeMarineEnvelope(location, 'water', DUE_MARINE_RUN)),
+    );
+    store.set(
+      wavesKey,
+      JSON.stringify(completeMarineEnvelope(location, 'waves', '2026-08-20T120000Z')),
+    );
+    const candidate = completeMarineSeries('water', '2026-08-20T120000Z');
+    let waterPositionCalls = 0;
+    const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('api.met.no/')) {
+        return Response.json({
+          properties: {
+            timeseries: [{
+              time: '2026-08-20T17:00:00.000Z',
+              data: {
+                instant: {
+                  details: {
+                    air_temperature: 15,
+                    wind_speed: 2,
+                    wind_speed_of_gust: 3,
+                    wind_from_direction: 180,
+                  },
+                },
+                next_1_hours: {
+                  summary: { symbol_code: 'clearsky_day' },
+                  details: { precipitation_amount: 0 },
+                },
+              },
+            }],
+          },
+        }, {
+          headers: {
+            Expires: 'Thu, 20 Aug 2026 18:00:00 GMT',
+            'Last-Modified': 'Thu, 20 Aug 2026 15:30:00 GMT',
+          },
+        });
+      }
+      if (url.includes('feeds.meteoalarm.org/')) {
+        return new Response('<feed></feed>', { status: 200 });
+      }
+      if (url.endsWith('/instances')) {
+        return Response.json({
+          instances: [catalogueInstance('2026-08-20T120000Z')],
+        });
+      }
+      if (url.includes('/collections/dkss_') && url.includes('/instances/')) {
+        waterPositionCalls += 1;
+        const visible = waterPositionCalls === 1 ? candidate.slice(0, 12) : candidate;
+        return Response.json({
+          features: visible.map((point) => ({
+            properties: {
+              step: point.time,
+              'sea-mean-deviation': point.tideLevel,
+              'water-temperature': point.tempWater,
+              'current-u': 0,
+              'current-v': 0,
+            },
+          })),
+        });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    vi.setSystemTime(firstTick);
+    await worker.scheduled(
+      { scheduledTime: firstTick } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    const afterPartial = JSON.parse(
+      store.get(assembledForecastKey(location))!,
+    ) as ForecastData;
+    expect(afterPartial.sources.cacheHealth?.marineInstances?.water?.id)
+      .toBe(DUE_MARINE_RUN);
+    expect(afterPartial.sources.cacheHealth?.degradedSources).toBeUndefined();
+    expect(JSON.parse(store.get(waterKey)!)).toMatchObject({ id: DUE_MARINE_RUN });
+    expect(puts.filter((key) => key === waterKey)).toHaveLength(0);
+    expect(waterPositionCalls).toBe(1);
+
+    vi.setSystemTime(secondTick);
+    await worker.scheduled(
+      { scheduledTime: secondTick } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    const afterComplete = JSON.parse(
+      store.get(assembledForecastKey(location))!,
+    ) as ForecastData;
+    expect(afterComplete.sources.cacheHealth?.marineInstances?.water?.id)
+      .toBe('2026-08-20T120000Z');
+    expect(JSON.parse(store.get(waterKey)!)).toMatchObject({
+      id: '2026-08-20T120000Z',
+      seriesEndMs: Date.parse('2026-08-25T12:00:00.000Z'),
+    });
+    expect(puts.filter((key) => key === waterKey)).toHaveLength(1);
+    expect(waterPositionCalls).toBe(2);
+    expect(provider).toHaveBeenCalled();
+  });
+
+  it('never relabels expired assembled rows with an unaccepted partial run', async () => {
+    const firstTick = Date.parse('2026-08-20T15:44:00.000Z');
+    const secondTick = firstTick + LOCATIONS.length * CRON_PERIOD_MS;
+    const location = tickOrder(firstTick)[0];
+    const expiredWaterRun = '2026-08-20T000000Z';
+    const candidateWaterRun = '2026-08-20T120000Z';
+    const wavesRun = '2026-08-20T120000Z';
+    const { env, store, puts } = runtime({ water: expiredWaterRun, waves: wavesRun });
+    const waterKey = marineIngredientKey(location, 'water');
+    const wavesKey = marineIngredientKey(location, 'waves');
+    // There is deliberately no usable raw water ingredient. The only water
+    // rows live in the assembled payload and are already beyond the 12-hour
+    // safety limit; a fresh catalogue id must never re-date those bytes.
+    store.set(
+      wavesKey,
+      JSON.stringify(completeMarineEnvelope(location, 'waves', wavesRun)),
+    );
+    const partialWater = completeMarineSeries('water', candidateWaterRun).slice(0, 12);
+    let waterPositionCalls = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('api.met.no/')) {
+        return Response.json({
+          properties: {
+            timeseries: [{
+              time: '2026-08-20T17:00:00.000Z',
+              data: {
+                instant: {
+                  details: {
+                    air_temperature: 15,
+                    wind_speed: 2,
+                    wind_speed_of_gust: 3,
+                    wind_from_direction: 180,
+                  },
+                },
+                next_1_hours: {
+                  summary: { symbol_code: 'clearsky_day' },
+                  details: { precipitation_amount: 0 },
+                },
+              },
+            }],
+          },
+        }, {
+          headers: {
+            Expires: 'Thu, 20 Aug 2026 18:00:00 GMT',
+            'Last-Modified': 'Thu, 20 Aug 2026 15:30:00 GMT',
+          },
+        });
+      }
+      if (url.includes('feeds.meteoalarm.org/')) {
+        return new Response('<feed></feed>', { status: 200 });
+      }
+      if (url.endsWith('/instances')) {
+        return Response.json({ instances: [catalogueInstance(candidateWaterRun)] });
+      }
+      if (url.includes('/collections/dkss_') && url.includes('/instances/')) {
+        waterPositionCalls += 1;
+        return Response.json({
+          features: partialWater.map((point) => ({
+            properties: {
+              step: point.time,
+              'sea-mean-deviation': point.tideLevel,
+              'water-temperature': point.tempWater,
+              'current-u': 0,
+              'current-v': 0,
+            },
+          })),
+        });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    for (const scheduledTime of [firstTick, secondTick]) {
+      vi.setSystemTime(scheduledTime);
+      await worker.scheduled(
+        { scheduledTime } as ScheduledController,
+        env as Env,
+        {} as ExecutionContext,
+      );
+
+      const held = JSON.parse(store.get(assembledForecastKey(location))!) as ForecastData;
+      expect(held.sources.cacheHealth).toMatchObject({
+        status: 'stale',
+        needsRebuild: true,
+        marineInstances: {
+          water: { collection: 'dkss_idw', id: expiredWaterRun },
+        },
+      });
+      expect(store.has(waterKey)).toBe(false);
+      expect(puts.filter((key) => key === waterKey)).toHaveLength(0);
+    }
+
+    // The next rotation must really retry DMI. Before the provenance fix, the
+    // first failure stamped candidateWaterRun onto the old payload and the
+    // second build reused those expired rows as if they belonged to that run.
+    expect(waterPositionCalls).toBe(2);
+  });
+
+  it('does not add waves, busy copy, or contact when an ahead sibling probe fails', async () => {
     const { env, store } = runtime({
       water: DUE_MARINE_RUN,
       waves: '2026-08-20T120000Z',
@@ -497,7 +817,9 @@ describe('scheduled city rotation', () => {
     const previousSuccess = scheduledTime - 4 * CRON_PERIOD_MS;
     store.set(CRON_HEARTBEAT_KEY, JSON.stringify({
       schemaVersion: 2,
-      lastTickAt: new Date(scheduledTime - CRON_PERIOD_MS).toISOString(),
+      lastTickAt: new Date(
+        scheduledTime - CRON_HEARTBEAT_THROTTLE_TICKS * CRON_PERIOD_MS,
+      ).toISOString(),
       locations: { [location.id]: new Date(previousSuccess).toISOString() },
       unreachable: {},
     }));
@@ -538,15 +860,69 @@ describe('scheduled city rotation', () => {
     expect(provider.mock.calls.some(([input]) => String(input).includes('/collections/wam_')))
       .toBe(true);
     const checked = JSON.parse(store.get(assembledForecastKey(location))!) as ForecastData;
-    expect(checked.sources.cacheHealth?.degradedSources).toBeUndefined();
+    expect(checked.sources.cacheHealth?.degradedSources).toEqual(['water']);
     expect(checked.sources.cacheHealth?.providerBusy).toBeUndefined();
     expect(checked.sources.cacheHealth?.message).toBeUndefined();
     expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
       schemaVersion: 2,
-      // This is a healthy manifest-only verification, so the cadence write is
-      // throttled and neither provider-contact nor failure history is invented.
-      lastTickAt: new Date(scheduledTime - CRON_PERIOD_MS).toISOString(),
+      // The manifest is not contact, while the WAM request was genuinely
+      // attempted and failed. Data-health grace does not erase that evidence.
+      lastTickAt: new Date(scheduledTime).toISOString(),
       locations: { [location.id]: new Date(previousSuccess).toISOString() },
+      unreachable: { [location.id]: new Date(scheduledTime).toISOString() },
+    });
+  });
+
+  it('records contact when a due manifest hit is paired with a valid empty sibling catalogue', async () => {
+    const { env, store } = runtime({
+      water: DUE_MARINE_RUN,
+      waves: '2026-08-20T120000Z',
+    });
+    const scheduledTime = FIRST_TICK_MS + 8 * LOCATIONS.length * CRON_PERIOD_MS;
+    const location = tickOrder(scheduledTime)[0];
+    const previousSuccess = scheduledTime - 4 * CRON_PERIOD_MS;
+    store.set(CRON_HEARTBEAT_KEY, JSON.stringify({
+      schemaVersion: 2,
+      lastTickAt: new Date(
+        scheduledTime - CRON_HEARTBEAT_THROTTLE_TICKS * CRON_PERIOD_MS,
+      ).toISOString(),
+      locations: { [location.id]: new Date(previousSuccess).toISOString() },
+      unreachable: {},
+    }));
+    store.set(DMI_RUN_MANIFEST_KEY, JSON.stringify({
+      schemaVersion: DMI_RUN_MANIFEST_SCHEMA_VERSION,
+      entries: {
+        [dmiCollectionListKey(location.dmiCollections.water)]: {
+          collection: location.dmiCollections.water[0],
+          id: DUE_MARINE_RUN,
+          declaredEndMs: DUE_MARINE_DECLARED_END_MS,
+          discoveredAt: new Date(scheduledTime).toISOString(),
+        },
+      },
+    }));
+    const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/instances') && url.includes('/collections/wam_')) {
+        return Response.json({ instances: [] });
+      }
+      throw new Error(`Unexpected provider URL: ${url}`);
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.setSystemTime(scheduledTime);
+
+    await worker.scheduled(
+      { scheduledTime } as ScheduledController,
+      env as Env,
+      {} as ExecutionContext,
+    );
+
+    expect(provider).toHaveBeenCalled();
+    expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
+      schemaVersion: 2,
+      lastTickAt: new Date(scheduledTime).toISOString(),
+      locations: { [location.id]: new Date(scheduledTime).toISOString() },
       unreachable: {},
     });
   });

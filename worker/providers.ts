@@ -41,6 +41,7 @@ import {
   FORECAST_PROVIDER_PARAMETERS,
   FORECAST_SOURCE_POLICY,
   PAYLOAD_VERSION,
+  assessMarineRunCoverage,
   assembleForecastFromSources,
   canUseMetFallback,
   currentMarineIngredient,
@@ -58,12 +59,16 @@ import {
   latestInstanceFromResponse,
   mapMetPayload,
   marineFallbackRejection,
-  marineIngredientHasCompleteCoverage,
+  marineCandidateIsWithinPublicationGrace,
   marineInstancesEqual,
   marineInstancesWithinFallbackAge,
   marineProbeDecision,
+  marineRunContract,
+  marineRunDegradedAtMs,
   marineRunDueAtMs,
   marineSourcesDueForProbe,
+  marineSourcesMissingExpectedAdvance,
+  marineSourcesOverdueForRefresh,
   metForecastUrl,
   parseDmiInstanceMs,
   retainedActiveWarnings,
@@ -100,6 +105,8 @@ export {
   marineInstancesWithinFallbackAge,
   marineProbeDecision,
   marineSourcesDueForProbe,
+  marineSourcesMissingExpectedAdvance,
+  marineSourcesOverdueForRefresh,
 };
 
 function assertMarineRunWithinFallbackAge(
@@ -128,6 +135,18 @@ const DMI_RUN_MANIFEST_KV_BUDGET_MS = 1_000;
 
 type DmiRunManifestStore = Pick<KVNamespace, 'get' | 'put'>;
 
+class DmiCatalogueNotReadyError extends ProviderUnavailableError {
+  constructor(collection: string) {
+    super(
+      'marine',
+      `DMI ${collection} has not published a usable instance yet.`,
+    );
+    this.name = 'DmiCatalogueNotReadyError';
+  }
+}
+
+export type MarineSubstitutionCause = 'not-ready' | 'busy' | 'unavailable';
+
 interface DmiRunManifestEntry extends MarineInstance {
   discoveredAt: string;
 }
@@ -152,6 +171,7 @@ interface DmiInstanceResolution {
   source: 'catalogue' | 'manifest';
   collections: readonly string[];
   known: MarineInstance | undefined;
+  catalogueRegressionIgnored?: true;
 }
 
 interface DmiInstanceResolutionPlan {
@@ -196,7 +216,8 @@ function validatedDmiRunManifestEntry(
     return null;
   }
 
-  const runAtMs = parseDmiInstanceMs(value.id);
+  const contract = marineRunContract(value.collection, value.id);
+  const runAtMs = contract?.runStartMs ?? Number.NaN;
   const declaredEndMs = value.declaredEndMs;
   const discoveredAtMs = Date.parse(value.discoveredAt);
   if (!Number.isFinite(runAtMs)
@@ -270,8 +291,6 @@ function manifestInstanceForCollections(
 ): MarineInstance | null {
   const stored = dmiRunManifestEntryState(manifest, collections, nowMs);
   if (stored.kind !== 'valid'
-    || typeof stored.entry.declaredEndMs !== 'number'
-    || !Number.isFinite(stored.entry.declaredEndMs)
     || !isMarineRunWithinFallbackAge(stored.entry, nowMs)
     || nowMs - stored.discoveredAtMs > FORECAST_SOURCE_POLICY.dmiRunCycleMs) {
     return null;
@@ -284,11 +303,6 @@ function manifestInstanceForCollections(
   }
   if (Number.isFinite(knownRunAtMs) && stored.runAtMs < knownRunAtMs) return null;
   if (Number.isFinite(knownRunAtMs) && stored.runAtMs === knownRunAtMs) {
-    if (known?.collection === stored.entry.collection
-      && typeof known.declaredEndMs === 'number'
-      && stored.entry.declaredEndMs < known.declaredEndMs) {
-      return null;
-    }
     const knownRunDueAtMs = marineRunDueAtMs(known);
     const storedRunDueAtMs = marineRunDueAtMs(stored.entry);
     // Equal timestamps may still come from different allowed fallback
@@ -310,7 +324,9 @@ function manifestInstanceForCollections(
   return {
     collection: stored.entry.collection,
     id: stored.entry.id,
-    declaredEndMs: stored.entry.declaredEndMs,
+    ...(typeof stored.entry.declaredEndMs === 'number'
+      ? { declaredEndMs: stored.entry.declaredEndMs }
+      : {}),
   };
 }
 
@@ -345,19 +361,43 @@ function resolveLatestInstanceForCollections(
       eventMemo,
       contactEvidence,
     )
-      .then((instance) => ({
-        instance: known
-          && known.collection === instance.collection
-          && known.id === instance.id
-          && typeof known.declaredEndMs === 'number'
-          && (typeof instance.declaredEndMs !== 'number'
-            || known.declaredEndMs > instance.declaredEndMs)
-          ? { ...instance, declaredEndMs: known.declaredEndMs }
-          : instance,
-        source: 'catalogue' as const,
-        collections,
-        known,
-      })),
+      .then((instance) => {
+        const discovered = marineRunContract(instance.collection, instance.id);
+        const retained = known
+          && collections.includes(known.collection)
+          && isMarineRunWithinFallbackAge(known, Date.now())
+          ? marineRunContract(known.collection, known.id)
+          : null;
+        if (retained && discovered && retained.runStartMs > discovered.runStartMs) {
+          // A transiently incomplete catalogue must never rewind a city that
+          // already proved and retained a newer complete run. The catalogue
+          // contact still counts, but its older answer is neither served nor
+          // persisted into the shared manifest.
+          try {
+            console.warn(JSON.stringify({
+              event: 'dmi_catalogue_regression_ignored',
+              collections,
+              retainedRunId: known?.id,
+              catalogueRunId: instance.id,
+            }));
+          } catch {
+            // Diagnostics cannot decide which run is served.
+          }
+          return {
+            instance: known as MarineInstance,
+            source: 'catalogue' as const,
+            collections,
+            known,
+            catalogueRegressionIgnored: true as const,
+          };
+        }
+        return {
+          instance,
+          source: 'catalogue' as const,
+          collections,
+          known,
+        };
+      }),
   };
 }
 
@@ -372,7 +412,9 @@ async function persistDmiRunManifest(
   const nowMs = Date.now();
   const updates = new Map<string, MarineInstance>();
   for (const result of resolutions) {
-    if (result.status !== 'fulfilled' || result.value.source !== 'catalogue') continue;
+    if (result.status !== 'fulfilled'
+      || result.value.source !== 'catalogue'
+      || result.value.catalogueRegressionIgnored) continue;
     const { collections, instance, known } = result.value;
     if (!isMarineRunWithinFallbackAge(instance, nowMs)) continue;
     const discoveredRunAtMs = parseDmiInstanceMs(instance.id);
@@ -394,23 +436,8 @@ async function persistDmiRunManifest(
     const advancesStoredManifest = stored.kind === 'missing'
       ? (!Number.isFinite(knownRunAtMs) || discoveredRunAtMs > knownRunAtMs)
       : discoveredRunAtMs > stored.runAtMs;
-    // A model-53 manifest may already hold this id without the catalogue's
-    // temporal end. Permit one same-run enrichment so later cities can prove
-    // coverage instead of probing independently until the next run.
-    const enrichesSameRunCoverage = stored.kind === 'valid'
-      && discoveredRunAtMs === stored.runAtMs
-      && instance.collection === stored.entry.collection
-      && typeof instance.declaredEndMs === 'number'
-      && (typeof stored.entry.declaredEndMs !== 'number'
-        || instance.declaredEndMs > stored.entry.declaredEndMs);
-    const enrichesMissingCoverage = stored.kind === 'missing'
-      && known?.collection === instance.collection
-      && known.id === instance.id
-      && typeof instance.declaredEndMs === 'number'
-      && (typeof known.declaredEndMs !== 'number'
-        || instance.declaredEndMs > known.declaredEndMs);
     if (doesNotRegressKnownRun
-      && (advancesStoredManifest || enrichesSameRunCoverage || enrichesMissingCoverage)) {
+      && advancesStoredManifest) {
       updates.set(dmiCollectionListKey(collections), instance);
     }
   }
@@ -520,7 +547,7 @@ async function probeLatestInstanceForCollections(
         'marine',
         eventMemo,
       );
-      const latest = latestInstanceFromResponse(data);
+      const latest = latestInstanceFromResponse(data, collection);
       // A structurally valid empty catalogue still proves provider contact;
       // resolving a usable run remains the stricter aggregate below.
       if (contactEvidence) contactEvidence.providerContacted = true;
@@ -533,10 +560,7 @@ async function probeLatestInstanceForCollections(
             : {}),
         };
       }
-      lastError = new ProviderUnavailableError(
-        'marine',
-        `DMI ${collection} has not published a usable instance yet.`,
-      );
+      lastError = new DmiCatalogueNotReadyError(collection);
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
       // Collection fallbacks are for a missing collection (404) or a usable
@@ -557,6 +581,11 @@ export interface MarineInstanceProbe {
   // own publication schedule; a not-yet-due sibling is not degraded merely
   // because the other kind caused this combined probe.
   substituted: MarineKind[];
+  // Why each carried-over id was needed. Publication lag and a verified 429
+  // are normalised only through the bounded publication grace; an ordinary
+  // provider failure is visible immediately because it says nothing about
+  // whether DMI is still publishing this run.
+  substitutionCauses?: Partial<Record<MarineKind, MarineSubstitutionCause>>;
   // True only when this invocation resolved at least one usable catalogue run.
   // A valid empty catalogue is still provider-contact evidence, but cannot
   // verify a run. A manifest-only verification is healthy but is not a new
@@ -627,13 +656,25 @@ export async function fetchLatestMarineInstances(
   // already-current path, restamped lastAttemptAt to now, cleared nothing, and
   // if MET's Expires lapsed it stamped fetchedAt onto hours-old tide data.
   const substituted: MarineKind[] = [];
+  const substitutionCauses: Partial<Record<MarineKind, MarineSubstitutionCause>> = {};
+  const substitutionCause = (
+    result: PromiseSettledResult<DmiInstanceResolution>,
+  ): MarineSubstitutionCause => {
+    if (result.status === 'fulfilled') return 'unavailable';
+    if (result.reason instanceof DmiCatalogueNotReadyError) return 'not-ready';
+    return isProviderUnavailableError(result.reason) && result.reason.busy
+      ? 'busy'
+      : 'unavailable';
+  };
   if (!water && fallbackInstances?.water && isMarineRunWithinFallbackAge(fallbackInstances.water)) {
     water = fallbackInstances.water;
     substituted.push('water');
+    substitutionCauses.water = substitutionCause(results[0]);
   }
   if (!waves && fallbackInstances?.waves && isMarineRunWithinFallbackAge(fallbackInstances.waves)) {
     waves = fallbackInstances.waves;
     substituted.push('waves');
+    substitutionCauses.waves = substitutionCause(results[1]);
   }
 
   if (!water || !waves) {
@@ -661,6 +702,7 @@ export async function fetchLatestMarineInstances(
   return {
     instances: { water, waves },
     substituted,
+    ...(substituted.length > 0 ? { substitutionCauses } : {}),
     catalogueContacted,
     manifestResolved,
   };
@@ -872,8 +914,14 @@ export async function readRetainedMarineInstances(
         `waves retained instance check for ${location.id}`,
       ),
     ]);
-    waterStored = isMarineIngredientEnvelope(waterRaw, location) ? waterRaw : null;
-    wavesStored = isMarineIngredientEnvelope(wavesRaw, location) ? wavesRaw : null;
+    waterStored = isMarineIngredientEnvelope(waterRaw, location)
+      && waterRaw.marineKind === 'water'
+      ? waterRaw
+      : null;
+    wavesStored = isMarineIngredientEnvelope(wavesRaw, location)
+      && wavesRaw.marineKind === 'waves'
+      ? wavesRaw
+      : null;
   } catch (error) {
     rethrowIfDeadlineReached(error, policy, `retained instances read recovery for ${location.id}`);
     return undefined;
@@ -892,16 +940,10 @@ export async function readRetainedMarineInstances(
       water: {
         collection: currentWater.collection,
         id: currentWater.id,
-        ...(typeof currentWater.declaredEndMs === 'number'
-          ? { declaredEndMs: currentWater.declaredEndMs }
-          : {}),
       },
       waves: {
         collection: currentWaves.collection,
         id: currentWaves.id,
-        ...(typeof currentWaves.declaredEndMs === 'number'
-          ? { declaredEndMs: currentWaves.declaredEndMs }
-          : {}),
       },
     };
     return marineInstancesWithinFallbackAge(candidate) ? candidate : undefined;
@@ -945,7 +987,10 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
       policy,
       `${kind} retained cache read for ${location.id}`,
     );
-    stored = isMarineIngredientEnvelope(retained, location) ? retained : null;
+    stored = isMarineIngredientEnvelope(retained, location)
+      && retained.marineKind === kind
+      ? retained
+      : null;
   } catch (error) {
     rethrowIfDeadlineReached(error, policy, `${kind} retained cache read recovery for ${location.id}`);
     stored = null;
@@ -954,14 +999,53 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
   // Same complete run we already hold data for: reuse it, no network call. DMI
   // runs change only every ~6h, so an hourly weather rebuild must not re-pull
   // identical marine data (measured: gaps between runs are exactly 6.00h).
-  // Partial or unknown coverage deliberately falls through and gets another
-  // chance to reach the catalogue's declared boundary.
+  // Anything that cannot re-prove the independent full-run contract falls
+  // through and is fetched again; stored coverage stamps are not trusted.
   const currentStored = currentMarineIngredient(stored);
+
+  const storedContract = currentStored
+    ? marineRunContract(currentStored.collection, currentStored.id)
+    : null;
+  const requestedContract = marineRunContract(instance.collection, instance.id);
+  if (currentStored
+    && storedContract
+    && requestedContract
+    && storedContract.runStartMs > requestedContract.runStartMs) {
+    // Defence in depth at the persistence boundary: even if a future caller
+    // bypasses catalogue resolution, an older candidate cannot overwrite a
+    // newer complete raw ingredient.
+    try {
+      console.warn(JSON.stringify({
+        event: 'dmi_raw_regression_ignored',
+        locationId: location.id,
+        marineKind: kind,
+        retainedRunId: currentStored.id,
+        requestedRunId: instance.id,
+      }));
+    } catch {
+      // Diagnostics cannot decide which run is served.
+    }
+    const sameCollectionAsRequested = currentStored.collection === instance.collection;
+    return {
+      series: currentStored.series,
+      instance: {
+        collection: currentStored.collection,
+        id: currentStored.id,
+      },
+      fallback: !sameCollectionAsRequested,
+      providerContacted: false,
+      ...(sameCollectionAsRequested
+        ? {}
+        : {
+            degraded: true,
+            sameCollectionAsRequested: false,
+          }),
+    };
+  }
 
   if (currentStored
     && currentStored.collection === instance.collection
-    && currentStored.id === instance.id
-    && marineIngredientHasCompleteCoverage(currentStored, instance.declaredEndMs)) {
+    && currentStored.id === instance.id) {
     return {
       series: currentStored.series,
       instance,
@@ -972,15 +1056,53 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
 
   // Fall back to the run we already hold (retained ingredient, else the seed
   // from the cached payload). `extra` distinguishes WHY we fell back.
+  const fallbackFromCompleteStored = (
+    extra: Pick<
+      MarineSeriesResult,
+      'providerContacted' | 'degraded' | 'busy' | 'notReady' | 'degradationIsImmediate'
+    >,
+    nowMs = Date.now(),
+  ): MarineSeriesResult | null => {
+    if (!currentStored || !isMarineRunWithinFallbackAge(currentStored, nowMs)) return null;
+    return {
+      series: currentStored.series,
+      instance: {
+        collection: currentStored.collection,
+        id: currentStored.id,
+      },
+      fallback: true,
+      // currentStored was produced by currentMarineIngredient above, which has
+      // already recomputed the full schema-v3 coverage proof once.
+      sameCollectionAsRequested: currentStored.collection === instance.collection,
+      ...extra,
+    };
+  };
   const fallbackToHeld = (
-    extra: Pick<MarineSeriesResult, 'providerContacted' | 'degraded' | 'busy' | 'notReady'>,
-  ): MarineSeriesResult | null => heldMarineFallback(
-    currentStored,
-    seedSeries,
-    seedInstance,
-    instance,
-    extra,
-  );
+    extra: Pick<
+      MarineSeriesResult,
+      'providerContacted' | 'degraded' | 'busy' | 'notReady' | 'degradationIsImmediate'
+    >,
+  ): MarineSeriesResult | null => fallbackFromCompleteStored(extra)
+    ?? heldMarineFallback(
+      null,
+      seedSeries,
+      seedInstance,
+      instance,
+      extra,
+    );
+  const fallbackToCompleteHeld = (
+    extra: Pick<MarineSeriesResult, 'providerContacted' | 'notReady'>,
+  ): MarineSeriesResult | null => {
+    const outcomeAtMs = Date.now();
+    const retainedDegradedAtMs = marineRunDegradedAtMs(currentStored);
+    if (!currentStored
+      || currentStored.collection !== instance.collection
+      || !Number.isFinite(retainedDegradedAtMs)
+      || outcomeAtMs >= retainedDegradedAtMs) {
+      return null;
+    }
+    return fallbackFromCompleteStored(extra, outcomeAtMs);
+  };
 
   let data: { features: TFeature[] };
   try {
@@ -998,12 +1120,19 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
   } catch (error) {
     rethrowIfDeadlineReached(error, policy, `${kind} retained fallback for ${location.id}`);
     if (!isProviderUnavailableError(error)) throw error;
-    // Transport error (429/5xx/network): we genuinely could not refresh this
-    // source. Show the held run and flag it degraded (amber).
+    // A verified 429 during DMI's bounded publication window is not evidence
+    // that the previous complete run is stale. Keep the operational 429 in the
+    // upstream-attempt log, but do not turn normal publishing into user-facing
+    // degradation. Generic 5xx/network failures remain visible immediately.
+    if (error.busy && marineCandidateIsWithinPublicationGrace(instance)) {
+      const pending = fallbackToCompleteHeld({ providerContacted: false, notReady: true });
+      if (pending) return pending;
+    }
     const held = fallbackToHeld({
       providerContacted: false,
       degraded: true,
       busy: error.busy,
+      degradationIsImmediate: !error.busy,
     });
     if (held) return held;
     throw error;
@@ -1014,34 +1143,58 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
   assertMarineRunWithinFallbackAge(instance, instance.collection);
 
   const series = mapFeatures(data.features);
-  if (series.length > 0) {
-    const seriesEndMs = series.reduce(
-      (latest, point) => Number.isFinite(point.timeMs)
-        ? Math.max(latest, point.timeMs)
-        : latest,
-      Number.NEGATIVE_INFINITY,
-    );
-    const recordedSeriesEndMs = Number.isFinite(seriesEndMs) ? seriesEndMs : null;
-    const declaredEndMs = typeof instance.declaredEndMs === 'number'
-      && Number.isFinite(instance.declaredEndMs)
-      ? instance.declaredEndMs
-      : null;
-    const coverageStatus = recordedSeriesEndMs === null || declaredEndMs === null
-      ? 'unknown' as const
-      : recordedSeriesEndMs >= declaredEndMs
-        ? 'complete' as const
-        : 'partial' as const;
-    const coverageGapMs = coverageStatus === 'partial'
-      && declaredEndMs !== null
-      && recordedSeriesEndMs !== null
-      ? declaredEndMs - recordedSeriesEndMs
-      : null;
+  const coverage = assessMarineRunCoverage(
+    kind,
+    instance,
+    series,
+    data.features.length,
+  );
+  if (!coverage) {
+    throw new Error(`DMI ${instance.collection} cannot define a ${kind} run contract.`);
+  }
+  // Sample grace at the outcome, not before the fetch. A slow request that
+  // starts just inside the boundary must not suppress degradation after the
+  // boundary has passed while it was in flight.
+  const withinPublicationGrace = marineCandidateIsWithinPublicationGrace(instance);
+  // This observation is intentionally NOT a kv_write event. Partial and
+  // malformed candidates never replace the retained raw-marine ingredient,
+  // so counting the observation itself as that write would corrupt the
+  // write-budget telemetry this project relies on.
+  try {
+    console.log(JSON.stringify({
+      event: 'marine_coverage_observed',
+      locationId: location.id,
+      marineKind: kind,
+      collection: instance.collection,
+      runId: instance.id,
+      status: coverage.status,
+      sourceFeatureCount: coverage.sourceFeatureCount,
+      seriesPointCount: coverage.seriesPointCount,
+      expectedPointCount: coverage.expectedPointCount,
+      seriesStartMs: coverage.seriesStartMs,
+      seriesEndMs: coverage.seriesEndMs,
+      expectedStartMs: coverage.runStartMs,
+      expectedEndMs: coverage.expectedEndMs,
+      missingPointCount: coverage.missingPointCount,
+      extraPointCount: coverage.extraPointCount,
+      duplicatePointCount: coverage.duplicatePointCount,
+      gridMismatchCount: coverage.gridMismatchCount,
+      timestampMismatchCount: coverage.timestampMismatchCount,
+      invalidRequiredValueCount: coverage.invalidRequiredValueCount,
+      withinPublicationGrace,
+    }));
+  } catch {
+    // Diagnostics cannot decide whether a candidate is accepted.
+  }
+
+  if (coverage.status === 'complete') {
+    const completeSeriesEndMs = coverage.seriesEndMs;
+    if (completeSeriesEndMs === null) {
+      throw new Error(`DMI ${instance.collection} complete ${kind} run has no terminal step.`);
+    }
     const coverageChanged = !currentStored
       || currentStored.collection !== instance.collection
-      || currentStored.id !== instance.id
-      || currentStored.seriesEndMs !== recordedSeriesEndMs
-      || currentStored.declaredEndMs !== declaredEndMs
-      || currentStored.series.length !== series.length;
+      || currentStored.id !== instance.id;
     if (coverageChanged) {
       try {
         await awaitWithinDeadline(
@@ -1052,22 +1205,26 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
               schemaVersion: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
               locationId: location.id,
               forecastConfigRevision: location.forecastConfigRevision,
+              marineKind: kind,
               collection: instance.collection,
               id: instance.id,
-              seriesEndMs: recordedSeriesEndMs,
-              declaredEndMs,
+              expectedStartMs: coverage.runStartMs,
+              expectedEndMs: coverage.expectedEndMs,
+              seriesEndMs: completeSeriesEndMs,
               series,
-            }),
+            } satisfies MarineIngredientEnvelope),
             'raw-marine',
             location.id,
             undefined,
             {
               marineKind: kind,
-              seriesPointCount: series.length,
-              seriesEndMs: recordedSeriesEndMs,
-              declaredEndMs,
-              coverageStatus,
-              coverageGapMs,
+              seriesPointCount: coverage.seriesPointCount,
+              seriesStartMs: coverage.seriesStartMs,
+              seriesEndMs: coverage.seriesEndMs,
+              expectedPointCount: coverage.expectedPointCount,
+              expectedStartMs: coverage.runStartMs,
+              expectedEndMs: coverage.expectedEndMs,
+              coverageStatus: 'complete',
             },
           ),
           policy,
@@ -1075,29 +1232,34 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
         );
       } catch (error) {
         rethrowIfDeadlineReached(error, policy, `${kind} retained cache write recovery for ${location.id}`);
-        // Retention is best-effort.
+        // Retention is best-effort after the in-memory candidate has passed.
       }
     }
-    return coverageStatus === 'complete'
-      ? { series, instance, fallback: false, providerContacted: true }
-      : {
-          series,
-          instance,
-          fallback: true,
-          sameCollectionAsRequested: false,
-          providerContacted: true,
-          degraded: true,
-        };
+    return { series, instance, fallback: false, providerContacted: true };
   }
 
-  // 200 but no data for this instance: the run is listed in the catalog but
-  // not published yet. The run we already hold is still the latest AVAILABLE
-  // data, so this is NOT degradation - fall back silently and stay green.
-  const held = fallbackToHeld({ providerContacted: true, notReady: true });
+  if (coverage.status === 'partial' && withinPublicationGrace) {
+    const pending = fallbackToCompleteHeld({ providerContacted: true, notReady: true });
+    if (pending) return pending;
+  }
+
+  const held = fallbackToHeld({
+    providerContacted: true,
+    degraded: true,
+    degradationIsImmediate: coverage.status === 'invalid',
+  });
   if (held) return held;
+  if (coverage.status === 'invalid') {
+    // Invalid data is a contract failure, not evidence that DMI is still
+    // publishing. In particular it must not arm the initialization cooldown
+    // used for a legitimate partial candidate on a cold generation.
+    throw new Error(
+      `DMI ${instance.collection} returned an invalid ${kind} run for ${location.areaName}.`,
+    );
+  }
   throw new ProviderUnavailableError(
     'marine',
-    `DMI ${instance.collection} has not published ${kind} forecast points for ${location.areaName} yet.`,
+    `DMI ${instance.collection} has not published the complete ${kind} run for ${location.areaName} yet.`,
   );
 }
 

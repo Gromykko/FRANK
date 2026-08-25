@@ -16,10 +16,12 @@ import {
   marineInstancesEqual,
   marineProbeDecision,
   marineSourcesDueForProbe,
+  marineSourcesMissingExpectedAdvance,
+  marineSourcesOverdueForRefresh,
   parseDmiInstanceMs,
   retainedActiveWarnings,
 } from '../../worker/forecastModel';
-import { MARINE_INGREDIENT_CACHE_SCHEMA_VERSION } from '../../src/features/forecast/releaseContract';
+import { completeMarineEnvelope } from './marineTestData';
 
 const LOCATION = locationData[0] as ForecastLocation;
 const NOW = Date.parse('2026-08-20T12:30:00Z');
@@ -122,16 +124,11 @@ describe('generation-owned forecast model', () => {
   });
 
   it('keeps held marine sources independent and preserves their actual run ids', () => {
-    const storedWater = {
-      schemaVersion: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
-      locationId: LOCATION.id,
-      forecastConfigRevision: LOCATION.forecastConfigRevision,
-      collection: 'dkss_idw',
-      id: '2026-08-20T060000Z',
-      seriesEndMs: HOUR_MS,
-      declaredEndMs: HOUR_MS,
-      series: [{ time: HOUR, timeMs: HOUR_MS, tideLevel: 0.1 }],
-    };
+    const storedWater = completeMarineEnvelope(
+      LOCATION,
+      'water',
+      '2026-08-20T060000Z',
+    );
     const requested = { collection: 'dkss_idw', id: RUN };
     expect(heldMarineFallback(
       storedWater,
@@ -167,10 +164,11 @@ describe('generation-owned forecast model', () => {
   it('enforces model-owned age, source-selection, and transient-fallback boundaries', () => {
     const exactlyTwelveHoursOld = {
       collection: 'dkss_idw',
-      id: '2026-08-20T003000Z',
+      id: '2026-08-20T000000Z',
     };
-    expect(isMarineRunWithinFallbackAge(exactlyTwelveHoursOld, NOW)).toBe(true);
-    expect(isMarineRunWithinFallbackAge(exactlyTwelveHoursOld, NOW + 1)).toBe(false);
+    const fallbackBoundary = Date.parse('2026-08-20T12:00:00.000Z');
+    expect(isMarineRunWithinFallbackAge(exactlyTwelveHoursOld, fallbackBoundary)).toBe(true);
+    expect(isMarineRunWithinFallbackAge(exactlyTwelveHoursOld, fallbackBoundary + 1)).toBe(false);
 
     expect(canUseMetFallback({
       lastModified: 'Thu, 20 Aug 2026 06:30:00 GMT',
@@ -265,7 +263,45 @@ describe('generation-owned forecast model', () => {
       false,
       ['water'],
       Date.parse('2026-08-20T21:45:00.000Z'),
+    )).toEqual([]);
+    expect(degradedMarineSourcesAfterProbe(
+      waterLag,
+      false,
+      ['water'],
+      Date.parse('2026-08-20T21:50:00.000Z'),
     )).toEqual(['water']);
+    expect(degradedMarineSourcesAfterProbe(
+      waterLag,
+      false,
+      ['water'],
+      Date.parse('2026-08-20T21:20:00.000Z'),
+      false,
+      { water: 'unavailable' },
+    )).toEqual(['water']);
+    expect(degradedMarineSourcesAfterProbe(
+      waterLag,
+      false,
+      ['water'],
+      Date.parse('2026-08-20T21:49:59.999Z'),
+      false,
+      { water: 'busy' },
+    )).toEqual([]);
+    expect(degradedMarineSourcesAfterProbe(
+      waterLag,
+      false,
+      ['water'],
+      Date.parse('2026-08-20T21:50:00.000Z'),
+      false,
+      { water: 'busy' },
+    )).toEqual(['water']);
+    expect(degradedMarineSourcesAfterProbe(
+      waterLag,
+      false,
+      ['water'],
+      Date.parse('2026-08-20T21:49:59.999Z'),
+      false,
+      { water: 'not-ready' },
+    )).toEqual([]);
     expect(degradedMarineSourcesAfterProbe(
       waterLag,
       true,
@@ -276,6 +312,49 @@ describe('generation-owned forecast model', () => {
       water: { collection: 'dkss_idw', id: 'invalid' },
       waves: { collection: 'wam_nsb', id: '2026-08-21T000001Z' },
     }, Date.parse('2026-08-21T00:00:00Z'))).toEqual(['water', 'waves']);
+  });
+
+  it('separates the early probe gate from the 30-minute user-visible grace', () => {
+    const held = {
+      water: { collection: 'dkss_idw', id: '2026-08-20T120000Z' },
+      waves: { collection: 'wam_nsb', id: '2026-08-20T120000Z' },
+    };
+    expect(FORECAST_SOURCE_POLICY.dmiPublicationGraceMs).toBe(30 * 60 * 1000);
+    expect(marineSourcesDueForProbe(held, Date.parse('2026-08-20T20:35:00Z')))
+      .toEqual(['waves']);
+    expect(marineSourcesOverdueForRefresh(held, Date.parse('2026-08-20T21:14:59.999Z')))
+      .toEqual([]);
+    expect(marineSourcesOverdueForRefresh(held, Date.parse('2026-08-20T21:15:00Z')))
+      .toEqual(['waves']);
+    expect(marineSourcesOverdueForRefresh(held, Date.parse('2026-08-20T21:50:00Z')))
+      .toEqual(['water', 'waves']);
+  });
+
+  it('keeps a source degraded when it advances only to another overdue run', () => {
+    const previous = {
+      water: { collection: 'dkss_idw', id: '2026-08-20T000000Z' },
+      waves: { collection: 'wam_nsb', id: '2026-08-20T120000Z' },
+    };
+    const oneRunAhead = {
+      ...previous,
+      water: { collection: 'dkss_idw', id: '2026-08-20T060000Z' },
+    };
+    const caughtUp = {
+      ...previous,
+      water: { collection: 'dkss_idw', id: '2026-08-20T120000Z' },
+    };
+    const afterTwelveRunGrace = Date.parse('2026-08-20T16:00:00.000Z');
+
+    expect(marineSourcesMissingExpectedAdvance(
+      previous,
+      oneRunAhead,
+      afterTwelveRunGrace,
+    )).toEqual(['water']);
+    expect(marineSourcesMissingExpectedAdvance(
+      previous,
+      caughtUp,
+      afterTwelveRunGrace,
+    )).toEqual([]);
   });
 
   it('marks a failed marine catalogue probe without rewriting existing source order', () => {
@@ -317,18 +396,16 @@ describe('mapMetPayload expiry clamping', () => {
   });
 });
 
-// A 429 on the water position leg sends us back to the run we already hold. If
-// that run is still the newest one DMI's own schedule says exists, the bytes we
-// serve are identical to what the call would have returned - so the app must not
-// tell anyone their water level is "from an earlier update". Observed in
-// production 2026-08-25: every city reporting degraded water while holding the
-// same current run as waves, which needed no request and was never flagged.
+// A 429 on the water position leg sends us back to the independently complete
+// run we already hold. During the bounded publication grace, retaining that
+// known-good run is expected operation rather than proof of stale data; the
+// unavailable candidate may differ and is never assumed byte-identical.
 describe('a failed refresh call is not stale data', () => {
   const HOUR_2 = '2026-08-20T12:00:00.000Z';
   const CURRENT_RUN = '2026-08-20T120000Z';
-  // 02:00 + 6h cycle + 3h35 DKSS + 10m cushion = 11:45, so by 12:30 a newer run
-  // is genuinely due and this one IS behind.
-  const BEHIND_RUN = '2026-08-20T020000Z';
+  // 00:00 + 6h cycle + 3h20 DKSS + 30m publication grace = 09:50, so by 12:30
+  // a newer run is genuinely overdue and this one IS behind.
+  const BEHIND_RUN = '2026-08-20T000000Z';
 
   const assembleWithWater = (water: Record<string, unknown>) =>
     assembleForecastFromSources(LOCATION, {
@@ -376,7 +453,7 @@ describe('a failed refresh call is not stale data', () => {
       warnings: [],
     } as Parameters<typeof assembleForecastFromSources>[1], NOW);
 
-  it('does not degrade a busy fallback onto the newest run that is due', () => {
+  it('does not degrade complete same-collection retention before its grace expires', () => {
     const result = assembleWithWater({
       instance: { collection: 'dkss_idw', id: CURRENT_RUN },
       fallback: true,
@@ -391,7 +468,7 @@ describe('a failed refresh call is not stale data', () => {
     expect(result.degradedBusyProvider).toBeUndefined();
   });
 
-  it('degrades any fallback that cannot prove it is the same run', () => {
+  it('degrades a fallback without complete same-collection retention proof', () => {
     const result = assembleWithWater({
       instance: { collection: 'dkss_idw', id: CURRENT_RUN },
       fallback: true,
@@ -427,15 +504,12 @@ describe('heldMarineFallback proves equivalence rather than assuming it', () => 
   const RUN_ID = '2026-08-20T120000Z';
   const REQUESTED = { collection: 'dkss_idw', id: RUN_ID };
   const point = { time: '2026-08-20T12:00:00.000Z', timeMs: Date.parse('2026-08-20T12:00:00.000Z'), tempWater: 15 };
-  const envelope = (over: Record<string, unknown> = {}) => ({
-    schemaVersion: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
-    locationId: LOCATION.id,
-    forecastConfigRevision: LOCATION.forecastConfigRevision,
-    collection: 'dkss_idw',
-    id: RUN_ID,
-    seriesEndMs: point.timeMs,
-    declaredEndMs: point.timeMs,
-    series: [point],
+  const envelope = (
+    id = RUN_ID,
+    collection = 'dkss_idw',
+    over: Record<string, unknown> = {},
+  ) => ({
+    ...completeMarineEnvelope(LOCATION, 'water', id, collection),
     ...over,
   });
   const held = (stored: unknown) => heldMarineFallback(
@@ -449,27 +523,25 @@ describe('heldMarineFallback proves equivalence rather than assuming it', () => 
   // OLDER RUN of the right collection. Whether that run is stale is judged
   // separately, by its own publication schedule.
   it('claims the collection for an older run of the same collection', () => {
-    expect(held(envelope({ id: '2026-08-20T060000Z' }))?.sameCollectionAsRequested).toBe(true);
+    expect(held(envelope('2026-08-20T060000Z'))?.sameCollectionAsRequested).toBe(true);
   });
 
   it('refuses it for the sibling collection at the same timestamp', () => {
     // dkss_idw and dkss_nsbs are different model areas; a matching run
     // timestamp does not make their values interchangeable.
-    expect(held(envelope({ collection: 'dkss_nsbs' }))?.sameCollectionAsRequested).toBe(false);
+    expect(held(envelope(RUN_ID, 'dkss_nsbs'))?.sameCollectionAsRequested).toBe(false);
   });
 
   it('refuses it for an empty stored series', () => {
-    expect(held(envelope({ series: [] }))?.sameCollectionAsRequested).toBe(false);
+    expect(held(envelope(RUN_ID, 'dkss_idw', { series: [] }))?.sameCollectionAsRequested)
+      .toBe(false);
   });
 
-  it('refuses a retained series that stops before the catalogue-declared end', () => {
-    expect(held(envelope({
-      declaredEndMs: point.timeMs + 60 * 60 * 1000,
-    }))?.sameCollectionAsRequested).toBe(false);
-  });
-
-  it('fails closed when the catalogue-declared end is unknown', () => {
-    expect(held(envelope({ declaredEndMs: null }))?.sameCollectionAsRequested).toBe(false);
+  it('refuses a retained series with a forged end stamp and a middle gap', () => {
+    const corrupt = envelope();
+    corrupt.series.splice(40, 1);
+    corrupt.series.push({ ...corrupt.series.at(-1)! });
+    expect(held(corrupt)?.sameCollectionAsRequested).toBe(false);
   });
 
   it('never claims it on the seed tier', () => {
@@ -503,8 +575,9 @@ describe('DMI catalogue time parsing', () => {
       instances: [
         { id: '2026-02-28T120000Z' },
         { id: '2026-02-30T120000Z' },
+        { id: '2026-02-28T150000Z' },
       ],
-    })).toEqual({ id: '2026-02-28T120000Z' });
+    }, 'dkss_idw')).toEqual({ id: '2026-02-28T120000Z' });
   });
 
   it('carries a valid declared temporal end and leaves invalid metadata unknown', () => {
@@ -516,7 +589,7 @@ describe('DMI catalogue time parsing', () => {
           '2026-08-25T12:00:00Z',
         ]] } },
       }],
-    });
+    }, 'dkss_idw');
     expect(parsed).toEqual({
       id: '2026-08-20T120000Z',
       declaredEndMs: Date.parse('2026-08-25T12:00:00Z'),
@@ -530,7 +603,7 @@ describe('DMI catalogue time parsing', () => {
           '2026-02-30T12:00:00Z',
         ]] } },
       }],
-    })).toEqual({ id: '2026-08-20T120000Z' });
+    }, 'dkss_idw')).toEqual({ id: '2026-08-20T120000Z' });
   });
 
   it('uses the furthest valid end across intervals and duplicate records', () => {
@@ -552,7 +625,7 @@ describe('DMI catalogue time parsing', () => {
         },
       ],
     };
-    expect(latestInstanceFromResponse(data)).toEqual({
+    expect(latestInstanceFromResponse(data, 'dkss_idw')).toEqual({
       id: RUN,
       declaredEndMs: Date.parse('2026-08-25T12:00:00Z'),
     });
@@ -565,10 +638,10 @@ describe('DMI catalogue time parsing', () => {
           ['2026-08-25T13:00:00Z', 'not-a-date'],
         ] } },
       }],
-    })).toEqual({ id: RUN });
+    }, 'dkss_idw')).toEqual({ id: RUN });
   });
 
-  it('treats same-run coverage enrichment as a model change that must rebuild', () => {
+  it('treats catalogue extent as diagnostic rather than run identity', () => {
     const withoutExtent = {
       water: { collection: 'dkss_idw', id: RUN },
       waves: { collection: 'wam_nsb', id: RUN },
@@ -580,6 +653,6 @@ describe('DMI catalogue time parsing', () => {
         declaredEndMs: Date.parse('2026-08-25T12:00:00Z'),
       },
     };
-    expect(marineInstancesEqual(withoutExtent, withExtent)).toBe(false);
+    expect(marineInstancesEqual(withoutExtent, withExtent)).toBe(true);
   });
 });

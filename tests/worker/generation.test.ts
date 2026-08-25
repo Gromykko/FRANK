@@ -65,10 +65,10 @@ describe('release generation identity and storage isolation', () => {
       'frank:raw:met:v1:location:horsens:config:v1',
     );
     expect(marineIngredientKey(LOCATION, 'water')).toBe(
-      'frank:raw:marine:v2:water:location:horsens:config:v1',
+      'frank:raw:marine:v3:water:location:horsens:config:v1',
     );
     expect(marineIngredientKey(LOCATION, 'waves')).toBe(
-      'frank:raw:marine:v2:waves:location:horsens:config:v1',
+      'frank:raw:marine:v3:waves:location:horsens:config:v1',
     );
   });
 
@@ -77,7 +77,7 @@ describe('release generation identity and storage isolation', () => {
   // nothing gets reinterpreted across a boundary.
   it('retires raw ingredients only through their own envelope schema version', () => {
     const defaultWater = marineIngredientKey(LOCATION, 'water');
-    expect(defaultWater).toContain(':marine:v2:water:');
+    expect(defaultWater).toContain(':marine:v3:water:');
   });
 
   it('changes the KV namespace when any release axis changes even if the label is forgotten', () => {

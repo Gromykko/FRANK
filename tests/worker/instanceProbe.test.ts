@@ -284,6 +284,7 @@ describe('fetchLatestMarineInstances (split resolution)', () => {
     // The carried-over id must be NAMED. Returning it silently is what let a
     // DMI catalogue outage read as a fully current forecast.
     expect(result.substituted).toEqual(['waves']);
+    expect(result.substitutionCauses).toEqual({ waves: 'busy' });
     expect(result.catalogueContacted).toBe(true);
   });
 
@@ -301,6 +302,42 @@ describe('fetchLatestMarineInstances (split resolution)', () => {
       waves: { collection: 'wam_nsb', id: '2026-08-08T120000Z' },
     });
     expect(result.substituted).toEqual(['water']);
+    expect(result.substitutionCauses).toEqual({ water: 'busy' });
+    expect(result.catalogueContacted).toBe(true);
+  });
+
+  it('distinguishes a valid empty catalogue from an upstream failure', async () => {
+    globalThis.fetch = (async (url: string) => {
+      if (String(url).includes('dkss_idw')) {
+        return { ok: true, status: 200, json: async () => instancesBody([]) };
+      }
+      return { ok: true, status: 200, json: async () => instancesBody(['2026-08-08T120000Z']) };
+    }) as unknown as typeof fetch;
+
+    const result = await fetchLatestMarineInstances(location, undefined, eventMemo, fallback);
+
+    expect(result.substituted).toEqual(['water']);
+    expect(result.substitutionCauses).toEqual({ water: 'not-ready' });
+    expect(result.catalogueContacted).toBe(true);
+  });
+
+  it('keeps a generic mixed catalogue failure distinct from a verified 429', async () => {
+    globalThis.fetch = (async (url: string) => {
+      if (String(url).includes('dkss_idw')) {
+        return { ok: false, status: 503, text: async () => 'Unavailable' };
+      }
+      return { ok: true, status: 200, json: async () => instancesBody(['2026-08-08T120000Z']) };
+    }) as unknown as typeof fetch;
+
+    const result = await fetchLatestMarineInstances(
+      location,
+      { maxAttempts: 1 },
+      eventMemo,
+      fallback,
+    );
+
+    expect(result.substituted).toEqual(['water']);
+    expect(result.substitutionCauses).toEqual({ water: 'unavailable' });
     expect(result.catalogueContacted).toBe(true);
   });
 
@@ -314,6 +351,7 @@ describe('fetchLatestMarineInstances (split resolution)', () => {
     const result = await fetchLatestMarineInstances(location, undefined, eventMemo, fallback);
 
     expect(result.substituted).toEqual(['water', 'waves']);
+    expect(result.substitutionCauses).toEqual({ water: 'busy', waves: 'busy' });
     expect(result.catalogueContacted).toBe(false);
   });
 

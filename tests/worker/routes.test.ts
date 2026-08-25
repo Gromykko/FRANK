@@ -5,7 +5,6 @@ import type { ForecastLocation } from '../../src/config/locationTypes';
 import { FORECAST_PAYLOAD_VERSION } from '../../src/features/forecast/types';
 import {
   CURRENT_RELEASE,
-  MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
 } from '../../src/features/forecast/releaseContract';
 import { buildSunSchedule } from '../../src/features/forecast/sun';
 import type { ForecastData, HealthLocationEntry, HealthPayload } from '../../worker/domain';
@@ -22,10 +21,10 @@ import {
   DMI_RUN_MANIFEST_SCHEMA_VERSION,
   dmiCollectionListKey,
 } from '../../worker/providers';
+import { completeMarineEnvelope, completeMarineSeries } from './marineTestData';
 
 const LOCATIONS = locationData as ForecastLocation[];
 const LAST_COMPLETED_CHECK = new Date(Date.now() - 5 * 60_000).toISOString();
-const CURRENT_RUN = new Date().toISOString();
 const WORKER_VERSION_ID = 'cba7bd5e-93f4-4df7-8b61-8f00d5b6f3a1';
 const WARM_TOKEN = 'test-only-frank-warm-token-with-256-bits-of-entropy';
 const WARM_BUILD_NOW = Date.parse('2031-08-23T11:59:00.000Z');
@@ -68,10 +67,18 @@ function locationById(id: string): ForecastLocation {
   return location;
 }
 
+function currentDmiRunId(nowMs = Date.now()): string {
+  const run = new Date(nowMs);
+  run.setUTCMinutes(0, 0, 0);
+  run.setUTCHours(Math.floor(run.getUTCHours() / 6) * 6);
+  return run.toISOString().replace(/:/g, '').replace('.000', '');
+}
+
 function cachedForecast(locationId = 'horsens'): ForecastData {
   const location = locationById(locationId);
   const forecastTime = new Date(Date.now() + 60 * 60_000).toISOString();
   const sun = buildSunSchedule([forecastTime], location);
+  const currentRun = currentDmiRunId();
   return {
     hourly: [{
       time: forecastTime,
@@ -115,8 +122,8 @@ function cachedForecast(locationId = 'horsens'): ForecastData {
         lastAttemptAt: LAST_COMPLETED_CHECK,
         weatherExpires: new Date(Date.now() + 30 * 60_000).toISOString(),
         marineInstances: {
-          water: { collection: 'dkss_idw', id: CURRENT_RUN },
-          waves: { collection: 'wam_nsb', id: CURRENT_RUN },
+          water: { collection: 'dkss_idw', id: currentRun },
+          waves: { collection: 'wam_nsb', id: currentRun },
         },
       },
     },
@@ -229,32 +236,7 @@ function retainedMarineIngredient(
   location: ForecastLocation,
   kind: 'water' | 'waves',
 ) {
-  const seriesEndMs = Date.parse(WARM_FORECAST_HOUR);
-  return {
-    schemaVersion: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
-    locationId: location.id,
-    forecastConfigRevision: location.forecastConfigRevision,
-    collection: location.dmiCollections[kind][0],
-    id: WARM_RETAINED_RUN,
-    seriesEndMs,
-    declaredEndMs: seriesEndMs,
-    series: kind === 'water'
-      ? [{
-          time: WARM_FORECAST_HOUR,
-          timeMs: Date.parse(WARM_FORECAST_HOUR),
-          tempWater: 16,
-          tideLevel: 0,
-          currentSpeed: 0,
-          currentDirection: 0,
-        }]
-      : [{
-          time: WARM_FORECAST_HOUR,
-          timeMs: Date.parse(WARM_FORECAST_HOUR),
-          waveHeight: 0.1,
-          waveDirection: 180,
-          wavePeriod: 3,
-        }],
-  };
+  return completeMarineEnvelope(location, kind, WARM_RETAINED_RUN);
 }
 
 function warmMetResponse(): Response {
@@ -303,21 +285,30 @@ function installWarmProviderResponses(marineBusy = false) {
             headers: { 'Retry-After': '1200' },
           });
         }
-        const properties = url.includes('/collections/dkss_')
-          ? {
-              step: WARM_FORECAST_HOUR,
-              'sea-mean-deviation': 0,
-              'water-temperature': 16,
-              'current-u': 0,
-              'current-v': 0,
-            }
-          : {
-              step: WARM_FORECAST_HOUR,
-              'significant-wave-height': 0.1,
-              'mean-wave-dir': 180,
-              'mean-wave-period': 3,
-            };
-        return Response.json({ features: [{ properties }] });
+        const water = url.includes('/collections/dkss_');
+        const series = completeMarineSeries(
+          water ? 'water' : 'waves',
+          WARM_CURRENT_RUN,
+          water ? 'dkss_idw' : 'wam_nsb',
+        );
+        return Response.json({
+          features: series.map((point) => ({
+            properties: water
+              ? {
+                  step: point.time,
+                  'sea-mean-deviation': point.tideLevel,
+                  'water-temperature': point.tempWater,
+                  'current-u': 0,
+                  'current-v': 0,
+                }
+              : {
+                  step: point.time,
+                  'significant-wave-height': point.waveHeight,
+                  'mean-wave-dir': point.waveDirection,
+                  'mean-wave-period': point.wavePeriod,
+                },
+          })),
+        });
       }
       if (url.endsWith('/instances') && marineBusy) {
         return new Response('Server is busy', {
@@ -783,13 +774,13 @@ describe('Worker route HTTP contract', () => {
       },
       {
         name: 'future run id',
-        water: { collection: 'dkss_idw', id: '2026-08-20T180100Z' },
+        water: { collection: 'dkss_idw', id: '2026-08-21T000000Z' },
         expectedState: 'Run time in future',
         degraded: false,
       },
       {
         name: 'expired run id',
-        water: { collection: 'dkss_idw', id: '2026-08-20T055900Z' },
+        water: { collection: 'dkss_idw', id: '2026-08-20T000000Z' },
         expectedState: 'Run expired',
         degraded: true,
       },
@@ -832,9 +823,9 @@ describe('Worker route HTTP contract', () => {
       expect(waterCell, faultCase.name).not.toContain('Waiting for');
       expect(waterCell, faultCase.name).not.toContain('Next run expected');
       if (faultCase.name === 'expired run id') {
-        // Even a faulted known collection keeps the release clock: 05:59Z plus
-        // DKSS's 3h20 completion delay is an estimated 09:19Z release.
-        expect(waterCell).toContain('<span class="cell-value">8h 41m</span>');
+        // Even a faulted known collection keeps the release clock: 00:00Z plus
+        // DKSS's 3h20 completion delay is an estimated 03:20Z release.
+        expect(waterCell).toContain('<span class="cell-value">14h 40m</span>');
       }
       expect(body, faultCase.name).not.toContain('NaN');
     }
@@ -1217,6 +1208,79 @@ describe('Worker route HTTP contract', () => {
         releaseHeartbeatWrite();
         await Promise.allSettled([responsePromise, ...runtime.waits]);
       }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not turn a malformed cold DMI run into an initialization cooldown', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(WARM_BUILD_NOW);
+      const location = locationById('aarhus');
+      const runtime = makeRuntime({
+        exact: false,
+        seed: { [DMI_RUN_MANIFEST_KEY]: warmManifest(location) },
+      });
+      const providerFetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
+        async (input: RequestInfo | URL) => {
+          const url = String(input);
+          if (url.includes('api.met.no/')) return warmMetResponse();
+          if (url.includes('feeds.meteoalarm.org/')) {
+            return new Response('<feed></feed>', { status: 200 });
+          }
+          if (url.includes('/instances/')) {
+            const water = url.includes('/collections/dkss_');
+            const series = completeMarineSeries(
+              water ? 'water' : 'waves',
+              WARM_CURRENT_RUN,
+              water ? 'dkss_idw' : 'wam_nsb',
+            );
+            return Response.json({
+              features: series.map((point, index) => ({
+                properties: water
+                  ? {
+                      step: point.time,
+                      ...(index === 10 ? {} : { 'sea-mean-deviation': point.tideLevel }),
+                      'water-temperature': point.tempWater,
+                      'current-u': 0,
+                      'current-v': 0,
+                    }
+                  : {
+                      step: point.time,
+                      'significant-wave-height': point.waveHeight,
+                      'mean-wave-dir': point.waveDirection,
+                      'mean-wave-period': point.wavePeriod,
+                    },
+              })),
+            });
+          }
+          throw new Error(`Unexpected provider URL: ${url}`);
+        },
+      );
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const first = await worker.fetch(
+        authorizedWarmRequest('/api/v1/forecast/aarhus?warm=1'),
+        runtime.env,
+        runtime.ctx,
+      );
+      const firstCalls = providerFetch.mock.calls.length;
+
+      expect(first.status).toBe(503);
+      expect(await first.json()).not.toMatchObject({ code: 'FORECAST_INITIALIZING' });
+      expect(runtime.puts.map(({ key }) => key)).not.toContain(initializationStateKey(location));
+
+      const repeated = await worker.fetch(
+        authorizedWarmRequest('/api/v1/forecast/aarhus?warm=1'),
+        runtime.env,
+        runtime.ctx,
+      );
+      expect(repeated.status).toBe(503);
+      expect(providerFetch.mock.calls.length).toBeGreaterThan(firstCalls);
+      expect(runtime.puts.map(({ key }) => key)).not.toContain(initializationStateKey(location));
     } finally {
       vi.useRealTimers();
     }
