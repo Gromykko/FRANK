@@ -196,14 +196,21 @@ describe('generation-owned forecast model', () => {
     expect(isMetRawCache(retained('Fri, 01 Jan 3000 00:00:00 GMT'), LOCATION, NOW)).toBe(false);
   });
 
-  it('uses the measured DMI publication gate and retains only active warnings', () => {
+  // Gates are tuned against observation, so derive rather than restate them.
+  const dueAt = (completeDelayMs: number, runMs: number) => runMs
+    + FORECAST_SOURCE_POLICY.dmiRunCycleMs
+    + completeDelayMs
+    - FORECAST_SOURCE_POLICY.dmiPublicationLeadMs;
+
+  it('uses the published DMI publication gate and retains only active warnings', () => {
     const decision = marineProbeDecision({
       water: { collection: 'dkss_idw', id: RUN },
       waves: { collection: 'wam_nsb', id: RUN },
     }, undefined, Date.parse('2026-08-20T20:00:00Z'));
+    // DKSS is the slower of the two, so it sets the shared gate.
     expect(decision).toEqual({
       shouldProbe: false,
-      nextProbeAtMs: Date.parse('2026-08-20T21:45:00Z'),
+      nextProbeAtMs: dueAt(FORECAST_SOURCE_POLICY.dmiDkssCompleteDelayMs, Date.parse(HOUR)),
       reason: 'publication-window',
     });
     expect(FORECAST_SOURCE_POLICY.marineFallbackMaxAgeMs).toBe(12 * 60 * 60 * 1000);
@@ -231,22 +238,13 @@ describe('generation-owned forecast model', () => {
       waves: { collection: 'wam_nsb', id: '2026-08-20T180000Z' },
     };
 
-    expect(marineSourcesDueForProbe(
-      wavesLag,
-      Date.parse('2026-08-20T20:59:59.999Z'),
-    )).toEqual([]);
-    expect(marineSourcesDueForProbe(
-      waterLag,
-      Date.parse('2026-08-20T21:44:59.999Z'),
-    )).toEqual([]);
-    expect(marineSourcesDueForProbe(
-      wavesLag,
-      Date.parse('2026-08-20T21:00:00.000Z'),
-    )).toEqual(['waves']);
-    expect(marineSourcesDueForProbe(
-      waterLag,
-      Date.parse('2026-08-20T21:45:00.000Z'),
-    )).toEqual(['water']);
+    const wavesDueAt = dueAt(FORECAST_SOURCE_POLICY.dmiWamNsbCompleteDelayMs, Date.parse('2026-08-20T12:00:00.000Z'));
+    const waterDueAt = dueAt(FORECAST_SOURCE_POLICY.dmiDkssCompleteDelayMs, Date.parse('2026-08-20T12:00:00.000Z'));
+
+    expect(marineSourcesDueForProbe(wavesLag, wavesDueAt - 1)).toEqual([]);
+    expect(marineSourcesDueForProbe(waterLag, waterDueAt - 1)).toEqual([]);
+    expect(marineSourcesDueForProbe(wavesLag, wavesDueAt)).toEqual(['waves']);
+    expect(marineSourcesDueForProbe(waterLag, waterDueAt)).toEqual(['water']);
 
     // Water caused the combined probe. A failed carry-over for the ahead WAM
     // run is not a wave degradation until WAM's own next publication is due.

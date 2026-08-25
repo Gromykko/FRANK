@@ -199,12 +199,6 @@ function providerTimestampMs(value: string | undefined): number {
 
 // A DMI run id ('2026-08-24T060000Z') as the cycle hour operators actually
 // speak in. Returns null rather than guessing when the id is unparseable.
-function formatRunHour(id: string | undefined): string | null {
-  const ms = providerTimestampMs(id);
-  if (!Number.isFinite(ms)) return null;
-  return `${String(new Date(ms).getUTCHours()).padStart(2, '0')}:00Z`;
-}
-
 function providerAgeMs(value: string | undefined, nowMs: number): number | null {
   const timestampMs = providerTimestampMs(value);
   const ageMs = nowMs - timestampMs;
@@ -508,13 +502,18 @@ export function statusResponse(health: HealthPayload): Response {
   // most diagnostic fact here. Listed once when every city agrees; when they
   // diverge each run is listed, because that divergence is precisely the
   // failure worth seeing.
+  // Dated in full, not just the hour. "00:00Z" cannot tell you whether a city is
+  // on today's midnight run or yesterday's, which is exactly the question during
+  // a stall - and the run identity moved here when the table's value cells went
+  // back to being ages, so this line is now the only place it is stated.
   const marineRuns = (kind: 'water' | 'waves'): string => {
-    const hours = new Set(
+    const runs = new Set(
       health.locations
-        .map((entry) => formatRunHour(entry.cacheHealth?.marineInstances?.[kind]?.id))
-        .filter((hour): hour is string => hour !== null),
+        .map((entry) => entry.cacheHealth?.marineInstances?.[kind]?.id)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0)
+        .map((id) => formatProviderTimestamp(id)),
     );
-    return hours.size === 0 ? 'run unknown' : [...hours].sort().join(' + ');
+    return runs.size === 0 ? 'run unknown' : [...runs].sort().join(' + ');
   };
 
   const beatAgeMin = typeof health.cronHeartbeat?.ageMin === 'number'

@@ -59,20 +59,39 @@ export const FORECAST_SOURCE_POLICY = Object.freeze({
   metFallbackMaxAgeMs: 6 * 60 * 60 * 1000,
   marineFallbackMaxAgeMs: 12 * 60 * 60 * 1000,
   dmiRunCycleMs: 6 * 60 * 60 * 1000,
-  // DMI's usual complete-model delays are DKSS +3h20, wam_nsb +2h45,
-  // and wam_dw +3h00:
+  // DMI's published complete-model delays: DKSS +3h20, wam_nsb +2h45,
+  // wam_dw +3h00.
   // https://www.dmi.dk/friedata/dokumentation/data/forecast-data-availability
-  // Recent STAC properties.created observations showed DKSS becoming available
-  // later than its published figure, while wam_nsb straddled its figure. The
-  // measured gates below use +3h35 and +2h50; unmeasured wam_dw stays at its
-  // published +3h00. The separate 10-minute cushion remains unchanged. DMI also
-  // identifies properties.created as the factual availability clock; observing
-  // it directly is intentionally left for a separate change.
-  dmiDkssCompleteDelayMs: (3 * 60 + 35) * 60 * 1000,
-  dmiWamNsbCompleteDelayMs: (2 * 60 + 50) * 60 * 1000,
+  //
+  // These were previously padded to +3h35 and +2h50 with a further 10-minute
+  // cushion, because ONE probe was all a cycle got: miss it and the next look
+  // was twenty minutes away, so the gate had to be placed late enough to
+  // succeed first time. That padding cost real freshness. Direct observation on
+  // 2026-08-25 timed wam_nsb publishing at +2h39 to +2h44 - inside its
+  // published figure - while our gate did not open until +3h00.
+  //
+  // Arriving early is now free, so the gate sits on the published figure with
+  // no cushion and a miss simply comes back next rotation. Guessing the exact
+  // publication minute stops mattering, which is the honest answer to a
+  // provider whose timing genuinely varies. DMI identifies properties.created
+  // as the factual availability clock; reading it directly would remove the
+  // guess entirely and is still left for a separate change.
+  dmiDkssCompleteDelayMs: (3 * 60 + 20) * 60 * 1000,
+  dmiWamNsbCompleteDelayMs: (2 * 60 + 45) * 60 * 1000,
   dmiOtherWamCompleteDelayMs: 3 * 60 * 60 * 1000,
-  dmiPublicationCushionMs: 10 * 60 * 1000,
-  dmiDueProbeBackoffMs: 20 * 60 * 1000,
+  // A LEAD, not a cushion - the sign is the point. The old 10-minute cushion
+  // pushed the gate later so one probe would likely land after publication;
+  // this pulls it earlier so we are already waiting when the run appears.
+  // wam_nsb was observed complete at +2h39, ahead of its own published +2h45,
+  // so arriving exactly on the published figure is arriving late. Being a few
+  // minutes early also puts the first look in before the wave of schedulers
+  // that fire on the round figure.
+  dmiPublicationLeadMs: 10 * 60 * 1000,
+  // One rotation, matching dmiFailedProbeRetryMs. With the gate on the
+  // published figure a fruitless check means "not published yet", not "DMI is
+  // late", so the twenty-minute wait that assumed the latter would now cost up
+  // to twenty minutes of staleness on every cycle.
+  dmiDueProbeBackoffMs: 4 * 60 * 1000,
   // A failed contact is evidence about the call, not about DMI's schedule, so
   // it must not arm the publication backoff. One rotation is the natural
   // cadence; repeated identical failures are kept out of KV by
@@ -241,7 +260,7 @@ export function marineSourcesDueForProbe(
     return nowMs >= runMs
       + FORECAST_SOURCE_POLICY.dmiRunCycleMs
       + completeDelayMs
-      + FORECAST_SOURCE_POLICY.dmiPublicationCushionMs;
+      - FORECAST_SOURCE_POLICY.dmiPublicationLeadMs;
   });
 }
 
@@ -291,17 +310,17 @@ export function marineProbeDecision(
     expectedAtMs = waterRunMs
       + FORECAST_SOURCE_POLICY.dmiRunCycleMs
       + Math.max(waterDelayMs, wavesDelayMs)
-      + FORECAST_SOURCE_POLICY.dmiPublicationCushionMs;
+      - FORECAST_SOURCE_POLICY.dmiPublicationLeadMs;
   } else if (waterRunMs < wavesRunMs) {
     expectedAtMs = waterRunMs
       + FORECAST_SOURCE_POLICY.dmiRunCycleMs
       + waterDelayMs
-      + FORECAST_SOURCE_POLICY.dmiPublicationCushionMs;
+      - FORECAST_SOURCE_POLICY.dmiPublicationLeadMs;
   } else {
     expectedAtMs = wavesRunMs
       + FORECAST_SOURCE_POLICY.dmiRunCycleMs
       + wavesDelayMs
-      + FORECAST_SOURCE_POLICY.dmiPublicationCushionMs;
+      - FORECAST_SOURCE_POLICY.dmiPublicationLeadMs;
   }
 
   if (nowMs < expectedAtMs) {

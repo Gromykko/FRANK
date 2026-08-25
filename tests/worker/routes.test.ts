@@ -496,8 +496,10 @@ describe('Worker route HTTP contract', () => {
     // The legend also names which six-hourly DMI run each source is on. When
     // cities diverge onto different runs - the failure that took a night to
     // diagnose - every run is listed, so the split is visible at a glance.
-    expect(body).toMatch(/<span><b>Water<\/b> DMI DKSS \d{2}:00Z<\/span>/);
-    expect(body).toMatch(/<span><b>Waves<\/b> DMI WAM \d{2}:00Z<\/span>/);
+    // Dated in full: an hour alone cannot say whether a city is on today's
+    // midnight run or yesterday's, which is the question during a stall.
+    expect(body).toMatch(/<span><b>Water<\/b> DMI DKSS \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC<\/span>/);
+    expect(body).toMatch(/<span><b>Waves<\/b> DMI WAM \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC<\/span>/);
     expect(body).toContain('<span><b>Warnings</b> MeteoAlarm</span>');
     expect(body).toContain('Polled with the forecast');
     // A real data table now, with header cells and row scopes - not the layout
