@@ -1,4 +1,4 @@
-import { CRON_PERIOD_MS } from './execution';
+import { CRON_HEARTBEAT_THROTTLE_TICKS, CRON_PERIOD_MS } from './execution';
 import type {
   CronHeartbeat,
   HealthLocationEntry,
@@ -6,7 +6,7 @@ import type {
   WorkerCacheHealth,
 } from './domain';
 import { CURRENT_RELEASE } from '../src/features/forecast/releaseContract';
-import { FORECAST_SOURCE_POLICY } from './forecastModel';
+import { FORECAST_SOURCE_POLICY, marineSourcesDueForProbe } from './forecastModel';
 import { htmlResponse, jsonResponse } from './http';
 
 // /health judges two clocks because "the Worker is dead" and "the data is
@@ -40,7 +40,12 @@ export const HEALTH_MAX_DATA_AGE_MS = 3 * 60 * 60 * 1000;
 // Beyond this the scheduler is not beating. It was previously an inline 10 in
 // two places and named nowhere, while the page asserted "Active" purely because
 // an age existed - so a cron dead for 47 minutes rendered "Active · 47m ago".
-export const HEARTBEAT_STALE_AFTER_MIN = 10;
+// Must exceed CRON_HEARTBEAT_THROTTLE_TICKS minutes, and is pinned to it by
+// assertHeartbeatStaleWindowExceedsThrottle at worker/index.ts module load.
+// 35 tolerates exactly one missed cadence write (age 30) without crying wolf,
+// and flags two. Anomalies bypass the throttle, so this window only governs
+// how fast a totally dead scheduler gets called dead.
+export const HEARTBEAT_STALE_AFTER_MIN = 35;
 
 export function buildHealthPayload(
   entries: HealthLocationEntry[],
@@ -293,6 +298,15 @@ export function statusResponse(health: HealthPayload): Response {
           ? 'awaiting data'
           : cacheHealth.status ?? 'unknown';
 
+    // DMI publishes on a six-hour cycle, so a healthy city routinely holds a
+    // run several hours old and the raw age read as an alarm when nothing was
+    // wrong. The question that matters is whether a NEWER run should already
+    // be in hand - which is exactly the gate the refresh path uses to decide
+    // whether to probe, so the two can never disagree about what "late" means.
+    const marineRunOverdue = new Set(
+      missing ? [] : marineSourcesDueForProbe(cacheHealth.marineInstances, nowMs),
+    );
+
     const providerAppliesTo = (source: 'weather' | 'water' | 'waves'): boolean => {
       if (!cacheHealth.providerBusy) return false;
       if (degradedSources.size > 0 && !degradedSources.has(source)) return false;
@@ -338,22 +352,39 @@ export function statusResponse(health: HealthPayload): Response {
       const degraded = degradedSources.has(key);
       const busy = providerAppliesTo(key);
       const provenanceAgeMs = providerAgeMs(provenance, nowMs);
+      // Weather has no run cycle: MET keeps its age reading, which is the
+      // honest measure there.
+      const runOverdue = key !== 'weather' && marineRunOverdue.has(key);
+      const runHour = key === 'weather' ? null : formatRunHour(provenance);
       const provenanceDetail = provenance
         ? `${provenanceLabel} ${formatProviderTimestamp(provenance)}`
         : `${provenanceLabel} not recorded`;
       return {
         key, label, provider,
-        tone: degraded || busy ? 'warn' : provenanceAgeMs === null ? 'neutral' : 'good',
+        tone: degraded || busy || runOverdue
+          ? 'warn'
+          : provenanceAgeMs === null ? 'neutral' : 'good',
         // 'Current' not 'Current snapshot': when healthy the operator already
         // has six other green signals, and "snapshot" had become a filler noun
         // repeated across every source string. The badge stays rather than
         // disappearing - it is the only thing separating "evaluated and good"
         // from "this slot rendered blank", and keeping it prevents a layout
         // shift the moment a source turns amber.
-        state: busy ? 'Provider busy' : degraded ? 'Last-good fallback' : provenanceAgeMs === null ? 'Age not recorded' : 'Current',
+        state: busy
+          ? 'Provider busy'
+          : degraded
+            ? 'Last-good fallback'
+            : runOverdue
+              ? 'Run overdue'
+              : provenanceAgeMs === null ? 'Age not recorded' : 'Current',
+        // On the newest run that is due, the run hour answers "which run is
+        // this?" and the age answers nothing. Once a run IS overdue the age
+        // becomes the measure of how far behind we are, so it comes back.
         value: provenanceAgeMs === null
           ? 'not recorded'
-          : formatAge(provenanceAgeMs),
+          : runOverdue || runHour === null
+            ? formatAge(provenanceAgeMs)
+            : runHour,
         detail: provenanceDetail,
       };
     };
@@ -1043,9 +1074,11 @@ export function statusResponse(health: HealthPayload): Response {
       <p>Last check is the most recent persisted scheduled or authenticated release attempt
       for the required forecast sources. The scheduler attempts one rotated city every
       ${escapeHtml(Math.round(CRON_PERIOD_MS / 60_000))} minute, while the shared heartbeat
-      normally samples one successful tick every five minutes to protect the KV allowance.
+      normally samples one successful tick every
+      ${escapeHtml(Math.round(CRON_HEARTBEAT_THROTTLE_TICKS * CRON_PERIOD_MS / 60_000))}
+      minutes to protect the KV allowance.
       Once a city has a recorded success, a healthy city can use that app-wide sample, so
-      its displayed check remains accurate to roughly the five-minute throttle.</p>
+      its displayed check remains accurate to roughly that throttle.</p>
 
       <p>A city reads older than the others when its selected tick runs out of budget or a
       provider refresh attempt fails. Those outcomes are recorded immediately and block

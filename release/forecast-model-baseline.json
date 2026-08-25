@@ -3,17 +3,17 @@
   "semanticBoundary": "worker-generation-owned-v1",
   "release": {
     "apiSchemaVersion": 1,
-    "modelRevision": 46,
+    "modelRevision": 47,
     "assembledCacheSchema": 1,
     "marineCacheSchema": 1,
-    "dataGenerationId": "api1-model46",
+    "dataGenerationId": "api1-model47",
     "payloadVersion": 7
   },
   "semanticInputs": {
     "src/features/forecast/normalize.ts": "6e2b8b84f3f352627756b6c50eb522bddcfe1a5e557c34c05122d631a49b1663",
     "src/features/forecast/parseWarnings.ts": "8bf112789a37c5167f749dd1978c5d647f85d285cb06d4bce5feaaef6cbf2f96",
     "src/features/forecast/providerUrls.ts": "491974f7d92da617466abb68b2bce53640294fb3d2b34530ff989d61b7fa5d58",
-    "src/features/forecast/releaseContract.ts": "bd495b3967e504a793d1bed5f4d97366acc5e8e884e1af81b92e06d7a30da2fa",
+    "src/features/forecast/releaseContract.ts": "650d5a591bb1b1541b6ce753834314f095b8710bdbcda69bd143abe293aed674",
     "src/features/forecast/sun.ts": "f69dacefb9f43709f63a11a01b66b2cda77b25d7e53bcda62cefae10fd0543e4",
     "src/features/forecast/temporalPolicy.ts": "59940e152870a1b8a071f46deb378e0cbc2901ea30b00c725f16e836d395775d",
     "src/features/forecast/types.ts": "97d16ba935765fef387e20872b90b13c51e19137c2d36847825c0d5136dde6ad",
@@ -23,7 +23,7 @@
     "worker/forecastModel.ts": "7de815756b710a1448652d1b21447e198fabc538ca1796de16d5148a6e6f74af",
     "worker/generation.ts": "471cae837f55a6b108ddf451ca3ccb8f2a2af006d2b552bc784b2ed99c6ef2a6",
     "worker/domain.ts": "c5f2f45cad93354c1354aa38f613ff286437abc76aa6b04e800d24081317831f",
-    "worker/index.ts": "3ff10e50a2ce467acea9fedec14194be1214fb270409311946ef9bdc95053fa0",
+    "worker/index.ts": "c1d3e5f9cd8467f296ed2ff172e35676a77603b9ee0dacf1944d940f796257e5",
     "worker/providerAvailability.ts": "52443e5c5b22fba55d05e10f708263e4fead3a0b7b9691f020611668582a3076",
     "worker/providers.ts": "5ce4997221fb92868447178062cfdc6b0b9c3e804eb6e3b342a3978f22079634",
     "worker/validation.ts": "b0a68f89a3347a641a231de7d3d3c36bcc0292a1c7ddd5ec7e7fb325f0e5207f"

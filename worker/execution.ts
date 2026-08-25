@@ -7,6 +7,13 @@ import type { EventMemo } from './domain';
 // window. Cron keeps its separate explicit 50-second timeout.
 export const DEFAULT_FETCH_TIMEOUT_MS = 20_000;
 const DEFAULT_MAX_FETCH_ATTEMPTS = 1;
+// A ceiling on the TIME-DERIVED attempt count only; an explicit policy
+// maxAttempts stays a deliberate caller choice. Without it a generous budget
+// bought floor(availableMs / 3000) swings - observed at 15 on one request.
+// DMI refused 347 of 643 upstream attempts in 24h (2026-08-25) and sends no
+// Retry-After, so the extra swings are spent on a provider that has already
+// said no, against a 50-subrequest and 10ms-CPU invocation budget.
+const MAX_DERIVED_FETCH_ATTEMPTS = 5;
 const CRON_FETCH_TIMEOUT_MS = 50_000;
 const CRON_LOCATION_MIN_BUDGET_MS = 15_000;
 const CRON_COMPLETION_RESERVE_MS = 8_000;
@@ -160,7 +167,7 @@ export function executionPolicy(policy: ExecutionPolicyInput = {}): ExecutionPol
   const reserve = Math.max(0, policy.completionReserveMs ?? 0);
   const availableMs = Number.isFinite(deadline) ? Math.max(0, deadline - Date.now() - reserve) : 0;
   const dynamicAttempts = availableMs >= 6_000
-    ? Math.max(1, Math.floor(availableMs / 3_000))
+    ? Math.min(MAX_DERIVED_FETCH_ATTEMPTS, Math.max(1, Math.floor(availableMs / 3_000)))
     : DEFAULT_MAX_FETCH_ATTEMPTS;
   const maxAttempts = policy.maxAttempts !== undefined
     ? Math.max(1, policy.maxAttempts)
@@ -207,6 +214,18 @@ export function reallocateMarinePositionAttempts(
 // list it starved last time. The test reads wrangler.jsonc and fails if these
 // two ever drift apart again.
 export const CRON_PERIOD_MS = 60_000;
+
+// How many scheduled ticks pass between routine heartbeat writes. Lives here
+// beside CRON_PERIOD_MS, not in index.ts, so the status page can state the real
+// cadence instead of a hardcoded sentence that silently goes stale when this
+// number changes - which is exactly how it came to claim "every five minutes".
+//
+// Fifteen rather than five: cadence writes were 274 of our 749 KV writes a day
+// (2026-08-25) against a 1,000-write ACCOUNT ceiling - the largest single line
+// and the one carrying the least information. Fifteen costs ~96 a day instead.
+// The trade is detection latency for total scheduler death only: a city going
+// unreachable or recovering forces an immediate write regardless of this.
+export const CRON_HEARTBEAT_THROTTLE_TICKS = 15;
 
 export function rotateTickOrder<T>(
   scheduledTime: number | undefined,

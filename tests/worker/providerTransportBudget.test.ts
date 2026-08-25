@@ -453,3 +453,23 @@ describe('event external-subrequest budget', () => {
     expect(fetchMock).toHaveBeenCalledTimes(EVENT_EXTERNAL_SUBREQUEST_BUDGET);
   });
 });
+
+// A generous deadline used to buy floor(availableMs / 3000) attempts with no
+// ceiling - 15 were observed on a single request against a provider that
+// refuses more than half our calls and sends no Retry-After.
+describe('derived attempt ceiling', () => {
+  it('caps attempts derived from a long deadline', () => {
+    const now = Date.now();
+    expect(executionPolicy({ deadlineAt: now + 60_000 }).maxAttempts).toBe(5);
+    expect(executionPolicy({ deadlineAt: now + 600_000 }).maxAttempts).toBe(5);
+  });
+
+  it('still derives fewer attempts from a short deadline', () => {
+    // Away from a 3_000 boundary: elapsed ms inside the call must not flip it.
+    expect(executionPolicy({ deadlineAt: Date.now() + 10_000 }).maxAttempts).toBe(3);
+  });
+
+  it('leaves an explicit maxAttempts alone', () => {
+    expect(executionPolicy({ deadlineAt: Date.now() + 600_000, maxAttempts: 12 }).maxAttempts).toBe(12);
+  });
+});

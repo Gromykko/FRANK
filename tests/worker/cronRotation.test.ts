@@ -546,7 +546,7 @@ describe('scheduled city rotation', () => {
     });
   });
 
-  it('skips heartbeat writes inside five minutes and writes once the interval elapses', async () => {
+  it('skips heartbeat writes inside the throttle window and writes once it elapses', async () => {
     const { env, store, puts } = runtime();
     const provider = vi.spyOn(globalThis, 'fetch').mockRejectedValue(
       new Error('A source fetch is not due in this fixture.'),
@@ -571,11 +571,13 @@ describe('scheduled city rotation', () => {
     expect(firstHeartbeat).toBeDefined();
     expect(heartbeatWrites()).toHaveLength(1);
 
-    for (const offset of [1, 2, 3, 4]) await runTick(offset);
+    for (let offset = 1; offset < CRON_HEARTBEAT_THROTTLE_TICKS; offset++) {
+      await runTick(offset);
+    }
     expect(heartbeatWrites()).toHaveLength(1);
     expect(store.get(CRON_HEARTBEAT_KEY)).toBe(firstHeartbeat);
 
-    const elapsedTick = await runTick(5);
+    const elapsedTick = await runTick(CRON_HEARTBEAT_THROTTLE_TICKS);
     expect(heartbeatWrites()).toHaveLength(2);
     const heartbeat = JSON.parse(store.get(CRON_HEARTBEAT_KEY)!) as {
       lastTickAt: string;
@@ -793,7 +795,7 @@ describe('scheduled city rotation', () => {
       .map(({ category }) => category)).toEqual(['heartbeat-anomaly']);
   });
 
-  it('throttles an unchanged anomaly but refreshes it when five ticks have elapsed', async () => {
+  it('throttles an unchanged anomaly but refreshes it once the throttle has elapsed', async () => {
     const { env, store, puts } = runtime(DUE_MARINE_RUN);
     const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
       new Response('temporary provider failure', { status: 503 }));
@@ -803,7 +805,10 @@ describe('scheduled city rotation', () => {
 
     const repeatedTick = FIRST_TICK_MS + 11 * LOCATIONS.length * CRON_PERIOD_MS;
     const location = tickOrder(repeatedTick)[0];
-    const previousTick = repeatedTick - CRON_PERIOD_MS;
+    // Sits far enough back that one further rotation crosses the throttle,
+    // while the first run is still inside it (throttle - L, then + L = throttle).
+    const previousTick = repeatedTick
+      - (CRON_HEARTBEAT_THROTTLE_TICKS - LOCATIONS.length) * CRON_PERIOD_MS;
     const previousFailure = repeatedTick - LOCATIONS.length * CRON_PERIOD_MS;
     const previousSuccess = repeatedTick - 2 * LOCATIONS.length * CRON_PERIOD_MS;
     const storedHeartbeat = JSON.stringify({
@@ -825,8 +830,10 @@ describe('scheduled city rotation', () => {
     expect(puts.filter((key) => key === CRON_HEARTBEAT_KEY)).toHaveLength(0);
     expect(store.get(CRON_HEARTBEAT_KEY)).toBe(storedHeartbeat);
 
-    const elapsedTick = repeatedTick
-      + (CRON_HEARTBEAT_THROTTLE_TICKS - 1) * CRON_PERIOD_MS;
+    // Exactly one rotation later, so the same city comes round and the
+    // failed-contact backoff has elapsed once - widening this would let the
+    // catalogue retry again and change the fetch count asserted below.
+    const elapsedTick = repeatedTick + LOCATIONS.length * CRON_PERIOD_MS;
     expect(tickOrder(elapsedTick)[0].id).toBe(location.id);
     vi.setSystemTime(elapsedTick);
     await worker.scheduled(
@@ -852,9 +859,10 @@ describe('scheduled city rotation', () => {
     const { env, store, puts } = runtime();
     const scheduledTime = FIRST_TICK_MS + (10 * LOCATIONS.length + 1) * CRON_PERIOD_MS;
     const location = tickOrder(scheduledTime)[0];
-    const previousTick = scheduledTime - 5 * CRON_PERIOD_MS;
-    const previousFailure = scheduledTime - 6 * CRON_PERIOD_MS;
-    const previousSuccess = scheduledTime - 8 * CRON_PERIOD_MS;
+    const previousTick = scheduledTime
+      - CRON_HEARTBEAT_THROTTLE_TICKS * CRON_PERIOD_MS;
+    const previousFailure = previousTick - CRON_PERIOD_MS;
+    const previousSuccess = previousTick - 3 * CRON_PERIOD_MS;
     store.set(CRON_HEARTBEAT_KEY, JSON.stringify({
       schemaVersion: 2,
       lastTickAt: new Date(previousTick).toISOString(),

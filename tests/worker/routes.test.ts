@@ -619,6 +619,39 @@ describe('Worker route HTTP contract', () => {
     expect(horsensCard).not.toMatch(/data-source="water"[^>]*>(?:(?!<\/td>)[\s\S])*?Provider busy/);
   });
 
+  it('calls a marine run overdue once a newer one is due, and shows how far behind', async () => {
+    // 2026-08-20T00:00Z run, read at 12:30Z. The next run (06:00Z) completed at
+    // 06:00 + 3h35 + 10m cushion = 09:45Z, so by 12:30 we are demonstrably
+    // holding a run we should have replaced.
+    const now = Date.parse('2026-08-20T12:30:00.000Z');
+    const entries: HealthLocationEntry[] = [{
+      id: 'horsens',
+      areaName: 'Horsens Fjord',
+      hasCache: true,
+      exactGenerationReady: true,
+      availabilitySource: 'generation',
+      fetchedAt: '2026-08-20T12:25:00.000Z',
+      cacheHealth: {
+        status: 'current',
+        lastAttemptAt: '2026-08-20T12:28:00.000Z',
+        weatherLastModified: '2026-08-20T12:00:00.000Z',
+        marineInstances: {
+          water: { collection: 'dkss_idw', id: '2026-08-20T000000Z' },
+          waves: { collection: 'wam_nsb', id: '2026-08-20T000000Z' },
+        },
+      },
+    }];
+
+    const body = await statusResponse(buildHealthPayload(entries, false, now)).text();
+    const card = body.match(/<tbody class="board-group[^"]*" data-location="horsens">[\s\S]*?<\/tbody>/)?.[0] ?? '';
+
+    expect(card).toContain('Run overdue');
+    // The age is the measure of how far behind - it returns exactly here.
+    expect(card).toContain('12h 30m');
+    expect(card).toMatch(/tone-warn" data-source="water"/);
+    expect(card).toMatch(/tone-warn" data-source="waves"/);
+  });
+
   it('shows real provider provenance ages without claiming MeteoAlarm health', async () => {
     const now = Date.parse('2026-08-20T18:00:00.000Z');
     const entries: HealthLocationEntry[] = [{
@@ -642,7 +675,14 @@ describe('Worker route HTTP contract', () => {
     const body = await statusResponse(buildHealthPayload(entries, false, now)).text();
 
     expect(body).toContain('30 min');
-    expect(body.match(/6h 00m/g) ?? []).toHaveLength(2);
+    // A 12:00Z run at 18:00 is the newest one due (DKSS completes +3h35, WAM
+    // +2h50, and the next cycle only lands at 18:00 + its own delay), so both
+    // marine cells name their run rather than reporting an alarming 6h age.
+    // Scoped to the cells: the provider legend prints run hours too.
+    const provenanceCard = body.match(/<tbody class="board-group[^"]*" data-location="horsens">[\s\S]*?<\/tbody>/)?.[0] ?? '';
+    expect(provenanceCard).toMatch(/data-source="water"(?:(?!<\/td>)[\s\S])*?12:00Z/);
+    expect(provenanceCard).toMatch(/data-source="waves"(?:(?!<\/td>)[\s\S])*?12:00Z/);
+    expect(provenanceCard).not.toContain('6h 00m');
     expect(body).toContain('Forecast issued 2026-08-20 17:30 UTC');
     expect(body).not.toContain('Forecast issued 2026-08-20 17:30:00 UTC');
     expect(body).toContain('Model run 2026-08-20 12:00 UTC');

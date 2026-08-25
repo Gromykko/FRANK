@@ -20,9 +20,11 @@ import {
 import {
   buildHealthPayload,
   healthResponse,
+  HEARTBEAT_STALE_AFTER_MIN,
   statusResponse,
 } from './health';
 import {
+  CRON_HEARTBEAT_THROTTLE_TICKS,
   CRON_PERIOD_MS,
   CRON_TICK_BUDGET_MS,
   DEFAULT_FETCH_TIMEOUT_MS as FETCH_TIMEOUT_MS,
@@ -155,10 +157,12 @@ const CHECKED_STAMP_MIN_WRITE_INTERVAL_MS = 25 * 60 * 1000;
 // would be one KV write per city per tick. Against a 1,000-write day, that is
 // what forced the coarse CHECKED_STAMP_MIN_WRITE_INTERVAL_MS throttle and a "checked"
 // time that could be 25 minutes behind the truth. One shared object targeting a
-// write about every five scheduled minutes keeps the liveness evidence
+// write about every fifteen scheduled minutes keeps the liveness evidence
 // affordable even when the scheduler itself fires every minute.
+// The tick count itself lives in execution.ts (see there for why it is 15);
+// re-exported so the heartbeat's callers and tests keep one import site.
 const CRON_HEARTBEAT_SCHEMA_VERSION = 2;
-export const CRON_HEARTBEAT_THROTTLE_TICKS = 5;
+export { CRON_HEARTBEAT_THROTTLE_TICKS };
 // Enough for a read and a write of one small object; short enough that a KV
 // brownout cannot hold the invocation open past the runtime's patience.
 const HEARTBEAT_WRITE_BUDGET_MS = 3_000;
@@ -213,6 +217,27 @@ export function assertHeartbeatThrottleCoprime(
 }
 
 assertHeartbeatThrottleCoprime(CRON_HEARTBEAT_THROTTLE_TICKS, FORECAST_LOCATIONS.length);
+
+// A heartbeat written every N ticks but called stale after fewer than N ticks
+// reads STALLED while perfectly healthy. Raising the throttle without raising
+// the window is the easy version of that mistake, so the two are pinned
+// together here rather than left to agree by luck in separate files.
+export function assertHeartbeatStaleWindowExceedsThrottle(
+  staleAfterMin: number,
+  throttleTicks: number,
+): void {
+  const throttleMin = (throttleTicks * CRON_PERIOD_MS) / 60_000;
+  if (!(staleAfterMin > throttleMin)) {
+    throw new Error(
+      `Heartbeat stale window (${staleAfterMin} min) must exceed the write throttle (${throttleMin} min).`,
+    );
+  }
+}
+
+assertHeartbeatStaleWindowExceedsThrottle(
+  HEARTBEAT_STALE_AFTER_MIN,
+  CRON_HEARTBEAT_THROTTLE_TICKS,
+);
 
 const KNOWN_FORECAST_LOCATION_IDS = new Set(
   FORECAST_LOCATIONS.map((location) => location.id),
