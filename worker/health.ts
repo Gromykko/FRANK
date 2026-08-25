@@ -42,10 +42,10 @@ export const HEALTH_MAX_DATA_AGE_MS = 3 * 60 * 60 * 1000;
 // an age existed - so a cron dead for 47 minutes rendered "Active · 47m ago".
 // Must exceed CRON_HEARTBEAT_THROTTLE_TICKS minutes, and is pinned to it by
 // assertHeartbeatStaleWindowExceedsThrottle at worker/index.ts module load.
-// 35 tolerates exactly one missed cadence write (age 30) without crying wolf,
-// and flags two. Anomalies bypass the throttle, so this window only governs
-// how fast a totally dead scheduler gets called dead.
-export const HEARTBEAT_STALE_AFTER_MIN = 35;
+// Ten tolerates exactly one missed cadence write (age 10) without crying wolf
+// and flags two. Anomalies bypass the throttle, so this window only governs how
+// fast a totally dead scheduler gets called dead.
+export const HEARTBEAT_STALE_AFTER_MIN = 10;
 
 export function buildHealthPayload(
   entries: HealthLocationEntry[],

@@ -236,12 +236,17 @@ export const CRON_PERIOD_MS = 60_000;
 // cadence instead of a hardcoded sentence that silently goes stale when this
 // number changes - which is exactly how it came to claim "every five minutes".
 //
-// Fifteen rather than five: cadence writes were 274 of our 749 KV writes a day
-// (2026-08-25) against a 1,000-write ACCOUNT ceiling - the largest single line
-// and the one carrying the least information. Fifteen costs ~96 a day instead.
-// The trade is detection latency for total scheduler death only: a city going
-// unreachable or recovering forces an immediate write regardless of this.
-export const CRON_HEARTBEAT_THROTTLE_TICKS = 15;
+// Five, and measured rather than assumed. It went to fifteen when cadence writes
+// were 274 of 749 a day against a 1,000-write ACCOUNT ceiling; with the day's
+// other savings the rate is now ~472, so the ~192 extra writes five costs are
+// affordable and buy back a status page that reads live instead of showing a
+// twelve-minute-old heartbeat that looks like a stall.
+//
+// This is the first knob to turn if the budget tightens again - adding a city,
+// or a sustained rise in failure-state writes, both push toward the ceiling.
+// The trade it buys is only detection latency for TOTAL scheduler death: a city
+// going unreachable or recovering forces an immediate write regardless.
+export const CRON_HEARTBEAT_THROTTLE_TICKS = 5;
 
 export function rotateTickOrder<T>(
   scheduledTime: number | undefined,
