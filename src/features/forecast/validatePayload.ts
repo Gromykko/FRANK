@@ -220,7 +220,10 @@ function hasValidWarnings(value: unknown): boolean {
 function hasValidMarineInstance(value: unknown): boolean {
   return isRecord(value)
     && isNonEmptyString(value.collection)
-    && isNonEmptyString(value.id);
+    && isNonEmptyString(value.id)
+    && (value.declaredEndMs === undefined
+      || (typeof value.declaredEndMs === 'number'
+        && Number.isFinite(value.declaredEndMs)));
 }
 
 function hasValidMarineInstances(value: unknown): boolean {

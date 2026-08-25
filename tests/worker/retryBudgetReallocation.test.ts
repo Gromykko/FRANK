@@ -27,8 +27,23 @@ import {
 const NOW = Date.parse('2026-08-23T13:00:00.000Z');
 const OLD_RUN = '2026-08-23T060000Z';
 const NEW_RUN = '2026-08-23T120000Z';
+const NEW_RUN_DECLARED_END_MS = Date.parse('2026-08-28T12:00:00.000Z');
 const WATER = ['dkss_idw', 'dkss_nsbs'];
 const WAVES = ['wam_nsb', 'wam_dw'];
+
+function newRunCatalogueInstance() {
+  return {
+    id: NEW_RUN,
+    extent: {
+      temporal: {
+        interval: [[
+          '2026-08-23T12:00:00.000Z',
+          new Date(NEW_RUN_DECLARED_END_MS).toISOString(),
+        ]],
+      },
+    },
+  };
+}
 
 const LOCATION: ForecastLocation = {
   id: 'horsens',
@@ -77,11 +92,13 @@ function currentManifestEntries(): Record<string, unknown> {
     [dmiCollectionListKey(WATER)]: {
       collection: WATER[0],
       id: NEW_RUN,
+      declaredEndMs: NEW_RUN_DECLARED_END_MS,
       discoveredAt,
     },
     [dmiCollectionListKey(WAVES)]: {
       collection: WAVES[0],
       id: NEW_RUN,
+      declaredEndMs: NEW_RUN_DECLARED_END_MS,
       discoveredAt,
     },
   };
@@ -135,7 +152,7 @@ describe('live retry-budget reallocation', () => {
 
   it('keeps the position cap near its ceiling after a quick catalogue success', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
-      Response.json({ instances: [{ id: NEW_RUN }] }));
+      Response.json({ instances: [newRunCatalogueInstance()] }));
     const eventMemo: EventMemo = new Map();
 
     const result = await fetchLatestMarineInstances(
@@ -169,7 +186,9 @@ describe('live retry-budget reallocation', () => {
         return new Response('temporary provider failure', { status: 503 });
       }
       const isFallbackCollection = collection === WATER[1] || collection === WAVES[1];
-      return Response.json({ instances: isFallbackCollection ? [{ id: NEW_RUN }] : [] });
+      return Response.json({
+        instances: isFallbackCollection ? [newRunCatalogueInstance()] : [],
+      });
     });
     const eventMemo: EventMemo = new Map();
 

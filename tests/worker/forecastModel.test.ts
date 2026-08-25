@@ -12,8 +12,11 @@ import {
   isMetRawCache,
   isMarineRunWithinFallbackAge,
   isTransientProviderFailure,
+  latestInstanceFromResponse,
+  marineInstancesEqual,
   marineProbeDecision,
   marineSourcesDueForProbe,
+  parseDmiInstanceMs,
   retainedActiveWarnings,
 } from '../../worker/forecastModel';
 import { MARINE_INGREDIENT_CACHE_SCHEMA_VERSION } from '../../src/features/forecast/releaseContract';
@@ -125,6 +128,8 @@ describe('generation-owned forecast model', () => {
       forecastConfigRevision: LOCATION.forecastConfigRevision,
       collection: 'dkss_idw',
       id: '2026-08-20T060000Z',
+      seriesEndMs: HOUR_MS,
+      declaredEndMs: HOUR_MS,
       series: [{ time: HOUR, timeMs: HOUR_MS, tideLevel: 0.1 }],
     };
     const requested = { collection: 'dkss_idw', id: RUN };
@@ -428,6 +433,8 @@ describe('heldMarineFallback proves equivalence rather than assuming it', () => 
     forecastConfigRevision: LOCATION.forecastConfigRevision,
     collection: 'dkss_idw',
     id: RUN_ID,
+    seriesEndMs: point.timeMs,
+    declaredEndMs: point.timeMs,
     series: [point],
     ...over,
   });
@@ -455,9 +462,124 @@ describe('heldMarineFallback proves equivalence rather than assuming it', () => 
     expect(held(envelope({ series: [] }))?.sameCollectionAsRequested).toBe(false);
   });
 
+  it('refuses a retained series that stops before the catalogue-declared end', () => {
+    expect(held(envelope({
+      declaredEndMs: point.timeMs + 60 * 60 * 1000,
+    }))?.sameCollectionAsRequested).toBe(false);
+  });
+
+  it('fails closed when the catalogue-declared end is unknown', () => {
+    expect(held(envelope({ declaredEndMs: null }))?.sameCollectionAsRequested).toBe(false);
+  });
+
   it('never claims it on the seed tier', () => {
     const result = held(null);
     expect(result?.fallback).toBe(true);
     expect(result?.sameCollectionAsRequested).toBeUndefined();
+  });
+});
+
+describe('DMI catalogue time parsing', () => {
+  it('rejects calendar-normalised run identifiers and accepts genuine dates', () => {
+    for (const id of [
+      '2026-02-30T120000Z',
+      '2026-13-01T000000Z',
+      '2026-01-32T000000Z',
+      '2026-04-31T000000Z',
+      '2026-02-29T060000Z',
+      '2026-01-01T240000Z',
+      '2026-01-01T126000Z',
+      '2026-02-30T12:00:00Z',
+    ]) {
+      expect(parseDmiInstanceMs(id), id).toBeNaN();
+    }
+
+    expect(parseDmiInstanceMs('2028-02-29T060000Z'))
+      .toBe(Date.parse('2028-02-29T06:00:00Z'));
+    expect(parseDmiInstanceMs('2028-02-29T06:00:00.123Z'))
+      .toBe(Date.parse('2028-02-29T06:00:00.123Z'));
+
+    expect(latestInstanceFromResponse({
+      instances: [
+        { id: '2026-02-28T120000Z' },
+        { id: '2026-02-30T120000Z' },
+      ],
+    })).toEqual({ id: '2026-02-28T120000Z' });
+  });
+
+  it('carries a valid declared temporal end and leaves invalid metadata unknown', () => {
+    const parsed = latestInstanceFromResponse({
+      instances: [{
+        id: '2026-08-20T120000Z',
+        extent: { temporal: { interval: [[
+          '2026-08-20T12:00:00Z',
+          '2026-08-25T12:00:00Z',
+        ]] } },
+      }],
+    });
+    expect(parsed).toEqual({
+      id: '2026-08-20T120000Z',
+      declaredEndMs: Date.parse('2026-08-25T12:00:00Z'),
+    });
+
+    expect(latestInstanceFromResponse({
+      instances: [{
+        id: '2026-08-20T120000Z',
+        extent: { temporal: { interval: [[
+          '2026-08-20T12:00:00Z',
+          '2026-02-30T12:00:00Z',
+        ]] } },
+      }],
+    })).toEqual({ id: '2026-08-20T120000Z' });
+  });
+
+  it('uses the furthest valid end across intervals and duplicate records', () => {
+    const data = {
+      instances: [
+        {
+          id: RUN,
+          extent: { temporal: { interval: [
+            ['2026-08-20T12:00:00Z', '2026-08-22T12:00:00Z'],
+            ['2026-08-22T13:00:00Z', '2026-08-24T12:00:00Z'],
+          ] } },
+        },
+        {
+          id: RUN,
+          extent: { temporal: { interval: [[
+            '2026-08-20T12:00:00Z',
+            '2026-08-25T12:00:00Z',
+          ]] } },
+        },
+      ],
+    };
+    expect(latestInstanceFromResponse(data)).toEqual({
+      id: RUN,
+      declaredEndMs: Date.parse('2026-08-25T12:00:00Z'),
+    });
+
+    expect(latestInstanceFromResponse({
+      instances: [{
+        id: RUN,
+        extent: { temporal: { interval: [
+          ['2026-08-20T12:00:00Z', '2026-08-25T12:00:00Z'],
+          ['2026-08-25T13:00:00Z', 'not-a-date'],
+        ] } },
+      }],
+    })).toEqual({ id: RUN });
+  });
+
+  it('treats same-run coverage enrichment as a model change that must rebuild', () => {
+    const withoutExtent = {
+      water: { collection: 'dkss_idw', id: RUN },
+      waves: { collection: 'wam_nsb', id: RUN },
+    };
+    const withExtent = {
+      ...withoutExtent,
+      water: {
+        ...withoutExtent.water,
+        declaredEndMs: Date.parse('2026-08-25T12:00:00Z'),
+      },
+    };
+    expect(marineInstancesEqual(withoutExtent, withExtent)).toBe(false);
   });
 });

@@ -37,17 +37,31 @@ const LOCATION = {
   areaName: 'Test Fjord',
   coordinate: { longitude: 9.9, latitude: 55.8 },
 };
-const WATER_INSTANCE = { collection: 'dkss_idw', id: '2026-07-11T120000Z' };
+const WATER_INSTANCE = {
+  collection: 'dkss_idw',
+  id: '2026-07-11T120000Z',
+  declaredEndMs: Date.parse('2026-07-11T12:00:00Z'),
+};
 const identityMap = (features: unknown) => features as Array<{ timeMs: number }>;
 const CURRENT_INGREDIENT_KEY = marineIngredientKey(LOCATION, 'water');
-const retainedEnvelope = (id: string, series: unknown[]) => ({
-  schemaVersion: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
-  locationId: LOCATION.id,
-  forecastConfigRevision: LOCATION.forecastConfigRevision,
-  collection: 'dkss_idw',
-  id,
-  series,
-});
+const retainedEnvelope = (id: string, series: unknown[]) => {
+  const seriesEndMs = series.reduce<number | null>((latest, point) => {
+    const timeMs = (point as { timeMs?: unknown })?.timeMs;
+    return typeof timeMs === 'number' && Number.isFinite(timeMs)
+      ? Math.max(latest ?? Number.NEGATIVE_INFINITY, timeMs)
+      : latest;
+  }, null);
+  return {
+    schemaVersion: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
+    locationId: LOCATION.id,
+    forecastConfigRevision: LOCATION.forecastConfigRevision,
+    collection: 'dkss_idw',
+    id,
+    seriesEndMs,
+    declaredEndMs: seriesEndMs,
+    series,
+  };
+};
 
 const originalFetch = globalThis.fetch;
 beforeEach(() => {
@@ -82,6 +96,8 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
       forecastConfigRevision: LOCATION.forecastConfigRevision,
       collection: 'dkss_idw',
       id: '2026-07-11T120000Z',
+      seriesEndMs: Date.parse('2026-07-11T12:00:00Z'),
+      declaredEndMs: Date.parse('2026-07-11T12:00:00Z'),
     });
   });
 
@@ -229,7 +245,11 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     expect(result.degraded).toBe(true); // 429 = a real failure to refresh
     expect(result.busy).toBe(true);
     expect(result.series).toEqual(retained);
-    expect(result.instance).toEqual({ collection: 'dkss_idw', id: '2026-07-11T060000Z' });
+    expect(result.instance).toEqual({
+      collection: 'dkss_idw',
+      id: '2026-07-11T060000Z',
+      declaredEndMs: retained[0].timeMs,
+    });
   });
 
   it('a newly-listed run that returns EMPTY is NOT degraded - the held run is still latest (stays green)', async () => {

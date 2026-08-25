@@ -150,8 +150,8 @@ export interface WeatherData {
       // DMI run provenance for the marine values in this assembled payload.
       // Older cached payloads may omit it; either source may also be absent.
       marineInstances?: {
-        water?: { collection: string; id: string };
-        waves?: { collection: string; id: string };
+        water?: { collection: string; id: string; declaredEndMs?: number };
+        waves?: { collection: string; id: string; declaredEndMs?: number };
       };
       checkedBy?: string;
       needsRebuild?: boolean;

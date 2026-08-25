@@ -27,6 +27,32 @@ const LOCATIONS = locationData as ForecastLocation[];
 const FIRST_TICK_MS = Date.parse('2026-08-20T16:00:00.000Z');
 const MARINE_RUN = '2026-08-20T160000Z';
 const DUE_MARINE_RUN = '2026-08-20T060000Z';
+const DUE_MARINE_DECLARED_END_MS = Date.parse('2026-08-25T06:00:00.000Z');
+const DECLARED_RUN_SPAN_MS = 5 * 24 * 60 * 60_000;
+
+function declaredEndMsForRun(run: string): number {
+  const match = run.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+  if (!match) throw new Error(`Expected a compact DMI run id, received ${run}.`);
+  const runMs = Date.parse(
+    `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}Z`,
+  );
+  return runMs + DECLARED_RUN_SPAN_MS;
+}
+
+function catalogueInstance(run: string) {
+  const declaredEndMs = declaredEndMsForRun(run);
+  return {
+    id: run,
+    extent: {
+      temporal: {
+        interval: [[
+          new Date(declaredEndMs - DECLARED_RUN_SPAN_MS).toISOString(),
+          new Date(declaredEndMs).toISOString(),
+        ]],
+      },
+    },
+  };
+}
 // The static CRON_*_MAX_ATTEMPTS values are upper bounds. Since attempts are
 // budgeted at their real ~6s cost (minus the completion reserve), the policy
 // usually grants fewer, and a simulation keyed to the ceiling describes a run
@@ -149,8 +175,16 @@ function cachedForecast(
         // Exactly the production maximum: fetchedAt + 90 minutes.
         weatherExpires: new Date(FIRST_TICK_MS + 60 * 60_000).toISOString(),
         marineInstances: {
-          water: { collection: 'dkss_idw', id: waterRun },
-          waves: { collection: 'wam_nsb', id: wavesRun },
+          water: {
+            collection: 'dkss_idw',
+            id: waterRun,
+            declaredEndMs: declaredEndMsForRun(waterRun),
+          },
+          waves: {
+            collection: 'wam_nsb',
+            id: wavesRun,
+            declaredEndMs: declaredEndMsForRun(wavesRun),
+          },
         },
       },
     },
@@ -325,11 +359,13 @@ describe('scheduled city rotation', () => {
         [dmiCollectionListKey(location.dmiCollections.water)]: {
           collection: location.dmiCollections.water[0],
           id: DUE_MARINE_RUN,
+          declaredEndMs: DUE_MARINE_DECLARED_END_MS,
           discoveredAt,
         },
         [dmiCollectionListKey(location.dmiCollections.waves)]: {
           collection: location.dmiCollections.waves[0],
           id: DUE_MARINE_RUN,
+          declaredEndMs: DUE_MARINE_DECLARED_END_MS,
           discoveredAt,
         },
       },
@@ -368,7 +404,7 @@ describe('scheduled city rotation', () => {
     const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith('/instances')) {
-        return Response.json({ instances: [{ id: DUE_MARINE_RUN }] });
+        return Response.json({ instances: [catalogueInstance(DUE_MARINE_RUN)] });
       }
       throw new Error(`Unexpected provider URL: ${url}`);
     });
@@ -405,7 +441,7 @@ describe('scheduled city rotation', () => {
     const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith('/instances') && url.includes('/collections/dkss_')) {
-        return Response.json({ instances: [{ id: DUE_MARINE_RUN }] });
+        return Response.json({ instances: [catalogueInstance(DUE_MARINE_RUN)] });
       }
       if (url.endsWith('/instances') && url.includes('/collections/wam_')) {
         return new Response('temporary provider failure', { status: 503 });
@@ -429,8 +465,16 @@ describe('scheduled city rotation', () => {
     expect(provider.mock.calls.some(([input]) => String(input).includes('/collections/wam_')))
       .toBe(true);
     expect(checked.sources.cacheHealth?.marineInstances).toEqual({
-      water: { collection: 'dkss_idw', id: DUE_MARINE_RUN },
-      waves: { collection: 'wam_nsb', id: '2026-08-20T120000Z' },
+      water: {
+        collection: 'dkss_idw',
+        id: DUE_MARINE_RUN,
+        declaredEndMs: DUE_MARINE_DECLARED_END_MS,
+      },
+      waves: {
+        collection: 'wam_nsb',
+        id: '2026-08-20T120000Z',
+        declaredEndMs: declaredEndMsForRun('2026-08-20T120000Z'),
+      },
     });
     expect(checked.sources.cacheHealth?.degradedSources).toBeUndefined();
     expect(checked.sources.cacheHealth?.providerBusy).toBeUndefined();
@@ -463,6 +507,7 @@ describe('scheduled city rotation', () => {
         [dmiCollectionListKey(location.dmiCollections.water)]: {
           collection: location.dmiCollections.water[0],
           id: DUE_MARINE_RUN,
+          declaredEndMs: DUE_MARINE_DECLARED_END_MS,
           discoveredAt: new Date(scheduledTime).toISOString(),
         },
       },
@@ -940,7 +985,7 @@ describe('scheduled city rotation', () => {
     provider.mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith('/instances')) {
-        return Response.json({ instances: [{ id: DUE_MARINE_RUN }] });
+        return Response.json({ instances: [catalogueInstance(DUE_MARINE_RUN)] });
       }
       throw new Error(`Unexpected provider URL: ${url}`);
     });
@@ -1099,7 +1144,7 @@ describe('scheduled city rotation', () => {
     const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith('/instances')) {
-        return Response.json({ instances: [{ id: DUE_MARINE_RUN }] });
+        return Response.json({ instances: [catalogueInstance(DUE_MARINE_RUN)] });
       }
       throw new Error(`Unexpected provider URL: ${url}`);
     });

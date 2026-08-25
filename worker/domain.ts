@@ -19,6 +19,10 @@ export interface MarineRunRef {
 export interface MarineInstance {
   collection: string;
   id: string;
+  // Parsed from the catalogue's declared temporal interval. Optional because
+  // older manifests and malformed/partial catalogue metadata must remain
+  // representable as unknown rather than being mistaken for complete.
+  declaredEndMs?: number;
 }
 
 export interface MarineInstances {
@@ -111,10 +115,15 @@ export interface MetRawCache {
   body: import('../src/features/forecast/normalize').MetForecastResponse;
 }
 
-export interface MarineIngredientEnvelope extends MarineInstance {
+export interface MarineIngredientEnvelope
+  extends Omit<MarineInstance, 'declaredEndMs'> {
   schemaVersion: number;
   locationId: string;
   forecastConfigRevision: number;
+  // Coverage evidence recorded by the sole production constructor. Null is an
+  // explicit unknown and therefore never proves a complete retained run.
+  seriesEndMs: number | null;
+  declaredEndMs: number | null;
   series: SeriesPoint[];
 }
 

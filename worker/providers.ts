@@ -58,6 +58,7 @@ import {
   latestInstanceFromResponse,
   mapMetPayload,
   marineFallbackRejection,
+  marineIngredientHasCompleteCoverage,
   marineInstancesEqual,
   marineInstancesWithinFallbackAge,
   marineProbeDecision,
@@ -196,12 +197,17 @@ function validatedDmiRunManifestEntry(
   }
 
   const runAtMs = parseDmiInstanceMs(value.id);
+  const declaredEndMs = value.declaredEndMs;
   const discoveredAtMs = Date.parse(value.discoveredAt);
   if (!Number.isFinite(runAtMs)
     || runAtMs > nowMs
     || !Number.isFinite(discoveredAtMs)
     || discoveredAtMs > nowMs
-    || new Date(discoveredAtMs).toISOString() !== value.discoveredAt) {
+    || new Date(discoveredAtMs).toISOString() !== value.discoveredAt
+    || (declaredEndMs !== undefined
+      && (typeof declaredEndMs !== 'number'
+        || !Number.isFinite(declaredEndMs)
+        || declaredEndMs < runAtMs))) {
     return null;
   }
 
@@ -210,6 +216,7 @@ function validatedDmiRunManifestEntry(
     entry: {
       collection: value.collection,
       id: value.id,
+      ...(typeof declaredEndMs === 'number' ? { declaredEndMs } : {}),
       discoveredAt: value.discoveredAt,
     },
     discoveredAtMs,
@@ -263,6 +270,8 @@ function manifestInstanceForCollections(
 ): MarineInstance | null {
   const stored = dmiRunManifestEntryState(manifest, collections, nowMs);
   if (stored.kind !== 'valid'
+    || typeof stored.entry.declaredEndMs !== 'number'
+    || !Number.isFinite(stored.entry.declaredEndMs)
     || !isMarineRunWithinFallbackAge(stored.entry, nowMs)
     || nowMs - stored.discoveredAtMs > FORECAST_SOURCE_POLICY.dmiRunCycleMs) {
     return null;
@@ -275,6 +284,11 @@ function manifestInstanceForCollections(
   }
   if (Number.isFinite(knownRunAtMs) && stored.runAtMs < knownRunAtMs) return null;
   if (Number.isFinite(knownRunAtMs) && stored.runAtMs === knownRunAtMs) {
+    if (known?.collection === stored.entry.collection
+      && typeof known.declaredEndMs === 'number'
+      && stored.entry.declaredEndMs < known.declaredEndMs) {
+      return null;
+    }
     const knownRunDueAtMs = marineRunDueAtMs(known);
     const storedRunDueAtMs = marineRunDueAtMs(stored.entry);
     // Equal timestamps may still come from different allowed fallback
@@ -296,6 +310,7 @@ function manifestInstanceForCollections(
   return {
     collection: stored.entry.collection,
     id: stored.entry.id,
+    declaredEndMs: stored.entry.declaredEndMs,
   };
 }
 
@@ -331,7 +346,14 @@ function resolveLatestInstanceForCollections(
       contactEvidence,
     )
       .then((instance) => ({
-        instance,
+        instance: known
+          && known.collection === instance.collection
+          && known.id === instance.id
+          && typeof known.declaredEndMs === 'number'
+          && (typeof instance.declaredEndMs !== 'number'
+            || known.declaredEndMs > instance.declaredEndMs)
+          ? { ...instance, declaredEndMs: known.declaredEndMs }
+          : instance,
         source: 'catalogue' as const,
         collections,
         known,
@@ -372,7 +394,23 @@ async function persistDmiRunManifest(
     const advancesStoredManifest = stored.kind === 'missing'
       ? (!Number.isFinite(knownRunAtMs) || discoveredRunAtMs > knownRunAtMs)
       : discoveredRunAtMs > stored.runAtMs;
-    if (doesNotRegressKnownRun && advancesStoredManifest) {
+    // A model-53 manifest may already hold this id without the catalogue's
+    // temporal end. Permit one same-run enrichment so later cities can prove
+    // coverage instead of probing independently until the next run.
+    const enrichesSameRunCoverage = stored.kind === 'valid'
+      && discoveredRunAtMs === stored.runAtMs
+      && instance.collection === stored.entry.collection
+      && typeof instance.declaredEndMs === 'number'
+      && (typeof stored.entry.declaredEndMs !== 'number'
+        || instance.declaredEndMs > stored.entry.declaredEndMs);
+    const enrichesMissingCoverage = stored.kind === 'missing'
+      && known?.collection === instance.collection
+      && known.id === instance.id
+      && typeof instance.declaredEndMs === 'number'
+      && (typeof known.declaredEndMs !== 'number'
+        || instance.declaredEndMs > known.declaredEndMs);
+    if (doesNotRegressKnownRun
+      && (advancesStoredManifest || enrichesSameRunCoverage || enrichesMissingCoverage)) {
       updates.set(dmiCollectionListKey(collections), instance);
     }
   }
@@ -386,6 +424,9 @@ async function persistDmiRunManifest(
     entries[key] = {
       collection: instance.collection,
       id: instance.id,
+      ...(typeof instance.declaredEndMs === 'number'
+        ? { declaredEndMs: instance.declaredEndMs }
+        : {}),
       discoveredAt,
     } satisfies DmiRunManifestEntry;
   }
@@ -487,6 +528,9 @@ async function probeLatestInstanceForCollections(
         return {
           collection,
           id: latest.id,
+          ...(typeof latest.declaredEndMs === 'number'
+            ? { declaredEndMs: latest.declaredEndMs }
+            : {}),
         };
       }
       lastError = new ProviderUnavailableError(
@@ -845,8 +889,20 @@ export async function readRetainedMarineInstances(
     && currentWaves?.id
   ) {
     const candidate: MarineInstances = {
-      water: { collection: currentWater.collection, id: currentWater.id },
-      waves: { collection: currentWaves.collection, id: currentWaves.id },
+      water: {
+        collection: currentWater.collection,
+        id: currentWater.id,
+        ...(typeof currentWater.declaredEndMs === 'number'
+          ? { declaredEndMs: currentWater.declaredEndMs }
+          : {}),
+      },
+      waves: {
+        collection: currentWaves.collection,
+        id: currentWaves.id,
+        ...(typeof currentWaves.declaredEndMs === 'number'
+          ? { declaredEndMs: currentWaves.declaredEndMs }
+          : {}),
+      },
     };
     return marineInstancesWithinFallbackAge(candidate) ? candidate : undefined;
   }
@@ -895,14 +951,17 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
     stored = null;
   }
 
-  // Same run we already hold data for: reuse it, no network call. DMI runs
-  // change only every ~6h, so an hourly weather rebuild must not re-pull
+  // Same complete run we already hold data for: reuse it, no network call. DMI
+  // runs change only every ~6h, so an hourly weather rebuild must not re-pull
   // identical marine data (measured: gaps between runs are exactly 6.00h).
+  // Partial or unknown coverage deliberately falls through and gets another
+  // chance to reach the catalogue's declared boundary.
   const currentStored = currentMarineIngredient(stored);
 
   if (currentStored
     && currentStored.collection === instance.collection
-    && currentStored.id === instance.id) {
+    && currentStored.id === instance.id
+    && marineIngredientHasCompleteCoverage(currentStored, instance.declaredEndMs)) {
     return {
       series: currentStored.series,
       instance,
@@ -956,30 +1015,79 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
 
   const series = mapFeatures(data.features);
   if (series.length > 0) {
-    try {
-      await awaitWithinDeadline(
-        () => putKvWithLog(
-          env.FRANK_FORECAST_CACHE,
-          key,
-          JSON.stringify({
-            schemaVersion: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
-            locationId: location.id,
-            forecastConfigRevision: location.forecastConfigRevision,
-            collection: instance.collection,
-            id: instance.id,
-            series,
-          }),
-          'raw-marine',
-          location.id,
-        ),
-        policy,
-        `${kind} retained cache write for ${location.id}`,
-      );
-    } catch (error) {
-      rethrowIfDeadlineReached(error, policy, `${kind} retained cache write recovery for ${location.id}`);
-      // Retention is best-effort.
+    const seriesEndMs = series.reduce(
+      (latest, point) => Number.isFinite(point.timeMs)
+        ? Math.max(latest, point.timeMs)
+        : latest,
+      Number.NEGATIVE_INFINITY,
+    );
+    const recordedSeriesEndMs = Number.isFinite(seriesEndMs) ? seriesEndMs : null;
+    const declaredEndMs = typeof instance.declaredEndMs === 'number'
+      && Number.isFinite(instance.declaredEndMs)
+      ? instance.declaredEndMs
+      : null;
+    const coverageStatus = recordedSeriesEndMs === null || declaredEndMs === null
+      ? 'unknown' as const
+      : recordedSeriesEndMs >= declaredEndMs
+        ? 'complete' as const
+        : 'partial' as const;
+    const coverageGapMs = coverageStatus === 'partial'
+      && declaredEndMs !== null
+      && recordedSeriesEndMs !== null
+      ? declaredEndMs - recordedSeriesEndMs
+      : null;
+    const coverageChanged = !currentStored
+      || currentStored.collection !== instance.collection
+      || currentStored.id !== instance.id
+      || currentStored.seriesEndMs !== recordedSeriesEndMs
+      || currentStored.declaredEndMs !== declaredEndMs
+      || currentStored.series.length !== series.length;
+    if (coverageChanged) {
+      try {
+        await awaitWithinDeadline(
+          () => putKvWithLog(
+            env.FRANK_FORECAST_CACHE,
+            key,
+            JSON.stringify({
+              schemaVersion: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
+              locationId: location.id,
+              forecastConfigRevision: location.forecastConfigRevision,
+              collection: instance.collection,
+              id: instance.id,
+              seriesEndMs: recordedSeriesEndMs,
+              declaredEndMs,
+              series,
+            }),
+            'raw-marine',
+            location.id,
+            undefined,
+            {
+              marineKind: kind,
+              seriesPointCount: series.length,
+              seriesEndMs: recordedSeriesEndMs,
+              declaredEndMs,
+              coverageStatus,
+              coverageGapMs,
+            },
+          ),
+          policy,
+          `${kind} retained cache write for ${location.id}`,
+        );
+      } catch (error) {
+        rethrowIfDeadlineReached(error, policy, `${kind} retained cache write recovery for ${location.id}`);
+        // Retention is best-effort.
+      }
     }
-    return { series, instance, fallback: false, providerContacted: true };
+    return coverageStatus === 'complete'
+      ? { series, instance, fallback: false, providerContacted: true }
+      : {
+          series,
+          instance,
+          fallback: true,
+          sameCollectionAsRequested: false,
+          providerContacted: true,
+          degraded: true,
+        };
   }
 
   // 200 but no data for this instance: the run is listed in the catalog but

@@ -184,8 +184,16 @@ describe('forecast payload trust boundary', () => {
 
     const withProvenance = structuredClone(withoutProvenance);
     withProvenance.sources.cacheHealth!.marineInstances = {
-      water: { collection: 'dkss_idw', id: '2026-08-12T060000Z' },
-      waves: { collection: 'wam_nsb', id: '2026-08-12T060000Z' },
+      water: {
+        collection: 'dkss_idw',
+        id: '2026-08-12T060000Z',
+        declaredEndMs: Date.parse('2026-08-17T06:00:00Z'),
+      },
+      waves: {
+        collection: 'wam_nsb',
+        id: '2026-08-12T060000Z',
+        declaredEndMs: Date.parse('2026-08-17T06:00:00Z'),
+      },
     };
     expect(isValidForecastPayload(withProvenance, CURRENT_LOCATION)).toBe(true);
 
@@ -202,6 +210,20 @@ describe('forecast payload trust boundary', () => {
       { water: {} },
       { water: { collection: '', id: '2026-08-12T060000Z' } },
       { waves: { collection: 'wam_nsb', id: '' } },
+      {
+        water: {
+          collection: 'dkss_idw',
+          id: '2026-08-12T060000Z',
+          declaredEndMs: '2026-08-17T06:00:00Z',
+        },
+      },
+      {
+        water: {
+          collection: 'dkss_idw',
+          id: '2026-08-12T060000Z',
+          declaredEndMs: Number.NaN,
+        },
+      },
     ]) {
       const invalid = structuredClone(withoutProvenance);
       Reflect.set(invalid.sources.cacheHealth!, 'marineInstances', malformed);

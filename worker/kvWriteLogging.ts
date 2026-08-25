@@ -13,6 +13,15 @@ export type KvWriteCategory = typeof KV_WRITE_CATEGORIES[number];
 
 type KvWriter = Pick<KVNamespace, 'put'>;
 
+export interface RawMarineCoverageLog {
+  marineKind: 'water' | 'waves';
+  seriesPointCount: number;
+  seriesEndMs: number | null;
+  declaredEndMs: number | null;
+  coverageStatus: 'complete' | 'partial' | 'unknown';
+  coverageGapMs: number | null;
+}
+
 export async function putKvWithLog(
   namespace: KvWriter,
   key: string,
@@ -20,6 +29,7 @@ export async function putKvWithLog(
   category: KvWriteCategory,
   locationId?: string,
   options?: KVNamespacePutOptions,
+  rawMarineCoverage?: RawMarineCoverageLog,
 ): Promise<void> {
   if (options === undefined) {
     await namespace.put(key, value);
@@ -35,6 +45,7 @@ export async function putKvWithLog(
       event: 'kv_write',
       category,
       ...(locationId === undefined ? {} : { locationId }),
+      ...(rawMarineCoverage === undefined ? {} : rawMarineCoverage),
     }));
   } catch {
     // A logging failure cannot undo the KV write that has already completed.

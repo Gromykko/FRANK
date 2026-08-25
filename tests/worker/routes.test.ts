@@ -205,17 +205,20 @@ function warmHeartbeat(locationId: string, nowMs = WARM_BUILD_NOW) {
 
 function warmManifest(location: ForecastLocation, runId = WARM_CURRENT_RUN) {
   const discoveredAt = new Date(WARM_BUILD_NOW).toISOString();
+  const declaredEndMs = Date.parse(WARM_FORECAST_HOUR);
   return {
     schemaVersion: DMI_RUN_MANIFEST_SCHEMA_VERSION,
     entries: {
       [dmiCollectionListKey(location.dmiCollections.water)]: {
         collection: location.dmiCollections.water[0],
         id: runId,
+        declaredEndMs,
         discoveredAt,
       },
       [dmiCollectionListKey(location.dmiCollections.waves)]: {
         collection: location.dmiCollections.waves[0],
         id: runId,
+        declaredEndMs,
         discoveredAt,
       },
     },
@@ -226,12 +229,15 @@ function retainedMarineIngredient(
   location: ForecastLocation,
   kind: 'water' | 'waves',
 ) {
+  const seriesEndMs = Date.parse(WARM_FORECAST_HOUR);
   return {
     schemaVersion: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
     locationId: location.id,
     forecastConfigRevision: location.forecastConfigRevision,
     collection: location.dmiCollections[kind][0],
     id: WARM_RETAINED_RUN,
+    seriesEndMs,
+    declaredEndMs: seriesEndMs,
     series: kind === 'water'
       ? [{
           time: WARM_FORECAST_HOUR,

@@ -160,6 +160,10 @@ export function isMarineIngredientEnvelope(
     && value.forecastConfigRevision === location.forecastConfigRevision
     && typeof value.collection === 'string'
     && typeof value.id === 'string'
+    && (value.seriesEndMs === null
+      || (typeof value.seriesEndMs === 'number' && Number.isFinite(value.seriesEndMs)))
+    && (value.declaredEndMs === null
+      || (typeof value.declaredEndMs === 'number' && Number.isFinite(value.declaredEndMs)))
     && Array.isArray(value.series);
 }
 
@@ -195,13 +199,39 @@ export function metForecastUrl(location: Pick<ForecastLocation, 'coordinate'>): 
   return buildMetUrl(FORECAST_SOURCE_POLICY.metBaseUrl, location.coordinate);
 }
 
+function utcTimestampFromParts(parts: readonly (string | undefined)[]): number {
+  const [year, month, day, hour, minute, second, fraction = ''] = parts;
+  const components = [year, month, day, hour, minute, second].map(Number);
+  if (components.some((component) => !Number.isInteger(component))) return Number.NaN;
+  const [yearNumber, monthNumber, dayNumber, hourNumber, minuteNumber, secondNumber] = components;
+  const millisecondNumber = fraction.length > 0
+    ? Number(fraction.padEnd(3, '0'))
+    : 0;
+  if (!Number.isInteger(millisecondNumber)) return Number.NaN;
+
+  const date = new Date(0);
+  date.setUTCFullYear(yearNumber, monthNumber - 1, dayNumber);
+  date.setUTCHours(hourNumber, minuteNumber, secondNumber, millisecondNumber);
+  const timestampMs = date.getTime();
+  return Number.isFinite(timestampMs)
+    && date.getUTCFullYear() === yearNumber
+    && date.getUTCMonth() === monthNumber - 1
+    && date.getUTCDate() === dayNumber
+    && date.getUTCHours() === hourNumber
+    && date.getUTCMinutes() === minuteNumber
+    && date.getUTCSeconds() === secondNumber
+    && date.getUTCMilliseconds() === millisecondNumber
+    ? timestampMs
+    : Number.NaN;
+}
+
 export function parseDmiInstanceMs(id: unknown): number {
   if (typeof id !== 'string') return Number.NaN;
   const compact = id.match(/^(\d{4})-?(\d{2})-?(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
-  if (compact) {
-    return new Date(`${compact[1]}-${compact[2]}-${compact[3]}T${compact[4]}:${compact[5]}:${compact[6]}Z`).getTime();
-  }
-  return new Date(id).getTime();
+  if (compact) return utcTimestampFromParts(compact.slice(1));
+
+  const iso = id.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?Z$/);
+  return iso ? utcTimestampFromParts(iso.slice(1)) : Number.NaN;
 }
 
 export function isMarineRunWithinFallbackAge(
@@ -358,18 +388,43 @@ export function marineProbeDecision(
 
 export function latestInstanceFromResponse(
   data: unknown,
-): Pick<MarineInstance, 'id'> | undefined {
+): Pick<MarineInstance, 'id' | 'declaredEndMs'> | undefined {
   if (!isRecord(data) || !Array.isArray(data.instances)) {
     throw new Error('DMI instance response did not contain an instances array.');
   }
   if (data.instances.length === 0) return undefined;
-  let best: Pick<MarineInstance, 'id'> | undefined;
+  let best: Pick<MarineInstance, 'id' | 'declaredEndMs'> | undefined;
   let bestMs = -Infinity;
   for (const instance of data.instances) {
     const id = isRecord(instance) ? instance.id : undefined;
     const timeMs = parseDmiInstanceMs(id);
-    if (typeof id === 'string' && Number.isFinite(timeMs) && timeMs > bestMs) {
-      best = { id };
+    if (typeof id === 'string' && Number.isFinite(timeMs) && timeMs >= bestMs) {
+      const extent = isRecord(instance.extent) ? instance.extent : undefined;
+      const temporal = extent && isRecord(extent.temporal) ? extent.temporal : undefined;
+      const intervals: unknown[] = temporal && Array.isArray(temporal.interval)
+        ? temporal.interval
+        : [];
+      const intervalEnds: number[] = intervals.map((interval: unknown): number =>
+        Array.isArray(interval) ? parseDmiInstanceMs(interval[1]) : Number.NaN);
+      const declaredEndMs = intervalEnds.length > 0
+        && intervalEnds.every((endMs: number) => Number.isFinite(endMs) && endMs >= timeMs)
+        ? intervalEnds.reduce(
+            (latest: number, endMs: number) => Math.max(latest, endMs),
+            timeMs,
+          )
+        : Number.NaN;
+      const bestDeclaredEndMs = best?.declaredEndMs ?? Number.NEGATIVE_INFINITY;
+      if (timeMs === bestMs
+        && (!Number.isFinite(declaredEndMs)
+          || (Number.isFinite(bestDeclaredEndMs) && declaredEndMs <= bestDeclaredEndMs))) {
+        continue;
+      }
+      best = {
+        id,
+        ...(Number.isFinite(declaredEndMs) && declaredEndMs >= timeMs
+          ? { declaredEndMs }
+          : {}),
+      };
       bestMs = timeMs;
     }
   }
@@ -401,8 +456,10 @@ export function marineInstancesEqual(
       && right
       && left.water?.collection === right.water?.collection
       && left.water?.id === right.water?.id
+      && left.water?.declaredEndMs === right.water?.declaredEndMs
       && left.waves?.collection === right.waves?.collection
       && left.waves?.id === right.waves?.id
+      && left.waves?.declaredEndMs === right.waves?.declaredEndMs
   );
 }
 
@@ -458,6 +515,33 @@ export function currentMarineIngredient(
     : null;
 }
 
+export function marineIngredientHasCompleteCoverage(
+  stored: MarineIngredientEnvelope | null | undefined,
+  requiredDeclaredEndMs?: number,
+): boolean {
+  if (!stored) return false;
+  const { seriesEndMs, declaredEndMs } = stored;
+  if (typeof seriesEndMs !== 'number'
+    || !Number.isFinite(seriesEndMs)
+    || typeof declaredEndMs !== 'number'
+    || !Number.isFinite(declaredEndMs)) {
+    return false;
+  }
+  const actualSeriesEndMs = stored.series.reduce(
+    (latest, point) => Number.isFinite(point?.timeMs)
+      ? Math.max(latest, point.timeMs)
+      : latest,
+    Number.NEGATIVE_INFINITY,
+  );
+  const requiredEndMs = typeof requiredDeclaredEndMs === 'number'
+    && Number.isFinite(requiredDeclaredEndMs)
+    ? requiredDeclaredEndMs
+    : null;
+  return actualSeriesEndMs === seriesEndMs
+    && seriesEndMs >= declaredEndMs
+    && (requiredEndMs === null || declaredEndMs >= requiredEndMs);
+}
+
 export function heldMarineFallback(
   currentStored: MarineIngredientEnvelope | null,
   seedSeries: SeriesPoint[] | undefined,
@@ -469,13 +553,23 @@ export function heldMarineFallback(
   if (currentStored && isMarineRunWithinFallbackAge(currentStored, nowMs)) {
     return {
       series: currentStored.series,
-      instance: { collection: currentStored.collection, id: currentStored.id },
+      instance: {
+        collection: currentStored.collection,
+        id: currentStored.id,
+        ...(typeof currentStored.declaredEndMs === 'number'
+          && Number.isFinite(currentStored.declaredEndMs)
+          ? { declaredEndMs: currentStored.declaredEndMs }
+          : {}),
+      },
       fallback: true,
-      // A non-empty series is the weakest possible completeness signal and is
-      // not proof of a full run - DMI publishes a run one time step at a time -
-      // but storing an empty one is impossible, so its absence is a real fault.
+      // Collection identity is not enough: DMI publishes a run one time step
+      // at a time. Only the recorded series boundary reaching the catalogue's
+      // declared end proves that a held run is equivalent to a fresh response.
       sameCollectionAsRequested: currentStored.collection === requestedInstance.collection
-        && currentStored.series.length > 0,
+        && marineIngredientHasCompleteCoverage(
+          currentStored,
+          requestedInstance.declaredEndMs,
+        ),
       ...extra,
     };
   }
@@ -550,7 +644,7 @@ export function assembleForecastFromSources(
   // The suppression is gated on PROVABLE provenance, not on the absence of a
   // known-bad marker. Anything unable to show it is serving the collection that
   // was asked for stays degraded: a seed rebuild, a sibling-collection envelope,
-  // and an empty stored series alike. Whether the RUN is old is a separate
+  // and a stored series without proven full coverage alike. Whether the RUN is old is a separate
   // question, answered just above by its own publication schedule.
   // Weather has no run cycle of its own, so its rule is untouched.
   const marineBehind = new Set(marineSourcesDueForProbe(effectiveInstances, nowMs));

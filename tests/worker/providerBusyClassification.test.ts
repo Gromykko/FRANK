@@ -32,12 +32,15 @@ function retainedMarineIngredient(
   location: ForecastLocation,
   kind: 'water' | 'waves',
 ) {
+  const seriesEndMs = Date.parse(FORECAST_HOUR);
   return {
     schemaVersion: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
     locationId: location.id,
     forecastConfigRevision: location.forecastConfigRevision,
     collection: location.dmiCollections[kind][0],
     id: RETAINED_RUN,
+    seriesEndMs,
+    declaredEndMs: seriesEndMs,
     series: kind === 'water'
       ? [{
           time: FORECAST_HOUR,
