@@ -408,8 +408,11 @@ describe('cronExecutionPolicy', () => {
       hardDeadlineAt: tickDeadline,
       fetchTimeoutMs: 50_000,
       maxAttempts: 3,
+      // 50s of location budget at ~6s per real attempt = 8 that can actually
+      // finish, which now binds the 18-attempt position ceiling rather than
+      // the ceiling binding time.
       marineCatalogueMaxAttempts: 8,
-      marinePositionMaxAttempts: 18,
+      marinePositionMaxAttempts: 8,
       completionReserveMs: 8_000,
       retryDelayMs: undefined,
       retryBusyDelayMs: undefined,
@@ -430,9 +433,11 @@ describe('cronExecutionPolicy', () => {
     expect(policy).toMatchObject({
       deadlineAt: now + 20_000,
       fetchTimeoutMs: 20_000,
+      // A 20s share buys 3 completable attempts, so every ladder collapses to
+      // it - the fair share, not the per-stage ceiling, is the binding limit.
       maxAttempts: 3,
-      marineCatalogueMaxAttempts: 8,
-      marinePositionMaxAttempts: 11,
+      marineCatalogueMaxAttempts: 3,
+      marinePositionMaxAttempts: 3,
       completionReserveMs: 4_000,
       retryDelayMs: undefined,
       retryBusyDelayMs: undefined,
@@ -446,9 +451,11 @@ describe('cronExecutionPolicy', () => {
     expect(policy).toMatchObject({
       deadlineAt: now + 15_000,
       fetchTimeoutMs: 15_000,
-      maxAttempts: 3,
-      marineCatalogueMaxAttempts: 8,
-      marinePositionMaxAttempts: 8,
+      // 15s buys 2 completable attempts - the point of the test is that time
+      // binds the position cap, which it still does, lower down.
+      maxAttempts: 2,
+      marineCatalogueMaxAttempts: 2,
+      marinePositionMaxAttempts: 2,
       completionReserveMs: 3_000,
     });
   });

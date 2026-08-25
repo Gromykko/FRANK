@@ -117,8 +117,11 @@ describe('live retry-budget reallocation', () => {
     expect(result.catalogueContacted).toBe(false);
     expect(provider).not.toHaveBeenCalled();
     expect(eventMemo.externalSubrequestsStarted ?? 0).toBe(0);
+    // The subrequest plan still allows 18 per leg; the policy now grants fewer
+    // because a 50s tick cannot complete that many ~6s attempts. Position keeps
+    // whichever ceiling is real, undiminished by catalogue spend.
     expect(adjusted.marinePositionMaxAttempts).toBe(
-      CRON_EXTERNAL_SUBREQUEST_PATHS.manifestHit.marinePositionAttemptsPerLeg,
+      fullCronPolicy().marinePositionMaxAttempts,
     );
   });
 
@@ -139,8 +142,8 @@ describe('live retry-budget reallocation', () => {
 
     expect(result.catalogueContacted).toBe(true);
     expect(consumed).toBe(CRON_SUBREQUEST_CALL_GRAPH.marineKinds);
-    expect(adjusted.marinePositionMaxAttempts).toBeGreaterThanOrEqual(
-      CRON_EXTERNAL_SUBREQUEST_PATHS.manifestHit.marinePositionAttemptsPerLeg - 1,
+    expect(adjusted.marinePositionMaxAttempts).toBe(
+      fullCronPolicy().marinePositionMaxAttempts,
     );
     expect(plannedBuildTotal(consumed, adjusted.marinePositionMaxAttempts))
       .toBeLessThanOrEqual(EVENT_EXTERNAL_SUBREQUEST_BUDGET);

@@ -7,6 +7,18 @@ import type { EventMemo } from './domain';
 // window. Cron keeps its separate explicit 50-second timeout.
 export const DEFAULT_FETCH_TIMEOUT_MS = 20_000;
 const DEFAULT_MAX_FETCH_ATTEMPTS = 1;
+
+// What one provider attempt actually costs in wall-clock, used to turn a time
+// budget into an attempt count. Measured against DMI on 2026-08-25: a response
+// served from their cache lands in ~0.2s, but an origin miss takes ~6.0s for
+// the same 255KB payload. Budgeting for the fast path meant the derived counts
+// described attempts that could never finish - the deadline cut them off first,
+// which is why the observed attempt numbers skipped values.
+//
+// Deliberately the SLOW number. Telemetry over 7 days (2026-08-25) recorded
+// every successful DMI read on attempt 1 or 4 and not one beyond it, so
+// erring toward fewer, completable attempts costs nothing measurable.
+const ESTIMATED_PROVIDER_ATTEMPT_MS = 6_000;
 // A ceiling on the TIME-DERIVED attempt count only; an explicit policy
 // maxAttempts stays a deliberate caller choice. Without it a generous budget
 // bought floor(availableMs / 3000) swings - observed at 15 on one request.
@@ -166,8 +178,12 @@ export function executionPolicy(policy: ExecutionPolicyInput = {}): ExecutionPol
   const deadline = policy.deadlineAt ?? Number.POSITIVE_INFINITY;
   const reserve = Math.max(0, policy.completionReserveMs ?? 0);
   const availableMs = Number.isFinite(deadline) ? Math.max(0, deadline - Date.now() - reserve) : 0;
-  const dynamicAttempts = availableMs >= 6_000
-    ? Math.min(MAX_DERIVED_FETCH_ATTEMPTS, Math.max(1, Math.floor(availableMs / 3_000)))
+  // Below room for two real attempts there is no point deriving a count.
+  const dynamicAttempts = availableMs >= 2 * ESTIMATED_PROVIDER_ATTEMPT_MS
+    ? Math.min(
+        MAX_DERIVED_FETCH_ATTEMPTS,
+        Math.max(1, Math.floor(availableMs / ESTIMATED_PROVIDER_ATTEMPT_MS)),
+      )
     : DEFAULT_MAX_FETCH_ATTEMPTS;
   const maxAttempts = policy.maxAttempts !== undefined
     ? Math.max(1, policy.maxAttempts)
@@ -254,7 +270,13 @@ export function cronExecutionPolicy(
     Math.floor(remainingMs / locationsRemaining),
   );
   if (locationBudgetMs <= 0) return null;
-  const timeBoundAttempts = Math.max(1, Math.floor(locationBudgetMs / 1_800));
+  // 1_800 here was the more optimistic of the two estimates and governed the
+  // path that runs every minute, so it produced the deep retry ladders seen in
+  // telemetry (attempts 8, 9, 12, 15 - all refusals, no data).
+  const timeBoundAttempts = Math.max(
+    1,
+    Math.floor(locationBudgetMs / ESTIMATED_PROVIDER_ATTEMPT_MS),
+  );
   const maxAttempts = Math.min(
     CRON_PROVIDER_MAX_ATTEMPTS,
     timeBoundAttempts,

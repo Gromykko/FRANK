@@ -106,8 +106,12 @@ describe('event external-subrequest budget', () => {
       new Map(),
     )).rejects.toThrow(/temporarily unavailable/i);
 
+    // The position stage still gets the deeper of the two ceilings by design.
     expect(CRON_MARINE_POSITION_MAX_ATTEMPTS).toBeGreaterThan(CRON_PROVIDER_MAX_ATTEMPTS);
-    expect(fetchMock).toHaveBeenCalledTimes(CRON_MARINE_POSITION_MAX_ATTEMPTS);
+    // But 18 was the SUBREQUEST fair share ((45 - 8) / 2), and a 50s tick only
+    // fits ~8 attempts at their real ~6s cost. Time binds first now, so the leg
+    // spends what it can actually complete rather than what the budget allows.
+    expect(fetchMock).toHaveBeenCalledTimes(fullCronPolicy().marinePositionMaxAttempts);
   });
 
   it('lets a marine catalogue stage use its raised provider-specific ceiling', async () => {
@@ -295,8 +299,10 @@ describe('event external-subrequest budget', () => {
     const adjusted = reallocateMarinePositionAttempts(fullCronPolicy(), eventMemo);
 
     expect(eventMemo.externalSubrequestsStarted ?? 0).toBe(0);
+    // Nothing was consumed, so position keeps the whole ceiling the policy
+    // granted it - which is now the time-bound one, not the subrequest one.
     expect(adjusted.marinePositionMaxAttempts).toBe(
-      CRON_MARINE_POSITION_MAX_ATTEMPTS,
+      fullCronPolicy().marinePositionMaxAttempts,
     );
   });
 
@@ -306,8 +312,10 @@ describe('event external-subrequest budget', () => {
 
     const adjusted = reallocateMarinePositionAttempts(fullCronPolicy(), eventMemo);
 
-    expect(adjusted.marinePositionMaxAttempts).toBeGreaterThanOrEqual(
-      CRON_MARINE_POSITION_MAX_ATTEMPTS - 1,
+    // A cheap catalogue success no longer dents the cap at all: the subrequest
+    // fair share after it (17) is still above the time-bound ceiling.
+    expect(adjusted.marinePositionMaxAttempts).toBe(
+      fullCronPolicy().marinePositionMaxAttempts,
     );
     expect(
       eventMemo.externalSubrequestsStarted
@@ -465,8 +473,10 @@ describe('derived attempt ceiling', () => {
   });
 
   it('still derives fewer attempts from a short deadline', () => {
-    // Away from a 3_000 boundary: elapsed ms inside the call must not flip it.
-    expect(executionPolicy({ deadlineAt: Date.now() + 10_000 }).maxAttempts).toBe(3);
+    // Away from a 6_000 boundary: elapsed ms inside the call must not flip it.
+    expect(executionPolicy({ deadlineAt: Date.now() + 20_000 }).maxAttempts).toBe(3);
+    // Below room for two real attempts it falls back to a single one.
+    expect(executionPolicy({ deadlineAt: Date.now() + 9_000 }).maxAttempts).toBe(1);
   });
 
   it('leaves an explicit maxAttempts alone', () => {
