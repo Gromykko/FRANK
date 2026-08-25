@@ -604,7 +604,7 @@ export function statusResponse(health: HealthPayload): Response {
       // but printed on all four rows it was eight identical lines of noise.
       // It rides the cell as a title instead: available on demand, silent when
       // not wanted.
-      `<td class="num ${source.tone === 'warn' || source.tone === 'bad' ? `tone-${source.tone}` : ''}" data-source="${source.key}" title="${escapeHtml(source.detail)}">`
+      `<td class="num ${source.tone === 'warn' || source.tone === 'bad' ? `tone-${source.tone}` : ''}" data-source="${source.key}" data-label="${escapeHtml(source.label)}" title="${escapeHtml(source.detail)}">`
       + `<span class="cell-value">${escapeHtml(source.value)}</span>`
       + (source.state !== HEALTHY_SOURCE_STATE
         ? noteLines(source.state)
@@ -624,10 +624,10 @@ export function statusResponse(health: HealthPayload): Response {
           ${escapeHtml(location.areaName)}
           ${location.exactGenerationReady ? '' : `<span class="generation-state ${overallTone}">${escapeHtml(generationState)}</span>`}
         </th>
-        <td class="num ${missing ? 'tone-bad' : toneClass(level(age.ageMs, HEALTH_MAX_DATA_AGE_MS))}">
+        <td class="num ${missing ? 'tone-bad' : toneClass(level(age.ageMs, HEALTH_MAX_DATA_AGE_MS))}" data-label="Forecast">
           <span class="cell-value">${escapeHtml(missing ? 'none' : formatAge(age.ageMs))}</span>
         </td>
-        <td class="num ${initialization ? 'tone-warn' : missing ? 'tone-bad' : toneClass(level(age.checkAgeMs, HEALTH_MAX_CHECK_AGE_MS))}">
+        <td class="num ${initialization ? 'tone-warn' : missing ? 'tone-bad' : toneClass(level(age.checkAgeMs, HEALTH_MAX_CHECK_AGE_MS))}" data-label="Check">
           <span class="cell-value">${escapeHtml(formatAge(age.checkAgeMs))}</span>
           ${checkDetail === 'cron' ? '' : `<span class="cell-note">${escapeHtml(checkDetail)}</span>`}
         </td>
@@ -1040,6 +1040,41 @@ export function statusResponse(health: HealthPayload): Response {
     font:var(--text-caption)/1.4 var(--font-body);
   }
   .board-note.bad td { color:var(--color-danger-text) }
+
+  /* Seven columns need 560px, so on a phone the board scrolled sideways and hid
+     the three marine columns entirely - the ones you open this page to read.
+     Below 700px it stops being a table: each location becomes a block and every
+     figure names itself from the header it lost. Nothing is behind a scrollbar. */
+  @media (max-width:700px) {
+    .board { min-width:0; display:block }
+    .board thead { display:none }
+    .board tbody, .board tr, .board th, .board td { display:block; width:auto }
+    .board-group { padding:4px 0 10px }
+    .board .cell-name {
+      padding:10px 10px 6px;
+      border-bottom:1px solid var(--panel-border);
+      font:700 var(--text-body)/1.3 var(--font-heading);
+    }
+    .board td.num {
+      display:grid;
+      grid-template-columns:auto 1fr;
+      align-items:baseline;
+      gap:2px 12px;
+      padding:6px 10px;
+      text-align:right;
+    }
+    .board td[data-label]::before {
+      content:attr(data-label);
+      grid-column:1;
+      text-align:left;
+      color:var(--text-muted);
+      font:700 var(--text-instrument)/1.3 var(--font-heading);
+      letter-spacing:.08em;
+      text-transform:uppercase;
+    }
+    .board td .cell-value, .board td .cell-note { grid-column:2 }
+    .board-note td { padding:6px 10px 0 }
+  }
   /* Only rendered when a location is NOT on the target generation, so it is
      always an exception and always earns its colour. */
   .generation-state {
