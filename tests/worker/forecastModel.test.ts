@@ -376,6 +376,7 @@ describe('a failed refresh call is not stale data', () => {
     const result = assembleWithWater({
       instance: { collection: 'dkss_idw', id: CURRENT_RUN },
       fallback: true,
+      sameRunAsRequested: true,
       providerContacted: false,
       degraded: true,
       busy: true,
@@ -386,11 +387,12 @@ describe('a failed refresh call is not stale data', () => {
     expect(result.degradedBusyProvider).toBeUndefined();
   });
 
-  it('still degrades a seed fallback, whose series really has lost its tail', () => {
+  it('degrades any fallback that cannot prove it is the same run', () => {
     const result = assembleWithWater({
       instance: { collection: 'dkss_idw', id: CURRENT_RUN },
       fallback: true,
-      seedFallback: true,
+      // No sameRunAsRequested: a seed rebuild, a sibling collection, or an
+      // empty stored series all arrive looking exactly like this.
       providerContacted: false,
       degraded: true,
       busy: true,
@@ -403,10 +405,57 @@ describe('a failed refresh call is not stale data', () => {
     const result = assembleWithWater({
       instance: { collection: 'dkss_idw', id: BEHIND_RUN },
       fallback: true,
+      sameRunAsRequested: true,
       providerContacted: false,
       degraded: true,
       busy: true,
     });
     expect(result.degradedSources).toEqual(['water']);
+  });
+});
+
+// The flag above is only worth anything if the real constructor sets it
+// honestly. The raw ingredient key is per kind+location (marineIngredientKey),
+// so the retained envelope can hold a different collection or run than the one
+// requested, and dkss_idw/dkss_nsbs are different model areas whose values are
+// not interchangeable at a matching timestamp.
+describe('heldMarineFallback proves equivalence rather than assuming it', () => {
+  const RUN_ID = '2026-08-20T120000Z';
+  const REQUESTED = { collection: 'dkss_idw', id: RUN_ID };
+  const point = { time: '2026-08-20T12:00:00.000Z', timeMs: Date.parse('2026-08-20T12:00:00.000Z'), tempWater: 15 };
+  const envelope = (over: Record<string, unknown> = {}) => ({
+    schemaVersion: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
+    locationId: LOCATION.id,
+    forecastConfigRevision: LOCATION.forecastConfigRevision,
+    collection: 'dkss_idw',
+    id: RUN_ID,
+    series: [point],
+    ...over,
+  });
+  const held = (stored: unknown) => heldMarineFallback(
+    stored as never, [point], REQUESTED, REQUESTED,
+    { providerContacted: false, degraded: true, busy: true }, NOW,
+  );
+
+  it('claims equivalence only for the same collection and run', () => {
+    expect(held(envelope())?.sameRunAsRequested).toBe(true);
+  });
+
+  it('refuses it for the sibling collection at the same timestamp', () => {
+    expect(held(envelope({ collection: 'dkss_nsbs' }))?.sameRunAsRequested).toBe(false);
+  });
+
+  it('refuses it for a different run of the same collection', () => {
+    expect(held(envelope({ id: '2026-08-20T060000Z' }))?.sameRunAsRequested).toBe(false);
+  });
+
+  it('refuses it for an empty stored series', () => {
+    expect(held(envelope({ series: [] }))?.sameRunAsRequested).toBe(false);
+  });
+
+  it('never claims it on the seed tier', () => {
+    const result = held(null);
+    expect(result?.fallback).toBe(true);
+    expect(result?.sameRunAsRequested).toBeUndefined();
   });
 });

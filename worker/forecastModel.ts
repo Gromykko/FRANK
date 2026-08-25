@@ -439,6 +439,13 @@ export function heldMarineFallback(
       series: currentStored.series,
       instance: { collection: currentStored.collection, id: currentStored.id },
       fallback: true,
+      // Only an exact provenance match earns the "nothing was lost" treatment.
+      // A non-empty series is the weakest possible completeness signal and is
+      // not proof of a full run - DMI publishes a run one time step at a time -
+      // but storing an empty one is impossible, so its absence is a real fault.
+      sameRunAsRequested: currentStored.collection === requestedInstance.collection
+        && currentStored.id === requestedInstance.id
+        && currentStored.series.length > 0,
       ...extra,
     };
   }
@@ -449,7 +456,7 @@ export function heldMarineFallback(
       series: seedSeries,
       instance: seedInstance ?? requestedInstance,
       fallback: true,
-      seedFallback: true,
+      // Never equivalent: deriveMarineSeedsFromPayload keeps only hourly rows.
       ...extra,
     };
   }
@@ -510,8 +517,10 @@ export function assembleForecastFromSources(
   // the length of a DMI busy spell, while the figures on screen were exactly
   // right - and did it only for water, because waves needed no request at all.
   //
-  // A seed fallback stays degraded whatever the schedule says: that series is
-  // rebuilt from the cached payload's hourly rows and really has lost its tail.
+  // The suppression is gated on PROVABLE equivalence, not on the absence of a
+  // known-bad marker. Anything that cannot show it is serving the same run from
+  // the same collection stays degraded, which covers a seed rebuild, a retained
+  // envelope from the sibling collection, and an empty stored series alike.
   // Weather has no run cycle of its own, so its rule is untouched.
   const marineBehind = new Set(marineSourcesDueForProbe(effectiveInstances, nowMs));
   const marineDegraded = (
@@ -520,7 +529,7 @@ export function assembleForecastFromSources(
   ): boolean => Boolean(
     source.fallback
     && source.degraded
-    && (source.seedFallback || marineBehind.has(kind)),
+    && (!source.sameRunAsRequested || marineBehind.has(kind)),
   );
   const weatherDegraded = Boolean(met.fallback && met.degraded);
   const waterDegraded = marineDegraded(water, 'water');

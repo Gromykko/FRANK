@@ -128,11 +128,15 @@ export interface MarineSeriesResult {
   degraded?: boolean;
   busy?: boolean;
   notReady?: boolean;
-  // The held series came from the cached payload's seed rather than the
-  // retained raw ingredient. deriveMarineSeedsFromPayload keeps only hourly
-  // rows, so that series is genuinely short - unlike the retained ingredient,
-  // which is byte-identical to what a successful fetch of the same run returns.
-  seedFallback?: boolean;
+  // PROOF that this held series is the same run, from the same collection, the
+  // failed request asked for - the only case where a failed call costs nothing.
+  // Deliberately positive and deliberately absent by default: anything that
+  // cannot prove equivalence is treated as degraded. The raw ingredient key is
+  // per kind+location only (marineIngredientKey), so a retained envelope may
+  // legitimately hold a DIFFERENT collection or run than the one requested;
+  // dkss_idw and dkss_nsbs are different model areas, and a matching run
+  // timestamp does not make their values interchangeable.
+  sameRunAsRequested?: boolean;
 }
 
 export interface MarineSeeds {
