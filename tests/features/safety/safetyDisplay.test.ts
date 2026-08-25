@@ -52,41 +52,39 @@ describe('raw-mode safety display', () => {
     expect(hasActiveSafetyChecks(rawSettings)).toBe(false);
   });
 
-  // These previously asserted the opposite: that weather hazards stayed
-  // authoritative with every limit off. That was right while limits-off was an
-  // obscure state someone unticked their way into - warn them the app had gone
-  // quiet. As a mode the user deliberately chooses, it was wrong twice over: it
-  // rated a calm hour 'caution', so the whole matrix went amber while nothing
-  // was being judged, and it kept giving advice the user had switched off.
+  // This has moved twice, and the second move undid half the first. Limits-off
+  // once kept weather hazards authoritative - right while it was an obscure
+  // state someone unticked their way into, wrong as a mode people choose: it
+  // rated a calm hour 'caution' and kept giving advice that had been switched
+  // off. The fix kept the hazard as a bare FACT ("Heavy rain") and dropped only
+  // the advice clause.
   //
-  // The rule now: report the weather, judge nothing. The hazard survives as a
-  // FACT ("Heavy rain") because that belongs on a weather display; the advice
-  // clause ("probably one to skip") does not.
+  // Seeing it running showed the fact was redundant too. The snapshot directly
+  // above already prints the same data.weatherCode beside the weather icon, so
+  // the quiet mode was repeating itself and ended up noisier than the judging
+  // one. Now: no verdict, no restatement - only the line explaining that limits
+  // are off.
   it.each(['heavyrainandthunder', 'heavyrain'])(
-    'reports the %s hazard as a fact and gives no verdict',
+    'gives no verdict and does not restate the hazard for %s',
     (symbolCode) => {
       const analysis = analyzeSafetyConditions(withWeather(symbolCode), rawSettings);
       const display = getSafetyDisplay(analysis, false, LIMITS_OFF);
 
       expect(analysis.rating).toBe('danger');
       expect(display.rating).toBe('none');
-      expect(display.reasons).toEqual([
-        { text: analysis.weatherFact, severity: 'none' },
-        { text: LIMITS_OFF, severity: 'none' },
-      ]);
-      // The advice clause must not survive into a mode that judges nothing.
-      expect(display.reasons.some((r) => /skip|keeping an eye/.test(r.text))).toBe(false);
-      expect(analysis.weatherFact).toBeTruthy();
+      expect(display.reasons).toEqual([{ text: LIMITS_OFF, severity: 'none' }]);
+      // Neither the advice clause nor the bare hazard may survive here.
+      expect(display.reasons.some((r) => /skip|keeping an eye|rain/i.test(r.text))).toBe(false);
     },
   );
 
-  it('reports a weather caution as a fact and gives no verdict', () => {
+  it('gives no verdict and no restatement for a weather caution', () => {
     const analysis = analyzeSafetyConditions(withWeather('fog'), rawSettings);
     const display = getSafetyDisplay(analysis, false, LIMITS_OFF);
 
     expect(analysis.rating).toBe('caution');
     expect(display.rating).toBe('none');
-    expect(display.reasons[0]).toEqual({ text: analysis.weatherFact, severity: 'none' });
+    expect(display.reasons).toEqual([{ text: LIMITS_OFF, severity: 'none' }]);
   });
 
   it('gives no verdict at all when the raw weather is otherwise unremarkable', () => {

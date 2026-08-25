@@ -61,13 +61,12 @@ export default function ConditionsSnapshot({
   const tideText = isBlock
     ? (tideLo === tideHi ? `${tideHi} cm` : t('{0} to {1} cm', tideLo, tideHi))
     : `${formatLevelCm(data.tideLevel)} cm`;
-  // Keep MET's central instant estimate as the honest headline wind. The p90
-  // is a separate uncertainty estimate at the block start (not a period max),
-  // disclosed in the outlook note as informational context only.
+  // Keep MET's central instant estimate as the honest headline wind. MET's p90
+  // stays parsed on the model but is no longer shown: it is an uncertainty
+  // estimate at the block START rather than a period maximum, so it answered a
+  // question nobody asked, in language ("90th percentile") no paddler should
+  // have to decode - beside a wind column that already reports the real figure.
   const windText = `${formatReading(data.windSpeed, 1)} m/s`;
-  const hasOutlookWindP90 = isBlock
-    && typeof data.windSpeedP90 === 'number'
-    && Number.isFinite(data.windSpeedP90);
   // MET publishes no gust for the longer-range blocks. Show the no-reading
   // dash rather than repeating the sustained wind under a "gusts" label.
   // Neither central nor p90 sustained wind is a gust or a within-period max.
@@ -177,9 +176,6 @@ export default function ConditionsSnapshot({
       {isBlock && (
         <div className="snapshot-lowconf-note">
           {t('Long range outlook · more uncertain forecast')}
-          {hasOutlookWindP90 && (
-            <> · {t('90th-percentile wind at start: {0} m/s', formatReading(data.windSpeedP90 as number, 1))}</>
-          )}
         </div>
       )}
 

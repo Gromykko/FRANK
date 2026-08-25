@@ -241,7 +241,7 @@ export default function App() {
   const isBugt = CURRENT_LOCATION.areaName.toLowerCase().includes('bugt');
   const waterWord = lang === 'da' ? (isBugt ? 'Bugten' : 'Fjorden') : (isBugt ? 'bay' : 'fjord');
   const frankPhrase = noVerdict
-    ? t('Limits are off. You are the captain now')
+    ? t('Off duty. You are the captain now')
     : t(getFrankPhrase(safetyDisplayRating, selectedDateStr), waterWord);
 
   // Sunrise/sunset can legitimately be absent (polar edge cases) — guard the

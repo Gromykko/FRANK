@@ -4,6 +4,31 @@ import type { DisplayStatus } from '../features/safety/analyzeSafetyConditions';
 // 16x16 pixel grid so the face sits on the same pixel raster as the screen's
 // scanlines. Every lit pixel renders in currentColor, so the face picks up
 // the badge's phosphor rating color.
+// Closed lids for the no-verdict mode. FRANK is not broken and not warning
+// about anything - it has been asked not to have an opinion - and a face with
+// its eyes shut says that at a glance, where a greyed-out open-eyed stare read
+// as "disabled". In Moon, GERTY's emoticon is always the same amber; only the
+// expression changes, so the colour carries no meaning and the face carries it
+// all. Paired with the flat 'none' mouth below.
+const EYES_CLOSED = [
+  '................',
+  '................',
+  '................',
+  '................',
+  '................',
+  '................',
+  '...xxxx..xxxx...',
+  '................',
+  '................',
+  '................',
+  '................',
+  '................',
+  '................',
+  '................',
+  '................',
+  '................',
+];
+
 const EYES = [
   '................',
   '................',
@@ -121,7 +146,9 @@ export default function GertyFace({ rating }: { rating: DisplayStatus }) {
       aria-hidden="true"
       focusable="false"
     >
-      <g className="gerty-eyes">{gridRects(EYES)}</g>
+      <g className="gerty-eyes">
+        {gridRects(rating === 'none' ? EYES_CLOSED : EYES)}
+      </g>
       {gridRects(MOUTHS[rating])}
     </svg>
   );

@@ -36,7 +36,7 @@ export const da: Record<string, string> = {
   'Save it for another day': 'Gem den til en anden dag',
   'Your personal limits are off. Use the raw forecast values and local judgement before launching.':
     'Dine personlige grænser er slået fra. Brug de rå prognosetal og lokal dømmekraft, før du tager på vandet.',
-  'Limits are off. You are the captain now': 'Grænserne er slået fra. Du er kaptajnen nu',
+  'Off duty. You are the captain now': 'Ikke på vagt. Du er kaptajnen nu',
   'Switch to dark theme': 'Skift til mørkt tema',
   'Switch to light theme': 'Skift til lyst tema',
   'built {0}': 'bygget {0}',
@@ -395,7 +395,6 @@ export const da: Record<string, string> = {
   'Wind from {0}. The arrow points downwind (where the wind is heading).':
     'Vind fra {0}. Pilen peger med vinden (derhen hvor vinden blæser).',
   'Long range outlook · more uncertain forecast': 'Langtidsudsigt · mere usikker prognose',
-  '90th-percentile wind at start: {0} m/s': '90-percentil for vind ved start: {0} m/s',
   'Overall rating: {0}.': 'Samlet vurdering: {0}.',
   'Conditions for {0}:': 'Forhold for {0}:',
 

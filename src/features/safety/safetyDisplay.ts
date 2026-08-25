@@ -44,17 +44,11 @@ export function getSafetyDisplay(
   // 'caution', so a mode that applies no limits still painted the whole matrix
   // cautionary - neither a verdict nor useful information.
   //
-  // Weather hazards remain VISIBLE but as observations. "Heavy rain" is a fact
-  // and belongs on a weather display; "probably one to skip" is advice, and
-  // advice is exactly what was switched off. Withholding the fact would be a
-  // different thing from withholding the judgement.
-  return {
-    rating: 'none',
-    reasons: [
-      ...(analysis.weatherFact
-        ? [{ text: analysis.weatherFact, severity: 'none' as const }]
-        : []),
-      limitsOffReason,
-    ],
-  };
+  // The hazard itself is not repeated here. It was briefly shown as a bare
+  // observation ("Heavy rain"), which read as a second opinion on something the
+  // snapshot directly above already states: both come from the same
+  // data.weatherCode, one via getCompactWeatherDescription beside the weather
+  // icon and one via getWeatherDescription. Saying it twice made the quiet mode
+  // noisier than the judging one.
+  return { rating: 'none', reasons: [limitsOffReason] };
 }

@@ -2604,7 +2604,13 @@ button.legend-toggle.is-on {
 }
 
 /* The device face goes monochrome when there is no verdict to display. */
-.frank-device-shell.rating-none { --frank-phosphor: var(--text-muted); }
+/* Dimmed amber, not grey. Grey reads as a dead or faulty screen; GERTY's face
+   is amber in every mood, and the closed lids - not the colour - are what say
+   FRANK is off duty. Mixed well down from --crt-caution so it cannot be
+   mistaken for an actual caution verdict. */
+.frank-device-shell.rating-none {
+  --frank-phosphor: color-mix(in srgb, var(--crt-caution) 45%, var(--text-muted));
+}
 .frank-device-shell.rating-safe { --frank-phosphor: var(--crt-safe); }
 .frank-device-shell.rating-caution { --frank-phosphor: var(--crt-caution); }
 .frank-device-shell.rating-danger { --frank-phosphor: var(--crt-danger); }

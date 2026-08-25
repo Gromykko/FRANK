@@ -109,7 +109,6 @@ export interface SafetyAnalysis {
   // follows it. Weather-only mode reports what the sky is doing but must not
   // say what to do about it, and "Heavy rain" is a fact while "probably one to
   // skip" is a verdict. Only set when a weather hazard actually fired.
-  weatherFact?: string;
 }
 
 export interface SafetyAnalysisContext {
@@ -403,15 +402,12 @@ export function analyzeSafetyConditions(
   const weatherSeverity = data.symbolCode
     ? severityFromMetSymbol(data.symbolCode)
     : WEATHER_CODE_SEVERITY[data.weatherCode] ?? 'safe';
-  let weatherFact: string | undefined;
   const weatherDesc = translate(getWeatherDescription(data.weatherCode));
   if (weatherSeverity === 'danger') {
     rating = 'danger';
-    weatherFact = weatherDesc;
     addReason('danger', translate('{0} — rough out there, probably one to skip.', weatherDesc));
   } else if (weatherSeverity === 'caution') {
     if (rating !== 'danger') rating = 'caution';
-    weatherFact = weatherDesc;
     addReason('caution', translate('{0} — worth keeping an eye on.', weatherDesc));
   }
 
@@ -504,5 +500,5 @@ export function analyzeSafetyConditions(
         ));
   }
 
-  return { rating, reasons, ...(weatherFact ? { weatherFact } : {}) };
+  return { rating, reasons };
 }

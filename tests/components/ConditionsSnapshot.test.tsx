@@ -120,10 +120,16 @@ describe('ConditionsSnapshot', () => {
     expect(container.querySelector('.snapshot-sun')?.textContent).toContain('05.45');
     expect(container.querySelector('.snapshot-wind > .sr-only')?.textContent)
       .toBe('4.3 m/s, gusts –');
-    expect(container.querySelector('.snapshot-lowconf-note')?.textContent)
-      .toContain('90th-percentile wind at start: 5.0 m/s');
-    expect(container.querySelector('.snapshot-lowconf-note')?.textContent)
-      .not.toContain('maximum');
+    // The note says the outlook is less certain and stops there. It used to
+    // append MET's 90th-percentile wind, which is an uncertainty estimate at the
+    // block START rather than a period maximum - a distinction that needs a
+    // paragraph to explain and that the wind column beside it already answers
+    // honestly. The p90 stays on the model; it is simply not shown.
+    const note = container.querySelector('.snapshot-lowconf-note')?.textContent ?? '';
+    expect(note).toContain('Long range outlook');
+    expect(note).not.toContain('percentile');
+    expect(note).not.toContain('maximum');
+    expect(note).not.toMatch(/\d/);
   });
 
   it('does not turn a whole outlook period into night styling from its start mark', () => {
