@@ -8,7 +8,10 @@ import {
   shouldCheckInBackground,
 } from '../../worker/index';
 import { MARINE_INGREDIENT_CACHE_SCHEMA_VERSION } from '../../src/features/forecast/releaseContract';
-import { FORECAST_SOURCE_POLICY } from '../../worker/forecastModel';
+import {
+  FORECAST_SOURCE_POLICY,
+  marineSourcesDueForProbe,
+} from '../../worker/forecastModel';
 import { marineIngredientKey } from '../../worker/generation';
 
 // An in-memory stand-in for the KV binding (get(key,'json') / put(key,string)).
@@ -434,8 +437,10 @@ describe('marineProbeDecision (DMI publication schedule)', () => {
     + FORECAST_SOURCE_POLICY.dmiRunCycleMs
     + completeDelayMs
     - FORECAST_SOURCE_POLICY.dmiPublicationLeadMs;
-  // DKSS is the slower of the shared run's two collections, so it sets the gate.
-  const expectedSharedRunAt = dueAt(FORECAST_SOURCE_POLICY.dmiDkssCompleteDelayMs);
+  // The combined check opens when the first source reaches its own gate. WAM
+  // publishes earlier than DKSS, so deliberately pin the earlier schedule.
+  const expectedFirstSourceAt = dueAt(FORECAST_SOURCE_POLICY.dmiWamNsbCompleteDelayMs);
+  const expectedWaterAt = dueAt(FORECAST_SOURCE_POLICY.dmiDkssCompleteDelayMs);
 
   it('pins the published completion delays and the publication lead', () => {
     // DMI's own published figures, no longer padded:
@@ -455,29 +460,51 @@ describe('marineProbeDecision (DMI publication schedule)', () => {
       .toBe(FORECAST_SOURCE_POLICY.dmiFailedProbeRetryMs);
   });
 
-  it('waits for the slower collection when water and waves share a run', () => {
+  it('opens at the first per-source gate and shares that due predicate', () => {
+    const beforeGate = expectedFirstSourceAt - 1;
+    expect(marineSourcesDueForProbe(sharedRun, beforeGate)).toEqual([]);
     expect(marineProbeDecision(
       sharedRun,
       undefined,
-      expectedSharedRunAt - 1,
+      beforeGate,
     )).toEqual({
       shouldProbe: false,
-      nextProbeAtMs: expectedSharedRunAt,
+      nextProbeAtMs: expectedFirstSourceAt,
       reason: 'publication-window',
     });
-    expect(marineProbeDecision(sharedRun, undefined, expectedSharedRunAt).shouldProbe).toBe(true);
+    expect(marineSourcesDueForProbe(sharedRun, expectedFirstSourceAt)).toEqual(['waves']);
+    expect(marineProbeDecision(sharedRun, undefined, expectedFirstSourceAt)).toEqual({
+      shouldProbe: true,
+      nextProbeAtMs: expectedFirstSourceAt,
+      reason: 'due',
+    });
   });
 
-  it('uses the other WAM completion delay when that is the slower shared-run source', () => {
+  it('does not back off a newly due sibling from an earlier-source attempt', () => {
+    const lastWamAttemptAt = expectedWaterAt - 1;
+    expect(marineSourcesDueForProbe(sharedRun, expectedWaterAt)).toEqual(['water', 'waves']);
+    expect(marineProbeDecision(
+      sharedRun,
+      new Date(lastWamAttemptAt).toISOString(),
+      expectedWaterAt,
+    )).toEqual({
+      shouldProbe: true,
+      nextProbeAtMs: expectedFirstSourceAt,
+      reason: 'due',
+    });
+  });
+
+  it('uses the earlier WAM completion delay when two WAM collections share a run', () => {
     const wamOnly = {
       water: { collection: 'wam_nsb', id: '2026-07-11T120000Z' },
       waves: { collection: 'wam_dw', id: '2026-07-11T120000Z' },
     };
+    const firstWamAt = dueAt(FORECAST_SOURCE_POLICY.dmiWamNsbCompleteDelayMs);
     expect(marineProbeDecision(
       wamOnly,
       undefined,
-      dueAt(FORECAST_SOURCE_POLICY.dmiOtherWamCompleteDelayMs) - 1,
-    ).nextProbeAtMs).toBe(dueAt(FORECAST_SOURCE_POLICY.dmiOtherWamCompleteDelayMs));
+      firstWamAt - 1,
+    ).nextProbeAtMs).toBe(firstWamAt);
   });
 
   it('schedules from whichever held ingredient is on the older run', () => {
@@ -488,8 +515,8 @@ describe('marineProbeDecision (DMI publication schedule)', () => {
     expect(marineProbeDecision(
       waterLags,
       undefined,
-      expectedSharedRunAt - 1,
-    ).nextProbeAtMs).toBe(expectedSharedRunAt);
+      expectedWaterAt - 1,
+    ).nextProbeAtMs).toBe(expectedWaterAt);
 
     const wavesLag = {
       water: { collection: 'dkss_idw', id: '2026-07-11T180000Z' },
@@ -503,7 +530,7 @@ describe('marineProbeDecision (DMI publication schedule)', () => {
   });
 
   it('comes back next rotation after a due check found no newer run', () => {
-    const attemptedAt = expectedSharedRunAt + 60_000;
+    const attemptedAt = expectedFirstSourceAt + 60_000;
     const retryAt = attemptedAt + FORECAST_SOURCE_POLICY.dmiDueProbeBackoffMs;
     expect(marineProbeDecision(
       sharedRun,
@@ -521,10 +548,13 @@ describe('marineProbeDecision (DMI publication schedule)', () => {
       retryAt,
       false,
     ).shouldProbe).toBe(true);
+    // Schedule truth remains due during an operational retry backoff; hiding it
+    // would also hide real degradation. Only the call timing is throttled.
+    expect(marineSourcesDueForProbe(sharedRun, retryAt - 1)).toEqual(['waves']);
   });
 
   it('retries a failed due probe after one city rotation', () => {
-    const attemptedAt = expectedSharedRunAt + 60_000;
+    const attemptedAt = expectedFirstSourceAt + 60_000;
     const retryAt = attemptedAt + FORECAST_SOURCE_POLICY.dmiFailedProbeRetryMs;
     expect(marineProbeDecision(
       sharedRun,
@@ -543,7 +573,7 @@ describe('marineProbeDecision (DMI publication schedule)', () => {
       true,
     )).toEqual({
       shouldProbe: true,
-      nextProbeAtMs: expectedSharedRunAt,
+      nextProbeAtMs: expectedFirstSourceAt,
       reason: 'due',
     });
   });
@@ -551,13 +581,13 @@ describe('marineProbeDecision (DMI publication schedule)', () => {
   it('does not mistake pre-window or future stamps for a completed due probe', () => {
     expect(marineProbeDecision(
       sharedRun,
-      new Date(expectedSharedRunAt - 1000).toISOString(),
-      expectedSharedRunAt,
+      new Date(expectedFirstSourceAt - 1000).toISOString(),
+      expectedFirstSourceAt,
     ).shouldProbe).toBe(true);
     expect(marineProbeDecision(
       sharedRun,
       '2026-07-12T00:00:00Z',
-      expectedSharedRunAt,
+      expectedFirstSourceAt,
     ).shouldProbe).toBe(true);
   });
 

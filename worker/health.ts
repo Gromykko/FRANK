@@ -205,6 +205,66 @@ function providerAgeMs(value: string | undefined, nowMs: number): number | null 
   return Number.isFinite(timestampMs) && ageMs >= 0 ? ageMs : null;
 }
 
+interface MarineProvenanceFault {
+  state: string;
+  value: string;
+  detail: string;
+}
+
+// A due, valid DMI run is ordinary operation. Invalid provenance is different:
+// it cannot support the schedule calculation at all, so presenting it as
+// "Next run expected" would turn a data-integrity fault into a neutral wait.
+function marineProvenanceFault(
+  instance: { collection?: string; id?: string } | null | undefined,
+  nowMs: number,
+): MarineProvenanceFault | null {
+  if (!instance
+    || typeof instance.id !== 'string'
+    || instance.id.length === 0
+    || typeof instance.collection !== 'string'
+    || instance.collection.length === 0) {
+    return {
+      state: 'Run provenance missing',
+      value: 'not recorded',
+      detail: 'The model run id or collection was not recorded.',
+    };
+  }
+
+  const runMs = providerTimestampMs(instance.id);
+  if (!Number.isFinite(runMs)) {
+    return {
+      state: 'Run time malformed',
+      value: 'not recorded',
+      detail: 'The model run id could not be parsed.',
+    };
+  }
+  if (runMs > nowMs) {
+    return {
+      state: 'Run time in future',
+      value: 'not recorded',
+      detail: 'The model run is dated after this status reading.',
+    };
+  }
+
+  const ageMs = nowMs - runMs;
+  if (ageMs > FORECAST_SOURCE_POLICY.marineFallbackMaxAgeMs) {
+    return {
+      state: 'Run expired',
+      value: formatAge(ageMs),
+      detail: 'The model run exceeds the marine fallback age limit.',
+    };
+  }
+  if (!Number.isFinite(marineRunDueAtMs(instance))) {
+    return {
+      state: 'Collection unknown',
+      value: formatAge(ageMs),
+      detail: 'The model collection is not recognized by the publication policy.',
+    };
+  }
+
+  return null;
+}
+
 // The one state with nothing to report. Everything else earns a note under the
 // number - including states that carry no colour, like waiting for the next
 // model run: quiet when nothing is wrong is the rule, not quiet unless amber.
@@ -300,8 +360,9 @@ export function statusResponse(health: HealthPayload): Response {
     // DMI publishes on a six-hour cycle, so a healthy city routinely holds a
     // run several hours old and the raw age read as an alarm when nothing was
     // wrong. The question that matters is whether a NEWER run should already
-    // be in hand - which is exactly the gate the refresh path uses to decide
-    // whether to probe, so the two can never disagree about what "late" means.
+    // be in hand - which is exactly the publication gate the refresh path
+    // evaluates before its separate operational retry backoff, so the two use
+    // one answer about what "late" means.
     const marineRunOverdue = new Set(
       missing ? [] : marineSourcesDueForProbe(cacheHealth.marineInstances, nowMs),
     );
@@ -351,6 +412,14 @@ export function statusResponse(health: HealthPayload): Response {
       const degraded = degradedSources.has(key);
       const busy = providerAppliesTo(key);
       const provenanceAgeMs = providerAgeMs(provenance, nowMs);
+      const marineInstance = key === 'water'
+        ? cacheHealth.marineInstances?.water
+        : key === 'waves'
+          ? cacheHealth.marineInstances?.waves
+          : undefined;
+      const provenanceFault = key === 'weather'
+        ? null
+        : marineProvenanceFault(marineInstance, nowMs);
       // Waiting for the next run is ordinary operation, not a fault: we hold a
       // valid run, the forecast on screen is correct, and the rotation picks the
       // new one up within a few minutes. Calling that amber cried wolf on every
@@ -380,9 +449,22 @@ export function statusResponse(health: HealthPayload): Response {
       const provenanceDetail = provenance
         ? `${provenanceLabel} ${formatProviderTimestamp(provenance)}`
         : `${provenanceLabel} not recorded`;
+      const operationalState = busy
+        ? 'Provider busy'
+        : degraded
+          ? 'Last-good fallback'
+          : null;
+      const sourceState = provenanceFault
+        ? operationalState
+          ? `${operationalState} · ${provenanceFault.state}`
+          : provenanceFault.state
+        : operationalState
+          ?? (awaitingRun
+            ? `Next run expected${behindBy}`
+            : provenanceAgeMs === null ? 'Age not recorded' : HEALTHY_SOURCE_STATE);
       return {
         key, label, provider,
-        tone: degraded || busy
+        tone: degraded || busy || provenanceFault
           ? 'warn'
           : provenanceAgeMs === null ? 'neutral' : 'good',
         // 'Current' not 'Current snapshot': when healthy the operator already
@@ -391,23 +473,16 @@ export function statusResponse(health: HealthPayload): Response {
         // disappearing - it is the only thing separating "evaluated and good"
         // from "this slot rendered blank", and keeping it prevents a layout
         // shift the moment a source turns amber.
-        state: busy
-          ? 'Provider busy'
-          : degraded
-            ? 'Last-good fallback'
-            : awaitingRun
-              ? `Next run expected${behindBy}`
-              : provenanceAgeMs === null ? 'Age not recorded' : HEALTHY_SOURCE_STATE,
+        state: sourceState,
         // Every numeric column on this board is an age, so these are too. A run
         // stamp here read as a different kind of measurement mid-row, and the
         // run identity is already stated twice: once in the provider legend and
         // once in this cell's own title. What the age lacked was context, not
         // replacement - the state and tone above supply it, so a six-hour-old
         // run that is still the newest one due now sits plain and uncoloured.
-        value: provenanceAgeMs === null
-          ? 'not recorded'
-          : formatAge(provenanceAgeMs),
-        detail: provenanceDetail,
+        value: provenanceFault?.value
+          ?? (provenanceAgeMs === null ? 'not recorded' : formatAge(provenanceAgeMs)),
+        detail: provenanceFault?.detail ?? provenanceDetail,
       };
     };
 

@@ -261,7 +261,10 @@ export function marineRunDueAtMs(
 }
 
 export function marineSourcesDueForProbe(
-  marineInstances: Partial<MarineInstances> | null | undefined,
+  marineInstances: {
+    water?: MarineRunRef;
+    waves?: MarineRunRef;
+  } | null | undefined,
   nowMs = Date.now(),
 ): MarineKind[] {
   const kinds: readonly MarineKind[] = ['water', 'waves'];
@@ -306,10 +309,10 @@ export function marineProbeDecision(
 ): MarineProbeDecision {
   const waterRunMs = parseDmiInstanceMs(marineInstances?.water?.id);
   const wavesRunMs = parseDmiInstanceMs(marineInstances?.waves?.id);
-  const waterDelayMs = dmiCompleteDelayMs(marineInstances?.water?.collection);
-  const wavesDelayMs = dmiCompleteDelayMs(marineInstances?.waves?.collection);
+  const waterDueAtMs = marineRunDueAtMs(marineInstances?.water);
+  const wavesDueAtMs = marineRunDueAtMs(marineInstances?.waves);
 
-  if (![waterRunMs, wavesRunMs, waterDelayMs, wavesDelayMs].every(Number.isFinite)
+  if (![waterRunMs, wavesRunMs, waterDueAtMs, wavesDueAtMs].every(Number.isFinite)
     || waterRunMs > nowMs
     || wavesRunMs > nowMs) {
     return { shouldProbe: true, nextProbeAtMs: nowMs, reason: 'invalid' };
@@ -320,31 +323,26 @@ export function marineProbeDecision(
     return { shouldProbe: true, nextProbeAtMs: nowMs, reason: 'expired' };
   }
 
-  let expectedAtMs: number;
-  if (waterRunMs === wavesRunMs) {
-    expectedAtMs = waterRunMs
-      + FORECAST_SOURCE_POLICY.dmiRunCycleMs
-      + Math.max(waterDelayMs, wavesDelayMs)
-      - FORECAST_SOURCE_POLICY.dmiPublicationLeadMs;
-  } else if (waterRunMs < wavesRunMs) {
-    expectedAtMs = waterRunMs
-      + FORECAST_SOURCE_POLICY.dmiRunCycleMs
-      + waterDelayMs
-      - FORECAST_SOURCE_POLICY.dmiPublicationLeadMs;
-  } else {
-    expectedAtMs = wavesRunMs
-      + FORECAST_SOURCE_POLICY.dmiRunCycleMs
-      + wavesDelayMs
-      - FORECAST_SOURCE_POLICY.dmiPublicationLeadMs;
-  }
-
-  if (nowMs < expectedAtMs) {
+  // DMI publishes water and waves on genuinely different schedules. Open the
+  // combined catalogue check when the FIRST source reaches its own gate rather
+  // than delaying WAM behind DKSS. Calling the same per-source predicate here
+  // also keeps their publication-schedule answer identical; the operational
+  // retry backoff below may still defer a source that remains schedule-due.
+  const expectedAtMs = Math.min(waterDueAtMs, wavesDueAtMs);
+  const dueSources = marineSourcesDueForProbe(marineInstances, nowMs);
+  if (dueSources.length === 0) {
     return { shouldProbe: false, nextProbeAtMs: expectedAtMs, reason: 'publication-window' };
   }
 
+  // A check for the earlier source is not evidence that a later sibling was
+  // checked before its gate even opened. Anchor backoff to the latest gate
+  // among sources due NOW, so the first turn of newly-due DKSS cannot inherit a
+  // WAM-only attempt stamp.
+  const dueSourceGateAtMs = Math.max(...dueSources.map((kind) =>
+    (kind === 'water' ? waterDueAtMs : wavesDueAtMs)));
   const lastAttemptMs = Date.parse(lastAttemptAt ?? '');
   if (Number.isFinite(lastAttemptMs)
-    && lastAttemptMs >= expectedAtMs
+    && lastAttemptMs >= dueSourceGateAtMs
     && lastAttemptMs <= nowMs) {
     const backoffMs = previousMarineFailed
       ? FORECAST_SOURCE_POLICY.dmiFailedProbeRetryMs

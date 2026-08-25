@@ -61,6 +61,7 @@ import {
   marineInstancesEqual,
   marineInstancesWithinFallbackAge,
   marineProbeDecision,
+  marineRunDueAtMs,
   marineSourcesDueForProbe,
   metForecastUrl,
   parseDmiInstanceMs,
@@ -268,8 +269,30 @@ function manifestInstanceForCollections(
   }
 
   const knownRunAtMs = known ? parseDmiInstanceMs(known.id) : Number.NaN;
-  if (known && !Number.isFinite(knownRunAtMs)) return null;
+  if (known
+    && (!collections.includes(known.collection) || !Number.isFinite(knownRunAtMs))) {
+    return null;
+  }
   if (Number.isFinite(knownRunAtMs) && stored.runAtMs < knownRunAtMs) return null;
+  if (Number.isFinite(knownRunAtMs) && stored.runAtMs === knownRunAtMs) {
+    const knownRunDueAtMs = marineRunDueAtMs(known);
+    const storedRunDueAtMs = marineRunDueAtMs(stored.entry);
+    // Equal timestamps may still come from different allowed fallback
+    // collections. Treat the earlier collection gate as authoritative; using
+    // only the city's old collection could adopt a returned entry already due.
+    const equalRunDueAtMs = Math.min(knownRunDueAtMs, storedRunDueAtMs);
+    // Equality is useful before this source's own next-run gate, and remains
+    // briefly useful if another city verified it after that gate opened. That
+    // verification expires on the same backoff as a direct fruitless probe;
+    // trusting it for the manifest's six-hour lifetime would recreate the live
+    // 00Z freshness lock whenever DMI published just after the first probe.
+    const equalRunVerificationCurrent = stored.discoveredAtMs >= equalRunDueAtMs
+      && nowMs < stored.discoveredAtMs + FORECAST_SOURCE_POLICY.dmiDueProbeBackoffMs;
+    if (!Number.isFinite(equalRunDueAtMs)
+      || (nowMs >= equalRunDueAtMs && !equalRunVerificationCurrent)) {
+      return null;
+    }
+  }
   return {
     collection: stored.entry.collection,
     id: stored.entry.id,
@@ -340,11 +363,16 @@ async function persistDmiRunManifest(
       && isMarineRunWithinFallbackAge(known, nowMs)
       ? parseDmiInstanceMs(known.id)
       : Number.NaN;
-    const advancesKnownRun = !Number.isFinite(knownRunAtMs)
-      || discoveredRunAtMs > knownRunAtMs;
-    if (advancesKnownRun
-      && (stored.kind === 'missing'
-        || (stored.kind === 'valid' && discoveredRunAtMs > stored.runAtMs))) {
+    const doesNotRegressKnownRun = !Number.isFinite(knownRunAtMs)
+      || discoveredRunAtMs >= knownRunAtMs;
+    // Preserve the missing-manifest rule: an unchanged city-local run is not a
+    // discovery by itself. But when a shared manifest exists behind that city,
+    // confirming the city's already-known newer run must advance the global
+    // entry, or every lagging city remains pinned to the old value.
+    const advancesStoredManifest = stored.kind === 'missing'
+      ? (!Number.isFinite(knownRunAtMs) || discoveredRunAtMs > knownRunAtMs)
+      : discoveredRunAtMs > stored.runAtMs;
+    if (doesNotRegressKnownRun && advancesStoredManifest) {
       updates.set(dmiCollectionListKey(collections), instance);
     }
   }

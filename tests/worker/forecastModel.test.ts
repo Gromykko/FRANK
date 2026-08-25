@@ -207,10 +207,11 @@ describe('generation-owned forecast model', () => {
       water: { collection: 'dkss_idw', id: RUN },
       waves: { collection: 'wam_nsb', id: RUN },
     }, undefined, Date.parse('2026-08-20T20:00:00Z'));
-    // DKSS is the slower of the two, so it sets the shared gate.
+    // WAM publishes first, so the combined check opens on WAM's own gate rather
+    // than withholding it until the slower DKSS collection is expected.
     expect(decision).toEqual({
       shouldProbe: false,
-      nextProbeAtMs: dueAt(FORECAST_SOURCE_POLICY.dmiDkssCompleteDelayMs, Date.parse(HOUR)),
+      nextProbeAtMs: dueAt(FORECAST_SOURCE_POLICY.dmiWamNsbCompleteDelayMs, Date.parse(HOUR)),
       reason: 'publication-window',
     });
     expect(FORECAST_SOURCE_POLICY.marineFallbackMaxAgeMs).toBe(12 * 60 * 60 * 1000);

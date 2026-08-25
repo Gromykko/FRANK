@@ -8,7 +8,10 @@ import {
 } from 'vitest';
 import type { ForecastLocation } from '../../src/config/locationTypes';
 import type { MarineInstances } from '../../worker/domain';
-import { FORECAST_SOURCE_POLICY } from '../../worker/forecastModel';
+import {
+  FORECAST_SOURCE_POLICY,
+  marineRunDueAtMs,
+} from '../../worker/forecastModel';
 import {
   DMI_RUN_MANIFEST_KEY,
   DMI_RUN_MANIFEST_SCHEMA_VERSION,
@@ -171,6 +174,132 @@ describe('shared DMI run manifest', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('short-circuits equal manifest entries before each source reaches its own due gate', async () => {
+    const firstDueAt = Math.min(
+      marineRunDueAtMs(OLD_INSTANCES.water),
+      marineRunDueAtMs(OLD_INSTANCES.waves),
+    );
+    vi.setSystemTime(firstDueAt - 1);
+    const discoveredAt = new Date(firstDueAt - 60 * 60_000).toISOString();
+    const store = trackedManifestStore(manifestJson(bothEntries(OLD_RUN, discoveredAt)));
+    const calls = stubCatalogue();
+
+    const result = await resolveMarine(store);
+
+    expect(result.catalogueContacted).toBe(false);
+    expect(result.manifestResolved).toEqual(['water', 'waves']);
+    expect(result.instances).toEqual(OLD_INSTANCES);
+    expect(calls).toHaveLength(0);
+    expect(store.puts).toHaveLength(0);
+  });
+
+  it('probes only the source whose own gate opened while its sibling still adopts the manifest', async () => {
+    const wavesDueAt = marineRunDueAtMs(OLD_INSTANCES.waves);
+    vi.setSystemTime(wavesDueAt);
+    const discoveredAt = new Date(wavesDueAt - 60 * 60_000).toISOString();
+    const store = trackedManifestStore(manifestJson(bothEntries(OLD_RUN, discoveredAt)));
+    const calls = stubCatalogue();
+
+    const result = await resolveMarine(store);
+
+    expect(result.catalogueContacted).toBe(true);
+    expect(result.manifestResolved).toEqual(['water']);
+    expect(result.instances).toEqual({
+      water: OLD_INSTANCES.water,
+      waves: { collection: 'wam_nsb', id: NEW_RUN },
+    });
+    const catalogueCalls = calls.filter((url) => url.endsWith('/instances'));
+    expect(catalogueCalls).toHaveLength(1);
+    expect(catalogueCalls[0]).toContain('/collections/wam_nsb/instances');
+  });
+
+  it('uses the earlier gate when equal timestamps come from different fallback collections', async () => {
+    const known: MarineInstances = {
+      water: OLD_INSTANCES.water,
+      waves: { collection: 'wam_dw', id: OLD_RUN },
+    };
+    const storedWaves = { collection: 'wam_nsb', id: OLD_RUN };
+    const storedWavesDueAt = marineRunDueAtMs(storedWaves);
+    vi.setSystemTime(storedWavesDueAt);
+    const discoveredAt = new Date(storedWavesDueAt - 60 * 60_000).toISOString();
+    const store = trackedManifestStore(manifestJson({
+      [dmiCollectionListKey(WATER)]: manifestEntry('dkss_idw', OLD_RUN, discoveredAt),
+      [dmiCollectionListKey(WAVES)]: manifestEntry('wam_nsb', OLD_RUN, discoveredAt),
+    }));
+    const calls = stubCatalogue();
+
+    const result = await resolveMarine(store, known);
+
+    expect(result.manifestResolved).toEqual(['water']);
+    expect(result.instances).toEqual({
+      water: OLD_INSTANCES.water,
+      waves: { collection: 'wam_nsb', id: NEW_RUN },
+    });
+    const catalogueCalls = calls.filter((url) => url.endsWith('/instances'));
+    expect(catalogueCalls).toHaveLength(1);
+    expect(catalogueCalls[0]).toContain('/collections/wam_nsb/instances');
+  });
+
+  it('rejects equal pre-gate evidence once each source is due and probes the catalogue', async () => {
+    const waterDueAt = marineRunDueAtMs(OLD_INSTANCES.water);
+    const wavesDueAt = marineRunDueAtMs(OLD_INSTANCES.waves);
+    vi.setSystemTime(Math.max(waterDueAt, wavesDueAt));
+    const discoveredAt = new Date(Math.min(waterDueAt, wavesDueAt) - 1).toISOString();
+    const store = trackedManifestStore(manifestJson(bothEntries(OLD_RUN, discoveredAt)));
+    const calls = stubCatalogue();
+
+    const result = await resolveMarine(store);
+
+    expect(result.catalogueContacted).toBe(true);
+    expect(result.manifestResolved).toEqual([]);
+    expect(result.instances).toEqual({
+      water: { collection: 'dkss_idw', id: NEW_RUN },
+      waves: { collection: 'wam_nsb', id: NEW_RUN },
+    });
+    expect(calls.filter((url) => url.endsWith('/instances'))).toHaveLength(2);
+  });
+
+  it('accepts an equal run that another city verified after its due gate opened', async () => {
+    const verifiedAt = Math.max(
+      marineRunDueAtMs(OLD_INSTANCES.water),
+      marineRunDueAtMs(OLD_INSTANCES.waves),
+    );
+    vi.setSystemTime(verifiedAt);
+    const store = trackedManifestStore(manifestJson(
+      bothEntries(OLD_RUN, new Date(verifiedAt).toISOString()),
+    ));
+    const calls = stubCatalogue();
+
+    const result = await resolveMarine(store);
+
+    expect(result.catalogueContacted).toBe(false);
+    expect(result.manifestResolved).toEqual(['water', 'waves']);
+    expect(result.instances).toEqual(OLD_INSTANCES);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('expires equal-run verification at the direct-probe backoff boundary', async () => {
+    const verifiedAt = Math.max(
+      marineRunDueAtMs(OLD_INSTANCES.water),
+      marineRunDueAtMs(OLD_INSTANCES.waves),
+    );
+    vi.setSystemTime(verifiedAt + FORECAST_SOURCE_POLICY.dmiDueProbeBackoffMs);
+    const store = trackedManifestStore(manifestJson(
+      bothEntries(OLD_RUN, new Date(verifiedAt).toISOString()),
+    ));
+    const calls = stubCatalogue();
+
+    const result = await resolveMarine(store);
+
+    expect(result.catalogueContacted).toBe(true);
+    expect(result.manifestResolved).toEqual([]);
+    expect(result.instances).toEqual({
+      water: { collection: 'dkss_idw', id: NEW_RUN },
+      waves: { collection: 'wam_nsb', id: NEW_RUN },
+    });
+    expect(calls.filter((url) => url.endsWith('/instances'))).toHaveLength(2);
+  });
+
   it('merges two newer catalogue discoveries into one logged manifest write', async () => {
     const staleAt = new Date(
       NOW - FORECAST_SOURCE_POLICY.dmiRunCycleMs - 1,
@@ -234,7 +363,7 @@ describe('shared DMI run manifest', () => {
     expect(store.puts).toHaveLength(0);
   });
 
-  it('does not publish a catalogue run that fails to advance the city-known run', async () => {
+  it('advances an older manifest when the catalogue confirms the city-known newer run', async () => {
     const store = trackedManifestStore(manifestJson(bothEntries(OLD_RUN)));
     const calls = stubCatalogue();
     const known: MarineInstances = {
@@ -247,7 +376,59 @@ describe('shared DMI run manifest', () => {
     expect(result.instances).toEqual(known);
     expect(result.catalogueContacted).toBe(true);
     expect(calls.filter((url) => url.endsWith('/instances'))).toHaveLength(2);
-    expect(store.puts).toHaveLength(0);
+    expect(store.puts).toHaveLength(1);
+    expect(JSON.parse(store.puts[0].value)).toEqual({
+      schemaVersion: DMI_RUN_MANIFEST_SCHEMA_VERSION,
+      entries: bothEntries(NEW_RUN),
+    });
+  });
+
+  it('reproduces the 00Z/00Z manifest lock for every lagging city at 09:45Z', async () => {
+    const observedAt = Date.parse('2026-08-25T09:45:00.000Z');
+    const run00 = '2026-08-25T000000Z';
+    const run06 = '2026-08-25T060000Z';
+    const observedManifest = manifestJson(bothEntries(
+      run00,
+      '2026-08-25T04:00:00.000Z',
+    ));
+    const lagging: MarineInstances = {
+      water: { collection: 'dkss_idw', id: run00 },
+      waves: { collection: 'wam_nsb', id: run00 },
+    };
+    vi.setSystemTime(observedAt);
+    const calls = stubCatalogue({
+      dkss_idw: run06,
+      dkss_nsbs: run06,
+      wam_nsb: run06,
+      wam_dw: run06,
+    });
+
+    // Each selection is evaluated against the captured pre-fix shared state.
+    // In production the first successful city advances the manifest, allowing
+    // later ticks to adopt 06Z without repeating these catalogue calls.
+    for (const id of ['aarhus', 'vejle', 'kolding']) {
+      const store = trackedManifestStore(observedManifest);
+      const result = await resolveMarine(store, lagging, { ...LOCATION, id });
+      expect(result.catalogueContacted, id).toBe(true);
+      expect(result.manifestResolved, id).toEqual([]);
+      expect(result.instances, id).toEqual({
+        water: { collection: 'dkss_idw', id: run06 },
+        waves: { collection: 'wam_nsb', id: run06 },
+      });
+    }
+    const horsensStore = trackedManifestStore(observedManifest);
+    const horsens = await resolveMarine(horsensStore, {
+      water: lagging.water,
+      waves: { collection: 'wam_nsb', id: run06 },
+    });
+    expect(horsens.catalogueContacted).toBe(true);
+    expect(horsens.manifestResolved).toEqual([]);
+    expect(horsensStore.puts).toHaveLength(1);
+    expect(JSON.parse(horsensStore.puts[0].value)).toEqual({
+      schemaVersion: DMI_RUN_MANIFEST_SCHEMA_VERSION,
+      entries: bothEntries(run06, new Date(observedAt).toISOString()),
+    });
+    expect(calls.filter((url) => url.endsWith('/instances'))).toHaveLength(8);
   });
 
   it('replaces a comparable expired entry when DMI recovers with a newer run', async () => {

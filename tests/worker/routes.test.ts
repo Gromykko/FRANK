@@ -654,22 +654,23 @@ describe('Worker route HTTP contract', () => {
   });
 
   it('says a newer run is expected, without colouring it, and shows how long', async () => {
-    // 2026-08-20T00:00Z run, read at 12:30Z. DKSS publishes the next one at
-    // 00:00 + 6h + 3h20 = 09:20Z, so by 12:30 we have been waiting 3h10 for a
+    // 2026-08-20T00:00Z run, read at 11:30Z. DKSS publishes the next one at
+    // 00:00 + 6h + 3h20 = 09:20Z, so by 11:30 we have been waiting 2h10 for a
     // run that exists - which is a fact worth stating, not a fault worth
-    // colouring: the forecast on screen is a valid run and still correct.
-    const now = Date.parse('2026-08-20T12:30:00.000Z');
+    // colouring: the forecast on screen remains inside the 12-hour fallback
+    // limit. At 12:30 this fixture would be expired, not ordinarily due.
+    const now = Date.parse('2026-08-20T11:30:00.000Z');
     const entries: HealthLocationEntry[] = [{
       id: 'horsens',
       areaName: 'Horsens Fjord',
       hasCache: true,
       exactGenerationReady: true,
       availabilitySource: 'generation',
-      fetchedAt: '2026-08-20T12:25:00.000Z',
+      fetchedAt: '2026-08-20T11:25:00.000Z',
       cacheHealth: {
         status: 'current',
-        lastAttemptAt: '2026-08-20T12:28:00.000Z',
-        weatherLastModified: '2026-08-20T12:00:00.000Z',
+        lastAttemptAt: '2026-08-20T11:28:00.000Z',
+        weatherLastModified: '2026-08-20T11:00:00.000Z',
         marineInstances: {
           water: { collection: 'dkss_idw', id: '2026-08-20T000000Z' },
           waves: { collection: 'wam_nsb', id: '2026-08-20T000000Z' },
@@ -691,9 +692,78 @@ describe('Worker route HTTP contract', () => {
     // Measured from DMI's published completion (00:00Z + 6h + 3h20 = 09:20),
     // not from the gate, which deliberately opens ten minutes earlier: the
     // first minutes of waiting are early, not late.
-    expect(card).toContain('3h 10m');
+    expect(card).toContain('2h 10m');
     // The value cell still reports the run's own age, like every other column.
-    expect(card).toContain('12h 30m');
+    expect(card).toContain('11h 30m');
+  });
+
+  it('warns on each invalid marine provenance class instead of calling it an expected run', async () => {
+    const now = Date.parse('2026-08-20T18:00:00.000Z');
+    const validWaves = { collection: 'wam_nsb', id: '2026-08-20T120000Z' };
+    const cases = [
+      {
+        name: 'missing provenance',
+        water: undefined,
+        expectedState: 'Run provenance missing',
+        degraded: false,
+      },
+      {
+        name: 'malformed run id',
+        water: { collection: 'dkss_idw', id: 'not-a-dmi-run' },
+        expectedState: 'Run time malformed',
+        degraded: false,
+      },
+      {
+        name: 'future run id',
+        water: { collection: 'dkss_idw', id: '2026-08-20T180100Z' },
+        expectedState: 'Run time in future',
+        degraded: false,
+      },
+      {
+        name: 'expired run id',
+        water: { collection: 'dkss_idw', id: '2026-08-20T055900Z' },
+        expectedState: 'Run expired',
+        degraded: true,
+      },
+      {
+        name: 'unknown collection',
+        water: { collection: 'unknown_marine_model', id: '2026-08-20T120000Z' },
+        expectedState: 'Collection unknown',
+        degraded: false,
+      },
+    ] as const;
+
+    for (const faultCase of cases) {
+      const entries: HealthLocationEntry[] = [{
+        id: 'horsens',
+        areaName: 'Horsens Fjord',
+        hasCache: true,
+        exactGenerationReady: true,
+        availabilitySource: 'generation',
+        fetchedAt: '2026-08-20T17:45:00.000Z',
+        cacheHealth: {
+          status: 'current',
+          lastAttemptAt: '2026-08-20T17:50:00.000Z',
+          weatherLastModified: '2026-08-20T17:30:00.000Z',
+          degradedSources: faultCase.degraded ? ['water'] : [],
+          marineInstances: {
+            water: faultCase.water,
+            waves: validWaves,
+          } as unknown as NonNullable<HealthLocationEntry['cacheHealth']>['marineInstances'],
+        },
+      }];
+
+      const body = await statusResponse(buildHealthPayload(entries, false, now)).text();
+      const card = body.match(/<tbody class="board-group[^"]*" data-location="horsens">[\s\S]*?<\/tbody>/)?.[0] ?? '';
+      const waterCell = card.match(/<td class="num tone-warn" data-source="water"[\s\S]*?<\/td>/)?.[0] ?? '';
+
+      expect(waterCell, faultCase.name).toContain(faultCase.expectedState);
+      if (faultCase.degraded) {
+        expect(waterCell, faultCase.name).toContain('Last-good fallback');
+      }
+      expect(waterCell, faultCase.name).not.toContain('Next run expected');
+      expect(body, faultCase.name).not.toContain('NaN');
+    }
   });
 
   it('shows real provider provenance ages without claiming MeteoAlarm health', async () => {
