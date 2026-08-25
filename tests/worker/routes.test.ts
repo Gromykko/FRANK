@@ -653,10 +653,11 @@ describe('Worker route HTTP contract', () => {
     }
   });
 
-  it('calls a marine run overdue once a newer one is due, and shows how far behind', async () => {
-    // 2026-08-20T00:00Z run, read at 12:30Z. The next run (06:00Z) completed at
-    // 06:00 + 3h35 + 10m cushion = 09:45Z, so by 12:30 we are demonstrably
-    // holding a run we should have replaced.
+  it('says a newer run is expected, without colouring it, and shows how long', async () => {
+    // 2026-08-20T00:00Z run, read at 12:30Z. DKSS publishes the next one at
+    // 00:00 + 6h + 3h20 = 09:20Z, so by 12:30 we have been waiting 3h10 for a
+    // run that exists - which is a fact worth stating, not a fault worth
+    // colouring: the forecast on screen is a valid run and still correct.
     const now = Date.parse('2026-08-20T12:30:00.000Z');
     const entries: HealthLocationEntry[] = [{
       id: 'horsens',
@@ -679,11 +680,20 @@ describe('Worker route HTTP contract', () => {
     const body = await statusResponse(buildHealthPayload(entries, false, now)).text();
     const card = body.match(/<tbody class="board-group[^"]*" data-location="horsens">[\s\S]*?<\/tbody>/)?.[0] ?? '';
 
-    expect(card).toContain('Run overdue');
-    // The age is the measure of how far behind - it returns exactly here.
+    // Waiting for the next run is ordinary operation - we hold a valid run and
+    // the rotation picks the new one up within minutes - so it carries no tone.
+    // Only provider-busy and last-good fallback, which mean something is
+    // actually broken, colour a cell.
+    expect(card).toContain('Next run expected');
+    expect(card).not.toContain('Run overdue');
+    expect(card).not.toMatch(/tone-warn" data-source="water"/);
+    expect(card).not.toMatch(/tone-warn" data-source="waves"/);
+    // Measured from DMI's published completion (00:00Z + 6h + 3h20 = 09:20),
+    // not from the gate, which deliberately opens ten minutes earlier: the
+    // first minutes of waiting are early, not late.
+    expect(card).toContain('3h 10m');
+    // The value cell still reports the run's own age, like every other column.
     expect(card).toContain('12h 30m');
-    expect(card).toMatch(/tone-warn" data-source="water"/);
-    expect(card).toMatch(/tone-warn" data-source="waves"/);
   });
 
   it('shows real provider provenance ages without claiming MeteoAlarm health', async () => {

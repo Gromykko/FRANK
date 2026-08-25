@@ -242,6 +242,24 @@ function dmiCompleteDelayMs(collection: unknown): number {
   return Number.NaN;
 }
 
+// When a NEWER run than the one held should already have been published, for
+// this instance's own collection. Exported so the status page can say how far
+// behind a source is using the same arithmetic the refresh path decides with -
+// two copies of this formula would eventually disagree about what "late" means.
+// NaN when the instance cannot be dated or its collection is unknown; callers
+// treat that as due, because an undatable run is not evidence of freshness.
+export function marineRunDueAtMs(
+  instance: MarineRunRef | null | undefined,
+): number {
+  const runMs = parseDmiInstanceMs(instance?.id);
+  const completeDelayMs = dmiCompleteDelayMs(instance?.collection);
+  if (!Number.isFinite(runMs) || !Number.isFinite(completeDelayMs)) return Number.NaN;
+  return runMs
+    + FORECAST_SOURCE_POLICY.dmiRunCycleMs
+    + completeDelayMs
+    - FORECAST_SOURCE_POLICY.dmiPublicationLeadMs;
+}
+
 export function marineSourcesDueForProbe(
   marineInstances: Partial<MarineInstances> | null | undefined,
   nowMs = Date.now(),
@@ -257,10 +275,7 @@ export function marineSourcesDueForProbe(
       || nowMs - runMs > FORECAST_SOURCE_POLICY.marineFallbackMaxAgeMs) {
       return true;
     }
-    return nowMs >= runMs
-      + FORECAST_SOURCE_POLICY.dmiRunCycleMs
-      + completeDelayMs
-      - FORECAST_SOURCE_POLICY.dmiPublicationLeadMs;
+    return nowMs >= marineRunDueAtMs(instance);
   });
 }
 

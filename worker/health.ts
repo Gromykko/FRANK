@@ -6,7 +6,7 @@ import type {
   WorkerCacheHealth,
 } from './domain';
 import { CURRENT_RELEASE } from '../src/features/forecast/releaseContract';
-import { FORECAST_SOURCE_POLICY, marineSourcesDueForProbe } from './forecastModel';
+import { FORECAST_SOURCE_POLICY, marineRunDueAtMs, marineSourcesDueForProbe } from './forecastModel';
 import { htmlResponse, jsonResponse } from './http';
 
 // /health judges two clocks because "the Worker is dead" and "the data is
@@ -205,6 +205,11 @@ function providerAgeMs(value: string | undefined, nowMs: number): number | null 
   return Number.isFinite(timestampMs) && ageMs >= 0 ? ageMs : null;
 }
 
+// The one state with nothing to report. Everything else earns a note under the
+// number - including states that carry no colour, like waiting for the next
+// model run: quiet when nothing is wrong is the rule, not quiet unless amber.
+const HEALTHY_SOURCE_STATE = 'Current';
+
 function formatProviderTimestamp(value: string | undefined): string {
   const timestampMs = providerTimestampMs(value);
   return Number.isFinite(timestampMs)
@@ -346,13 +351,38 @@ export function statusResponse(health: HealthPayload): Response {
       const degraded = degradedSources.has(key);
       const busy = providerAppliesTo(key);
       const provenanceAgeMs = providerAgeMs(provenance, nowMs);
-      const runOverdue = key !== 'weather' && marineRunOverdue.has(key);
+      // Waiting for the next run is ordinary operation, not a fault: we hold a
+      // valid run, the forecast on screen is correct, and the rotation picks the
+      // new one up within a few minutes. Calling that amber cried wolf on every
+      // cycle - and since the gate deliberately opens BEFORE publication, the
+      // first minutes of it were not even late, just early.
+      //
+      // It carries NO tone at all. The states that mean something is broken -
+      // provider busy, fallen back to last-good - already colour themselves from
+      // real evidence, and if DMI were down long enough to matter those would
+      // fire. A derived "this is taking too long" threshold on top would only
+      // duplicate them: an attempt at one showed why, since a whole missed
+      // publication cycle (6h) cannot be reached before marineFallbackMaxAgeMs
+      // (12h from a run published at +3h20) has already expired the run through
+      // a different path. It would have been dead code pretending to be a guard.
+      //
+      // Elapsed time is measured from DMI's published completion - the gate plus
+      // the lead we subtracted - so the first minutes of waiting, which are
+      // deliberately BEFORE publication, do not read as lateness.
+      const awaitingRun = key !== 'weather' && marineRunOverdue.has(key);
+      const behindMs = awaitingRun
+        ? nowMs - (marineRunDueAtMs(cacheHealth.marineInstances?.[key])
+          + FORECAST_SOURCE_POLICY.dmiPublicationLeadMs)
+        : Number.NaN;
+      const behindBy = Number.isFinite(behindMs) && behindMs > 0
+        ? ` · ${formatAge(behindMs)}`
+        : '';
       const provenanceDetail = provenance
         ? `${provenanceLabel} ${formatProviderTimestamp(provenance)}`
         : `${provenanceLabel} not recorded`;
       return {
         key, label, provider,
-        tone: degraded || busy || runOverdue
+        tone: degraded || busy
           ? 'warn'
           : provenanceAgeMs === null ? 'neutral' : 'good',
         // 'Current' not 'Current snapshot': when healthy the operator already
@@ -365,9 +395,9 @@ export function statusResponse(health: HealthPayload): Response {
           ? 'Provider busy'
           : degraded
             ? 'Last-good fallback'
-            : runOverdue
-              ? 'Run overdue'
-              : provenanceAgeMs === null ? 'Age not recorded' : 'Current',
+            : awaitingRun
+              ? `Next run expected${behindBy}`
+              : provenanceAgeMs === null ? 'Age not recorded' : HEALTHY_SOURCE_STATE,
         // Every numeric column on this board is an age, so these are too. A run
         // stamp here read as a different kind of measurement mid-row, and the
         // run identity is already stated twice: once in the provider legend and
@@ -458,7 +488,7 @@ export function statusResponse(health: HealthPayload): Response {
       // not wanted.
       `<td class="num ${source.tone === 'warn' || source.tone === 'bad' ? `tone-${source.tone}` : ''}" data-source="${source.key}" title="${escapeHtml(source.detail)}">`
       + `<span class="cell-value">${escapeHtml(source.value)}</span>`
-      + (source.tone === 'warn' || source.tone === 'bad'
+      + (source.state !== HEALTHY_SOURCE_STATE
         ? `<span class="cell-note">${escapeHtml(source.state)}</span>`
         : '')
       + '</td>';
