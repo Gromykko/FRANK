@@ -218,7 +218,10 @@ export default function App() {
   // so this is both the honest source of truth and what lets TypeScript prove
   // the other branches only ever see a real verdict.
   const noVerdict = safetyDisplayRating === 'none';
-  const safetyBadgeTitle = t(noVerdict ? 'Weather' : RATING_WORD[safetyDisplayRating]);
+  // "Weather mode", not "Weather": on the glass this sits where a verdict
+  // normally does, and one word there reads as a reading rather than as the
+  // state the app has been put into.
+  const safetyBadgeTitle = t(noVerdict ? 'Weather mode' : RATING_WORD[safetyDisplayRating]);
   const safetyBadgeSubtitle = t(noVerdict
     ? 'Limits are off — raw forecast only'
     : safetyDisplayRating === 'safe'

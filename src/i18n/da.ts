@@ -27,6 +27,9 @@ export const da: Record<string, string> = {
   'Try Again': 'Prøv igen',
   'Preparing forecast dashboard...': 'Forbereder prognoseoversigten...',
   'Weather': 'Vejr',
+  // Matches the toggle that turns it on ("Kun vejr - sla alle dine graenser fra"),
+  // so the device names the same state the control does.
+  'Weather mode': 'Kun vejr',
   'Limits are off — raw forecast only': 'Grænserne er slået fra — kun rå prognose',
   'Have fun out there': 'God tur derude',
   'Keep an eye out': 'Hold øje undervejs',

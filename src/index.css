@@ -116,9 +116,23 @@
   --shadow-hard: var(--shadow-lg);
   --shadow-hard-sm: var(--shadow-lg);
   --accent-instrument: var(--primary);
-  --crt-safe: var(--color-safe);
-  --crt-caution: var(--color-caution);
-  --crt-danger: var(--color-danger);
+  /* Pinned, not inherited. The CRT screen is #0a0e14 in BOTH themes, so its
+     phosphors must be chosen against black - but they were following the page
+     palette, which in light theme is tuned for a white background. Measured on
+     the screen they actually sit on, the light-theme danger red came out at
+     3.52:1, below the 4.5 WCAG AA asks of normal text, while the dark-theme
+     values clear it comfortably:
+
+         phosphor   light   dark
+         safe        4.50   8.61
+         caution     5.27   9.87
+         danger      3.52   6.04
+
+     These are the dark values, used in both themes because the surface is the
+     same in both. Change them only against #0a0e14. */
+  --crt-safe: #34d399;
+  --crt-caution: #fbbf24;
+  --crt-danger: #f87171;
 }
 
 /* Light overrides — only the base palette; the aliases follow via var() */

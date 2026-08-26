@@ -2627,14 +2627,21 @@ button.legend-toggle.is-on {
    reads as idling rather than scanning. Nine seconds per cycle with long holds
    is deliberately below the threshold where motion competes for attention. */
 @keyframes frank-eyes-wander {
-  0%, 20%   { transform: translate(0, 0); }
-  25%, 42%  { transform: translate(1px, 0); }
-  47%, 62%  { transform: translate(-1px, 0); }
-  67%, 82%  { transform: translate(0, -1px); }
-  87%, 100% { transform: translate(0, 0); }
+  0%, 18%   { transform: translate(0, 0) scaleY(1); }
+  19%, 20%  { transform: translate(0, 0) scaleY(0.12); }
+  21%, 42%  { transform: translate(1px, 0) scaleY(1); }
+  47%, 60%  { transform: translate(-1px, 0) scaleY(1); }
+  61%, 62%  { transform: translate(-1px, 0) scaleY(0.12); }
+  63%, 82%  { transform: translate(0, -1px) scaleY(1); }
+  87%, 100% { transform: translate(0, 0) scaleY(1); }
 }
 
 .frank-device-shell.rating-none .gerty-eyes {
+  /* Two blinks per nine-second cycle, each one frame long. steps(1) means the
+     lids snap shut and open rather than easing, which is how a pixel device
+     would do it - and scaleY needs a box to squash about, hence transform-box. */
+  transform-box: fill-box;
+  transform-origin: center;
   animation: frank-eyes-wander 9s steps(1, end) infinite;
 }
 
@@ -2736,12 +2743,11 @@ button.legend-toggle.is-on {
 .frank-display-text {
   display: block;
   max-width: 100%;
-  /* 22px, not 18. This is the only line on the glass now, set in a condensed
-     pixel face on a dark ground, so it reads smaller than its number suggests.
-     WCAG has no minimum size, but its contrast threshold relaxes above 18.66px
-     bold / 24px regular - staying under that is a reason to be generous here,
-     not frugal. */
-  font-size: 22px;
+  /* VT323 draws small for its nominal size, so 26px here is about the apparent
+     weight of 18px in a normal face. It also clears WCAG's 24px large-text
+     threshold, which halves the contrast the phosphors must carry - belt and
+     braces now that the phosphors themselves are pinned to the dark palette. */
+  font-size: 26px;
   line-height: 1.15;
   text-align: center;
   white-space: normal;
@@ -3293,9 +3299,9 @@ button.legend-toggle.is-on {
 
   .frank-display-text.is-verdict {
     /* Sized to the bay, not to the desktop. "KLAR TIL AT RO" is fourteen
-       characters in a 69px glass, so it always wraps; 15px lets it break into
+       characters, so it wraps whatever we do; this lets it break into
        comfortable lines inside the box rather than filling it corner to corner. */
-    font-size: 15px;
+    font-size: 16px;
     font-weight: 700;
     line-height: 1.25;
     letter-spacing: 0.03em;
