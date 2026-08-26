@@ -2680,12 +2680,18 @@ button.legend-toggle.is-on {
   justify-self: center;
   align-self: center;
   font-family: var(--font-heading);
-  font-size: var(--text-instrument);
+  /* Matched to the city label beside it: they share a baseline, and 11px against
+     12px is the worst of both worlds - too close to look deliberate, far enough
+     to catch the eye. The tracking below still tells them apart, emphatically,
+     so nothing is lost by agreeing on size. */
+  font-size: var(--text-caption);
   font-weight: 700;
   line-height: 1;
-  /* Wide, even inter-letter tracking evoking the spaced-out sci-fi title logo */
-  letter-spacing: 0.6em;
-  text-indent: 0.6em;
+  /* Wide, even inter-letter tracking evoking the spaced-out sci-fi title logo.
+     0.4em rather than 0.6: at the larger size the old tracking pushed FRANK to
+     roughly 85px inside a 74px bay, which would have overrun its own divider. */
+  letter-spacing: 0.4em;
+  text-indent: 0.4em;
   text-transform: uppercase;
   color: var(--frank-housing-text);
   opacity: 0.9;
@@ -3046,6 +3052,15 @@ button.legend-toggle.is-on {
 }
 
 /* Location: shares the label line with the nameplate */
+/* The pin and chevron are square 24x24 glyphs asked to render at 12x12. As flex
+   items with the default shrink of 1 they were being crushed to 5.3px wide -
+   44% of their height - so the pin read as a squeezed teardrop and the chevron
+   as a wedge. It looked like an icon-size problem and was an aspect-ratio one.
+   Only the city NAME may give up space here; the glyphs may not. */
+.frank-location svg {
+  flex: 0 0 auto;
+}
+
 .frank-location {
   grid-area: location;
   justify-self: center;
