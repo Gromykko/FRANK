@@ -119,11 +119,12 @@ test('the complete dashboard stays inside every supported viewport', async ({ pa
       whiteSpace: phraseStyle?.whiteSpace,
     };
   });
-  // A share of the row rather than a fixed pixel width: the glass is
-  // deliberately narrower on a phone, where it sits between the face and the
-  // buttons instead of spanning its own row. What must hold at every size is
-  // that it keeps a real share of the instrument row and does not clip.
-  expect(displayLayout.width).toBeGreaterThanOrEqual(displayLayout.viewport * 0.3);
+  // Neither a share of the viewport nor a stretch to fill: the glass is a SIZED
+  // instrument, capped so the face and buttons keep their proportion of the row
+  // (a share-of-viewport rule fails on a wider phone precisely because the cap
+  // is working). What must hold everywhere is that it is big enough to read and
+  // does not clip its own text.
+  expect(displayLayout.width).toBeGreaterThanOrEqual(80);
   expect(displayLayout.text.length).toBeGreaterThan(0);
   expect(displayLayout.clipped).toBe(false);
   // The typing is driven in JS, not a CSS animation, and must never be one:

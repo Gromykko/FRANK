@@ -3213,7 +3213,13 @@ button.legend-toggle.is-on {
      of dead housing between the face and the button cluster and made the shell
      two rows taller than it needed to be on the smallest screens. */
   .frank-device-columns {
-    grid-template-columns: 56px minmax(0, 1fr) auto;
+    /* The glass is sized, not stretched. Letting it take 1fr made it 42% of the
+       shell against the face's 16% and the buttons' 13%, so the row read as one
+       wide panel with two ornaments rather than three instruments. Capping it
+       near a third and letting space-between share the remainder gives even
+       gutters on both sides of it. */
+    grid-template-columns: 56px minmax(0, 104px) auto;
+    justify-content: space-between;
     /* The location switcher shares the third column with the buttons, and it is
        the wider of the two - so it, not the buttons, was sizing that column.
        The cluster then centred inside the surplus and left a 23px gap on its
@@ -3247,10 +3253,11 @@ button.legend-toggle.is-on {
   /* A small square-ish screen rather than a wide strip: the phrase wraps inside
      it as it prints, which is what makes the typing read as a device rather
      than as a caption. Height tracks the CRT so the row sits level. */
-  /* Sized to the CRT beside it. The glass shows the short verdict at this
-     width, not the one-liner, so it needs presence rather than room to wrap. */
+  /* Taller than the face rather than matching it: the glass carries the words,
+     and squarer proportions let a two-line verdict sit centred instead of
+     filling the box edge to edge. */
   .frank-display {
-    min-height: 56px;
+    min-height: 74px;
     padding: 6px 8px;
   }
 
