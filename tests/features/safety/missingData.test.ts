@@ -157,7 +157,7 @@ describe('a missing reading survives the JSON round trip', () => {
       const text = analyzeSafetyConditions(
         { ...goodHour, waveHeight: absent } as unknown as HourlyData, settings
       ).reasons.map((r) => r.text).join(' ');
-      expect(text, `waveHeight=${String(absent)}`).not.toMatch(/calm water|rough water|ripples|choppy/);
+      expect(text, `waveHeight=${String(absent)}`).not.toMatch(/calm sea|smooth sea|slight sea|moderate sea|rough sea|high sea|phenomenal sea/i);
     }
   });
 

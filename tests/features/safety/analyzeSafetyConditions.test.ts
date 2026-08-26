@@ -129,6 +129,50 @@ describe('analyzeSafetyConditions', () => {
     expect(getWaveHeightLabel(-1)).toBe('Unknown');
   });
 
+  it('uses every official DMI Beaufort band with exact upper-bound semantics', () => {
+    const boundaries: [number, string, string][] = [
+      [0.2, 'Calm', 'Light Air'],
+      [1.5, 'Light Air', 'Light Breeze'],
+      [3.3, 'Light Breeze', 'Gentle Breeze'],
+      [5.4, 'Gentle Breeze', 'Moderate Breeze'],
+      [7.9, 'Moderate Breeze', 'Fresh Breeze'],
+      [10.7, 'Fresh Breeze', 'Strong Breeze'],
+      [13.8, 'Strong Breeze', 'Near Gale'],
+      [17.1, 'Near Gale', 'Gale'],
+      [20.7, 'Gale', 'Strong Gale'],
+      [24.4, 'Strong Gale', 'Storm'],
+      [28.4, 'Storm', 'Violent Storm'],
+      [32.6, 'Violent Storm', 'Hurricane'],
+    ];
+
+    for (const [maximum, label, nextLabel] of boundaries) {
+      expect(getWindSpeedLabel(maximum), `${maximum} m/s exact boundary`).toBe(label);
+      expect(getWindSpeedLabel(maximum + 0.01), `above ${maximum} m/s`).toBe(nextLabel);
+      expect(da, `missing Danish translation for ${label}`).toHaveProperty(label);
+      expect(da, `missing Danish translation for ${nextLabel}`).toHaveProperty(nextLabel);
+    }
+  });
+
+  it('uses WMO sea-wave terms with WMO exact-boundary semantics', () => {
+    const boundaries: [number, string, string][] = [
+      [0.1, 'Calm sea', 'Smooth sea'],
+      [0.5, 'Smooth sea', 'Slight sea'],
+      [1.25, 'Slight sea', 'Moderate sea'],
+      [2.5, 'Moderate sea', 'Rough sea'],
+      [4, 'Rough sea', 'Very rough sea'],
+      [6, 'Very rough sea', 'High sea'],
+      [9, 'High sea', 'Very high sea'],
+      [14, 'Very high sea', 'Phenomenal sea'],
+    ];
+
+    for (const [maximum, label, nextLabel] of boundaries) {
+      expect(getWaveHeightLabel(maximum), `${maximum} m exact boundary`).toBe(label);
+      expect(getWaveHeightLabel(maximum + 0.01), `above ${maximum} m`).toBe(nextLabel);
+      expect(da, `missing Danish translation for ${label}`).toHaveProperty(label);
+      expect(da, `missing Danish translation for ${nextLabel}`).toHaveProperty(nextLabel);
+    }
+  });
+
   it('rejects out-of-range bearings when directional rules need them', () => {
     const settings = { ...baseSettings, enableCustomWindDirs: true } as SafetySettings;
     for (const windDirection of [-1, 360, 999]) {
@@ -293,12 +337,20 @@ describe('safety rule enable toggles', () => {
 // (NOT at the average-wind caution limit).
 // ---------------------------------------------------------------------------
 describe('gust margin math', () => {
-  // baseSettings: safe 5, caution 8, gustMargin 3 -> gust ceiling 8.
-  it('matches the Safety Manual example (safe 5 + margin 3 => ceiling 8)', () => {
+  // The configured Take care threshold plus the danger margin sets the gust ceiling.
+  it('derives the gust danger threshold from the configured Take care threshold and margin', () => {
     const at72 = analyzeSafetyConditions({ ...baseData, windGust: 7.2 }, baseSettings);
     expect(at72.rating).toBe('caution');
     const at84 = analyzeSafetyConditions({ ...baseData, windGust: 8.4 }, baseSettings);
     expect(at84.rating).toBe('danger');
+  });
+
+  it('keeps gusts numeric instead of assigning a Beaufort mean-wind label', () => {
+    const result = analyzeSafetyConditions({ ...baseData, windSpeed: 3, windGust: 8.4 }, baseSettings);
+    const gustReason = result.reasons.find((reason) => reason.text.startsWith('Wind gusts:'));
+
+    expect(gustReason?.text).toBe('Wind gusts: 8.4 m/s. Above your gust danger threshold of 8.0 m/s.');
+    expect(gustReason?.text).not.toMatch(/\([^)]*(?:Breeze|Gale|Storm|Hurricane)[^)]*\)/);
   });
 
   it('uses >= semantics at both gust boundaries', () => {
@@ -508,11 +560,11 @@ describe('custom wind direction sectors', () => {
       reasons: [
         {
           severity: 'caution',
-          text: 'Wind speed: 7.8 m/s (Moderate Breeze). Exceeds your safe limit of 5.0 m/s.',
+          text: 'Wind speed: 7.8 m/s (Moderate Breeze). Above your Take care threshold of 5.0 m/s.',
         },
         {
           severity: 'danger',
-          text: 'Westerly wind (315°) is over your 7.0 m/s danger cap for this direction.',
+          text: 'Westerly wind (315°) is over your 7.0 m/s danger threshold for this direction.',
         },
         {
           severity: 'caution',
@@ -536,7 +588,7 @@ describe('custom wind direction sectors', () => {
     expect(at(5.4).rating).toBe('safe');
     expect(at(5.5).rating).toBe('caution');
     expect(at(8.5).rating).toBe('danger');
-    expect(at(8.5).reasons.some(r => r.severity === 'danger' && r.text.includes('Westerly') && r.text.includes('danger cap'))).toBe(true);
+    expect(at(8.5).reasons.some(r => r.severity === 'danger' && r.text.includes('Westerly') && r.text.includes('danger threshold'))).toBe(true);
   });
 
   it('sector caps use AVERAGE wind, not gusts', () => {

@@ -49,6 +49,45 @@ Browser / Installed PWA
 * **Resilient Multi-Tier Fallbacks**: If DMI or MET experiences a temporary rate limit or outage, FRANK automatically falls back to held previous simulations and retained raw ingredients, keeping forecasts live with clear degradation indicators.
 * **Client-Side Safety Engine**: Risk assessment calculations (wind, gusts, water level, waves, daylight, water temperature) run 100% locally in the paddler's browser against their own chosen safety profile.
 
+### Safety profiles and condition language
+
+The built-in profiles use these inclusive client-side boundaries. A value on a
+boundary belongs to the stricter band: for example, Normal's general wind band
+is **Take care** at exactly 6.0 m/s and **Rough** at exactly 8.0 m/s. Enabled
+local sectors and other rules can trigger a stricter result earlier.
+
+| Profile | General wind: Take care / Rough | Significant waves: Take care / Rough |
+|---|---:|---:|
+| Chill · IPP 2–informed | 4.0 / 5.0 m/s | 0.20 / 0.50 m |
+| Normal · IPP 3–informed | 6.0 / 8.0 m/s | 0.30 / 1.00 m |
+| Pro · IPP 4–informed | 8.0 / 10.0 m/s | 0.50 / 2.00 m |
+
+These are FRANK presets, not limits issued by DKF, proof of competence, or a
+guarantee that a trip is safe. The Normal and Pro wind anchors use the numeric
+conditions in [DKF Touring](https://www.kano-kajak.dk/uddannelse-og-kurser/ipp-roeruddannelse/touring-tur/):
+the [IPP 3 Touring norm](https://drive.google.com/file/d/14lUb_7t5ZV1vp49sOBmCmlXuOnSWmQMX/view?usp=sharing)
+documents working conditions around 6 m/s and assessment up to 8 m/s, while the
+[IPP 4 Touring norm](https://drive.google.com/file/d/1iagdhW-B3ZXvHUmEBSfxVESyne5qevb2/view?usp=sharing)
+uses 8–10 m/s. Touring IPP 2 has no numeric wind limit. Chill's 5 m/s Rough
+boundary and the three Rough wave boundaries use the current
+[DKF sea-kayak norm, 7 May 2026](https://drive.google.com/file/d/1YoO6StJ_nfwx2kb9X7lyH5y4gFQqp1O5/view?usp=drive_link).
+Chill's 4 m/s Take-care boundary and all three lower wave Take-care boundaries
+are FRANK's deliberately conservative starting points. Enabled local
+wind-sector caps, gusts, water temperature, weather, daylight, route,
+equipment, and club rules can all demand a stricter decision than the general
+profile table.
+
+Mean-wind names follow [DMI's Beaufort scale](https://www.dmi.dk/vejr-og-atmosfare/temaforside-vind/beaufortskalaen/).
+They are not applied to gusts: MET defines `wind_speed` as a 10-minute mean at
+10 m and a gust as a much shorter three-second average in its
+[forecast data model](https://docs.api.met.no/doc/locationforecast/datamodel.html).
+Wave words reuse [WMO's recommended sea-wave terminology](https://community.wmo.int/site/knowledge-hub/programmes-and-initiatives/marine-services/frequently-asked-questions)
+only as supplemental context; the numeric height remains the decision input.
+DMI defines [significant wave height](https://www.dmi.dk/hav-og-is/temaforside-monsterbolger/bolger-pa-havet)
+as the mean height of the highest third of waves and notes that individual
+waves can be higher. FRANK separately cautions that this one number does not
+describe local surf or short steep chop by itself.
+
 ## Production Deployment & CI/CD
 
 Production is continuously validated and deployed via [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml):

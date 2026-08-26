@@ -9,6 +9,7 @@ import {
 import {
   CUSTOM_SETTINGS_STORAGE_KEY,
   DEFAULT_SETTINGS,
+  getPresetSettings,
   SETTINGS_STORAGE_KEY,
 } from '../../src/features/safety/presets';
 import type { SafetySettings } from '../../src/features/safety/presets';
@@ -112,6 +113,58 @@ describe('useSettings persistence lifecycle', () => {
 
     expect(setItem.mock.calls.some(([key]) => key === SETTINGS_STORAGE_KEY)).toBe(false);
     expect(setItem.mock.calls.some(([key]) => key === CUSTOM_SETTINGS_STORAGE_KEY)).toBe(false);
+  });
+
+  it('loads current built-in values from the stored mode without changing remembered Custom limits', async () => {
+    const staleNormal = {
+      ...DEFAULT_SETTINGS,
+      tripMode: 'default' as const,
+      maxWindSpeedSafe: 5.5,
+      maxWindSpeedCaution: 8.0,
+      gustMargin: 2.5,
+      maxWaveHeightSafe: 0.3,
+      maxWaveHeightCaution: 0.6,
+      waveCautionMargin: 0.3,
+    };
+    const rememberedCustom = customSettings({
+      maxWindSpeedSafe: 4.3,
+      gustMargin: 1.7,
+      maxWaveHeightSafe: 0.25,
+      waveCautionMargin: 0.4,
+    });
+    localStorage.setItem(SETTINGS_STORAGE_KEY, serializeStoredSettings(staleNormal));
+    localStorage.setItem(CUSTOM_SETTINGS_STORAGE_KEY, serializeStoredSettings(rememberedCustom));
+
+    await renderHook();
+
+    expect(current.settings).toEqual(getPresetSettings('default'));
+    expect(current.settings).toMatchObject({
+      tripMode: 'default',
+      maxWindSpeedSafe: 6.0,
+      maxWindSpeedCaution: 8.0,
+      gustMargin: 2.0,
+      maxWaveHeightSafe: 0.3,
+      maxWaveHeightCaution: 1.0,
+    });
+    // Merely loading a built-in mode is not a destructive migration of either
+    // stored record. Built-ins resolve from code; Custom remains user-owned.
+    expect(storedRecord(SETTINGS_STORAGE_KEY)).toMatchObject({
+      tripMode: 'default',
+      maxWindSpeedSafe: 5.5,
+      maxWaveHeightCaution: 0.6,
+    });
+    expect(storedRecord(CUSTOM_SETTINGS_STORAGE_KEY)).toMatchObject({
+      tripMode: 'custom',
+      maxWindSpeedSafe: 4.3,
+      maxWaveHeightSafe: 0.25,
+    });
+
+    await act(async () => current.setTripMode('custom'));
+    expect(current.settings).toMatchObject({
+      tripMode: 'custom',
+      maxWindSpeedSafe: 4.3,
+      maxWaveHeightSafe: 0.25,
+    });
   });
 
   it('keeps an unreadable active record byte-for-byte until a deliberate user change', async () => {

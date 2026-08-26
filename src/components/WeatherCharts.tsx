@@ -248,7 +248,7 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
   // ── The user's own limits, straight from settings ───────────────────────
   const windSafe = settings.maxWindSpeedSafe;
   const windDanger = settings.maxWindSpeedCaution;
-  const gustCeil = settings.maxWindSpeedSafe + (settings.gustMargin ?? 2.5);
+  const gustCeil = settings.maxWindSpeedSafe + (settings.gustMargin ?? 2.0);
   const waveSafe = settings.maxWaveHeightSafe;
   const waveDanger = settings.maxWaveHeightCaution;
   const tempSafe = settings.minWaterTempSafe;
@@ -446,7 +446,7 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
               <Line type="monotone" dataKey="windDisplay" name="Wind" stroke={SERIES.wind} dot={false} strokeWidth={2.5} />
             </AreaChart>
             {stickyRail(0, windAxisMax, 170 - CHART_MARGIN.top - 30, [0, Math.round(windAxisMax / 2), windAxisMax], [
-              ...(windLimitsOn ? [{ value: windSafe, label: t('wind safe {0}', windSafe), tone: 'caution' as const }] : []),
+              ...(windLimitsOn ? [{ value: windSafe, label: t('wind Take care {0}', windSafe), tone: 'caution' as const }] : []),
               ...(windLimitsOn ? [{ value: windDanger, label: t(gustEnabled && gustCeil === windDanger ? 'wind/gust danger {0}' : 'wind danger {0}', windDanger), tone: 'danger' as const }] : []),
               ...(gustLimitsOn && gustCeil !== windDanger ? [{ value: gustCeil, label: t('gust danger {0}', gustCeil), tone: 'danger' as const }] : []),
             ], CHART_MARGIN.top + 30)}
@@ -474,7 +474,7 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
               <Area type="monotone" dataKey="waveDisplay" name="Wave height" stroke={SERIES.wave} fillOpacity={1} fill="url(#colorWave)" strokeWidth={2.5} />
             </AreaChart>
             {stickyRail(0, waveAxisMax, 150 - CHART_MARGIN.top, [0, waveAxisMax], [
-              ...(waveCautionOn ? [{ value: waveSafe, label: t('wave safe {0}', waveSafe), tone: 'caution' as const }] : []),
+              ...(waveCautionOn ? [{ value: waveSafe, label: t('waves Take care {0}', waveSafe), tone: 'caution' as const }] : []),
               ...(waveLimitsOn ? [{ value: waveDanger, label: t('danger {0}', waveDanger), tone: 'danger' as const }] : []),
             ])}
           </div>

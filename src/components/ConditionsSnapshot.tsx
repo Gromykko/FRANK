@@ -189,9 +189,9 @@ export default function ConditionsSnapshot({
             <li key={`${reason.severity}-${reason.text}`} className={`reason-${reason.severity}`}>
               <span className="sr-only">
                 {reason.severity === 'danger'
-                  ? `${t('Danger')}: `
+                  ? `${t(RATING_WORD.danger)}: `
                   : reason.severity === 'caution'
-                    ? `${t('Caution')}: `
+                    ? `${t(RATING_WORD.caution)}: `
                     : ''}
               </span>
               {reason.text}

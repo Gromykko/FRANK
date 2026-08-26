@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import { CURRENT_LOCATION } from '../config/locations';
 import { resolveSectors } from '../features/safety/analyzeSafetyConditions';
+import { GUIDED_PROFILE_MODES, SAFETY_GUIDANCE_SOURCES } from '../features/safety/guidanceSources';
+import { getPresetSettings } from '../features/safety/presets';
 import { useLang } from '../i18n';
 import type { SafetySettings } from '../hooks/useSettings';
 
@@ -91,26 +93,75 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
 
         <div className="manual-body">
           <div>
-            <h3 className="manual-h">{t('1. Wave Height')}</h3>
-            <p className="manual-p">{t('Significant wave height is checked against your')} <strong>{t('Max Wave')}</strong> {t('safe limit and caution margin:')}</p>
-            <ul className="manual-list">
-              <li><strong>{t('Good to go:')}</strong> {t('Wave height below your Max Wave safe limit.')}</li>
-              <li><strong>{t('Take care:')}</strong> {t('At or above the safe limit, but below (Max Wave + Wave Caution Margin).')}</li>
-              <li><strong>{t('Rough:')}</strong> {t('At or above the danger threshold (Max Wave + Wave Caution Margin). Waves big enough to tip you — best avoided.')}</li>
+            <h3 className="manual-h">{t('Profile basis')}</h3>
+            <p className="manual-p">
+              {t('The built-in modes are FRANK starting points informed by DKF skill conditions. They are not DKF-issued safety limits, proof of competence, or a guarantee that a trip is safe.')}
+            </p>
+            <ul className="manual-list spaced">
+              {GUIDED_PROFILE_MODES.map(({ mode, label, level }) => {
+                const preset = getPresetSettings(mode);
+                return (
+                  <li key={mode}>
+                    <strong>{t(label)} · {level}:</strong>{' '}
+                    {t(
+                      'general wind Take care from {0} m/s and Rough from {1} m/s; significant waves Take care from {2} m and Rough from {3} m.',
+                      preset.maxWindSpeedSafe.toFixed(1),
+                      preset.maxWindSpeedCaution.toFixed(1),
+                      preset.maxWaveHeightSafe.toFixed(2),
+                      preset.maxWaveHeightCaution.toFixed(2),
+                    )}
+                  </li>
+                );
+              })}
             </ul>
-            <p className="manual-note">{t('If the caution margin toggle is off, the caution band disappears: waves rate Safe all the way up to the danger threshold.')}</p>
+            <p className="manual-note">
+              {t('Normal and Pro wind anchors use')}{' '}
+              <a href={SAFETY_GUIDANCE_SOURCES.dkfTouring} target="_blank" rel="noreferrer">DKF Touring</a>
+              {', '}{t('including the')}{' '}
+              <a href={SAFETY_GUIDANCE_SOURCES.dkfIpp3Touring} target="_blank" rel="noreferrer">{t('IPP 3 Touring norm')}</a>,
+              {' '}{t('and')}{' '}
+              <a href={SAFETY_GUIDANCE_SOURCES.dkfIpp4Touring} target="_blank" rel="noreferrer">{t('IPP 4 Touring norm')}</a>.
+              {' '}{t("Touring IPP 2 gives no numeric wind limit. Chill's 5 m/s Rough boundary and the numeric red wave ceilings use")}{' '}
+              <a href={SAFETY_GUIDANCE_SOURCES.dkfSeaKayakNorm} target="_blank" rel="noreferrer">{t("DKF's 7 May 2026 sea-kayak norm")}</a>.
+              {' '}{t("Chill's 4 m/s and the lower wave Take care boundaries are FRANK's conservative choices.")}
+              {' '}{t('Local wind sectors, gusts, temperature, weather, daylight, route, equipment, and club rules can all demand a stricter decision.')}
+            </p>
+          </div>
+
+          <div>
+            <h3 className="manual-h">{t('1. Wave Height')}</h3>
+            <p className="manual-p">{t('Significant wave height is checked against your Take care threshold and danger margin:')}</p>
+            <ul className="manual-list">
+              <li><strong>{t('Good to go:')}</strong> {t('Wave height is below your Take care threshold.')}</li>
+              <li><strong>{t('Take care:')}</strong> {t('Wave height is at or above the Take care threshold, but below the danger threshold.')}</li>
+              <li><strong>{t('Rough:')}</strong> {t('Wave height is at or above the configured danger threshold.')}</li>
+            </ul>
+            <p className="manual-note">{t('If the Take care band toggle is off, the amber band disappears: waves remain Good to go until the danger threshold.')}</p>
+            <p className="manual-note">
+              {t('Wave labels use')}{' '}
+              <a href={SAFETY_GUIDANCE_SOURCES.wmoSeaStateTerminology} target="_blank" rel="noreferrer">{t("WMO's sea-wave terms")}</a>
+              {' '}{t('only as context; FRANK assesses the numeric height.')}{' '}
+              <a href={SAFETY_GUIDANCE_SOURCES.dmiSignificantWaveHeight} target="_blank" rel="noreferrer">DMI</a>{' '}
+              {t('defines significant wave height as the mean height of the highest third of waves and notes that individual waves can be higher. FRANK separately cautions that the number does not describe local surf or short steep chop by itself.')}
+            </p>
           </div>
 
           <div>
             <h3 className="manual-h">{t('2. Wind Speed & Gusts')}</h3>
-            <p className="manual-p">{t('Average wind speed and peak gusts are checked independently against one shared ceiling: the')} <strong>{t('Wind Gust Margin')}</strong> {t('sets how far above your Max Wind Safe limit either may go before rating Danger (there is no separate danger-wind control — the threshold is Max Wind Safe + Gust Margin):')}</p>
+            <p className="manual-p">{t('MET supplies a 10-minute mean wind at 10 m and a peak gust based on a much shorter three-second average. FRANK checks both against the same Take care threshold; the Danger margin sets where each becomes Rough:')}</p>
             <ul className="manual-list">
-              <li><strong>{t('Good to go:')}</strong> {t('Both wind and gusts below Max Wind Safe.')}</li>
-              <li><strong>{t('Take care:')}</strong> {t('Wind or gusts between Max Wind Safe and Max Wind Safe + Gust Margin.')}</li>
-              <li><strong>{t('Rough:')}</strong> {t('Wind or gusts at or above Max Wind Safe + Gust Margin.')}</li>
+              <li><strong>{t('Good to go:')}</strong> {t('Both mean wind and gusts are below the Take care threshold.')}</li>
+              <li><strong>{t('Take care:')}</strong> {t('Mean wind or gusts are at or above the Take care threshold, but below the danger threshold.')}</li>
+              <li><strong>{t('Rough:')}</strong> {t('Mean wind or gusts are at or above the danger threshold.')}</li>
             </ul>
             <p className="manual-note">
-              {t('Example: Max Wind Safe = 5 m/s, Gust Margin = 3 m/s means the gust ceiling is 8 m/s. A gust of 7.2 m/s exceeds the 5 m/s safe limit and rates Caution; 8.4 m/s rates Danger.')}
+              {t("Normal's general wind band starts Take care at exactly 6.0 m/s and Rough at exactly 8.0 m/s. Enabled local sectors or other rules can make the result stricter. A threshold belongs to the stricter band.")}
+            </p>
+            <p className="manual-note">
+              {t('Mean-wind names follow')}{' '}
+              <a href={SAFETY_GUIDANCE_SOURCES.dmiBeaufort} target="_blank" rel="noreferrer">{t("DMI's Beaufort scale")}</a>.
+              {' '}{t('A gust is shown only as a number because a short gust is not a Beaufort mean-wind category. Measurement definitions:')}{' '}
+              <a href={SAFETY_GUIDANCE_SOURCES.metForecastDataModel} target="_blank" rel="noreferrer">MET Norway</a>.
             </p>
           </div>
 
@@ -124,16 +175,16 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
               {onshoreSectors.map((s) => (
                 <li key={s.id}><strong>{t('{0} wind', t(s.label))}</strong> ({s.min}&deg;-{s.max}&deg;) {t('can oppose falling water.')}</li>
               ))}
-              <li>{t('If a clash occurs and wind speed > 4.0 m/s, the hour is automatically marked')} <strong>{t('Caution')}</strong>.</li>
+              <li>{t('If a clash occurs and wind speed > 4.0 m/s, the hour is automatically marked')} <strong>{t('Take care')}</strong>.</li>
             </ul>
           </div>
 
           <div>
             <h3 className="manual-h">{t('4. Local Wind Sectors')}</h3>
-            <p className="manual-p">{t('Active only when')} <strong>{t('Local wind sectors')}</strong> {t('is enabled. Applies separate, stricter absolute limits for the wind sectors configured for {0}:', CURRENT_LOCATION.areaName)}</p>
+            <p className="manual-p">{t('Active only when')} <strong>{t('Local wind sectors')}</strong> {t('is enabled. Applies separate direction-specific limits for the wind sectors configured for {0}; these can make a profile stricter:', CURRENT_LOCATION.areaName)}</p>
             <ul className="manual-list spaced">
               {sectors.map((s) => (
-                <li key={s.id}><strong>{t(s.label)} ({s.min}&deg;-{s.max}&deg;):</strong> {t(s.description)}. {t('Safe cap: {0} m/s, danger cap: {1} m/s.', s.safeLimit, s.cautionLimit)}</li>
+                <li key={s.id}><strong>{t(s.label)} ({s.min}&deg;-{s.max}&deg;):</strong> {t(s.description)}. {t('Take care from {0} m/s; danger from {1} m/s.', s.safeLimit, s.cautionLimit)}</li>
               ))}
               <li>{t('These limits use')} <strong>{t('average wind speed only')}</strong> {t('(not gusts), as the chop that matters here is driven by sustained wind blowing across a long open stretch of water (its "fetch").')}</li>
               <li>{t('Directions are fixed to the local geography; only the speed caps are yours to adjust.')}</li>
@@ -165,10 +216,10 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
 
           <div>
             <h3 className="manual-h">{t('7. How Rules Combine')}</h3>
-            <p className="manual-p">{t('Every enabled rule is evaluated for every hour, and the overall rating is the')} <strong>{t('worst result')}</strong> {t('among them. A rule can only raise the severity (Safe → Caution → Danger) — no rule can lower a rating another rule has already set:')}</p>
+            <p className="manual-p">{t('Every enabled rule is evaluated for every hour, and the overall rating is the')} <strong>{t('worst result')}</strong> {t('among them. A rule can only raise the severity (Good to go → Take care → Rough) — no rule can lower a rating another rule has already set:')}</p>
             <ul className="manual-list spaced">
-              <li>{t('One Danger rule (for example a thunderstorm or heavy-rain forecast) makes the whole hour Danger, regardless of how calm everything else looks.')}</li>
-              <li>{t('Caution-only rules (wind-against-water clash > 4 m/s, nighttime) never raise an hour above Caution on their own.')}</li>
+              <li>{t('If any rule reaches Rough (for example a thunderstorm or heavy-rain forecast), the whole hour is Rough, regardless of how calm everything else looks.')}</li>
+              <li>{t('Take-care-only rules (wind-against-water clash > 4 m/s, nighttime) never raise an hour above Take care on their own.')}</li>
               <li>{t('Every triggered rule is listed in the assessment, so you always see all reasons — not just the worst one.')}</li>
             </ul>
           </div>
@@ -177,15 +228,15 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
             <h3 className="manual-h">{t('8. Water Temperature')}</h3>
             <p className="manual-p">{t("Cold shock and hypothermia risk, checked against your configured limits. The defaults are conservative starting points — set them to your own club's rules, your gear, and the season:")}</p>
             <ul className="manual-list">
-              <li><strong>&ge; {settings.minWaterTempSafe}&deg;C:</strong> {t('Safe for general paddling clothing.')}</li>
-              <li><strong>{settings.minWaterTempCaution}-{settings.minWaterTempSafe}&deg;C:</strong> {t('Caution. Thermal layers or wetsuit strongly recommended.')}</li>
-              <li><strong>&lt; {settings.minWaterTempCaution}&deg;C:</strong> {t('Danger. Drysuit or heavy wetsuit required.')}</li>
+              <li><strong>&ge; {settings.minWaterTempSafe}&deg;C:</strong> {t('Good to go for general paddling clothing.')}</li>
+              <li><strong>{settings.minWaterTempCaution}-{settings.minWaterTempSafe}&deg;C:</strong> {t('Take care. Thermal layers or wetsuit strongly recommended.')}</li>
+              <li><strong>&lt; {settings.minWaterTempCaution}&deg;C:</strong> {t('Rough. Drysuit or heavy wetsuit required.')}</li>
             </ul>
           </div>
 
           <div>
             <h3 className="manual-h">{t('9. Daylight Rule')}</h3>
-            <p className="manual-p">{t('Many clubs prohibit paddling between sunset and sunrise without navigation lights and permission, so when this rule is on, hourly forecasts outside daylight are marked Caution (turn it off if night paddling is fine for you). A longer-range outlook block is marked Caution unless its whole period is daylight. Launch windows are handled separately: periods with no complete daylight hour are dropped, and partial periods show only their longest continuous daylight part.')}</p>
+            <p className="manual-p">{t('Many clubs prohibit paddling between sunset and sunrise without navigation lights and permission, so when this rule is on, hourly forecasts outside daylight are marked Take care (turn it off if night paddling is fine for you). A longer-range outlook block is marked Take care unless its whole period is daylight. Launch windows are handled separately: periods with no complete daylight hour are dropped, and partial periods show only their longest continuous daylight part.')}</p>
           </div>
 
           <div>

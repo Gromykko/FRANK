@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLang } from '../i18n';
+import { getPresetSettings } from '../features/safety/presets';
+import { GUIDED_PROFILE_MODES, SAFETY_GUIDANCE_SOURCES } from '../features/safety/guidanceSources';
 import type { SafetySettings } from '../hooks/useSettings';
 
 const MODES: { value: SafetySettings['tripMode']; label: string }[] = [
@@ -138,7 +140,38 @@ export default function TripProfilePanel({ tripMode, onTripModeChange }: TripPro
       {showInfo && (
         <div className="trip-profile-info" id="trip-profile-info-pop" role="note" ref={popRef}>
           <p>
-            <strong>{t('Chill')}</strong>, <strong>{t('Normal')}</strong> {t('and')} <strong>{t('Pro')}</strong> {t('are presets — from the most cautious limits for beginners and easy trips to the loosest limits for experienced paddlers.')}
+            {t('The built-in profiles use these general wind and significant-wave bands:')}
+          </p>
+          <ul className="trip-profile-info-list">
+            {GUIDED_PROFILE_MODES.map(({ mode, label, level }) => {
+              const preset = getPresetSettings(mode);
+              return (
+                <li key={mode}>
+                  <strong>{t(label)} · {level}:</strong>{' '}
+                  {t(
+                    'wind Take care from {0} m/s and Rough from {1} m/s; waves Take care from {2} m and Rough from {3} m.',
+                    preset.maxWindSpeedSafe.toFixed(1),
+                    preset.maxWindSpeedCaution.toFixed(1),
+                    preset.maxWaveHeightSafe.toFixed(2),
+                    preset.maxWaveHeightCaution.toFixed(2),
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          <p>
+            {t('These are FRANK starting points, not DKF safety limits or proof of skill. Local wind sectors and every other enabled rule may make a verdict stricter.')}
+          </p>
+          <p className="trip-profile-info-note">
+            {t('Basis: Normal and Pro wind use the numeric conditions in')}{' '}
+            <a href={SAFETY_GUIDANCE_SOURCES.dkfTouring} target="_blank" rel="noreferrer">DKF Touring</a>.
+            {' '}{t('See the')}{' '}
+            <a href={SAFETY_GUIDANCE_SOURCES.dkfIpp3Touring} target="_blank" rel="noreferrer">{t('IPP 3 Touring norm')}</a>
+            {' '}{t('and')}{' '}
+            <a href={SAFETY_GUIDANCE_SOURCES.dkfIpp4Touring} target="_blank" rel="noreferrer">{t('IPP 4 Touring norm')}</a>.
+            {' '}{t("Touring IPP 2 has no numeric wind limit. Chill's 5 m/s Rough boundary and the red wave boundaries use")}{' '}
+            <a href={SAFETY_GUIDANCE_SOURCES.dkfSeaKayakNorm} target="_blank" rel="noreferrer">{t("DKF's 7 May 2026 sea-kayak norm")}</a>.
+            {' '}{t("Chill's 4 m/s and the lower wave Take care boundaries are FRANK's conservative choices.")}
           </p>
           <p>
             <strong>{t('Custom')}</strong> {t('is your own set: change anything in Your Limits below and it lands there.')}

@@ -51,15 +51,15 @@ function renderReasons(danish = false) {
 }
 
 describe('ConditionsSnapshot reason prefixes', () => {
-  it('announces danger and caution while leaving a safe reason unprefixed', () => {
+  it('announces the visible rating words while leaving a safe reason unprefixed', () => {
     const container = renderReasons();
     const safeReason = container.querySelector('.reason-safe');
     const cautionReason = container.querySelector('.reason-caution');
     const dangerReason = container.querySelector('.reason-danger');
 
     expect(safeReason?.querySelector('.sr-only')?.textContent).toBe('');
-    expect(cautionReason?.querySelector('.sr-only')?.textContent).toBe('Caution: ');
-    expect(dangerReason?.querySelector('.sr-only')?.textContent).toBe('Danger: ');
+    expect(cautionReason?.querySelector('.sr-only')?.textContent).toBe('Take care: ');
+    expect(dangerReason?.querySelector('.sr-only')?.textContent).toBe('Rough: ');
     expect(container.querySelector('.snapshot-reasons-container')?.classList.contains('rating-safe'))
       .toBe(true);
   });
@@ -69,6 +69,6 @@ describe('ConditionsSnapshot reason prefixes', () => {
 
     expect(container.querySelector('.reason-safe .sr-only')?.textContent).toBe('');
     expect(container.querySelector('.reason-caution .sr-only')?.textContent).toBe('Pas på: ');
-    expect(container.querySelector('.reason-danger .sr-only')?.textContent).toBe('Fare: ');
+    expect(container.querySelector('.reason-danger .sr-only')?.textContent).toBe('Barskt: ');
   });
 });

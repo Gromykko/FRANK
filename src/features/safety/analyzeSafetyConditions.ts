@@ -164,6 +164,8 @@ const isBearing = (value: unknown): value is number =>
 
 export function getWindSpeedLabel(speed: number): string {
   if (!isNonnegativeReading(speed)) return 'Unknown';
+  // DMI's Beaufort table, including the distinct force 10-12 names:
+  // https://www.dmi.dk/vejr-og-atmosfare/temaforside-vind/beaufortskalaen/
   if (speed <= 0.2) return 'Calm';
   if (speed <= 1.5) return 'Light Air';
   if (speed <= 3.3) return 'Light Breeze';
@@ -174,16 +176,27 @@ export function getWindSpeedLabel(speed: number): string {
   if (speed <= 17.1) return 'Near Gale';
   if (speed <= 20.7) return 'Gale';
   if (speed <= 24.4) return 'Strong Gale';
-  return 'Storm';
+  if (speed <= 28.4) return 'Storm';
+  if (speed <= 32.6) return 'Violent Storm';
+  return 'Hurricane';
 }
 
 export function getWaveHeightLabel(height: number): string {
   if (!isNonnegativeReading(height)) return 'Unknown';
-  if (height <= 0.1) return 'Flat / Calm';
-  if (height <= 0.5) return 'Smooth / Small Ripples';
-  if (height <= 1.25) return 'Slight / Choppy';
-  if (height <= 2.5) return 'Moderate / Rough';
-  return 'Very Rough / High';
+  // WMO's recommended sea-wave terms, used only as supplemental context for
+  // the numeric DMI significant-wave-height reading. Adding "sea" keeps these
+  // translation keys distinct from FRANK's Rough verdict. WMO assigns an exact
+  // boundary to the lower category, which is why these comparisons are <=.
+  // https://community.wmo.int/site/knowledge-hub/programmes-and-initiatives/marine-services/frequently-asked-questions
+  if (height <= 0.1) return 'Calm sea';
+  if (height <= 0.5) return 'Smooth sea';
+  if (height <= 1.25) return 'Slight sea';
+  if (height <= 2.5) return 'Moderate sea';
+  if (height <= 4) return 'Rough sea';
+  if (height <= 6) return 'Very rough sea';
+  if (height <= 9) return 'High sea';
+  if (height <= 14) return 'Very high sea';
+  return 'Phenomenal sea';
 }
 
 // Rules only ratchet the rating up, never down: every enabled rule runs, any
@@ -252,15 +265,15 @@ export function analyzeSafetyConditions(
     } else if (windSpeedForSafety >= settings.maxWindSpeedSafe) {
       rating = 'caution';
       addReason('caution', limitReason(windSpeedForSafety, settings.maxWindSpeedSafe, 1,
-        'Wind speed: {0} m/s ({1}). At your safe limit of {2} m/s.',
-        'Wind speed: {0} m/s ({1}). Exceeds your safe limit of {2} m/s.',
+        'Wind speed: {0} m/s ({1}). At your Take care threshold of {2} m/s.',
+        'Wind speed: {0} m/s ({1}). Above your Take care threshold of {2} m/s.',
         windSpeedForSafety.toFixed(1), windLabel, settings.maxWindSpeedSafe.toFixed(1)));
     }
   }
 
-  // Gusts are a sub-limit of Max Wind (the UI disables the gust toggle when
-  // wind is off), so turning Max Wind off also silences the gust check. The
-  // gust danger ceiling is safe limit + the user's gust margin — the built-in
+  // Gusts are a sub-limit of the wind rule (the UI disables the gust toggle
+  // when wind is off), so turning wind off also silences the gust check. The
+  // gust danger ceiling is the Take care threshold + the user's margin — built-in
   // presets place that exactly on the caution limit, but a custom margin
   // moves the ceiling with it, as the settings panel and manual describe.
   const enableWindGust = enableWindSpeed && (settings.enableWindGust ?? true);
@@ -269,18 +282,19 @@ export function analyzeSafetyConditions(
   const hasWindGust = isNonnegativeReading(gustForSafety);
   if (enableWindGust && !hasWindGust && (!data.blockSpanHours || isReading(gustForSafety))) missing.push('wind gusts');
   if (enableWindGust && hasWindGust) {
-    const gustLabel = translate(getWindSpeedLabel(gustForSafety));
-    const gustDangerLimit = settings.maxWindSpeedSafe + (settings.gustMargin ?? 2.5);
+    // Beaufort describes sustained/mean wind, not a short gust. Keep the gust
+    // numeric instead of assigning it a misleading Beaufort force name.
+    const gustDangerLimit = settings.maxWindSpeedSafe + (settings.gustMargin ?? 2.0);
     if (gustForSafety >= gustDangerLimit) {
       addReason('danger', limitReason(gustForSafety, gustDangerLimit, 1,
-        'Wind gusts: {0} m/s ({1}). At your gust ceiling of {2} m/s.',
-        'Wind gusts: {0} m/s ({1}). Above your gust ceiling of {2} m/s.',
-        gustForSafety.toFixed(1), gustLabel, gustDangerLimit.toFixed(1)));
+        'Wind gusts: {0} m/s. At your gust danger threshold of {1} m/s.',
+        'Wind gusts: {0} m/s. Above your gust danger threshold of {1} m/s.',
+        gustForSafety.toFixed(1), gustDangerLimit.toFixed(1)));
     } else if (gustForSafety >= settings.maxWindSpeedSafe) {
       addReason('caution', limitReason(gustForSafety, settings.maxWindSpeedSafe, 1,
-        'Wind gusts: {0} m/s ({1}). At your safe limit of {2} m/s.',
-        'Wind gusts: {0} m/s ({1}). Exceeds your safe limit of {2} m/s.',
-        gustForSafety.toFixed(1), gustLabel, settings.maxWindSpeedSafe.toFixed(1)));
+        'Wind gusts: {0} m/s. At your Take care threshold of {1} m/s.',
+        'Wind gusts: {0} m/s. Above your Take care threshold of {1} m/s.',
+        gustForSafety.toFixed(1), settings.maxWindSpeedSafe.toFixed(1)));
     }
   }
 
@@ -311,14 +325,14 @@ export function analyzeSafetyConditions(
     // "caution cap" on a red reason read as caution, not Rough.
     if (windSpeedForSafety >= sector.cautionLimit) {
       addReason('danger', limitReason(windSpeedForSafety, sector.cautionLimit, 1,
-        '{0} wind ({1}°) is at your {2} m/s danger cap for this direction.',
-        '{0} wind ({1}°) is over your {2} m/s danger cap for this direction.',
+        '{0} wind ({1}°) is at your {2} m/s danger threshold for this direction.',
+        '{0} wind ({1}°) is over your {2} m/s danger threshold for this direction.',
         translate(sector.label), windDir, sector.cautionLimit.toFixed(1)));
     } else if (windSpeedForSafety >= sector.safeLimit) {
       if (rating !== 'danger') rating = 'caution';
       addReason('caution', limitReason(windSpeedForSafety, sector.safeLimit, 1,
-        '{0} wind ({1}°) is at your {2} m/s safe cap for this direction.',
-        '{0} wind ({1}°) is over your {2} m/s safe cap for this direction.',
+        '{0} wind ({1}°) is at your {2} m/s Take care threshold for this direction.',
+        '{0} wind ({1}°) is over your {2} m/s Take care threshold for this direction.',
         translate(sector.label), windDir, sector.safeLimit.toFixed(1)));
     }
   }
@@ -371,8 +385,8 @@ export function analyzeSafetyConditions(
     } else if (enableWaveCaution && waveForSafety >= settings.maxWaveHeightSafe) {
       if (rating !== 'danger') rating = 'caution';
       addReason('caution', limitReason(waveForSafety, settings.maxWaveHeightSafe, 2,
-        'Wave height: {0} m ({1}). At your safe limit of {2} m.',
-        'Wave height: {0} m ({1}). Exceeds your safe limit of {2} m.',
+        'Wave height: {0} m ({1}). At your Take care threshold of {2} m.',
+        'Wave height: {0} m ({1}). Above your Take care threshold of {2} m.',
         waveForSafety.toFixed(2), waveLabel, settings.maxWaveHeightSafe.toFixed(2)));
     }
   }
@@ -455,15 +469,9 @@ export function analyzeSafetyConditions(
   }
 
   if (reasons.length === 0) {
-    // Describe the conditions in the standard terms (Beaufort wind, sea state,
-    // MET weather label) instead of repeating the numbers shown above. The
-    // bands match getWaveHeightLabel, phrased for prose.
-    const seaState = translate(!isNonnegativeReading(waveForSafety) ? 'sea state unknown'
-      : waveForSafety <= 0.1 ? 'calm water'
-      : waveForSafety <= 0.5 ? 'small ripples'
-      : waveForSafety <= 1.25 ? 'choppy water'
-      : waveForSafety <= 2.5 ? 'rough water'
-      : 'very rough water');
+    // Describe the conditions in the same standard terms used everywhere else
+    // instead of maintaining a second, contradictory sea-state vocabulary.
+    const seaState = translate(getWaveHeightLabel(waveForSafety)).toLowerCase();
 
     // Silence from a rule that is switched off is not evidence of safety, and
     // this sentence cannot tell the two apart on its own: with Max Wind

@@ -81,20 +81,27 @@ function buildSectorLimits(mode: SafetySettings['tripMode']): Record<string, Sec
 }
 
 const BASE_SETTINGS: SafetySettings = {
-  maxWindSpeedSafe: 5.5,
+  // Normal is IPP3-like: DKF Touring describes its central working condition
+  // as around 6 m/s and an assessment envelope reaching 8 m/s. These are
+  // FRANK's general wind bands, not a claim that DKF defines green/amber/red.
+  // https://www.kano-kajak.dk/uddannelse-og-kurser/ipp-roeruddannelse/touring-tur/
+  maxWindSpeedSafe: 6.0,
   maxWindSpeedCaution: 8.0,
   minWaterTempSafe: 15.0,
   minWaterTempCaution: 10.0,
   maxWaveHeightSafe: 0.3,
-  maxWaveHeightCaution: 0.6,
+  // DKF Touring describes waves qualitatively but publishes no numeric height
+  // table. The red ceiling therefore uses the current DKF sea-kayak IPP3
+  // figure (1 m); the existing conservative 0.30 m amber entry stays FRANK's.
+  maxWaveHeightCaution: 1.0,
   enableCustomWindDirs: true,
   sectorLimits: buildSectorLimits('default'),
   tripMode: 'default',
   daylightOnly: true,
   minDuration: 2,
   tidePreference: 'any',
-  gustMargin: 2.5,
-  waveCautionMargin: 0.3,
+  gustMargin: 2.0,
+  waveCautionMargin: 0.7,
   enableWindSpeed: true,
   enableWindGust: true,
   enableWaveHeight: true,
@@ -108,12 +115,15 @@ const PRESET_SETTINGS: Record<SafetySettings['tripMode'], SafetySettings> = {
   beginner: {
     ...BASE_SETTINGS,
     tripMode: 'beginner',
+    // DKF Touring IPP2 does not publish numeric wind conditions. The 5 m/s
+    // ceiling comes from DKF's current sea-kayak IPP2 norm; 4 m/s is FRANK's
+    // deliberately conservative Take-care boundary.
     maxWindSpeedSafe: 4.0,
-    maxWindSpeedCaution: 6.0,
-    gustMargin: 2.0,
+    maxWindSpeedCaution: 5.0,
+    gustMargin: 1.0,
     maxWaveHeightSafe: 0.2,
-    maxWaveHeightCaution: 0.4,
-    waveCautionMargin: 0.2,
+    maxWaveHeightCaution: 0.5,
+    waveCautionMargin: 0.3,
     minDuration: 2,
     sectorLimits: buildSectorLimits('beginner'),
   },
@@ -124,12 +134,14 @@ const PRESET_SETTINGS: Record<SafetySettings['tripMode'], SafetySettings> = {
   pro: {
     ...BASE_SETTINGS,
     tripMode: 'pro',
-    maxWindSpeedSafe: 7.0,
+    // DKF Touring IPP4 publishes an 8-10 m/s assessment environment.
+    // https://drive.google.com/file/d/1iagdhW-B3ZXvHUmEBSfxVESyne5qevb2/view?usp=sharing
+    maxWindSpeedSafe: 8.0,
     maxWindSpeedCaution: 10.0,
-    gustMargin: 3.0,
+    gustMargin: 2.0,
     maxWaveHeightSafe: 0.5,
-    maxWaveHeightCaution: 0.8,
-    waveCautionMargin: 0.3,
+    maxWaveHeightCaution: 2.0,
+    waveCautionMargin: 1.5,
     minDuration: 1,
     sectorLimits: buildSectorLimits('pro'),
   },

@@ -286,10 +286,10 @@ export function healSettings(s: SafetySettings): SafetySettings {
     // independently and only flooring it at safe + 0.5 let the two drift: a
     // profile carrying safe 5.5 / danger 12 / margin 2.5 was TOLD 8.0 was the
     // red line while the engine still waited for 12. Deriving it here gives the
-    // threshold one source of truth. Every built-in preset already satisfies
-    // this exactly (5.5+2.5=8, 4+2=6, 7+3=10; 0.3+0.3=0.6, 0.2+0.2=0.4,
-    // 0.5+0.3=0.8), so no preset user's verdict moves — only a drifted stored
-    // profile is pulled back, and always toward the stricter number.
+    // threshold one source of truth. Every built-in preset satisfies this
+    // exactly (6+2=8, 4+1=5, 8+2=10; 0.3+0.7=1, 0.2+0.3=0.5,
+    // 0.5+1.5=2), so selecting or reloading a built-in mode cannot make the
+    // displayed threshold disagree with the engine.
     maxWindSpeedCaution: roundToDecimals(
       floorCaution(healed.maxWindSpeedSafe, healed.maxWindSpeedSafe + healed.gustMargin),
       1,
@@ -366,7 +366,7 @@ export function useSettings() {
   // The raw bytes of a stored profile we could not parse, or null. A failed load
   // must NOT be silently replaced: the debounced write below fires on mount too,
   // so falling back to defaults used to stamp them over the unreadable blob
-  // 250ms later — a beginner's 4.0 m/s cap became the 5.5 m/s default,
+  // 250ms later — a beginner's 4.0 m/s cap became the 6.0 m/s default,
   // permanently, with no trace.
   //
   // But it must not block the user's own edits either. Holding the write open

@@ -12,11 +12,11 @@ describe('safety presets', () => {
     const s = getPresetSettings('beginner');
     expect(s.tripMode).toBe('beginner');
     expect(s.maxWindSpeedSafe).toBe(4.0);
-    expect(s.maxWindSpeedCaution).toBe(6.0);
-    expect(s.gustMargin).toBe(2.0);
+    expect(s.maxWindSpeedCaution).toBe(5.0);
+    expect(s.gustMargin).toBe(1.0);
     expect(s.maxWaveHeightSafe).toBe(0.2);
-    expect(s.maxWaveHeightCaution).toBe(0.4);
-    expect(s.waveCautionMargin).toBe(0.2);
+    expect(s.maxWaveHeightCaution).toBe(0.5);
+    expect(s.waveCautionMargin).toBe(0.3);
     expect(s.minDuration).toBe(2);
     expect(s.minWaterTempSafe).toBe(15.0);
     expect(s.minWaterTempCaution).toBe(10.0);
@@ -32,12 +32,12 @@ describe('safety presets', () => {
   it('default has the exact documented numbers and mirrors DEFAULT_SETTINGS', () => {
     const s = getPresetSettings('default');
     expect(s.tripMode).toBe('default');
-    expect(s.maxWindSpeedSafe).toBe(5.5);
+    expect(s.maxWindSpeedSafe).toBe(6.0);
     expect(s.maxWindSpeedCaution).toBe(8.0);
-    expect(s.gustMargin).toBe(2.5);
+    expect(s.gustMargin).toBe(2.0);
     expect(s.maxWaveHeightSafe).toBe(0.3);
-    expect(s.maxWaveHeightCaution).toBe(0.6);
-    expect(s.waveCautionMargin).toBe(0.3);
+    expect(s.maxWaveHeightCaution).toBe(1.0);
+    expect(s.waveCautionMargin).toBe(0.7);
     expect(s.minDuration).toBe(2);
     expect(s.minWaterTempSafe).toBe(15.0);
     expect(s.minWaterTempCaution).toBe(10.0);
@@ -52,12 +52,12 @@ describe('safety presets', () => {
   it('pro has the exact documented numbers', () => {
     const s = getPresetSettings('pro');
     expect(s.tripMode).toBe('pro');
-    expect(s.maxWindSpeedSafe).toBe(7.0);
+    expect(s.maxWindSpeedSafe).toBe(8.0);
     expect(s.maxWindSpeedCaution).toBe(10.0);
-    expect(s.gustMargin).toBe(3.0);
+    expect(s.gustMargin).toBe(2.0);
     expect(s.maxWaveHeightSafe).toBe(0.5);
-    expect(s.maxWaveHeightCaution).toBe(0.8);
-    expect(s.waveCautionMargin).toBe(0.3);
+    expect(s.maxWaveHeightCaution).toBe(2.0);
+    expect(s.waveCautionMargin).toBe(1.5);
     expect(s.minDuration).toBe(1);
     // Pro loosens both exposures by +1.0 on the sector's own caps.
     expect(s.sectorLimits.onshore.safe).toBe(onshore.safeLimit + 1.0);
@@ -132,7 +132,7 @@ describe('safety presets', () => {
     first.maxWindSpeedSafe = 99;
     first.sectorLimits.onshore.safe = 99;
     const second = getPresetSettings('default');
-    expect(second.maxWindSpeedSafe).toBe(5.5);
+    expect(second.maxWindSpeedSafe).toBe(6.0);
     expect(second.sectorLimits.onshore.safe).toBe(onshore.safeLimit);
   });
   // The whole point of the mode is that nothing is judged. If a new enable*
