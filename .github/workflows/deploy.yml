@@ -354,6 +354,32 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # `versions deploy` printing SUCCESS is not proof the deployment stuck.
+      # On 2026-08-26 run 33006408963 promoted c9f1a0ee at 100%, wrangler
+      # reported success, and production kept serving the previous version
+      # b3741d13 - every job green, the release silently not live. The trigger
+      # sync above re-reads the deployment about two seconds after the promote
+      # and is the likeliest re-pinner. Rather than guess, ask production what
+      # it is running: the Worker stamps its own version on every response, so
+      # this is the one check that compares the deploy against reality instead
+      # of against the repo.
+      - name: Verify production took the promoted version
+        env:
+          CANDIDATE_VERSION_ID: ${{ needs.upload_candidate.outputs.version_id }}
+          FRANK_WORKER_BASE_URL: ${{ vars.FRANK_WORKER_BASE_URL }}
+        run: |
+          for attempt in $(seq 1 10); do
+            live=$(curl -fsS -o /dev/null -D - "$FRANK_WORKER_BASE_URL/health" \
+              | awk -F': ' 'tolower($1) == "x-frank-worker-version" { gsub(/[[:space:]]/, "", $2); print $2 }')
+            if [ "$live" = "$CANDIDATE_VERSION_ID" ]; then
+              echo "production is serving $live"
+              exit 0
+            fi
+            echo "attempt $attempt: production serving ${live:-unknown}"
+            sleep 6
+          done
+          echo "::error::production never took $CANDIDATE_VERSION_ID (still $live)"
+          exit 1
 
       # Promotion has succeeded before cleanup starts. Cleanup is maintenance,
       # not a release gate: a failure remains visible and the next deployment
