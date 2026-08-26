@@ -3220,23 +3220,34 @@ button.legend-toggle.is-on {
      gaps are tuned. The button bay takes marginally more because its cluster is
      the widest fixed thing in the row. */
   .frank-device-columns {
-    grid-template-columns: 1fr 1fr 1.08fr;
+    /* The third bay is sized to the button cluster exactly, so the cluster
+       fills it the way the face fills the first. That is what makes the four
+       gaps identical: each divider then sits one column-gap from the object on
+       either side of it, with the glass's own padding matching that gap. */
+    grid-template-columns: 1fr 1fr 1.04fr;
     grid-template-areas:
       'crt  display actions'
       'name .       location';
     column-gap: 10px;
   }
 
-  /* Bigger, and centred in its bay rather than pinned to the shell's edge. */
+  /* Fills its bay rather than floating inside it. Centring a 74px face in a
+     90px bay left 8px of slack on each side, which is why the face sat further
+     from its divider (18px) than the glass did (11px) - the eye reads that as
+     the glass being pushed left. Tracking the bay makes the gap on both sides
+     of every divider the same by construction, at any width, and gets FRANK
+     nearly as large as the button cluster beside him. */
   .frank-crt {
-    width: 74px;
-    height: 74px;
-    justify-self: center;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1;
+    max-width: 92px;
+    justify-self: stretch;
   }
 
   .frank-crt .gerty-face {
-    width: 50px;
-    height: 50px;
+    width: 58%;
+    height: 58%;
   }
 
   .frank-nameplate,
