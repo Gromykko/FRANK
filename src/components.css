@@ -3212,35 +3212,36 @@ button.legend-toggle.is-on {
      display used to span its own full-width row above them, which left a band
      of dead housing between the face and the button cluster and made the shell
      two rows taller than it needed to be on the smallest screens. */
+  /* Three bays of roughly equal width, split by the two housing rules, with each
+     instrument centred in its own. Sizing the columns to their CONTENTS instead
+     left the face and buttons hugging the dividers with the leftover space
+     pooling as blank housing - the columns have to be equal first, and the
+     contents centred inside them, or the row cannot look balanced however the
+     gaps are tuned. The button bay takes marginally more because its cluster is
+     the widest fixed thing in the row. */
   .frank-device-columns {
-    /* The glass is sized, not stretched. Letting it take 1fr made it 42% of the
-       shell against the face's 16% and the buttons' 13%, so the row read as one
-       wide panel with two ornaments rather than three instruments. Capping it
-       near a third and letting space-between share the remainder gives even
-       gutters on both sides of it. */
-    grid-template-columns: 56px minmax(0, 104px) auto;
-    justify-content: space-between;
-    /* The location switcher shares the third column with the buttons, and it is
-       the wider of the two - so it, not the buttons, was sizing that column.
-       The cluster then centred inside the surplus and left a 23px gap on its
-       left against 13px on the right, which reads as the glass being shoved
-       left. Letting the location span the last two columns hands the third back
-       to the buttons, so the gaps either side of the glass match and the glass
-       itself gets the width the location was holding. */
+    grid-template-columns: 1fr 1fr 1.08fr;
     grid-template-areas:
-      'crt  display  actions'
-      'name location location';
+      'crt  display actions'
+      'name .       location';
     column-gap: 10px;
   }
 
+  /* Bigger, and centred in its bay rather than pinned to the shell's edge. */
   .frank-crt {
-    width: 56px;
-    height: 56px;
+    width: 74px;
+    height: 74px;
+    justify-self: center;
   }
 
   .frank-crt .gerty-face {
-    width: 38px;
-    height: 38px;
+    width: 50px;
+    height: 50px;
+  }
+
+  .frank-nameplate,
+  .frank-location {
+    justify-self: center;
   }
 
   .frank-cell-display {
@@ -3262,10 +3263,13 @@ button.legend-toggle.is-on {
   }
 
   .frank-display-text.is-verdict {
-    font-size: 17px;
+    /* Sized to the bay, not to the desktop. "KLAR TIL AT RO" is fourteen
+       characters in a 69px glass, so it always wraps; 15px lets it break into
+       comfortable lines inside the box rather than filling it corner to corner. */
+    font-size: 15px;
     font-weight: 700;
-    line-height: 1.1;
-    letter-spacing: 0.04em;
+    line-height: 1.25;
+    letter-spacing: 0.03em;
     text-transform: uppercase;
   }
 
@@ -3284,9 +3288,6 @@ button.legend-toggle.is-on {
     gap: 6px;
   }
 
-  .frank-location {
-    justify-self: end;
-  }
 }
 
 /* Below about 360px - iPhone SE first generation and similar - three columns
