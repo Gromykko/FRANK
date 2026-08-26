@@ -467,11 +467,18 @@ describe('Worker route HTTP contract', () => {
     expect(narrowCssStart).toBeGreaterThan(-1);
     expect(narrowCssEnd).toBeGreaterThan(narrowCssStart);
     const narrowCss = body.slice(narrowCssStart, narrowCssEnd);
+    const phoneCss = body.slice(body.indexOf('@media (max-width:480px)'), narrowCssStart);
     // The status message must survive the narrowest screen. An earlier rule hid
     // the display and kept the refresh-interval panel, so the smallest phone
     // showed a face and a constant but not the state.
-    expect(narrowCss).toContain("grid-template-areas:\n        'crt display'\n        'name display';");
-    expect(narrowCss).not.toContain('.frank-cell-display { display:none }');
+    // The narrow block used to restate the grid it already inherits; pin the
+    // base areas instead, and pin that nothing narrow takes the display away.
+    expect(body).toContain("grid-template-areas:\n      'crt display'\n      'name display';");
+    expect(narrowCss).not.toMatch(/\.frank-(?:cell-)?display[^}]*display:none/);
+    // Two bays, not three. A third track with no grid area assigned to it left
+    // 104px of blank housing beside the message and squeezed the glass to about
+    // 128px, which wrapped even 'all locations current' onto three lines.
+    expect(phoneCss).toContain('grid-template-columns:64px minmax(0,1fr);');
     expect(body).toMatch(/\.cell-name \{[^}]*display:flex;[^}]*gap:8px;/);
     // The generation badge is no longer demoted when healthy - it is not
     // rendered at all. A row only carries it when the location is off target,

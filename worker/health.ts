@@ -1173,8 +1173,6 @@ export function statusResponse(
   @media (max-width:720px) {
     .status-shell { padding:12px 10px 24px }
     .panel-bezel { align-items:flex-start; flex-direction:column; gap:2px; padding:10px 12px }
-    .locations-board { padding:8px }
-    .source-board { grid-template-columns:repeat(2,minmax(0,1fr)) }
     .notes summary { padding:12px }
     .notes-content { padding:0 12px 14px }
   }
@@ -1182,43 +1180,28 @@ export function statusResponse(
     .pixel-cloud-one { top:12vh; width:84px; opacity:.46; animation-delay:-24s }
   }
   @media (max-width:480px) {
-    .frank-device-shell { padding:10px 12px 12px }
-    .frank-cache { padding-right:0 }
+    .frank-device-shell { padding:10px 10px 12px }
+    /* Two bays, not three. The third 92px track was left behind when the
+       operations stamp was removed: nothing was ever placed in it, so the
+       phone header carried 104px of blank housing to the right of the
+       message and squeezed the glass to about 128px, which wrapped even
+       'all locations current' onto three lines. */
     .frank-device-columns {
-      grid-template-columns:64px minmax(0,1fr) 92px;
-      column-gap:12px;
+      grid-template-columns:64px minmax(0,1fr);
+      column-gap:10px;
     }
     .frank-crt { width:64px; height:64px }
     .frank-crt .gerty-face { width:42px; height:42px }
-    .frank-cell-display { padding:0 12px }
+    /* No right padding: the glass runs to the housing's own inset, so its
+       right gap is the shell's 10px and matches every other gap in the row. */
+    .frank-cell-display { padding:0 0 0 10px }
     .frank-display { min-height:56px; padding:6px 8px; font-size:1.125rem }
     .frank-nameplate { letter-spacing:.45em; text-indent:.45em }
-    .operation-stamp { padding:7px 8px; font-size:.625rem }
-    .operation-stamp strong { font-size:.6875rem }
-    .frank-location { font-size:.6875rem; letter-spacing:.08em }
-    .location-vitals { grid-template-columns:1fr 1fr }
-    .location-vitals > div:nth-child(3) {
-      grid-column:1/-1;
-      border-top:1px solid var(--module-edge);
-      border-left:0;
-    }
-    .source-board { grid-template-columns:1fr }
-    .source-card { min-height:104px }
   }
   @media (max-width:360px) {
     .status-shell { padding-right:8px; padding-left:8px }
-    /* The status message is the one thing that must survive the narrowest
-       screen. The old rule hid the display and kept the refresh-interval panel,
-       so the smallest phone showed a face and a constant, but not the state. */
-    .frank-device-columns {
-      grid-template-columns:64px minmax(0,1fr);
-      grid-template-areas:
-        'crt display'
-        'name display';
-      column-gap:12px;
-    }
     .frank-nameplate { font-size:.625rem; letter-spacing:.35em; text-indent:.35em }
-    .frank-cell-display { padding-left:12px }
+    .frank-cell-display { padding-left:10px }
   }
   @media (prefers-reduced-motion:reduce) {
     .pixel-cloud,.gerty-eyes { animation:none; will-change:auto }
