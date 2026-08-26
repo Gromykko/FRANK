@@ -3224,9 +3224,13 @@ button.legend-toggle.is-on {
 /* Narrow phones: shrink the CRT, buttons and labels so the middle column
    keeps room for the display */
 @media (max-width: 480px) {
+  /* The side padding is the face's and the button cluster's outer gap, and every
+     internal gap in the row is 10px - so it has to be 10px too, or the two
+     outermost instruments sit further from the housing than from their own
+     dividers. */
   .frank-device-shell {
     gap: 10px;
-    padding: 10px 12px 12px;
+    padding: 10px 10px 12px;
   }
 
   /* One instrument row, same as the desktop shape: face, glass, buttons. The
