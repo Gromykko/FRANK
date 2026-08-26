@@ -3254,9 +3254,15 @@ button.legend-toggle.is-on {
        Fixed outer bays cannot develop slack, so the four gaps stay equal at
        every width rather than at one. */
     grid-template-columns: 74px minmax(0, 1fr) calc(44px * 2 + 6px);
+    /* The label line spans the city across the middle bay as well. Sized to
+       the button cluster, the third bay is 94px and the city control wants
+       119 - so the chevron fell outside the button's own overflow clip and
+       rendered as a 4.6px sliver beside the name, which reads as a speck of
+       dirt rather than a control. It still ends on the same edge as the
+       buttons above it; it just has room to finish now. */
     grid-template-areas:
-      'crt  display actions'
-      'name .       location';
+      'crt  display  actions'
+      'name location location';
     column-gap: 10px;
   }
 
@@ -3278,9 +3284,14 @@ button.legend-toggle.is-on {
     height: 68%;
   }
 
-  .frank-nameplate,
-  .frank-location {
+  .frank-nameplate {
     justify-self: center;
+  }
+
+  /* Ends on the housing inset, so its right edge lines up with the refresh
+     button directly above it. */
+  .frank-location {
+    justify-self: end;
   }
 
   .frank-cell-display {

@@ -443,7 +443,12 @@ describe('Worker route HTTP contract', () => {
     expect(body).toContain('class="gerty-face" viewBox="3 3.5 10 9"');
     expect(body).toContain('<rect x="4" y="5" width="1" height="1"/>');
     expect(body).toContain('<span class="frank-nameplate">FRANK</span>');
-    expect(body).toContain('class="frank-display"');
+    // The status message is a sentence with an indicator, not a glass panel:
+    // an operations page is read, not admired, and the CSP forbids the
+    // external font the panel was set in, so it never rendered as one anyway.
+    expect(body).toContain('class="status-readout"');
+    expect(body).toContain('class="status-dot"');
+    expect(body).not.toContain('class="frank-display"');
     // The generation target moved out of a boxed panel and onto the device's
     // meta line, alongside the heartbeat.
     expect(body).toContain('class="device-meta"');
@@ -452,7 +457,7 @@ describe('Worker route HTTP contract', () => {
     expect(body).not.toContain('<span>Auto refresh</span>');
     expect(body).toContain('class="pixel-sky"');
     expect(body).toContain("--font-heading:'Inter'");
-    expect(body).toContain("--font-crt:'VT323'");
+    expect(body).not.toContain('--font-crt');
     expect(body).toContain('--bg-gradient:linear-gradient(180deg,#e5f2fc 0%,#eef7fd 38rem,#f5f7fa 78rem)');
     expect(body).toContain('--panel-bg:#f9fcff');
     expect(body).toContain('--crt-screen:#0a0e14');

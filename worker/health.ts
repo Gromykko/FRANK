@@ -759,7 +759,6 @@ export function statusResponse(
        including all the run timestamps - silently renders proportional and the column
        stops aligning. Inter stays on --font-heading/--font-body. */
     --font-mono:ui-monospace,'SFMono-Regular',Consolas,monospace;
-    --font-crt:'VT323','Courier New',ui-monospace,monospace;
     --text-instrument:.6875rem;
     --text-caption:.75rem;
     --text-ui:.8125rem;
@@ -859,6 +858,7 @@ export function statusResponse(
      screens instead of tinting the whole page. */
   .frank-device-shell {
     --frank-phosphor:var(--color-caution);
+    --frank-status-ink:var(--color-caution-text);
     display:flex;
     flex-direction:column;
     gap:10px;
@@ -868,9 +868,18 @@ export function statusResponse(
     background:var(--frank-housing);
     box-shadow:inset 0 1px 0 rgba(255,255,255,.06),var(--shadow-lg);
   }
-  .frank-device-shell.rating-safe { --frank-phosphor:var(--color-safe) }
-  .frank-device-shell.rating-caution { --frank-phosphor:var(--color-caution) }
-  .frank-device-shell.rating-danger { --frank-phosphor:var(--color-danger) }
+  .frank-device-shell.rating-safe {
+    --frank-phosphor:var(--color-safe);
+    --frank-status-ink:var(--color-safe-text);
+  }
+  .frank-device-shell.rating-caution {
+    --frank-phosphor:var(--color-caution);
+    --frank-status-ink:var(--color-caution-text);
+  }
+  .frank-device-shell.rating-danger {
+    --frank-phosphor:var(--color-danger);
+    --frank-status-ink:var(--color-danger-text);
+  }
   .frank-device-columns {
     display:grid;
     grid-template-columns:auto minmax(0,1fr);
@@ -879,7 +888,8 @@ export function statusResponse(
       'name display';
     column-gap:16px;
     row-gap:6px;
-    align-items:start;
+    /* Stretch, not start: the display cell carries the seam, and a cell that
+       shrinks to its text draws a divider shorter than the device beside it. */
     min-width:0;
   }
   .frank-crt {
@@ -967,31 +977,32 @@ export function statusResponse(
     padding:0 0 0 16px;
     border-left:1px solid var(--frank-housing-edge);
   }
-  .frank-display {
-    position:relative;
+  /* A plain sentence with an indicator beside it, not a screen. The glass
+     panel was the app's device idiom borrowed onto an operations page,
+     where it cost the message most of its width, wrapped three-word states
+     onto three lines, and set them in a display face that never loaded here
+     anyway - the CSP forbids an external font, so VT323 always fell through
+     to Courier New. Whoever reads this page is checking a state, not
+     admiring an instrument. */
+  .status-readout {
     display:flex;
-    flex:1 1 auto;
+    align-items:baseline;
+    gap:10px;
     min-width:0;
-    min-height:58px;
-    align-items:center;
-    justify-content:center;
-    overflow:hidden;
-    padding:8px 12px;
-    border:1px solid #05080d;
-    border-radius:10px;
-    color:var(--frank-phosphor);
-    background:var(--crt-screen);
-    box-shadow:inset 0 3px 8px rgba(0,0,0,.6);
-    font:400 clamp(1.25rem,2.2vw,1.5625rem)/1.05 var(--font-crt);
-    letter-spacing:.05em;
-    text-align:center;
+    margin:0;
+    color:var(--text-main);
+    font:700 1.0625rem/1.35 var(--font-body);
   }
-  .frank-display-text {
-    position:relative;
-    z-index:1;
-    overflow-wrap:normal;
-    word-break:normal;
-    text-shadow:0 0 8px color-mix(in srgb,currentColor 60%,transparent);
+  /* The rating in one glyph. It repeats the face beside it rather than
+     carrying the state alone, so it stays decorative and the sentence
+     remains the accessible answer. */
+  .status-dot {
+    flex:0 0 auto;
+    width:10px;
+    height:10px;
+    translate:0 -1px;
+    border-radius:50%;
+    background:var(--frank-status-ink);
   }
 
   .instrument-panel {
@@ -1195,7 +1206,7 @@ export function statusResponse(
     /* No right padding: the glass runs to the housing's own inset, so its
        right gap is the shell's 10px and matches every other gap in the row. */
     .frank-cell-display { padding:0 0 0 10px }
-    .frank-display { min-height:56px; padding:6px 8px; font-size:1.125rem }
+    .status-readout { font-size:1rem }
     .frank-nameplate { letter-spacing:.45em; text-indent:.45em }
   }
   @media (max-width:360px) {
@@ -1230,9 +1241,10 @@ export function statusResponse(
         <!-- No aria-label: on role="status" it becomes the accessible name and
              replaces the content, so a screen reader got statusDetail and never
              the status message itself. statusDetail is rendered visibly below. -->
-        <div class="frank-display" role="status">
-          <span class="frank-display-text">${escapeHtml(displayMessage)}</span>
-        </div>
+        <p class="status-readout" role="status">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span>${escapeHtml(displayMessage)}</span>
+        </p>
         <p class="device-meta">
           <span class="${beatLive ? '' : 'warn'}">${escapeHtml(beatText)}</span>
           <span aria-hidden="true">·</span>
