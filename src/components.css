@@ -3220,34 +3220,37 @@ button.legend-toggle.is-on {
      gaps are tuned. The button bay takes marginally more because its cluster is
      the widest fixed thing in the row. */
   .frank-device-columns {
-    /* The third bay is sized to the button cluster exactly, so the cluster
-       fills it the way the face fills the first. That is what makes the four
-       gaps identical: each divider then sits one column-gap from the object on
-       either side of it, with the glass's own padding matching that gap. */
-    grid-template-columns: 1fr 1fr 1.04fr;
+    /* The outer bays are sized to their contents; the glass takes what is left.
+       Fractional outer bays looked right at one width and wrong at every other:
+       at 375px the face's 92px cap happened to match its bay, but at 393px the
+       bay grew to 102px, the cap held the face at 92, and the 10px of slack
+       landed entirely on the divider side - so the gap there was double the
+       glass's own padding. The cluster did the same in the third bay.
+       Fixed outer bays cannot develop slack, so the four gaps stay equal at
+       every width rather than at one. */
+    grid-template-columns: 74px minmax(0, 1fr) calc(44px * 2 + 6px);
     grid-template-areas:
       'crt  display actions'
       'name .       location';
     column-gap: 10px;
   }
 
-  /* Fills its bay rather than floating inside it. Centring a 74px face in a
-     90px bay left 8px of slack on each side, which is why the face sat further
-     from its divider (18px) than the glass did (11px) - the eye reads that as
-     the glass being pushed left. Tracking the bay makes the gap on both sides
-     of every divider the same by construction, at any width, and gets FRANK
-     nearly as large as the button cluster beside him. */
+  /* The face fills its bay exactly, and the bay is sized to the face - which is
+     what keeps the gaps equal without changing how big FRANK is. Slack inside a
+     bay is what broke this before: a face centred in a wider bay pushes half the
+     surplus against its divider, so that gap ends up larger than the glass's own
+     padding on the other side. Sized bays cannot develop surplus, so the glass
+     takes every spare pixel instead - which is where the width belongs. */
   .frank-crt {
     width: 100%;
     height: auto;
     aspect-ratio: 1;
-    max-width: 92px;
     justify-self: stretch;
   }
 
   .frank-crt .gerty-face {
-    width: 58%;
-    height: 58%;
+    width: 68%;
+    height: 68%;
   }
 
   .frank-nameplate,
