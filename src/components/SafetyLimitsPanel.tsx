@@ -271,7 +271,8 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
                 // Take care against "your threshold of 0.0 m/s". 0.5 still
                 // expresses the most conservative paddler there is.
                 min={0.5} max={25} step={0.5} decimals={1}
-                unit={t('m/s wind')} label={t('wind Take care threshold')}
+                unit={t('m/s wind')}
+                label={t('wind Take care threshold; Danger stays {0} m/s above', settings.gustMargin.toFixed(1))}
                 onChange={val => updateCriteria({ maxWindSpeedSafe: val, maxWindSpeedCaution: val + settings.gustMargin })}
                 disabled={!settings.enableWindSpeed}
               />
@@ -290,14 +291,14 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
                   left a live danger threshold that could not be adjusted. */}
               <div className={`limit-caution-row has-toggle ${settings.enableWindSpeed ? '' : 'is-off'}`}>
                 <div className="limit-caution-copy">
-                  <span className="limit-caution-name">{t('Danger margin')}</span>
-                  <span className="limit-caution-hint">{t('Danger from {0} m/s. The switch also checks gusts against it.', windCautionAt.toFixed(1))}</span>
+                  <span className="limit-caution-name">{t('Gap to Danger')}</span>
+                  <span className="limit-caution-hint">{t('Take care from {0} m/s; +{1} m/s sets Danger from {2} m/s. The switch also checks gusts against it.', settings.maxWindSpeedSafe.toFixed(1), settings.gustMargin.toFixed(1), windCautionAt.toFixed(1))}</span>
                 </div>
                 <Stepper
                   compact
                   value={settings.gustMargin}
                   min={1} max={10} step={0.5} decimals={1}
-                  unit="+m/s" label={t('wind danger margin')}
+                  unit="+m/s" label={t('wind Take care-to-Danger gap')}
                   onChange={margin => updateCriteria({ gustMargin: margin, maxWindSpeedCaution: settings.maxWindSpeedSafe + margin })}
                   disabled={!settings.enableWindSpeed}
                 />
@@ -332,7 +333,8 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
               <Stepper
                 value={settings.maxWaveHeightSafe}
                 min={0.1} max={3.0} step={0.05} decimals={2}
-                unit={t('m waves')} label={t('wave Take care threshold')}
+                unit={t('m waves')}
+                label={t('wave Take care threshold; Danger stays {0} m above', settings.waveCautionMargin.toFixed(2))}
                 onChange={val => updateCriteria({
                   maxWaveHeightSafe: val,
                   maxWaveHeightCaution: roundToDecimals(val + settings.waveCautionMargin, 2),
@@ -353,14 +355,14 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
                   beneath it. With the switch off the rule goes green straight to red. */}
               <div className={`limit-caution-row has-toggle ${settings.enableWaveHeight ? '' : 'is-off'}`}>
                 <div className="limit-caution-copy">
-                  <span className="limit-caution-name">{t('Danger margin')}</span>
-                  <span className="limit-caution-hint">{t('Danger at {0} m and above. The switch adds an amber band below it.', waveCautionAt.toFixed(2))}</span>
+                  <span className="limit-caution-name">{t('Gap to Danger')}</span>
+                  <span className="limit-caution-hint">{t('Take care from {0} m; +{1} m sets Danger from {2} m. The switch adds the amber band between them.', settings.maxWaveHeightSafe.toFixed(2), settings.waveCautionMargin.toFixed(2), waveCautionAt.toFixed(2))}</span>
                 </div>
                 <Stepper
                   compact
                   value={settings.waveCautionMargin}
                   min={0.05} max={2.0} step={0.05} decimals={2}
-                  unit="+m" label={t('wave danger margin')}
+                  unit="+m" label={t('wave Take care-to-Danger gap')}
                   onChange={margin => updateCriteria({
                     waveCautionMargin: margin,
                     maxWaveHeightCaution: roundToDecimals(settings.maxWaveHeightSafe + margin, 2),
