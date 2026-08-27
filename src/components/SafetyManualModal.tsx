@@ -3,7 +3,7 @@ import { X } from 'lucide-react';
 import { CURRENT_LOCATION } from '../config/locations';
 import { resolveSectors } from '../features/safety/analyzeSafetyConditions';
 import { GUIDED_PROFILE_MODES, SAFETY_GUIDANCE_SOURCES } from '../features/safety/guidanceSources';
-import { getPresetSettings } from '../features/safety/presets';
+import { getPresetSettings, getWaveDangerAt, getWindDangerAt } from '../features/safety/presets';
 import { useLang } from '../i18n';
 import type { SafetySettings } from '../hooks/useSettings';
 
@@ -16,8 +16,6 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
   const { t } = useLang();
   // Live sectors with the user's caps applied, so the manual shows real numbers.
   const sectors = resolveSectors(CURRENT_LOCATION, settings);
-  const onshoreSectors = sectors.filter((s) => s.exposure === 'onshore');
-  const offshoreSectors = sectors.filter((s) => s.exposure === 'offshore');
   const contentRef = useRef<HTMLDivElement>(null);
   // A click's target is the element under mouseUP: releasing a text selection
   // over the backdrop must not close, so closing requires mousedown there too
@@ -97,7 +95,7 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
           <div>
             <h3 className="manual-h">{t('Profile basis')}</h3>
             <p className="manual-p">
-              {t('The built-in modes are FRANK starting points informed by DKF skill conditions. They are not DKF-issued safety limits, proof of competence, or a guarantee that a trip is safe.')}
+              {t("FRANK's built-in modes use DKF skill conditions as starting points. DKF did not publish them as safety limits. Choosing a mode does not prove competence or make a trip safe.")}
             </p>
             <ul className="manual-list spaced">
               {GUIDED_PROFILE_MODES.map(({ mode, label, level }) => {
@@ -107,31 +105,31 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
                     <strong>{t(label)} · {level}:</strong>{' '}
                     {t(
                       'general wind Take care from {0} m/s and Rough from {1} m/s; significant waves Take care from {2} m and Rough from {3} m.',
-                      preset.maxWindSpeedSafe.toFixed(1),
-                      preset.maxWindSpeedCaution.toFixed(1),
-                      preset.maxWaveHeightSafe.toFixed(2),
-                      preset.maxWaveHeightCaution.toFixed(2),
+                      preset.windTakeCareAt.toFixed(1),
+                      getWindDangerAt(preset).toFixed(1),
+                      preset.waveTakeCareAt.toFixed(2),
+                      getWaveDangerAt(preset).toFixed(2),
                     )}
                   </li>
                 );
               })}
             </ul>
             <p className="manual-note">
-              {t('Normal and Pro wind anchors use')}{' '}
+              {t('Intermediate and Advanced wind anchors use')}{' '}
               <a href={SAFETY_GUIDANCE_SOURCES.dkfTouring} target="_blank" rel="noreferrer">DKF Touring</a>
               {', '}{t('including the')}{' '}
               <a href={SAFETY_GUIDANCE_SOURCES.dkfIpp3Touring} target="_blank" rel="noreferrer">{t('IPP 3 Touring norm')}</a>,
               {' '}{t('and')}{' '}
               <a href={SAFETY_GUIDANCE_SOURCES.dkfIpp4Touring} target="_blank" rel="noreferrer">{t('IPP 4 Touring norm')}</a>.
-              {' '}{t("Touring IPP 2 gives no numeric wind limit. Chill's 5 m/s Rough boundary and the numeric red wave ceilings use")}{' '}
+              {' '}{t("Touring IPP 2 gives no numeric wind limit. Beginner's 5 m/s Rough boundary and the numeric red wave ceilings use")}{' '}
               <a href={SAFETY_GUIDANCE_SOURCES.dkfSeaKayakNorm} target="_blank" rel="noreferrer">{t("DKF's 7 May 2026 sea-kayak norm")}</a>.
-              {' '}{t("Chill's 4 m/s and the lower wave Take care boundaries are FRANK's conservative choices.")}
+              {' '}{t("Beginner's 4 m/s and the lower wave Take care boundaries are FRANK's conservative choices.")}
               {' '}{t('Local wind sectors, gusts, temperature, weather, daylight, route, equipment, and club rules can all demand a stricter decision.')}
             </p>
           </div>
 
           <div>
-            <h3 className="manual-h">{t('1. Wave Height')}</h3>
+            <h3 className="manual-h">{t('1. Wave height')}</h3>
             <p className="manual-p">{t('Significant wave height is checked against your Take care threshold and danger margin:')}</p>
             <ul className="manual-list">
               <li><strong>{t('Good to go:')}</strong> {t('Wave height is below your Take care threshold.')}</li>
@@ -149,15 +147,16 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
           </div>
 
           <div>
-            <h3 className="manual-h">{t('2. Wind Speed & Gusts')}</h3>
-            <p className="manual-p">{t('MET supplies a 10-minute mean wind at 10 m and a peak gust based on a much shorter three-second average. Gusts are judged against their own higher band, 1.6x the mean-wind thresholds: a limit written for mean wind already assumes the wind gusts, so measuring a gust against it would count the same gustiness twice. In these fjords the gust is typically 1.66x the mean.')}</p>
+            <h3 className="manual-h">{t('2. Wind speed and gusts')}</h3>
+            <p className="manual-p">{t("MET forecasts two different wind readings: a 10-minute mean wind at 10 m and a peak gust averaged over three seconds. When gust checks are on, FRANK multiplies the mean-wind Take care and danger thresholds by 1.6 and checks gusts against that separate band. The 1.6 factor is FRANK's forecast heuristic, not a threshold published by DKF, IPP, WMO, or a kayak club.")}</p>
+            <p className="manual-note">{t('A one-time sample of 230 MET forecast hours across these four fjord locations had a median gust-to-mean ratio of 1.66. It was forecast data, not observed wind or a safety study, so it does not establish a universal coastal gust factor.')}</p>
             <ul className="manual-list">
               <li><strong>{t('Good to go:')}</strong> {t('Mean wind is below the Take care threshold, and gusts are below their own.')}</li>
               <li><strong>{t('Take care:')}</strong> {t('Mean wind, or gusts against the gust band, reach Take care but not danger.')}</li>
               <li><strong>{t('Rough:')}</strong> {t('Mean wind, or gusts against the gust band, reach the danger threshold.')}</li>
             </ul>
             <p className="manual-note">
-              {t("Normal's general wind band starts Take care at exactly 6.0 m/s and Rough at exactly 8.0 m/s. Enabled local sectors or other rules can make the result stricter. A threshold belongs to the stricter band.")}
+              {t("Intermediate's general wind band starts Take care at exactly 6.0 m/s and Rough at exactly 8.0 m/s. Enabled local sectors or other rules can make the result stricter. A threshold belongs to the stricter band.")}
             </p>
             <p className="manual-note">
               {t('Mean-wind names follow')}{' '}
@@ -166,40 +165,27 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
               <a href={SAFETY_GUIDANCE_SOURCES.metForecastDataModel} target="_blank" rel="noreferrer">MET Norway</a>.
             </p>
             <p className="manual-note">
-              {t('The DKF/IPP material used for these profiles does not publish separate numeric gust bands. Using the selected general band for mean wind or gusts is a conservative FRANK rule, not a DKF limit. An official kayak-facing forecast uses the same sustained-wind-or-gust model:')}{' '}
-              <a href={SAFETY_GUIDANCE_SOURCES.nwsKayakWindHazards} target="_blank" rel="noreferrer">US National Weather Service</a>.
-              {' '}{t('Its local Great Lakes numbers are not copied into FRANK.')}
+              {t('The DKF/IPP material behind these profiles does not publish separate numeric gust bands. The')}{' '}
+              <a href={SAFETY_GUIDANCE_SOURCES.nwsKayakWindHazards} target="_blank" rel="noreferrer">US National Weather Service</a>{' '}
+              {t("also treats gusts as relevant in an official kayak forecast. FRANK does not copy that forecast's local Great Lakes thresholds.")}
             </p>
           </div>
 
           <div>
-            <h3 className="manual-h">{t('3. Wind-against-Water-Level Clashing')}</h3>
-            <p className="manual-p">{t('Active only when')} <strong>{t('Local wind sectors')}</strong> {t('is enabled. The app compares the current water level with the next forecast hour to detect rising or falling water. If sustained wind opposes that water movement, short steep chop is more likely:')}</p>
-            <ul className="manual-list spaced">
-              {offshoreSectors.map((s) => (
-                <li key={s.id}><strong>{t('{0} wind', t(s.label))}</strong> ({s.min}&deg;-{s.max}&deg;) {t('can oppose rising water.')}</li>
-              ))}
-              {onshoreSectors.map((s) => (
-                <li key={s.id}><strong>{t('{0} wind', t(s.label))}</strong> ({s.min}&deg;-{s.max}&deg;) {t('can oppose falling water.')}</li>
-              ))}
-              <li>{t('If a clash occurs and wind speed > 4.0 m/s, the hour is automatically marked')} <strong>{t('Take care')}</strong>.</li>
-            </ul>
-          </div>
-
-          <div>
-            <h3 className="manual-h">{t('4. Local Wind Sectors')}</h3>
-            <p className="manual-p">{t('Active only when')} <strong>{t('Local wind sectors')}</strong> {t('is enabled. Applies separate direction-specific limits for the wind sectors configured for {0}; these can make a profile stricter:', CURRENT_LOCATION.areaName)}</p>
+            <h3 className="manual-h">{t('3. Local wind sectors')}</h3>
+            <p className="manual-p">{t("These caps are optional and off by default. If you turn them on, FRANK applies separate wind limits to the fixed sectors below for {0}. A sector cap can make your profile stricter.", CURRENT_LOCATION.areaName)}</p>
             <ul className="manual-list spaced">
               {sectors.map((s) => (
-                <li key={s.id}><strong>{t(s.label)} ({s.min}&deg;-{s.max}&deg;):</strong> {t(s.description)}. {t('Take care from {0} m/s; danger from {1} m/s.', s.safeLimit, s.cautionLimit)}</li>
+                <li key={s.id}><strong>{t(s.label)} ({s.min}&deg;-{s.max}&deg;):</strong> {t(s.description)}. {t('Take care from {0} m/s; danger from {1} m/s.', s.takeCareAt, s.dangerAt)}</li>
               ))}
-              <li>{t('These limits use')} <strong>{t('average wind speed only')}</strong> {t('(not gusts), as the chop that matters here is driven by sustained wind blowing across a long open stretch of water (its "fetch").')}</li>
-              <li>{t('Directions are fixed to the local geography; only the speed caps are yours to adjust.')}</li>
+              <li>{t("The bearings and starting caps are FRANK-curated broad estimates for the area. They are not club-published rules or a survey of every shoreline.")}</li>
+              <li>{t('Sector caps use average wind, not gusts.')}</li>
+              <li>{t('You can adjust the speed caps. The bearings stay fixed.')}</li>
             </ul>
           </div>
 
           <div>
-            <h3 className="manual-h">{t('5. Water Level')}</h3>
+            <h3 className="manual-h">{t('4. Water level')}</h3>
             <p className="manual-p">
               {t('Water level comes from a storm-surge forecast model, not an astronomical tide table. The value shown is the forecast water level relative to mean sea level at the nearest model grid point, including wind setup and pressure effects.')}
             </p>
@@ -211,54 +197,54 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
           </div>
 
           <div>
-            <h3 className="manual-h">{t('6. Weather Condition (Rain, Snow, Sleet, Fog, Thunder)')}</h3>
+            <h3 className="manual-h">{t('5. Weather conditions (rain, snow, sleet, fog and thunder)')}</h3>
             <p className="manual-p">
-              {t("The weather condition comes straight from MET Norway's symbol_code. English follows MET's official")}{' '}
+              {t("The weather description follows MET Norway's official")}{' '}
               <a href={SAFETY_GUIDANCE_SOURCES.metWeatherSymbolLegend} target="_blank" rel="noreferrer">{t('Weathericons legend')}</a>.
-              {' '}{t('Danish uses translated')}{' '}
+              {' '}{t('Danish wording follows')}{' '}
               <a href={SAFETY_GUIDANCE_SOURCES.dmiForecastVocabulary} target="_blank" rel="noreferrer">{t('DMI weather terminology')}</a>.
-              {' '}{t('FRANK does not reconstruct rain or lightning from other readings; it assigns each native condition a paddling severity:')}
+              {' '}{t('FRANK does not infer rain or lightning from other readings. It gives each published weather condition a paddling rating:')}
             </p>
             <ul className="manual-list spaced">
-              <li><strong>{t('Good to go:')}</strong> {t('clear, fair, partly cloudy, cloudy, and light rain — no weather flag.')}</li>
-              <li><strong>{t('Take care:')}</strong> {t('rain, fog, light or ordinary snow and sleet, and non-heavy rain showers — worth keeping an eye on.')}</li>
-              <li><strong>{t('Rough:')}</strong> {t('heavy precipitation, snow or sleet showers, and every condition with thunder — probably one to skip.')}</li>
+              <li><strong>{t('Good to go:')}</strong> {t('clear, fair, partly cloudy, cloudy, and light rain. These conditions do not add a weather flag.')}</li>
+              <li><strong>{t('Take care:')}</strong> {t('rain, fog, light or ordinary snow and sleet, and non-heavy rain showers. Keep an eye on these conditions.')}</li>
+              <li><strong>{t('Rough:')}</strong> {t('heavy precipitation, snow or sleet showers, and every condition with thunder. These are probably reasons to skip the trip.')}</li>
             </ul>
-            <p className="manual-note">{t('There is no configurable rain limit or lightning slider: MET decides the condition, and the reason keeps its native meaning (for example "Heavy rain" or "Heavy rain and thunder").')}</p>
+            <p className="manual-note">{t('There is no rain limit or lightning setting. Each forecast description keeps its specific meaning, for example "Heavy rain" or "Heavy rain and thunder".')}</p>
           </div>
 
           <div>
-            <h3 className="manual-h">{t('7. How Rules Combine')}</h3>
-            <p className="manual-p">{t('Every enabled rule is evaluated for every hour, and the overall rating is the')} <strong>{t('worst result')}</strong> {t('among them. A rule can only raise the severity (Good to go → Take care → Rough) — no rule can lower a rating another rule has already set:')}</p>
+            <h3 className="manual-h">{t('6. How rules combine')}</h3>
+            <p className="manual-p">{t('FRANK checks every enabled rule for each hour. The')} <strong>{t('worst result')}</strong> {t('becomes the overall rating. A rule can raise the severity (Good to go → Take care → Rough), but it cannot lower a rating set by another rule:')}</p>
             <ul className="manual-list spaced">
               <li>{t('If any rule reaches Rough (for example a thunderstorm or heavy-rain forecast), the whole hour is Rough, regardless of how calm everything else looks.')}</li>
-              <li>{t('Take-care-only rules (wind-against-water clash > 4 m/s, nighttime) never raise an hour above Take care on their own.')}</li>
+              <li>{t('A rule that can only mark Take care, such as the daylight rule, cannot make an hour Rough by itself.')}</li>
               <li>{t('Every distinct triggered hazard is listed. If general and local-sector limits flag the same sustained wind, only the controlling wind explanation is shown.')}</li>
             </ul>
           </div>
 
           <div>
-            <h3 className="manual-h">{t('8. Water Temperature')}</h3>
-            <p className="manual-p">{t("Cold shock and hypothermia risk, checked against your configured limits. The defaults are conservative starting points — set them to your own club's rules, your gear, and the season:")}</p>
+            <h3 className="manual-h">{t('7. Water temperature')}</h3>
+            <p className="manual-p">{t("FRANK checks cold-shock and hypothermia risk against your temperature limits. The defaults are conservative starting points. Set them for your club's rules, your gear, and the season:")}</p>
             <ul className="manual-list">
-              <li><strong>&ge; {settings.minWaterTempSafe}&deg;C:</strong> {t('Good to go for general paddling clothing.')}</li>
-              <li><strong>{settings.minWaterTempCaution}-{settings.minWaterTempSafe}&deg;C:</strong> {t('Take care. Thermal layers or wetsuit strongly recommended.')}</li>
-              <li><strong>&lt; {settings.minWaterTempCaution}&deg;C:</strong> {t('Rough. Drysuit or heavy wetsuit required.')}</li>
+              <li><strong>&ge; {settings.waterTempTakeCareBelow}&deg;C:</strong> {t('Good to go for general paddling clothing.')}</li>
+              <li><strong>{settings.waterTempDangerBelow}-{settings.waterTempTakeCareBelow}&deg;C:</strong> {t('Take care. Thermal layers or wetsuit strongly recommended.')}</li>
+              <li><strong>&lt; {settings.waterTempDangerBelow}&deg;C:</strong> {t('Rough. Drysuit or heavy wetsuit required.')}</li>
             </ul>
           </div>
 
           <div>
-            <h3 className="manual-h">{t('9. Daylight Rule')}</h3>
-            <p className="manual-p">{t('Many clubs prohibit paddling between sunset and sunrise without navigation lights and permission, so when this rule is on, hourly forecasts outside daylight are marked Take care (turn it off if night paddling is fine for you). A longer-range outlook block is marked Take care unless its whole period is daylight. Launch windows are handled separately: periods with no complete daylight hour are dropped, and partial periods show only their longest continuous daylight part.')}</p>
+            <h3 className="manual-h">{t('8. Daylight rule')}</h3>
+            <p className="manual-p">{t('Many clubs require navigation lights and permission between sunset and sunrise. When the daylight rule is on, FRANK marks those hours Take care. You can turn it off if your own rules allow night paddling. A longer-range outlook block is marked Take care unless its whole period is in daylight. Launch windows work differently: FRANK removes periods with no complete daylight hour and shows only the longest continuous daylight part of a partial period.')}</p>
           </div>
 
           <div>
-            <h3 className="manual-h">{t('10. Launch Windows')}</h3>
-            <p className="manual-p">{t('A launch window is an unbroken run of Good-to-go hours — an hour rated Take care or Rough breaks the run:')}</p>
+            <h3 className="manual-h">{t('9. Launch windows')}</h3>
+            <p className="manual-p">{t('A launch window is an unbroken run of Good-to-go hours. An hour rated Take care or Rough breaks the run:')}</p>
             <ul className="manual-list">
               <li><strong>{t('Minimum duration:')}</strong> {t('runs shorter than your Min Duration setting are not shown.')}</li>
               <li><strong>{t('Day boundaries:')}</strong> {t('hourly windows split at local midnight, so each belongs to one calendar day; longer-range outlook windows can run past it (the end time then shows its day).')}</li>
-              <li><strong>{t('Longer range:')}</strong> {t('beyond the hourly forecast, coarser outlook blocks (6 hours, occasionally 12) form windows marked "more uncertain forecast" — treat them as hints, not commitments.')}</li>
+              <li><strong>{t('Longer range:')}</strong> {t('beyond the hourly forecast, coarser outlook blocks (6 hours, occasionally 12) form windows marked "more uncertain forecast". Treat them as hints, not commitments.')}</li>
             </ul>
           </div>
 

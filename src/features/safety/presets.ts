@@ -1,40 +1,31 @@
 import { CURRENT_LOCATION } from '../../config/locations';
 import type { SectorExposure } from '../../config/locationTypes';
+import { roundToDecimals } from '../../utils/number';
 
 // Per-sector wind-speed caps, keyed by sector id. Angles/labels live in the
 // (curated) location config; only these caps are user-tunable.
-export type SectorCap = { safe: number; caution: number };
+export type SectorCap = { takeCareAt: number; dangerAt: number };
 
-// The minimum gap a caution/danger cap must sit above its safe cap, so the
+// The minimum gap a Danger cap must sit above its Take care cap, so the
 // assessment never runs an inverted band. One rule, one place — every site that
 // enforces it (presets, healing, the editor, and the engine) uses this.
-export const MIN_CAUTION_GAP = 0.5;
+export const MIN_DANGER_GAP = 0.5;
 
-// Real wind is gusty, so a club's mean-wind limit was never gust-blind: it was
-// calibrated on days that already gusted. Judging a gust against the mean limit
-// therefore counts the same gustiness twice, and the double-count is not small.
-// Measured over 230 forecast hours across all four fjords, the local gust/mean
-// ratio has a median of 1.66 (p75 1.81, p90 2.04) - coastal roughness runs well
-// above the 1.3-1.5 typical of open water. Against the mean thresholds, gusts
-// alone painted 51% of Normal's hours red while sustained wind sat at a median
-// 4.7 m/s, 59% of its own cap. The supplement was outvoting the rule.
-//
-// So the gust ceiling is the mean ceiling times the gustiness a limit at that
-// speed already implies. 1.6 sits just under the measured median, which leaves
-// the rule slightly conservative, and it drops gusts-alone red to 5% of hours -
-// a supplement again, firing on genuinely squally air rather than on Tuesday.
+// FRANK checks forecast gusts against a separate band because the profile wind
+// limits describe mean wind. A 230-hour forecast sample across the four areas
+// had a median gust-to-mean ratio of 1.66 (p75 1.81, p90 2.04). That sample is
+// calibration context, not observed wind, a safety validation, or a published
+// club limit. The 1.6 factor is a FRANK product rule and is labelled that way.
 export const GUST_FACTOR = 1.6;
-export function floorCaution(safe: number, caution: number): number {
-  return Math.max(caution, safe + MIN_CAUTION_GAP);
+export function floorDanger(takeCareAt: number, dangerAt: number): number {
+  return Math.max(dangerAt, takeCareAt + MIN_DANGER_GAP);
 }
 
 export interface SafetySettings {
-  maxWindSpeedSafe: number;
-  maxWindSpeedCaution: number;
-  minWaterTempSafe: number;
-  minWaterTempCaution: number;
-  maxWaveHeightSafe: number;
-  maxWaveHeightCaution: number;
+  windTakeCareAt: number;
+  waterTempTakeCareBelow: number;
+  waterTempDangerBelow: number;
+  waveTakeCareAt: number;
   enableCustomWindDirs: boolean;
   // Per-sector cap overrides, keyed by WindSector.id. Missing sectors fall back
   // to the location's configured caps.
@@ -47,28 +38,43 @@ export interface SafetySettings {
   daylightOnly: boolean;
   minDuration: number;
   tidePreference: 'any' | 'high' | 'low' | 'incoming';
-  gustMargin: number;
-  waveCautionMargin: number;
+  windDangerGap: number;
+  waveDangerGap: number;
   enableWindSpeed: boolean;
   enableWindGust: boolean;
   enableWaveHeight: boolean;
-  enableWaveCaution: boolean;
+  enableWaveTakeCare: boolean;
   enableWaterTemp: boolean;
+}
+
+export function getWindDangerAt(
+  settings: Pick<SafetySettings, 'windTakeCareAt' | 'windDangerGap'>,
+): number {
+  return roundToDecimals(
+    floorDanger(settings.windTakeCareAt, settings.windTakeCareAt + settings.windDangerGap),
+    1,
+  );
+}
+
+export function getWaveDangerAt(
+  settings: Pick<SafetySettings, 'waveTakeCareAt' | 'waveDangerGap'>,
+): number {
+  return roundToDecimals(
+    Math.max(settings.waveTakeCareAt, settings.waveTakeCareAt + settings.waveDangerGap),
+    2,
+  );
 }
 
 const locationSectors = CURRENT_LOCATION.windSectors;
 
-export const SETTINGS_STORAGE_KEY = `ffkajak_settings_${CURRENT_LOCATION.id}`;
-export const CUSTOM_SETTINGS_STORAGE_KEY = `ffkajak_custom_saved_${CURRENT_LOCATION.id}`;
+export const SETTINGS_STORAGE_KEY = `frank_settings_${CURRENT_LOCATION.id}`;
+export const CUSTOM_SETTINGS_STORAGE_KEY = `frank_custom_saved_${CURRENT_LOCATION.id}`;
 
-// A preset shifts each sector's OWN configured caps by a per-exposure delta,
-// rather than clamping to an absolute ceiling. This preserves whatever ordering
-// a fjord defines — e.g. Vejle deliberately caps offshore LOWER than onshore for
-// fralandsvind drift risk, which an absolute per-exposure ceiling would silently
-// invert. Chill tightens, Pro loosens; a floor stops a tightened cap from
-// dropping to an unusable value. Cross-shore uses the (stricter) onshore delta.
-// null = identity (use the sector's configured caps as-is: default/custom).
-const SECTOR_SAFE_FLOOR = 2.5;
+// These optional rules start from each area's configured caps. A preset shifts
+// both caps for an exposure by the same amount, so opting in preserves the
+// configured ordering. Beginner tightens them, Advanced loosens them, and a floor
+// prevents an unusably low cap. null means use the configured values unchanged.
+const SECTOR_TAKE_CARE_FLOOR = 2.5;
 const PRESET_SECTOR_DELTAS: Record<SafetySettings['tripMode'], Record<SectorExposure, number> | null> = {
   beginner: { onshore: -0.5, offshore: -1.0 },
   pro: { onshore: 1.0, offshore: 1.0 },
@@ -85,43 +91,43 @@ function buildSectorLimits(mode: SafetySettings['tripMode']): Record<string, Sec
   const out: Record<string, SectorCap> = {};
   for (const sector of locationSectors) {
     if (!deltas) {
-      out[sector.id] = { safe: sector.safeLimit, caution: sector.cautionLimit };
+      out[sector.id] = { takeCareAt: sector.takeCareAt, dangerAt: sector.dangerAt };
       continue;
     }
     const delta = deltas[sector.exposure];
-    const safe = Math.max(sector.safeLimit + delta, SECTOR_SAFE_FLOOR);
-    const caution = floorCaution(safe, sector.cautionLimit + delta);
-    out[sector.id] = { safe, caution };
+    const takeCareAt = Math.max(sector.takeCareAt + delta, SECTOR_TAKE_CARE_FLOOR);
+    const dangerAt = floorDanger(takeCareAt, sector.dangerAt + delta);
+    out[sector.id] = { takeCareAt, dangerAt };
   }
   return out;
 }
 
 const BASE_SETTINGS: SafetySettings = {
-  // Normal is IPP3-like: DKF Touring describes its central working condition
+  // Intermediate is IPP3-like: DKF Touring describes its central working condition
   // as around 6 m/s and an assessment envelope reaching 8 m/s. These are
   // FRANK's general wind bands, not a claim that DKF defines green/amber/red.
   // https://www.kano-kajak.dk/uddannelse-og-kurser/ipp-roeruddannelse/touring-tur/
-  maxWindSpeedSafe: 6.0,
-  maxWindSpeedCaution: 8.0,
-  minWaterTempSafe: 15.0,
-  minWaterTempCaution: 10.0,
-  maxWaveHeightSafe: 0.3,
+  windTakeCareAt: 6.0,
+  waterTempTakeCareBelow: 15.0,
+  waterTempDangerBelow: 10.0,
+  waveTakeCareAt: 0.3,
   // DKF Touring describes waves qualitatively but publishes no numeric height
-  // table. The red ceiling therefore uses the current DKF sea-kayak IPP3
-  // figure (1 m); the existing conservative 0.30 m amber entry stays FRANK's.
-  maxWaveHeightCaution: 1.0,
-  enableCustomWindDirs: true,
+  // table. The Rough boundary uses the current DKF sea-kayak IPP3 figure
+  // (1 m); FRANK sets the conservative Take care boundary at 0.30 m.
+  // These broad FRANK area estimates are optional. Current club rules do not
+  // publish these compass sectors, so every judged profile leaves them off.
+  enableCustomWindDirs: false,
   sectorLimits: buildSectorLimits('default'),
   tripMode: 'default',
   daylightOnly: true,
   minDuration: 2,
   tidePreference: 'any',
-  gustMargin: 2.0,
-  waveCautionMargin: 0.7,
+  windDangerGap: 2.0,
+  waveDangerGap: 0.7,
   enableWindSpeed: true,
   enableWindGust: true,
   enableWaveHeight: true,
-  enableWaveCaution: true,
+  enableWaveTakeCare: true,
   enableWaterTemp: true,
 };
 
@@ -134,12 +140,10 @@ const PRESET_SETTINGS: Record<SafetySettings['tripMode'], SafetySettings> = {
     // DKF Touring IPP2 does not publish numeric wind conditions. The 5 m/s
     // ceiling comes from DKF's current sea-kayak IPP2 norm; 4 m/s is FRANK's
     // deliberately conservative Take-care boundary.
-    maxWindSpeedSafe: 4.0,
-    maxWindSpeedCaution: 5.0,
-    gustMargin: 1.0,
-    maxWaveHeightSafe: 0.2,
-    maxWaveHeightCaution: 0.5,
-    waveCautionMargin: 0.3,
+    windTakeCareAt: 4.0,
+    windDangerGap: 1.0,
+    waveTakeCareAt: 0.2,
+    waveDangerGap: 0.3,
     minDuration: 2,
     sectorLimits: buildSectorLimits('beginner'),
   },
@@ -152,12 +156,10 @@ const PRESET_SETTINGS: Record<SafetySettings['tripMode'], SafetySettings> = {
     tripMode: 'pro',
     // DKF Touring IPP4 publishes an 8-10 m/s assessment environment.
     // https://drive.google.com/file/d/1iagdhW-B3ZXvHUmEBSfxVESyne5qevb2/view?usp=sharing
-    maxWindSpeedSafe: 8.0,
-    maxWindSpeedCaution: 10.0,
-    gustMargin: 2.0,
-    maxWaveHeightSafe: 0.5,
-    maxWaveHeightCaution: 2.0,
-    waveCautionMargin: 1.5,
+    windTakeCareAt: 8.0,
+    windDangerGap: 2.0,
+    waveTakeCareAt: 0.5,
+    waveDangerGap: 1.5,
     minDuration: 1,
     sectorLimits: buildSectorLimits('pro'),
   },
@@ -175,7 +177,7 @@ const PRESET_SETTINGS: Record<SafetySettings['tripMode'], SafetySettings> = {
     enableWindSpeed: false,
     enableWindGust: false,
     enableWaveHeight: false,
-    enableWaveCaution: false,
+    enableWaveTakeCare: false,
     enableWaterTemp: false,
     enableCustomWindDirs: false,
     daylightOnly: false,

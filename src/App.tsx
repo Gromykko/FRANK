@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { analyzeSafetyConditions, RATING_WORD } from './features/safety/analyzeSafetyConditions';
 import { getMetWeatherDescription } from './features/forecast/weatherSymbols';
-import { getDisplayHourlyData, nextHourTideFor } from './features/forecast/displayData';
+import { getDisplayHourlyData } from './features/forecast/displayData';
 import { deriveCacheStatus } from './features/forecast/cacheStatusView';
 import { getWorkerContactMs } from './features/forecast/cache';
 import { formatTime, formatDateTime, locationDateKey } from './utils/date';
@@ -116,11 +116,10 @@ export default function App() {
   // its detail card when daylight context differed.
   const allAnalyses = useMemo(() => {
     if (displayHourlyData.length === 0) return [];
-    return displayHourlyData.map((hour, idx) =>
+    return displayHourlyData.map((hour) =>
       analyzeSafetyConditions(
         hour,
         settings,
-        nextHourTideFor(displayHourlyData, idx),
         t,
         { blockDaylight: { mode: 'whole-period', sun: sunTimes } },
       ));

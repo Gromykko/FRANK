@@ -23,7 +23,7 @@ FRANK currently covers **Horsens Fjord**, **Vejle Fjord**, **Kolding Fjord**, an
 | Information | Source | How FRANK uses it |
 |---|---|---|
 | Wind, gusts, precipitation, temperature, weather symbols | [MET Norway Locationforecast](https://api.met.no/weatherapi/locationforecast/2.0/documentation) | Hourly weather and longer-range outlook |
-| Water level, water temperature, currents | [DMI Forecast EDR — DKSS](https://www.dmi.dk/friedata/dokumentation/forecast-data-edr-api) | Marine conditions |
+| Water level and water temperature | [DMI Forecast EDR — DKSS](https://www.dmi.dk/friedata/dokumentation/forecast-data-edr-api) | Marine conditions |
 | Wave height, direction, period | [DMI Forecast EDR — WAM](https://www.dmi.dk/friedata/dokumentation/forecast-data-edr-api) | Marine conditions |
 | Official regional warnings | [MeteoAlarm / DMI](https://www.dmi.dk/varsler) | Advisory warning stripe; never silently changes the local rating |
 
@@ -56,7 +56,7 @@ Browser / Installed PWA
 * **Rotating Ingestion Cron**: A Cloudflare cron wakes every minute (`* * * * *`) and refreshes one rotating location. Every location is reached once per 4 minutes while each Free-plan invocation still processes only one city.
 * **Write-Aware Storage Optimization**: Timestamp-only forecast rewrites are suppressed, provider ingredients are reused where possible, and the shared heartbeat is throttled to protect the daily KV write allowance.
 * **Resilient Multi-Tier Fallbacks**: If DMI or MET experiences a temporary rate limit or outage, FRANK automatically falls back to held previous simulations and retained raw ingredients, keeping forecasts live with clear degradation indicators.
-* **Client-Side Safety Engine**: Risk assessment calculations (wind, gusts, water level, waves, daylight, water temperature) run 100% locally in the paddler's browser against their own chosen safety profile.
+* **Client-Side Safety Engine**: Risk assessment calculations (wind, gusts, waves, daylight, water temperature, and optional wind-sector caps) run 100% locally in the paddler's browser against their own chosen safety profile. Water level is used only by the optional launch-window filter; it does not change the safety verdict.
 
 ### Safety profiles and condition language
 
@@ -91,10 +91,11 @@ They are not applied to gusts: MET defines `wind_speed` as a 10-minute mean at
 10 m and a gust as a much shorter three-second average in its
 [forecast data model](https://docs.api.met.no/doc/locationforecast/datamodel.html).
 The DKF/IPP material used for these profiles publishes no separate numeric gust
-band. With gust checking enabled,
-FRANK conservatively applies the chosen general wind band to either the mean or
-the gust; this is a FRANK rule, not a DKF limit. The US National Weather Service
-uses the same sustained-wind-or-gust structure in an official
+band. With gust checking enabled, FRANK uses a separate, higher gust band: each
+chosen mean-wind threshold is multiplied by 1.6 and rounded to 0.1 m/s. For
+example, Intermediate's 6.0 / 8.0 m/s mean-wind band becomes 9.6 / 12.8 m/s for gusts.
+This is a FRANK rule, not a DKF limit. The US National Weather Service also
+considers both sustained wind and gusts in an official
 [kayak-facing marine outlook](https://www.weather.gov/mqt/Local_Marine), but its
 local Great Lakes numbers are not copied here. Direction-specific sector caps
 continue to use sustained wind only because their fetch/chop rationale does not

@@ -29,14 +29,14 @@ test('critical controls work in the production bundle', async ({ page }, testInf
 
   // A first visit starts on the most cautious judged profile: FRANK has to
   // guess, and the guess that is wrong sends somebody home rather than onto the
-  // water. Prove that, then move to Normal for the planner checks below.
-  const chillMode = page.getByRole('radio', { name: 'Chill' });
-  await expect(chillMode).toHaveAttribute('aria-checked', 'true');
+  // water. Prove that, then move to Intermediate for the planner checks below.
+  const beginnerMode = page.getByRole('radio', { name: 'Beginner' });
+  await expect(beginnerMode).toHaveAttribute('aria-checked', 'true');
   await expect(page.getByRole('button', { name: 'Weather only — turn off all your limits' }))
     .toHaveAttribute('aria-pressed', 'false');
-  const normalMode = page.getByRole('radio', { name: 'Normal' });
-  await normalMode.click();
-  await expect(normalMode).toHaveAttribute('aria-checked', 'true');
+  const intermediateMode = page.getByRole('radio', { name: 'Intermediate' });
+  await intermediateMode.click();
+  await expect(intermediateMode).toHaveAttribute('aria-checked', 'true');
 
   const refreshButton = page.getByRole('button', { name: 'Refresh forecast' });
   await expect(refreshButton).toHaveAttribute('aria-disabled', 'false');

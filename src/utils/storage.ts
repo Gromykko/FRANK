@@ -12,10 +12,31 @@ export function readStorage(key: string): string | null {
 type FrankStorage = Pick<Storage, 'key' | 'length' | 'removeItem'>;
 
 function isFrankLocalStorageKey(key: string): boolean {
-  return key.startsWith('ffkajak_')
-    || key.startsWith('frank_weather_data_v2')
-    || key === 'frank_location'
+  // The app no longer reads or migrates the retired ffkajak_* namespace, but
+  // an explicit "delete local data" request must still remove those old,
+  // FRANK-owned bytes rather than leave orphaned settings behind.
+  return key.startsWith('frank_') || key.startsWith('ffkajak_');
+}
+
+function isFrankSettingsOrThemeKey(key: string): boolean {
+  return key.startsWith('frank_settings_')
+    || key.startsWith('frank_custom_saved_')
+    || key === 'frank_last_trip_mode'
     || key === 'frank_theme_mode';
+}
+
+function removeMatchingKeys(
+  storage: FrankStorage,
+  matches: (key: string) => boolean,
+): void {
+  // Snapshot first: Storage indexes move whenever an entry is removed.
+  const matchingKeys: string[] = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (key !== null && matches(key)) matchingKeys.push(key);
+  }
+
+  for (const key of matchingKeys) storage.removeItem(key);
 }
 
 /**
@@ -27,13 +48,16 @@ export function clearFrankLocalDataAndReload(
   storage: FrankStorage = window.localStorage,
   reload: () => void = () => window.location.reload(),
 ): void {
-  // Snapshot first: Storage indexes move whenever an entry is removed.
-  const ownedKeys: string[] = [];
-  for (let index = 0; index < storage.length; index += 1) {
-    const key = storage.key(index);
-    if (key !== null && isFrankLocalStorageKey(key)) ownedKeys.push(key);
-  }
-
-  for (const key of ownedKeys) storage.removeItem(key);
+  removeMatchingKeys(storage, isFrankLocalStorageKey);
   reload();
+}
+
+/**
+ * Recover from a corrupt saved profile without erasing the location, language,
+ * or offline forecast that the crash screen still needs to preserve.
+ */
+export function clearFrankSettingsAndTheme(
+  storage: FrankStorage = window.localStorage,
+): void {
+  removeMatchingKeys(storage, isFrankSettingsOrThemeKey);
 }

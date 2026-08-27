@@ -879,11 +879,11 @@ describe('browser forecast cache recovery', () => {
     ]);
     localStorage.setItem(LEGACY_CACHE_KEY, JSON.stringify(preV2));
     const preservedEntries = new Map([
-      ['ffkajak_lang', 'da'],
+      ['frank_lang', 'da'],
       ['frank_theme_mode', 'dark'],
       ['frank_location', CURRENT_LOCATION.id],
-      [`ffkajak_settings_${CURRENT_LOCATION.id}`, '{"limits":true}'],
-      [`ffkajak_custom_saved_${CURRENT_LOCATION.id}`, '{"limits":true}'],
+      [`frank_settings_${CURRENT_LOCATION.id}`, '{"limits":true}'],
+      [`frank_custom_saved_${CURRENT_LOCATION.id}`, '{"limits":true}'],
       ['frank_weather_data_v2_vejle_config1_api1_model4_generation_other_payload7', '{"otherLocation":true}'],
     ]);
     for (const [key, value] of preservedEntries) localStorage.setItem(key, value);

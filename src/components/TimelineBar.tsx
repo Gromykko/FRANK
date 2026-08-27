@@ -738,7 +738,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
         </div>
       </div>
 
-      {/* Nothing explained the columns that stop being hourly. Past MET's hourly
+      {/* Nothing explained the columns that stop being hourly. Past the hourly
           range the matrix continues in 6-hour blocks: striped values,
           and a header reading a span like "02-08" instead of a single hour. All
           of it visual only, so a reader had no way to learn what it meant.
@@ -751,7 +751,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
           </p>
           <ul className="outlook-note-list">
             <li>{t('Waves and water temperature: the highest waves and coldest water.')}</li>
-            <li>{t('Wind and air temperature: MET’s reading for the block.')}</li>
+            <li>{t('Wind and air temperature show the forecast at the start of the block.')}</li>
             <li aria-label={t('Water level: high water, low water, both, or near mean.')}>
               <span aria-hidden="true">
                 {t('Water level: high water')} <ArrowUp size={12} />,{' '}

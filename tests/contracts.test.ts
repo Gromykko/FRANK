@@ -4,7 +4,6 @@ import { resolve } from 'node:path';
 import { FORECAST_PAYLOAD_VERSION } from '../src/features/forecast/types';
 import { PAYLOAD_VERSION } from '../worker/forecastModel';
 import { hourIndexForNow } from '../src/features/forecast/useForecast';
-import { nextHourTideFor } from '../src/features/forecast/displayData';
 import { findLaunchWindows } from '../src/features/planner/findLaunchWindows';
 import { DEFAULT_SETTINGS } from '../src/features/safety/presets';
 import type { SafetySettings } from '../src/features/safety/presets';
@@ -62,47 +61,6 @@ describe('hourIndexForNow', () => {
   it('survives an empty series and an unparseable timestamp', () => {
     expect(hourIndexForNow([], at('2026-08-08T13:00:00Z'))).toBe(0);
     expect(hourIndexForNow([hour('not a date')], at('2026-08-08T13:00:00Z'))).toBe(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The single source of truth for the wind-against-water-level chop rule, read
-// by the header verdict, the timeline's per-hour ratings, and the planner. The
-// three used to disagree: only the planner refused to treat a 6-hour block's
-// centre sample as "next hour", which can invert rising/falling.
-// ---------------------------------------------------------------------------
-describe('nextHourTideFor', () => {
-  const row = (time: string, tideLevel: number, blockSpanHours?: number) =>
-    ({ time, tideLevel, ...(blockSpanHours ? { blockSpanHours } : {}) }) as HourlyData;
-
-  it('returns a true hourly neighbour', () => {
-    expect(nextHourTideFor([
-      row('2026-08-08T12:00:00Z', 0.1),
-      row('2026-08-08T13:00:00Z', 0.2),
-    ], 0)).toBe(0.2);
-  });
-
-  it('refuses a timestamp gap even when both rows are nominally hourly', () => {
-    expect(nextHourTideFor([
-      row('2026-08-08T10:00:00Z', 0.1),
-      row('2026-08-08T13:00:00Z', 0.2),
-    ], 0)).toBeUndefined();
-  });
-
-  it('refuses either side of a block: its tide is a centre sample hours away', () => {
-    expect(nextHourTideFor([
-      row('2026-08-08T12:00:00Z', 0.1),
-      row('2026-08-08T13:00:00Z', 0.2, 6),
-    ], 0)).toBeUndefined();
-    expect(nextHourTideFor([
-      row('2026-08-08T12:00:00Z', 0.1, 6),
-      row('2026-08-08T18:00:00Z', 0.2),
-    ], 0)).toBeUndefined();
-  });
-
-  it('returns undefined at the end of the series', () => {
-    expect(nextHourTideFor([row('2026-08-08T12:00:00Z', 0.1)], 0)).toBeUndefined();
-    expect(nextHourTideFor([], 0)).toBeUndefined();
   });
 });
 

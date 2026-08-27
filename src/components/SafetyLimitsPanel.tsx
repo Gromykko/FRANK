@@ -5,7 +5,13 @@ import SafetyManualModal from './SafetyManualModal';
 import CustomSelect from './CustomSelect';
 import CompassRose from './CompassRose';
 import type { SafetySettings } from '../hooks/useSettings';
-import { GUST_FACTOR, floorCaution, MIN_CAUTION_GAP } from '../features/safety/presets';
+import {
+  GUST_FACTOR,
+  floorDanger,
+  getWaveDangerAt,
+  getWindDangerAt,
+  MIN_DANGER_GAP,
+} from '../features/safety/presets';
 import { CURRENT_LOCATION } from '../config/locations';
 import type { WindSector } from '../config/locations';
 import { clampNumber, roundToDecimals } from '../utils/number';
@@ -158,25 +164,32 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
 
   // A sector's live caps: the user's override if any, else the location default.
   const sectorCap = (sector: WindSector) =>
-    settings.sectorLimits?.[sector.id] ?? { safe: sector.safeLimit, caution: sector.cautionLimit };
+    settings.sectorLimits?.[sector.id] ?? {
+      takeCareAt: sector.takeCareAt,
+      dangerAt: sector.dangerAt,
+    };
 
-  const setSectorCap = (sector: WindSector, safe: number, caution: number) => {
+  const setSectorCap = (sector: WindSector, takeCareAt: number, dangerAt: number) => {
     updateCriteria({
       sectorLimits: {
         ...settings.sectorLimits,
-        // Caution never drops below the safe cap + gap (the assessment enforces this too).
-        [sector.id]: { safe, caution: floorCaution(safe, caution) },
+        [sector.id]: { takeCareAt, dangerAt: floorDanger(takeCareAt, dangerAt) },
       },
     });
   };
 
-  const windCautionAt = settings.maxWindSpeedSafe + settings.gustMargin;
-  const waveCautionAt = settings.maxWaveHeightSafe + settings.waveCautionMargin;
-  const tempSafeBand = Math.max(1, Math.round(settings.minWaterTempSafe - settings.minWaterTempCaution));
+  const windDangerAt = getWindDangerAt(settings);
+  const waveDangerAt = getWaveDangerAt(settings);
+  const tempTakeCareBand = Math.max(
+    1,
+    Math.round(settings.waterTempTakeCareBelow - settings.waterTempDangerBelow),
+  );
 
   const tempHint = t(
-    settings.minWaterTempCaution >= 15 ? 'Safe / Comfortable' :
-    settings.minWaterTempCaution >= 10 ? 'Caution / Cold Water' : 'Danger / Cold Shock');
+    'Take care below {0}°C · Rough below {1}°C',
+    settings.waterTempTakeCareBelow,
+    settings.waterTempDangerBelow,
+  );
 
   // Silence here is the dangerous kind: the panel and the verdict both use the
   // new value straight away, so a failed write is invisible until the next
@@ -244,7 +257,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
         <div className="settings-body">
 
           <p className="settings-autosave-note">
-            {t('Changes apply immediately and switch you to Custom mode. Pick a preset in the Trip Profile at the top (Chill, Normal, Pro) to go back.')}
+            {t('Changes apply immediately and switch you to Custom mode. Pick a preset in the Trip Profile at the top (Beginner, Intermediate, Advanced) to go back.')}
           </p>
 
           <div className="limit-cards">
@@ -253,10 +266,10 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
             <section className={`limit-card ${settings.enableWindSpeed ? '' : 'is-off'}`}>
               <div className="limit-head">
                 <div className="limit-id">
-                  <Wind size={20} className={`setting-icon ${settings.maxWindSpeedSafe >= 10 ? 'is-danger' : settings.maxWindSpeedSafe > 6 ? 'is-caution' : ''}`} />
+                  <Wind size={20} className={`setting-icon ${settings.windTakeCareAt >= 10 ? 'is-danger' : settings.windTakeCareAt > 6 ? 'is-caution' : ''}`} />
                   <div className="limit-titles">
                     <span className="limit-name">{t('Wind — Take care from')}</span>
-                    <span className="limit-hint">{t(getWindSpeedLabel(settings.maxWindSpeedSafe))}</span>
+                    <span className="limit-hint">{t(getWindSpeedLabel(settings.windTakeCareAt))}</span>
                   </div>
                 </div>
                 <ToggleSwitch
@@ -266,42 +279,45 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
                 />
               </div>
               <Stepper
-                value={settings.maxWindSpeedSafe}
+                value={settings.windTakeCareAt}
                 // Floored at one step: 0.0 made a glassy 0.0 m/s morning rate
                 // Take care against "your threshold of 0.0 m/s". 0.5 still
                 // expresses the most conservative paddler there is.
                 min={0.5} max={25} step={0.5} decimals={1}
                 unit={t('m/s wind')}
-                label={t('wind Take care threshold; Danger stays {0} m/s above', settings.gustMargin.toFixed(1))}
-                onChange={val => updateCriteria({ maxWindSpeedSafe: val, maxWindSpeedCaution: val + settings.gustMargin })}
+                label={t('wind Take care threshold; Danger stays {0} m/s above', settings.windDangerGap.toFixed(1))}
+                onChange={windTakeCareAt => updateCriteria({ windTakeCareAt })}
                 disabled={!settings.enableWindSpeed}
               />
               <ZoneBar
                 min={0} max={25}
-                cautionStart={settings.maxWindSpeedSafe}
-                cautionEnd={windCautionAt}
+                cautionStart={settings.windTakeCareAt}
+                cautionEnd={windDangerAt}
                 leftLabel={t('0 calm')}
-                midLabel={t('danger from {0}', windCautionAt.toFixed(1))}
+                midLabel={t('danger from {0}', windDangerAt.toFixed(1))}
                 rightLabel={t('25 storm')}
               />
-              {/* The stepper and the switch own different things. The stepper sets
-                  maxWindSpeedCaution - where AVERAGE wind becomes danger - which stays
-                  in force whatever the switch says. The switch only decides whether the
-                  gust reading is checked against it. Gating the stepper on the switch
-                  left a live danger threshold that could not be adjusted. */}
-              <div className={`limit-caution-row has-toggle ${settings.enableWindSpeed ? '' : 'is-off'}`}>
+              {/* The margin sets where average wind becomes dangerous. Gust checking is
+                  a separate rule, so its switch gets a separate, visibly labelled row. */}
+              <div className={`limit-caution-row ${settings.enableWindSpeed ? '' : 'is-off'}`}>
                 <div className="limit-caution-copy">
                   <span className="limit-caution-name">{t('Gap to Danger')}</span>
-                  <span className="limit-caution-hint">{t('Take care from {0} m/s; +{1} m/s sets Danger from {2} m/s. Gusts get their own higher band ({3} and {4} m/s), because a mean-wind limit already assumes gusty wind.', settings.maxWindSpeedSafe.toFixed(1), settings.gustMargin.toFixed(1), windCautionAt.toFixed(1), (settings.maxWindSpeedSafe * GUST_FACTOR).toFixed(1), (windCautionAt * GUST_FACTOR).toFixed(1))}</span>
+                  <span className="limit-caution-hint">{t('Take care from {0} m/s; +{1} m/s sets Danger from {2} m/s.', settings.windTakeCareAt.toFixed(1), settings.windDangerGap.toFixed(1), windDangerAt.toFixed(1))}</span>
                 </div>
                 <Stepper
                   compact
-                  value={settings.gustMargin}
+                  value={settings.windDangerGap}
                   min={1} max={10} step={0.5} decimals={1}
                   unit="+m/s" label={t('wind Take care-to-Danger gap')}
-                  onChange={margin => updateCriteria({ gustMargin: margin, maxWindSpeedCaution: settings.maxWindSpeedSafe + margin })}
+                  onChange={windDangerGap => updateCriteria({ windDangerGap })}
                   disabled={!settings.enableWindSpeed}
                 />
+              </div>
+              <div className={`limit-caution-row has-toggle ${settings.enableWindSpeed ? '' : 'is-off'}`}>
+                <div className="limit-caution-copy">
+                  <span className="limit-caution-name">{t('Gusts in verdict')}</span>
+                  <span className="limit-caution-hint">{t("Checks forecast gusts against FRANK's separate 1.6x band: Take care from {0} m/s and Danger from {1} m/s.", (settings.windTakeCareAt * GUST_FACTOR).toFixed(1), (windDangerAt * GUST_FACTOR).toFixed(1))}</span>
+                </div>
                 <ToggleSwitch
                   small
                   checked={settings.enableWindSpeed && settings.enableWindGust}
@@ -316,10 +332,10 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
             <section className={`limit-card ${settings.enableWaveHeight ? '' : 'is-off'}`}>
               <div className="limit-head">
                 <div className="limit-id">
-                  <Waves size={20} className={`setting-icon ${settings.maxWaveHeightSafe >= 1.0 ? 'is-danger' : settings.maxWaveHeightSafe >= 0.5 ? 'is-caution' : ''}`} />
+                  <Waves size={20} className={`setting-icon ${settings.waveTakeCareAt >= 1.0 ? 'is-danger' : settings.waveTakeCareAt >= 0.5 ? 'is-caution' : ''}`} />
                   <div className="limit-titles">
                     <span className="limit-name">{t('Waves — Take care from')}</span>
-                    <span className="limit-hint">{t(getWaveHeightLabel(settings.maxWaveHeightSafe))}</span>
+                    <span className="limit-hint">{t(getWaveHeightLabel(settings.waveTakeCareAt))}</span>
                   </div>
                 </div>
                 <ToggleSwitch
@@ -331,23 +347,20 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
               {/* Metres, because that is the unit DMI publishes wave height in
                   and therefore the unit the meteogram's Waves row shows. */}
               <Stepper
-                value={settings.maxWaveHeightSafe}
+                value={settings.waveTakeCareAt}
                 min={0.1} max={3.0} step={0.05} decimals={2}
                 unit={t('m waves')}
-                label={t('wave Take care threshold; Danger stays {0} m above', settings.waveCautionMargin.toFixed(2))}
-                onChange={val => updateCriteria({
-                  maxWaveHeightSafe: val,
-                  maxWaveHeightCaution: roundToDecimals(val + settings.waveCautionMargin, 2),
-                })}
+                label={t('wave Take care threshold; Danger stays {0} m above', settings.waveDangerGap.toFixed(2))}
+                onChange={waveTakeCareAt => updateCriteria({ waveTakeCareAt })}
                 disabled={!settings.enableWaveHeight}
               />
               <ZoneBar
                 min={0} max={3}
-                cautionStart={settings.maxWaveHeightSafe}
-                cautionEnd={waveCautionAt}
-                showCaution={settings.enableWaveHeight && (settings.enableWaveCaution ?? true)}
+                cautionStart={settings.waveTakeCareAt}
+                cautionEnd={waveDangerAt}
+                showCaution={settings.enableWaveHeight && (settings.enableWaveTakeCare ?? true)}
                 leftLabel={t('0 flat')}
-                midLabel={t('danger from {0}', waveCautionAt.toFixed(2))}
+                midLabel={t('danger from {0}', waveDangerAt.toFixed(2))}
                 rightLabel={t('3 rough')}
               />
               {/* Same split as wind: the stepper sets the danger ceiling, which always
@@ -356,24 +369,21 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
               <div className={`limit-caution-row has-toggle ${settings.enableWaveHeight ? '' : 'is-off'}`}>
                 <div className="limit-caution-copy">
                   <span className="limit-caution-name">{t('Gap to Danger')}</span>
-                  <span className="limit-caution-hint">{t('Take care from {0} m; +{1} m sets Danger from {2} m. The switch adds the amber band between them.', settings.maxWaveHeightSafe.toFixed(2), settings.waveCautionMargin.toFixed(2), waveCautionAt.toFixed(2))}</span>
+                  <span className="limit-caution-hint">{t('Take care from {0} m; +{1} m sets Danger from {2} m. The switch adds the amber band between them.', settings.waveTakeCareAt.toFixed(2), settings.waveDangerGap.toFixed(2), waveDangerAt.toFixed(2))}</span>
                 </div>
                 <Stepper
                   compact
-                  value={settings.waveCautionMargin}
+                  value={settings.waveDangerGap}
                   min={0.05} max={2.0} step={0.05} decimals={2}
                   unit="+m" label={t('wave Take care-to-Danger gap')}
-                  onChange={margin => updateCriteria({
-                    waveCautionMargin: margin,
-                    maxWaveHeightCaution: roundToDecimals(settings.maxWaveHeightSafe + margin, 2),
-                  })}
+                  onChange={waveDangerGap => updateCriteria({ waveDangerGap })}
                   disabled={!settings.enableWaveHeight}
                 />
                 <ToggleSwitch
                   small
-                  checked={settings.enableWaveHeight && settings.enableWaveCaution}
-                  onChange={checked => updateCriteria({ enableWaveCaution: checked })}
-                  label={t('Show Take care wave band')}
+                  checked={settings.enableWaveHeight && settings.enableWaveTakeCare}
+                  onChange={checked => updateCriteria({ enableWaveTakeCare: checked })}
+                  label={t('Use Take care wave band in verdict')}
                   disabled={!settings.enableWaveHeight}
                 />
               </div>
@@ -383,9 +393,9 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
             <section className={`limit-card ${settings.enableWaterTemp ? '' : 'is-off'}`}>
               <div className="limit-head">
                 <div className="limit-id">
-                  <Thermometer size={20} className={`setting-icon ${settings.minWaterTempCaution >= 15 ? 'is-safe' : settings.minWaterTempCaution >= 10 ? 'is-caution' : 'is-danger'}`} />
+                  <Thermometer size={20} className={`setting-icon ${settings.waterTempDangerBelow >= 15 ? 'is-safe' : settings.waterTempDangerBelow >= 10 ? 'is-caution' : 'is-danger'}`} />
                   <div className="limit-titles">
-                    <span className="limit-name">{t('Min Water Temp')}</span>
+                    <span className="limit-name">{t('Water temperature')}</span>
                     <span className="limit-hint">{tempHint}</span>
                   </div>
                 </div>
@@ -396,32 +406,32 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
                 />
               </div>
               <Stepper
-                value={settings.minWaterTempCaution}
+                value={settings.waterTempDangerBelow}
                 min={5} max={20} step={1} decimals={0}
-                unit={t('°C water')} label={t('min water temperature')}
-                onChange={val => updateCriteria({ minWaterTempCaution: val, minWaterTempSafe: val + tempSafeBand })}
+                unit={t('°C water')} label={t('water temperature Rough threshold')}
+                onChange={val => updateCriteria({ waterTempDangerBelow: val, waterTempTakeCareBelow: val + tempTakeCareBand })}
                 disabled={!settings.enableWaterTemp}
               />
               <ZoneBar
                 min={0} max={25}
                 invert
-                cautionStart={settings.minWaterTempCaution}
-                cautionEnd={settings.minWaterTempSafe}
+                cautionStart={settings.waterTempDangerBelow}
+                cautionEnd={settings.waterTempTakeCareBelow}
                 leftLabel={t('0 ice')}
-                midLabel={t('safe from {0}°', settings.minWaterTempSafe)}
+                midLabel={t('Good to go from {0}°', settings.waterTempTakeCareBelow)}
                 rightLabel={t('25 summer')}
               />
               <div className="limit-caution-row">
                 <div className="limit-caution-copy">
                   <span className="limit-caution-name">{t('Cold-water margin')}</span>
-                  <span className="limit-caution-hint">{t('{0}–{1} °C asks for thermal wear', settings.minWaterTempCaution, settings.minWaterTempSafe)}</span>
+                  <span className="limit-caution-hint">{t('{0}–{1} °C asks for thermal wear', settings.waterTempDangerBelow, settings.waterTempTakeCareBelow)}</span>
                 </div>
                 <Stepper
                   compact
-                  value={tempSafeBand}
+                  value={tempTakeCareBand}
                   min={1} max={10} step={1} decimals={0}
-                  unit="+°C" label={t('water temperature caution band')}
-                  onChange={band => updateCriteria({ minWaterTempSafe: settings.minWaterTempCaution + band })}
+                  unit="+°C" label={t('water temperature Take care band')}
+                  onChange={band => updateCriteria({ waterTempTakeCareBelow: settings.waterTempDangerBelow + band })}
                   disabled={!settings.enableWaterTemp}
                 />
               </div>
@@ -466,7 +476,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
 
               <div className="advanced-row">
                 <div className="advanced-row-label">
-                  <Navigation size={18} className="setting-icon" />
+                    <Navigation size={18} className="setting-icon" />
                   <div className="limit-titles">
                     <span className="limit-name">{t('Water level')}</span>
                     <span className="limit-hint">{t('Preferred water level for launching')}</span>
@@ -503,23 +513,23 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
               <div className={`advanced-group ${settings.enableCustomWindDirs ? '' : 'is-off'}`}>
                 <div className="advanced-row">
                   <div className="advanced-row-label">
-                    <Navigation size={18} className="setting-icon" />
+                      <Navigation size={18} className="setting-icon" />
                     <div className="limit-titles">
                       <span className="limit-name">{t('Local wind sectors')}</span>
-                      <span className="limit-hint">{t('Direction-specific caps for {0}, plus wind-against-water-level chop', CURRENT_LOCATION.areaName)}</span>
+                      <span className="limit-hint">{t('Optional stricter caps for {0}, based on broad area estimates', CURRENT_LOCATION.areaName)}</span>
                     </div>
                   </div>
                   <ToggleSwitch
                     checked={settings.enableCustomWindDirs}
                     onChange={checked => updateCriteria({ enableCustomWindDirs: checked })}
-                    label={t('Apply local wind-sector caps')}
+                    label={t('Apply optional FRANK wind-sector caps')}
                   />
                 </div>
 
-                {settings.enableCustomWindDirs && windSectors.length > 0 && (
-                  <div className="sector-panel">
+                {windSectors.length > 0 && (
+                  <div className="sector-panel" aria-disabled={!settings.enableCustomWindDirs}>
                     <p className="sector-lead">
-                      {t('Local direction changes wave exposure and drift risk, so these caps can be stricter than the general profile.')}
+                      {t('These are optional FRANK estimates for a broad area, not current limits published by a kayak club. When enabled, a matching sector can only make the general wind verdict stricter.')}
                     </p>
 
                     <div className="sector-rose-wrap">
@@ -543,16 +553,13 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
                                 </div>
                                 <Stepper
                                   compact
-                                  value={cap.safe}
-                                  // Stop the safe cap at one gap below the shared 25 ceiling.
-                                  // At 25 the danger stepper below computed min 25.5 > max 25:
-                                  // both its buttons went permanently dead, and because
-                                  // healSectorCautions re-applies floorCaution on EVERY save,
-                                  // the sector's danger cap was ratcheted to 25.5 and stayed
-                                  // there even after the safe cap came back down.
-                                  min={0} max={25 - MIN_CAUTION_GAP} step={0.5} decimals={1}
+                                  value={cap.takeCareAt}
+                                  // Leave room for the shared minimum gap below the
+                                  // 25 m/s ceiling, so both controls always remain valid.
+                                  min={0} max={25 - MIN_DANGER_GAP} step={0.5} decimals={1}
                                   unit="m/s" label={t('{0} Take care threshold', t(sector.label))}
-                                  onChange={val => setSectorCap(sector, val, cap.caution)}
+                                  onChange={takeCareAt => setSectorCap(sector, takeCareAt, cap.dangerAt)}
+                                  disabled={!settings.enableCustomWindDirs}
                                 />
                               </div>
 
@@ -562,10 +569,11 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
                                 </div>
                                 <Stepper
                                   compact
-                                  value={floorCaution(cap.safe, cap.caution)}
-                                  min={cap.safe + MIN_CAUTION_GAP} max={25} step={0.5} decimals={1}
+                                  value={floorDanger(cap.takeCareAt, cap.dangerAt)}
+                                  min={cap.takeCareAt + MIN_DANGER_GAP} max={25} step={0.5} decimals={1}
                                   unit="m/s" label={t('{0} danger threshold', t(sector.label))}
-                                  onChange={val => setSectorCap(sector, cap.safe, val)}
+                                  onChange={dangerAt => setSectorCap(sector, cap.takeCareAt, dangerAt)}
+                                  disabled={!settings.enableCustomWindDirs}
                                 />
                               </div>
                             </div>
@@ -575,7 +583,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
                     </div>
 
                     <p className="sector-note">
-                      {t('Directions are fixed to the local geography. Only the wind speeds are yours.')}
+                      {t('The bearings are fixed. You can adjust only the wind speeds.')}
                     </p>
                   </div>
                 )}

@@ -54,7 +54,7 @@ function wavesOnly(mode: (typeof profiles)[number][0]): SafetySettings {
     enableWindGust: false,
     enableCustomWindDirs: false,
     enableWaveHeight: true,
-    enableWaveCaution: true,
+    enableWaveTakeCare: true,
     enableWaterTemp: false,
     daylightOnly: false,
   };
@@ -74,8 +74,8 @@ describe('IPP-aligned profile boundaries', () => {
 
   // Gusts get the wind band scaled by GUST_FACTOR, not the wind band itself: a
   // mean-wind limit is written for wind that already gusts, so measuring a gust
-  // against it counts the same gustiness twice. Chill 6.4/8.0, Normal 9.6/12.8,
-  // Pro 12.8/16.0.
+  // against it counts the same gustiness twice. Beginner 6.4/8.0,
+  // Intermediate 9.6/12.8, Advanced 12.8/16.0.
   it.each(profiles)(
     '%s gusts are judged against %s / %s scaled by the gust factor, without a Beaufort label',
     (mode, windTakeCareAt, windRoughAt) => {

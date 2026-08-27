@@ -16,7 +16,7 @@
       "water": ["dkss_idw", "dkss_nsbs"],
       "waves": ["wam_nsb", "wam_dw"]
     },
-    "_note": "Caps aligned 2026-07-14 to the Vejle/BBKK club-grounded scheme (the only club-published numbers on this coast): onshore 5.0/8.0 for the long east fetch, offshore capped LOWER at 4.5/7.0 for fralandsvind drift risk. Horsens Fjord shares Vejle's geometry (opens east, town at the west head), and the previous values (onshore 4.5/7.0, offshore 5.5/8.0) capped offshore LOOSER than onshore - contradicting the validated fralandsvind principle.",
+    "_note": "The wind-sector bearings and caps are broad FRANK area estimates, not current club-published rules. They are off by default. The optional rule treats 45-135 degrees as easterly onshore wind over the longer fjord fetch and 225-315 degrees as westerly offshore wind, with caps of 5.0/8.0 and 4.5/7.0 m/s respectively.",
     "windSectors": [
       {
         "id": "onshore",
@@ -25,8 +25,8 @@
         "exposure": "onshore",
         "min": 45,
         "max": 135,
-        "safeLimit": 5.0,
-        "cautionLimit": 8.0
+        "takeCareAt": 5.0,
+        "dangerAt": 8.0
       },
       {
         "id": "offshore",
@@ -35,8 +35,8 @@
         "exposure": "offshore",
         "min": 225,
         "max": 315,
-        "safeLimit": 4.5,
-        "cautionLimit": 7.0
+        "takeCareAt": 4.5,
+        "dangerAt": 7.0
       }
     ]
   },
@@ -47,7 +47,7 @@
     "areaName": "Vejle Fjord",
     "subtitle": "Vejle",
     "timezone": "Europe/Copenhagen",
-    "_note": "Coordinate is a mid-fjord point (55.705, 9.68) where DMI's DKSS grid has a valid wet node with real water temperature and tide (the grid is patchy in the narrow fjord - most nearby points are masked/null, this one is a genuine in-fjord node). Wind sectors: geometry confirmed (Vejle Fjord opens east, town at the western head, so E=onshore/longest-fetch, W=offshore). Caps grounded in Brejning Baad Klub kajak practice on this exact coastline (5 m/s guest, 6 m/s competency, 8 m/s instructed ceiling): onshore 5.0/8.0, offshore capped LOWER at 4.5/7.0 to respect fralandsvind (offshore) drift risk rather than pure wave roughness. Like Horsens, the E-vs-W directional split is the app's own model (no Danish club publishes per-direction caps); the flat Max Wind cap is the club-style rule. Source: brejninghavn.dk BBKK Sikkerhed PDF.",
+    "_note": "Coordinate 55.705, 9.68 is a mid-fjord point where DMI's patchy DKSS grid has a valid wet node with water temperature and level data; most nearby narrow-fjord points are masked or null. The optional 45-135 and 225-315 degree sectors and their 5.0/8.0 and 4.5/7.0 m/s caps are broad FRANK area estimates, not current club-published limits, and are off by default. Brejning Baad Klub's public 29 June 2022 safety rules publish no numeric wind caps or compass sectors. An older 2016 document used 5, 6, and 8 m/s in separate guest, release-test, and instructed-introduction contexts, not as one safety ladder. Current rules: https://brejninghavn.dk/wp-content/uploads/bsk-pdf-manager/2022/10/Kajak-sikkerhedsbestemmelser-29-6-2022.pdf",
     "coordinate": {
       "latitude": 55.705,
       "longitude": 9.68
@@ -66,8 +66,8 @@
         "exposure": "onshore",
         "min": 45,
         "max": 135,
-        "safeLimit": 5.0,
-        "cautionLimit": 8.0
+        "takeCareAt": 5.0,
+        "dangerAt": 8.0
       },
       {
         "id": "offshore",
@@ -76,8 +76,8 @@
         "exposure": "offshore",
         "min": 225,
         "max": 315,
-        "safeLimit": 4.5,
-        "cautionLimit": 7.0
+        "takeCareAt": 4.5,
+        "dangerAt": 7.0
       }
     ]
   },
@@ -88,7 +88,7 @@
     "areaName": "Kolding Fjord",
     "subtitle": "Kolding",
     "timezone": "Europe/Copenhagen",
-    "_note": "Added 2026-07-14. Coordinate is the fjord-mouth DKSS node by Løverodde/Lillebælt (probed live: dkss_idw wet, water-temperature 17.2C + real deviation; wam_nsb waves confirmed on first worker build; the mid-fjord grid at 9.55 is masked like Vejle's interior). The node sits at the edge of Kolding Kajak Klub's daily rovand (Kolding Fjord west of the Skaerbaek-Loverodde line). CAPS GROUNDED in KKK's published rules (koldingkajakklub.dk/sikkerhed): 'hoejst 5 m/s' for non-released paddlers + 300 m rovand + winter Oct-Apr / 100 m - the flat 5 m/s corroborates the onshore safe cap exactly; the 8.0 danger ceiling rests on the Brejning instructed-ceiling analogy, and the E/W directional split is the app's own model, like every city.",
+    "_note": "Coordinate 55.512, 9.659 is the fjord-mouth DKSS node by Løverodde and Lillebælt. Live checks found a wet dkss_idw node with water temperature and level deviation, and wam_nsb wave data; the mid-fjord grid near 9.55 is masked. The point is at the edge of Kolding Kajak Klub's stated daily paddling water. The club's published 5 m/s rule applies to non-released paddlers in a restricted area; it does not publish the 45-135 and 225-315 degree sectors or the 8.0 and 7.0 m/s danger caps. Those sectors and caps are optional FRANK area estimates and are off by default. Club source: https://koldingkajakklub.dk/sikkerhed",
     "coordinate": {
       "latitude": 55.512,
       "longitude": 9.659
@@ -107,8 +107,8 @@
         "exposure": "onshore",
         "min": 45,
         "max": 135,
-        "safeLimit": 5.0,
-        "cautionLimit": 8.0
+        "takeCareAt": 5.0,
+        "dangerAt": 8.0
       },
       {
         "id": "offshore",
@@ -117,8 +117,8 @@
         "exposure": "offshore",
         "min": 225,
         "max": 315,
-        "safeLimit": 4.5,
-        "cautionLimit": 7.0
+        "takeCareAt": 4.5,
+        "dangerAt": 7.0
       }
     ]
   },
@@ -129,7 +129,7 @@
     "areaName": "Aarhus Bugt",
     "subtitle": "Aarhus",
     "timezone": "Europe/Copenhagen",
-    "_note": "Added 2026-07-14. Coordinate is an inner Aarhus Bugt DKSS node just off the city (probed live: dkss_idw water-temperature 18.4C + real deviation, wam_nsb wave height 0.15m - both wet). Geometry: city on the WEST shore, bay opens east/southeast to Kattegat, so E=onshore (long Kattegat fetch), W=offshore (fralandsvind). Open-bay fetch is longer than the fjords'. The 5.0/8.0 onshore and 4.5/7.0 offshore values are FRANK's current model rather than Aarhus club-published limits and should be revisited when an authoritative local source is available.",
+    "_note": "Coordinate 56.129, 10.257 is a wet inner-Aarhus-Bugt DKSS node just off the city. Live checks found dkss_idw water temperature and level deviation plus wam_nsb wave data. The city is on the west shore and the bay opens east and southeast toward Kattegat. The optional rule therefore treats 45-135 degrees as onshore and 225-315 degrees as offshore. The 5.0/8.0 and 4.5/7.0 m/s caps are broad FRANK area estimates, not Aarhus club-published limits, and are off by default.",
     "coordinate": {
       "latitude": 56.129,
       "longitude": 10.257
@@ -148,8 +148,8 @@
         "exposure": "onshore",
         "min": 45,
         "max": 135,
-        "safeLimit": 5.0,
-        "cautionLimit": 8.0
+        "takeCareAt": 5.0,
+        "dangerAt": 8.0
       },
       {
         "id": "offshore",
@@ -158,8 +158,8 @@
         "exposure": "offshore",
         "min": 225,
         "max": 315,
-        "safeLimit": 4.5,
-        "cautionLimit": 7.0
+        "takeCareAt": 4.5,
+        "dangerAt": 7.0
       }
     ]
   }

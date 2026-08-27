@@ -8,7 +8,7 @@ import { readStorage } from '../utils/storage';
 
 export type Lang = 'en' | 'da';
 
-const LANG_STORAGE_KEY = 'ffkajak_lang';
+const LANG_STORAGE_KEY = 'frank_lang';
 
 interface LangContextValue {
   lang: Lang;

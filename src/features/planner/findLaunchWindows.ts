@@ -2,7 +2,6 @@ import { analyzeSafetyConditions } from '../safety/analyzeSafetyConditions';
 import { isSameLocationDay } from '../../utils/date';
 import type { SafetySettings } from '../safety/presets';
 import type { HourlyData } from '../forecast/types';
-import { nextHourTideFor } from '../forecast/displayData';
 import { assessBlockDaylight } from '../safety/blockDaylight';
 import { hasActiveSafetyChecks } from '../safety/safetyDisplay';
 import type { SunTimes } from '../safety/blockDaylight';
@@ -125,7 +124,6 @@ export function findLaunchWindows(
     return analyzeSafetyConditions(
       data[idx],
       settings,
-      nextHourTideFor(data, idx),
       undefined,
       { blockDaylight: { mode: 'defer-to-window' } },
     ).rating === 'safe';

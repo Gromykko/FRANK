@@ -6,22 +6,20 @@ import { analyzeSafetyConditions } from '../../../src/features/safety/analyzeSaf
 
 const baseSettings = {
   tripMode: 'custom',
-  maxWindSpeedSafe: 5,
-  maxWindSpeedCaution: 8,
-  minWaterTempSafe: 15,
-  minWaterTempCaution: 10,
-  maxWaveHeightSafe: 0.5,
-  maxWaveHeightCaution: 1.0,
+  windTakeCareAt: 5,
+  waterTempTakeCareBelow: 15,
+  waterTempDangerBelow: 10,
+  waveTakeCareAt: 0.5,
   enableWindSpeed: true,
   enableWindGust: true,
   enableWaveHeight: true,
-  enableWaveCaution: true,
+  enableWaveTakeCare: true,
   enableWaterTemp: true,
   daylightOnly: true,
   minDuration: 2, // requires 3 consecutive safe hours (0 to 2)
   tidePreference: 'any',
-  gustMargin: 3,
-  waveCautionMargin: 0.5,
+  windDangerGap: 3,
+  waveDangerGap: 0.5,
 } as SafetySettings;
 
 const baseData: HourlyData = {
@@ -414,7 +412,7 @@ describe('findLaunchWindows — longer-range block windows', () => {
       // The same block is Caution when the matrix describes its whole period,
       // but the planner deliberately defers daylight so it can offer the safe
       // weather/marine portion clipped to complete daylight hours.
-      expect(analyzeSafetyConditions(block, baseSettings, undefined, undefined, {
+      expect(analyzeSafetyConditions(block, baseSettings, undefined, {
         blockDaylight: { sun },
       }).rating).toBe('caution');
       const windows = findLaunchWindows([block, makeBlock('2026-07-11T12:00:00')], baseSettings, 0, sun);
@@ -565,7 +563,7 @@ describe('findLaunchWindows with every limit disabled', () => {
     enableWindSpeed: false,
     enableWindGust: false,
     enableWaveHeight: false,
-    enableWaveCaution: false,
+    enableWaveTakeCare: false,
     enableWaterTemp: false,
     enableCustomWindDirs: false,
     daylightOnly: false,

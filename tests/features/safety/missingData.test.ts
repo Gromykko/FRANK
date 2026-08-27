@@ -36,7 +36,7 @@ describe('missing readings are never rated safe', () => {
     expect(rate({}).rating).toBe('safe');
   });
 
-  for (const field of ['windSpeed', 'windGust', 'windDirection', 'waveHeight', 'tempWater'] as const) {
+  for (const field of ['windSpeed', 'windGust', 'waveHeight', 'tempWater'] as const) {
     it(`does not clear an hour with no ${field}`, () => {
       for (const absent of [NaN, undefined, null]) {
         const result = rate({ [field]: absent });
@@ -45,6 +45,18 @@ describe('missing readings are never rated safe', () => {
       }
     });
   }
+
+  it('does not clear a missing wind direction when the optional sector rule is enabled', () => {
+    const settings = { ...DEFAULT_SETTINGS, enableCustomWindDirs: true };
+    for (const absent of [NaN, undefined, null]) {
+      const result = analyzeSafetyConditions(
+        { ...goodHour, windDirection: absent } as HourlyData,
+        settings,
+      );
+      expect(result.rating, `windDirection=${String(absent)}`).not.toBe('safe');
+      expect(result.reasons.some((reason) => /cannot clear/i.test(reason.text))).toBe(true);
+    }
+  });
 
   it('never emits the all-clear alongside a missing reading', () => {
     const result = rate({ waveHeight: NaN });
@@ -101,16 +113,16 @@ describe('a corrupt stored profile cannot disable a safety check', () => {
   };
 
   it('falls back to the default when a threshold is not a number', () => {
-    const parsed = parseStoredSettings(currentRecord({ tripMode: 'custom', maxWindSpeedSafe: 'x' }));
-    expect(parsed.maxWindSpeedSafe).toBe(DEFAULT_SETTINGS.maxWindSpeedSafe);
+    const parsed = parseStoredSettings(currentRecord({ tripMode: 'custom', windTakeCareAt: 'x' }));
+    expect(parsed.windTakeCareAt).toBe(DEFAULT_SETTINGS.windTakeCareAt);
     // The whole point: a gale must still rate danger afterwards.
     expect(analyzeSafetyConditions({ ...goodHour, windSpeed: 25, windGust: 30 }, parsed).rating).toBe('danger');
   });
 
   it('rounds a derived cap so it never prints a float artifact', () => {
     const parsed = parseStoredSettings(currentRecord({
-      maxWaveHeightSafe: 0.1,
-      maxWaveHeightCaution: 0.30000000000000004,
+      waveTakeCareAt: 0.1,
+      waveDangerGap: 0.2,
     }));
     const text = analyzeSafetyConditions({ ...goodHour, waveHeight: 0.35 }, parsed).reasons
       .map((r) => r.text)

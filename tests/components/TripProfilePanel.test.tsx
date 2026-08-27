@@ -15,12 +15,12 @@ describe('TripProfilePanel localisation', () => {
     );
 
     expect([...container.querySelectorAll('.frank-mode-label')].map((node) => node.textContent))
-      .toEqual(['Rolig', 'Normal', 'Pro', 'Egen']);
+      .toEqual(['Begynder', 'Øvet', 'Avanceret', 'Egen']);
   });
 
   it('opens a sourced About panel with the live IPP-aligned preset values', async () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-    localStorage.setItem('ffkajak_lang', 'en');
+    localStorage.setItem('frank_lang', 'en');
     const host = document.createElement('div');
     document.body.append(host);
     const root = createRoot(host);
@@ -38,12 +38,12 @@ describe('TripProfilePanel localisation', () => {
       });
 
       const about = host.querySelector('#trip-profile-info-pop')!;
-      expect(about.textContent).toContain('Chill · IPP 2: wind Take care from 4.0 m/s and Rough from 5.0 m/s; waves Take care from 0.20 m and Rough from 0.50 m.');
-      expect(about.textContent).toContain('Normal · IPP 3: wind Take care from 6.0 m/s and Rough from 8.0 m/s; waves Take care from 0.30 m and Rough from 1.00 m.');
-      expect(about.textContent).toContain('Pro · IPP 4: wind Take care from 8.0 m/s and Rough from 10.0 m/s; waves Take care from 0.50 m and Rough from 2.00 m.');
+      expect(about.textContent).toContain('Beginner · IPP 2: wind Take care from 4.0 m/s and Rough from 5.0 m/s; waves Take care from 0.20 m and Rough from 0.50 m.');
+      expect(about.textContent).toContain('Intermediate · IPP 3: wind Take care from 6.0 m/s and Rough from 8.0 m/s; waves Take care from 0.30 m and Rough from 1.00 m.');
+      expect(about.textContent).toContain('Advanced · IPP 4: wind Take care from 8.0 m/s and Rough from 10.0 m/s; waves Take care from 0.50 m and Rough from 2.00 m.');
       expect(about.textContent).toContain('not DKF safety limits or proof of skill');
-      expect(about.textContent).toContain('Local wind sectors');
-      expect(about.textContent).toContain("Chill's 4 m/s and the lower wave Take care boundaries are FRANK's conservative choices");
+      expect(about.textContent).toContain('Optional local wind sectors');
+      expect(about.textContent).toContain("Beginner's 4 m/s and the lower wave Take care boundaries are FRANK's conservative choices");
       expect(about.querySelector('a[href*="ipp-roeruddannelse/touring-tur"]')).not.toBeNull();
       expect(about.querySelector('a[href*="14lUb_7t5ZV1vp49sOBmCmlXuOnSWmQMX"]')).not.toBeNull();
       expect(about.querySelector('a[href*="1iagdhW-B3ZXvHUmEBSfxVESyne5qevb2"]')).not.toBeNull();

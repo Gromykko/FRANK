@@ -26,17 +26,6 @@ export const RATING_WORD: Record<DisplayStatus, string> = {
   none: 'No verdict',
 };
 
-// Below this sustained wind speed, wind-against-water-level chop is negligible,
-// so the tide-conflict rule stays quiet. A gentle breeze opposing the tide
-// doesn't build the short steep waves the rule warns about.
-const CHOP_WIND_GATE_MS = 4.0;
-
-// DMI water level is stored in metres but shown to users in whole centimetres.
-// Changes of half a displayed centimetre or less are therefore treated as
-// steady: they are below the UI's precision and can be model/rounding noise,
-// not evidence that wind is opposing a real rising or falling movement.
-const WATER_LEVEL_TREND_TOLERANCE_M = 0.005;
-
 // A sector may wrap through north (min > max, e.g. 315°–45°): membership is
 // then "at or past min OR at or before max".
 const inSector = (deg: number, min: number, max: number) =>
@@ -56,10 +45,6 @@ type VerdictReason = SafetyReason & { severity: SafetyRating };
 export interface SafetyAnalysis {
   rating: SafetyRating;
   reasons: SafetyReason[];
-  // The bare hazard description, without the advice clause that normally
-  // follows it. Weather-only mode reports what the sky is doing but must not
-  // say what to do about it, and "Heavy rain" is a fact while "probably one to
-  // skip" is a verdict. Only set when a weather hazard actually fired.
 }
 
 export interface SafetyAnalysisContext {
@@ -76,23 +61,22 @@ export interface SafetyAnalysisContext {
 }
 
 import type { SafetySettings } from './presets';
-import { GUST_FACTOR, floorCaution } from './presets';
+import { GUST_FACTOR, floorDanger, getWaveDangerAt, getWindDangerAt } from './presets';
 import { READING_DECIMALS, roundToDecimals } from '../../utils/number';
 import { interpolate } from '../../i18n/interpolate';
 import type { Translate } from '../../i18n/interpolate';
 
-// Resolve a location's curated wind sectors against the user's per-sector cap
-// overrides, applying the caution ≥ safe + 0.5 floor. Angles come from config;
-// only the caps are user-tunable.
+// Resolve a location's wind sectors against the user's per-sector cap
+// overrides. Bearings come from config; only the speed caps are user-tunable.
 export function resolveSectors(location: ForecastLocation, settings: SafetySettings): WindSector[] {
   return location.windSectors.map((sector) => {
     const cap = settings.sectorLimits?.[sector.id];
-    const safeLimit = cap?.safe ?? sector.safeLimit;
-    const cautionLimit = floorCaution(safeLimit, cap?.caution ?? sector.cautionLimit);
+    const takeCareAt = cap?.takeCareAt ?? sector.takeCareAt;
+    const dangerAt = floorDanger(takeCareAt, cap?.dangerAt ?? sector.dangerAt);
     return {
       ...sector,
-      safeLimit,
-      cautionLimit,
+      takeCareAt,
+      dangerAt,
     };
   });
 }
@@ -105,8 +89,8 @@ const isReading = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 
 // Speeds and heights are magnitudes: a finite negative number is not a calm
-// reading, it is a malformed/sentinel value. Keep signed temperatures and tide
-// levels on isReading because sub-zero values are physically meaningful there.
+// reading, it is a malformed/sentinel value. Keep signed temperatures on
+// isReading because sub-zero values are physically meaningful there.
 const isNonnegativeReading = (value: unknown): value is number =>
   isReading(value) && value >= 0;
 
@@ -158,7 +142,6 @@ export function getWaveHeightLabel(height: number): string {
 export function analyzeSafetyConditions(
   data: HourlyData,
   settings: SafetySettings,
-  nextHourTide?: number,
   // Reason texts route through this so the UI can pass the i18n t(); the
   // default is a plain English formatter with the same {0}-placeholder
   // semantics (findLaunchWindows and the tests use ratings/English as-is).
@@ -219,24 +202,25 @@ export function analyzeSafetyConditions(
   };
   let generalWindCandidate: SustainedWindCandidate | null = null;
   if (enableWindSpeed && hasWindSpeed) {
-    if (windSpeedForSafety >= settings.maxWindSpeedCaution) {
+    const windDangerAt = getWindDangerAt(settings);
+    if (windSpeedForSafety >= windDangerAt) {
       rating = 'danger';
       generalWindCandidate = {
-        reason: addReason('danger', limitReason(windSpeedForSafety, settings.maxWindSpeedCaution, 1,
+        reason: addReason('danger', limitReason(windSpeedForSafety, windDangerAt, 1,
           'Wind speed: {0} m/s ({1}). At your danger limit of {2} m/s.',
           'Wind speed: {0} m/s ({1}). Exceeds your danger limit of {2} m/s.',
-          windSpeedForSafety.toFixed(1), windLabelForSafety, settings.maxWindSpeedCaution.toFixed(1))),
-        threshold: settings.maxWindSpeedCaution,
+          windSpeedForSafety.toFixed(1), windLabelForSafety, windDangerAt.toFixed(1))),
+        threshold: windDangerAt,
         sectorSpecific: false,
       };
-    } else if (windSpeedForSafety >= settings.maxWindSpeedSafe) {
+    } else if (windSpeedForSafety >= settings.windTakeCareAt) {
       rating = 'caution';
       generalWindCandidate = {
-        reason: addReason('caution', limitReason(windSpeedForSafety, settings.maxWindSpeedSafe, 1,
+        reason: addReason('caution', limitReason(windSpeedForSafety, settings.windTakeCareAt, 1,
           'Wind speed: {0} m/s ({1}). At your Take care threshold of {2} m/s.',
           'Wind speed: {0} m/s ({1}). Above your Take care threshold of {2} m/s.',
-          windSpeedForSafety.toFixed(1), windLabelForSafety, settings.maxWindSpeedSafe.toFixed(1))),
-        threshold: settings.maxWindSpeedSafe,
+          windSpeedForSafety.toFixed(1), windLabelForSafety, settings.windTakeCareAt.toFixed(1))),
+        threshold: settings.windTakeCareAt,
         sectorSpecific: false,
       };
     }
@@ -256,33 +240,29 @@ export function analyzeSafetyConditions(
   if (enableWindGust && hasWindGust) {
     // Beaufort describes sustained/mean wind, not a short gust. Keep the gust
     // numeric instead of assigning it a misleading Beaufort force name.
-    const gustCautionLimit = roundToDecimals(settings.maxWindSpeedSafe * GUST_FACTOR, 1);
-    const gustDangerLimit = roundToDecimals(
-      floorCaution(settings.maxWindSpeedSafe, settings.maxWindSpeedCaution) * GUST_FACTOR, 1);
+    const gustTakeCareLimit = roundToDecimals(settings.windTakeCareAt * GUST_FACTOR, 1);
+    const gustDangerLimit = roundToDecimals(getWindDangerAt(settings) * GUST_FACTOR, 1);
     if (gustForSafety >= gustDangerLimit) {
       gustWindReason = addReason('danger', limitReason(gustForSafety, gustDangerLimit, 1,
         'Wind gusts: {0} m/s. At your gust danger threshold of {1} m/s.',
         'Wind gusts: {0} m/s. Above your gust danger threshold of {1} m/s.',
         gustForSafety.toFixed(1), gustDangerLimit.toFixed(1)));
-    } else if (gustForSafety >= gustCautionLimit) {
-      gustWindReason = addReason('caution', limitReason(gustForSafety, gustCautionLimit, 1,
+    } else if (gustForSafety >= gustTakeCareLimit) {
+      gustWindReason = addReason('caution', limitReason(gustForSafety, gustTakeCareLimit, 1,
         'Wind gusts: {0} m/s. At your gust Take care threshold of {1} m/s.',
         'Wind gusts: {0} m/s. Above your gust Take care threshold of {1} m/s.',
-        gustForSafety.toFixed(1), gustCautionLimit.toFixed(1)));
+        gustForSafety.toFixed(1), gustTakeCareLimit.toFixed(1)));
     }
   }
 
   // Local wind sectors: one pass over the fjord's curated sectors. Each sector
-  // the wind falls within applies its own safe/danger caps; onshore/offshore
-  // membership feeds the wind-against-water-level rule below.
+  // the wind falls within applies its own Take care/Danger caps.
   const hasWindDir = isBearing(data.windDirection);
   if (enableCustom && !hasWindDir) missing.push('wind direction');
   const hasSectorAssessment = enableCustom && hasWindSpeed && hasWindDir;
   const sectors = hasSectorAssessment
     ? resolveSectors(context?.location ?? CURRENT_LOCATION, settings)
     : [];
-  let windIsOnshore = false;
-  let windIsOffshore = false;
   const sectorWindCandidates: SustainedWindCandidate[] = [];
   // 359.6° rounds to 360, which is not a bearing — wrap it back to 0.
   // Rounded and wrapped once, then used for BOTH the sector test and the text.
@@ -294,39 +274,37 @@ export function analyzeSafetyConditions(
   const windDir = ((Math.round(data.windDirection) % 360) + 360) % 360;
   for (const sector of sectors) {
     if (!inSector(windDir, sector.min, sector.max)) continue;
-    if (sector.exposure === 'onshore') windIsOnshore = true;
-    else if (sector.exposure === 'offshore') windIsOffshore = true;
     // In user copy the upper boundary is always the DANGER cap — calling it a
     // "caution cap" on a red reason read as caution, not Rough.
-    if (windSpeedForSafety >= sector.cautionLimit) {
+    if (windSpeedForSafety >= sector.dangerAt) {
       sectorWindCandidates.push({
-        reason: addReason('danger', limitReason(windSpeedForSafety, sector.cautionLimit, 1,
+        reason: addReason('danger', limitReason(windSpeedForSafety, sector.dangerAt, 1,
           'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is at your {4} m/s danger threshold for this direction.',
           'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is over your {4} m/s danger threshold for this direction.',
           windSpeedForSafety.toFixed(1), windLabelForSafety, translate(sector.label), windDir,
-          sector.cautionLimit.toFixed(1))),
-        threshold: sector.cautionLimit,
+          sector.dangerAt.toFixed(1))),
+        threshold: sector.dangerAt,
         sectorSpecific: true,
       });
-    } else if (windSpeedForSafety >= sector.safeLimit) {
+    } else if (windSpeedForSafety >= sector.takeCareAt) {
       if (rating !== 'danger') rating = 'caution';
       sectorWindCandidates.push({
-        reason: addReason('caution', limitReason(windSpeedForSafety, sector.safeLimit, 1,
+        reason: addReason('caution', limitReason(windSpeedForSafety, sector.takeCareAt, 1,
           'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is at your {4} m/s Take care threshold for this direction.',
           'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is over your {4} m/s Take care threshold for this direction.',
           windSpeedForSafety.toFixed(1), windLabelForSafety, translate(sector.label), windDir,
-          sector.safeLimit.toFixed(1))),
-        threshold: sector.safeLimit,
+          sector.takeCareAt.toFixed(1))),
+        threshold: sector.takeCareAt,
         sectorSpecific: true,
       });
     }
   }
 
   // General and sector caps judge the SAME sustained-wind reading. Listing
-  // both says the same thing twice, and can bury the separate tide-conflict
-  // signal below it. Keep the higher-severity explanation; at equal severity,
-  // keep the lower (controlling) threshold; only an exact threshold tie prefers
-  // the sector because it names why this bearing has a local cap. Beginner and
+  // both says the same thing twice. Keep the higher-severity explanation; at
+  // equal severity, keep the lower (controlling) threshold; only an exact
+  // threshold tie prefers the sector because it names why this bearing has a
+  // local cap. Beginner and
   // Custom sectors can be looser than the general band, so blindly suppressing
   // the general reason would hide the rule that actually set the verdict.
   const sustainedWindCandidates = [
@@ -365,57 +343,39 @@ export function analyzeSafetyConditions(
     }
   }
 
-  // Needs both water levels to tell rising from falling. Without them the rule
-  // simply doesn't run — it's a refinement on top of the wind rules, not a
-  // hazard of its own, so an absent tide series isn't reported as missing data.
-  if (enableCustom && isReading(nextHourTide) && isReading(data.tideLevel) && hasWindSpeed) {
-    const waterLevelDelta = nextHourTide - data.tideLevel;
-    const waterTrend = waterLevelDelta > WATER_LEVEL_TREND_TOLERANCE_M
-      ? 'rising'
-      : waterLevelDelta < -WATER_LEVEL_TREND_TOLERANCE_M
-        ? 'falling'
-        : 'steady';
-    // Offshore wind opposes rising water; onshore wind opposes falling water.
-    if ((waterTrend === 'rising' && windIsOffshore) || (waterTrend === 'falling' && windIsOnshore)) {
-      if (windSpeedForSafety > CHOP_WIND_GATE_MS) {
-        if (rating !== 'danger') rating = 'caution';
-        addReason('caution', translate('Wind-against-water-level conflict: wind opposes {0} water level. Expect steeper chop.', translate(waterTrend)));
-      }
-    }
-  }
-
   const enableWaterTemp = settings.enableWaterTemp ?? true;
   if (enableWaterTemp && !isReading(waterTempForSafety)) missing.push('water temperature');
   if (enableWaterTemp && isReading(waterTempForSafety)) {
-    if (waterTempForSafety < settings.minWaterTempCaution) {
+    if (waterTempForSafety < settings.waterTempDangerBelow) {
       rating = 'danger';
-      addReason('danger', translate("Water temperature: {0}°C — colder than your danger limit of {1}°C. You'd really want a drysuit or heavy thermals for this.", waterTempForSafety.toFixed(1), settings.minWaterTempCaution.toFixed(1)));
-    } else if (waterTempForSafety < settings.minWaterTempSafe) {
+      addReason('danger', translate("Water temperature: {0}°C — colder than your danger limit of {1}°C. You'd really want a drysuit or heavy thermals for this.", waterTempForSafety.toFixed(1), settings.waterTempDangerBelow.toFixed(1)));
+    } else if (waterTempForSafety < settings.waterTempTakeCareBelow) {
       if (rating !== 'danger') rating = 'caution';
-      addReason('caution', translate('Water temperature: {0}°C — under your safe limit of {1}°C. Worth layering up.', waterTempForSafety.toFixed(1), settings.minWaterTempSafe.toFixed(1)));
+      addReason('caution', translate('Water temperature: {0}°C — below your Take care threshold of {1}°C. Thermal clothing may be needed.', waterTempForSafety.toFixed(1), settings.waterTempTakeCareBelow.toFixed(1)));
     }
   }
 
   const enableWaveHeight = settings.enableWaveHeight ?? true;
-  const enableWaveCaution = settings.enableWaveCaution ?? true;
+  const enableWaveTakeCare = settings.enableWaveTakeCare ?? true;
   const hasWaveHeight = isNonnegativeReading(waveForSafety);
   if (enableWaveHeight && !hasWaveHeight) missing.push('wave height');
   if (enableWaveHeight && hasWaveHeight) {
     const waveLabel = translate(getWaveHeightLabel(waveForSafety));
     // The danger ceiling always applies when wave height is enabled; the
-    // "wave caution margin" toggle only controls the intermediate caution band.
-    if (waveForSafety >= settings.maxWaveHeightCaution) {
+    // Take-care toggle only controls the intermediate amber band.
+    const waveDangerAt = getWaveDangerAt(settings);
+    if (waveForSafety >= waveDangerAt) {
       rating = 'danger';
-      addReason('danger', limitReason(waveForSafety, settings.maxWaveHeightCaution, 2,
+      addReason('danger', limitReason(waveForSafety, waveDangerAt, 2,
         'Wave height: {0} m ({1}). At your danger limit of {2} m.',
         'Wave height: {0} m ({1}). Exceeds your danger limit of {2} m.',
-        waveForSafety.toFixed(2), waveLabel, settings.maxWaveHeightCaution.toFixed(2)));
-    } else if (enableWaveCaution && waveForSafety >= settings.maxWaveHeightSafe) {
+        waveForSafety.toFixed(2), waveLabel, waveDangerAt.toFixed(2)));
+    } else if (enableWaveTakeCare && waveForSafety >= settings.waveTakeCareAt) {
       if (rating !== 'danger') rating = 'caution';
-      addReason('caution', limitReason(waveForSafety, settings.maxWaveHeightSafe, 2,
+      addReason('caution', limitReason(waveForSafety, settings.waveTakeCareAt, 2,
         'Wave height: {0} m ({1}). At your Take care threshold of {2} m.',
         'Wave height: {0} m ({1}). Above your Take care threshold of {2} m.',
-        waveForSafety.toFixed(2), waveLabel, settings.maxWaveHeightSafe.toFixed(2)));
+        waveForSafety.toFixed(2), waveLabel, settings.waveTakeCareAt.toFixed(2)));
     }
   }
 
@@ -484,7 +444,7 @@ export function analyzeSafetyConditions(
     const seaState = translate(getWaveHeightLabel(waveForSafety)).toLowerCase();
 
     // Silence from a rule that is switched off is not evidence of safety, and
-    // this sentence cannot tell the two apart on its own: with Max Wind
+    // this sentence cannot tell the two apart on its own: with the wind rule
     // disabled it printed "Everything's within your limits — gale, small
     // ripples, clear sky", asserting in a green badge that a gale was inside
     // limits the user had turned off. hasActiveSafetyChecks does not catch it

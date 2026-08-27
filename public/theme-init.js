@@ -10,7 +10,7 @@
   var mode = 'light';
   try {
     if (window.matchMedia('(prefers-color-scheme: dark)').matches) mode = 'dark';
-  } catch (error) {
+  } catch {
     // No matchMedia: light is the documented fallback.
   }
   try {
@@ -19,7 +19,7 @@
       mode = saved;
       root.setAttribute('data-theme-source', 'saved');
     }
-  } catch (error) {
+  } catch {
     // Storage can be blocked; the OS preference above still holds.
   }
   root.setAttribute('data-theme', mode);

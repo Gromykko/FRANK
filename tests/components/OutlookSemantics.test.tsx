@@ -65,4 +65,21 @@ describe('outlook period semantics', () => {
     expect(container.querySelector('.timeline-overlay-grid')?.getAttribute('role')).toBe('listbox');
     expect(container.querySelector('.timeline-overlay-grid')?.hasAttribute('aria-hidden')).toBe(false);
   });
+
+  it('explains block timing without provider jargon', () => {
+    const container = document.createElement('div');
+    container.innerHTML = renderToStaticMarkup(
+      <TimelineBar
+        data={[outlookBlock]}
+        statuses={['safe']}
+        selectedIndex={0}
+        onSelectIndex={vi.fn()}
+        startIndex={0}
+      />,
+    );
+
+    const note = container.querySelector('.timeline-outlook-note')?.textContent ?? '';
+    expect(note).toContain('Wind and air temperature show the forecast at the start of the block.');
+    expect(note).not.toMatch(/\bMET\b/);
+  });
 });

@@ -28,11 +28,8 @@ export interface ForecastLocation {
   windSectors: WindSector[];
 }
 
-// Which way a sector faces relative to launch: onshore pushes waves toward
-// shore, offshore blows away from it. A 'crossshore' member existed for a
-// case no fjord defines, no config produced and no screen could render -
-// it only made every exposure branch carry a third arm that never ran. Add
-// it back the day a location actually needs one.
+// Which way a sector faces relative to launch: onshore blows toward shore;
+// offshore blows away from it.
 export type SectorExposure = 'onshore' | 'offshore';
 
 export interface WindSector {
@@ -43,6 +40,6 @@ export interface WindSector {
   exposure: SectorExposure;
   min: number;
   max: number;
-  safeLimit: number;
-  cautionLimit: number;
+  takeCareAt: number;
+  dangerAt: number;
 }

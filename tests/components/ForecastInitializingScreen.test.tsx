@@ -81,7 +81,7 @@ afterAll(() => {
 });
 
 beforeEach(() => {
-  localStorage.setItem('ffkajak_lang', 'en');
+  localStorage.setItem('frank_lang', 'en');
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);

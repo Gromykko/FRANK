@@ -6,7 +6,7 @@ import {
   CUSTOM_SETTINGS_STORAGE_KEY,
 } from '../features/safety/presets';
 import type { SafetySettings } from '../features/safety/presets';
-import { floorCaution, MIN_CAUTION_GAP } from '../features/safety/presets';
+import { floorDanger, MIN_DANGER_GAP } from '../features/safety/presets';
 import { CURRENT_LOCATION } from '../config/locations';
 import type { ForecastLocation } from '../config/locations';
 import { readStorage } from '../utils/storage';
@@ -21,9 +21,9 @@ export type { SafetySettings } from '../features/safety/presets';
 // Metadata stays beside the settings rather than wrapping them. The shallow
 // shape preserves additive fields through read/write cycles, while the schema
 // marker lets us reject records from another location or an incompatible
-// future format. A future breaking format needs an explicit migration before
-// this number advances.
-export const SETTINGS_STORAGE_SCHEMA_VERSION = 1;
+// format. This pre-launch schema deliberately starts fresh when the shape
+// changes; advancing it requires an explicit decision about decode behavior.
+export const SETTINGS_STORAGE_SCHEMA_VERSION = 2;
 export const SETTINGS_STORAGE_METADATA_KEY = '__frankSettingsStorage';
 const SETTINGS_STORAGE_KIND = 'frank-safety-settings';
 
@@ -52,23 +52,21 @@ interface PendingSettingsMutation {
 }
 
 const SETTINGS_FIELD_KEYS: SettingsFieldKey[] = [
-  'maxWindSpeedSafe',
-  'maxWindSpeedCaution',
-  'minWaterTempSafe',
-  'minWaterTempCaution',
-  'maxWaveHeightSafe',
-  'maxWaveHeightCaution',
+  'windTakeCareAt',
+  'waterTempTakeCareBelow',
+  'waterTempDangerBelow',
+  'waveTakeCareAt',
   'enableCustomWindDirs',
   'tripMode',
   'daylightOnly',
   'minDuration',
   'tidePreference',
-  'gustMargin',
-  'waveCautionMargin',
+  'windDangerGap',
+  'waveDangerGap',
   'enableWindSpeed',
   'enableWindGust',
   'enableWaveHeight',
-  'enableWaveCaution',
+  'enableWaveTakeCare',
   'enableWaterTemp',
 ];
 
@@ -96,7 +94,11 @@ function settingsPatch(previous: SafetySettings, next: SafetySettings): Settings
     const after = next.sectorLimits?.[id];
     if (!after) {
       if (before) patch.sectorLimits[id] = null;
-    } else if (!before || before.safe !== after.safe || before.caution !== after.caution) {
+    } else if (
+      !before
+      || before.takeCareAt !== after.takeCareAt
+      || before.dangerAt !== after.dangerAt
+    ) {
       patch.sectorLimits[id] = { ...after };
     }
   }
@@ -147,7 +149,7 @@ function sameSettings(left: SafetySettings, right: SafetySettings): boolean {
   return leftIds.every((id) => {
     const a = left.sectorLimits[id];
     const b = right.sectorLimits[id];
-    return Boolean(b) && a.safe === b.safe && a.caution === b.caution;
+    return Boolean(b) && a.takeCareAt === b.takeCareAt && a.dangerAt === b.dangerAt;
   });
 }
 
@@ -170,14 +172,16 @@ export function serializeStoredSettings(
   });
 }
 
-// A stored profile can hold a sector caution cap below its safe cap (the
-// invariant is only enforced while editing); heal on load so the assessment
-// never runs with inverted bands.
-export function healSectorCautions(s: SafetySettings): SafetySettings {
+// A stored profile can hold a sector danger cap below its Take care cap. Heal
+// on load so the assessment never runs with an inverted band.
+export function healSectorDangerCaps(s: SafetySettings): SafetySettings {
   if (!s.sectorLimits) return s;
   const sectorLimits: SafetySettings['sectorLimits'] = {};
   for (const [id, cap] of Object.entries(s.sectorLimits)) {
-    sectorLimits[id] = { safe: cap.safe, caution: floorCaution(cap.safe, cap.caution) };
+    sectorLimits[id] = {
+      takeCareAt: cap.takeCareAt,
+      dangerAt: floorDanger(cap.takeCareAt, cap.dangerAt),
+    };
   }
   return { ...s, sectorLimits };
 }
@@ -193,25 +197,23 @@ export function healSectorCautions(s: SafetySettings): SafetySettings {
 //
 // `min`/`max` mirror the bounds the Stepper controls already enforce. Type
 // alone was not enough: any FINITE number used to pass, so a stored
-// `maxWindSpeedSafe: 999` (a stale profile, a hand-edit, a future writer that
+// `windTakeCareAt: 999` (a stale profile, a hand-edit, a future writer that
 // skips the Stepper) made `windSpeed >= 999` permanently false. The check reads
 // as enabled, `activeSafetyChecks` sees nothing switched off, and FRANK reports
 // "Good to go" in a gale. Clamping closes the door the NaN guard left open.
 const NUMERIC_LIMITS: { key: keyof SafetySettings; decimals: number; min: number; max: number }[] = [
-  { key: 'maxWindSpeedSafe', decimals: 1, min: 0.5, max: 25 },
-  { key: 'maxWindSpeedCaution', decimals: 1, min: 0, max: 35 },
+  { key: 'windTakeCareAt', decimals: 1, min: 0.5, max: 25 },
   // Floor 5, matching the Stepper, and NOT 0. Every other limit here clamps to
   // a value that still checks something; a water-temp floor of 0 makes
   // `temp < 0` unsatisfiable, so a stale or hand-edited profile switches off
   // cold shock - the deadliest hazard on this coast - while `enableWaterTemp`
   // stays true and no "limits are off" disclosure fires. Disabling the rule is
   // what the toggle is for.
-  { key: 'minWaterTempSafe', decimals: 1, min: 5, max: 25 },
-  { key: 'minWaterTempCaution', decimals: 1, min: 5, max: 25 },
-  { key: 'maxWaveHeightSafe', decimals: 2, min: 0.1, max: 3.0 },
-  { key: 'maxWaveHeightCaution', decimals: 2, min: 0.1, max: 5.0 },
-  { key: 'gustMargin', decimals: 1, min: 1, max: 10 },
-  { key: 'waveCautionMargin', decimals: 2, min: 0.05, max: 2.0 },
+  { key: 'waterTempTakeCareBelow', decimals: 1, min: 5, max: 25 },
+  { key: 'waterTempDangerBelow', decimals: 1, min: 5, max: 25 },
+  { key: 'waveTakeCareAt', decimals: 2, min: 0.1, max: 3.0 },
+  { key: 'windDangerGap', decimals: 1, min: 1, max: 10 },
+  { key: 'waveDangerGap', decimals: 2, min: 0.05, max: 2.0 },
   { key: 'minDuration', decimals: 0, min: 1, max: 12 },
 ];
 
@@ -221,7 +223,7 @@ const NUMERIC_LIMITS: { key: keyof SafetySettings; decimals: number; min: number
 // shows the "limits are off" escape hatch. Only the falsy direction is
 // dangerous, and it was the one direction nothing guarded.
 const BOOLEAN_FLAGS = [
-  'enableWindSpeed', 'enableWindGust', 'enableWaveHeight', 'enableWaveCaution',
+  'enableWindSpeed', 'enableWindGust', 'enableWaveHeight', 'enableWaveTakeCare',
   'enableWaterTemp', 'enableCustomWindDirs', 'daylightOnly',
 ] as const;
 
@@ -230,7 +232,7 @@ const TRIP_MODES: readonly SafetySettings['tripMode'][] = ['default', 'beginner'
 // Deliberately NOT suffixed with a location id. Every other settings record
 // is per city, because caps describe water; this one describes the paddler,
 // and the paddler is the thing that should follow them between fjords.
-const LAST_TRIP_MODE_KEY = 'ffkajak_last_trip_mode';
+const LAST_TRIP_MODE_KEY = 'frank_last_trip_mode';
 
 function isTripMode(value: string): value is SafetySettings['tripMode'] {
   return (TRIP_MODES as readonly string[]).includes(value);
@@ -271,52 +273,32 @@ function coerceNumericLimits(s: SafetySettings): SafetySettings {
     // Non-numbers are unusable, so drop the override and fall back to this
     // location's curated cap. Finite out-of-range numbers are recoverable:
     // clamp them to exactly what both steppers can represent. In particular,
-    // safe must stop one shared gap below 25 so danger never becomes 25.5 and
+    // Take care must stop one shared gap below 25 so danger never becomes 25.5 and
     // leaves the UI with min > max and permanently disabled controls.
-    if (!isFiniteNumber(cap?.safe) || !isFiniteNumber(cap?.caution)) continue;
-    const safe = roundToDecimals(clampNumber(cap.safe, 0, 25 - MIN_CAUTION_GAP, 0), 1);
-    const requestedCaution = roundToDecimals(clampNumber(cap.caution, 0, 25, 25), 1);
+    if (!isFiniteNumber(cap?.takeCareAt) || !isFiniteNumber(cap?.dangerAt)) continue;
+    const takeCareAt = roundToDecimals(
+      clampNumber(cap.takeCareAt, 0, 25 - MIN_DANGER_GAP, 0),
+      1,
+    );
+    const requestedDangerAt = roundToDecimals(clampNumber(cap.dangerAt, 0, 25, 25), 1);
     sectorLimits[id] = {
-      safe,
-      caution: roundToDecimals(floorCaution(safe, requestedCaution), 1),
+      takeCareAt,
+      dangerAt: roundToDecimals(floorDanger(takeCareAt, requestedDangerAt), 1),
     };
   }
   out.sectorLimits = sectorLimits;
   return out;
 }
 
-// Heal every inverted band. An inverted band flips the verdict — e.g. a wave
-// "danger" cap below the safe cap makes the caution branch unreachable and
-// reports danger for calm water. Wind uses the shared floorCaution gap; waves
-// only need caution ≥ safe (the 0.5 m/s wind gap is wrong at wave scale);
-// water temp is INVERTED — its danger threshold is the COLDER one, so
-// caution ≤ safe. Runs at EVERY entry point (stored-profile parse AND
-// saveSettings), so no editor — current or future — can ship an inverted band
-// into the assessment. Type coercion runs first, so the healing below can
-// assume it is comparing real numbers.
+// Heal the independent bands after type coercion. Mean-wind and wave danger
+// thresholds are derived from their Take care thresholds plus a validated gap,
+// so they cannot drift in storage. Water temperature runs in the other
+// direction: its danger threshold must be the colder value.
 export function healSettings(s: SafetySettings): SafetySettings {
-  const healed = healSectorCautions(coerceNumericLimits(s));
+  const healed = healSectorDangerCaps(coerceNumericLimits(s));
   return {
     ...healed,
-    // DERIVED, not merely floored. The settings panel, the ZoneBar, and the
-    // manual all state one rule — "danger = safe limit + your margin", with no
-    // separate danger control for average wind or waves. Storing the danger cap
-    // independently and only flooring it at safe + 0.5 let the two drift: a
-    // profile carrying safe 5.5 / danger 12 / margin 2.5 was TOLD 8.0 was the
-    // red line while the engine still waited for 12. Deriving it here gives the
-    // threshold one source of truth. Every built-in preset satisfies this
-    // exactly (6+2=8, 4+1=5, 8+2=10; 0.3+0.7=1, 0.2+0.3=0.5,
-    // 0.5+1.5=2), so selecting or reloading a built-in mode cannot make the
-    // displayed threshold disagree with the engine.
-    maxWindSpeedCaution: roundToDecimals(
-      floorCaution(healed.maxWindSpeedSafe, healed.maxWindSpeedSafe + healed.gustMargin),
-      1,
-    ),
-    maxWaveHeightCaution: roundToDecimals(
-      Math.max(healed.maxWaveHeightSafe, healed.maxWaveHeightSafe + healed.waveCautionMargin),
-      2,
-    ),
-    minWaterTempCaution: Math.min(healed.minWaterTempSafe, healed.minWaterTempCaution),
+    waterTempDangerBelow: Math.min(healed.waterTempTakeCareBelow, healed.waterTempDangerBelow),
   };
 }
 
@@ -395,7 +377,7 @@ export function useSettings() {
   const activeLoadFailedRef = useRef<string | null>(null);
   // The active choice and the remembered Custom profile are two independent
   // records. A corrupt custom record must not be replaced merely because the
-  // user switches from Normal to Pro; it becomes replaceable only when a
+  // user switches from Intermediate to Advanced; it becomes replaceable only when a
   // valid active Custom profile can recover it during an intentional mode
   // change, or the user deliberately edits that profile.
   const customLoadFailedRef = useRef<string | null>(null);

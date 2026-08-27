@@ -60,7 +60,7 @@ export function formatReading(value: number | undefined, decimals: number): stri
 // pressed flat against its 44px cell. "+26" is three.
 //
 // Metres stay the unit everywhere a value is COMPARED (the planner's ±0.1 m
-// window, the wind-against-water chop rule), so this is a display-boundary
+// window), so this is a display-boundary
 // conversion only. Rounding happens after scaling, so ±0.004 m reads as "+0"
 // rather than being nudged to a whole centimetre it never was.
 export function formatLevelCm(metres: number | undefined): string {

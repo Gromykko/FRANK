@@ -15,7 +15,7 @@ const rawSettings: SafetySettings = {
   enableWindSpeed: false,
   enableWindGust: false,
   enableWaveHeight: false,
-  enableWaveCaution: false,
+  enableWaveTakeCare: false,
   enableWaterTemp: false,
   enableCustomWindDirs: false,
   daylightOnly: false,

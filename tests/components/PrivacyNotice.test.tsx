@@ -3,7 +3,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import PrivacyNotice from '../../src/components/PrivacyNotice';
 import { LanguageProvider } from '../../src/i18n';
-import { clearFrankLocalDataAndReload } from '../../src/utils/storage';
+import {
+  clearFrankLocalDataAndReload,
+  clearFrankSettingsAndTheme,
+} from '../../src/utils/storage';
 
 let host: HTMLDivElement;
 let root: Root;
@@ -18,7 +21,7 @@ afterAll(() => {
 
 beforeEach(() => {
   localStorage.clear();
-  localStorage.setItem('ffkajak_lang', 'en');
+  localStorage.setItem('frank_lang', 'en');
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
@@ -78,24 +81,52 @@ describe('PrivacyNotice', () => {
     localStorage.setItem('frank_location', 'vejle');
     localStorage.setItem('frank_theme_mode', 'dark');
     localStorage.setItem('frank_weather_data_v2_horsens', '{"forecast":true}');
-    localStorage.setItem('ffkajak_settings_horsens', '{"limits":true}');
+    localStorage.setItem('frank_settings_horsens', '{"limits":true}');
+    localStorage.setItem('ffkajak_settings_horsens', '{"old":true}');
     localStorage.setItem('another_project', 'keep-me');
     const reload = vi.fn(() => {
       expect(localStorage.getItem('frank_location')).toBeNull();
-      expect(localStorage.getItem('ffkajak_lang')).toBeNull();
+      expect(localStorage.getItem('frank_lang')).toBeNull();
     });
 
     clearFrankLocalDataAndReload(localStorage, reload);
 
     expect(localStorage.getItem('frank_theme_mode')).toBeNull();
     expect(localStorage.getItem('frank_weather_data_v2_horsens')).toBeNull();
+    expect(localStorage.getItem('frank_settings_horsens')).toBeNull();
     expect(localStorage.getItem('ffkajak_settings_horsens')).toBeNull();
     expect(localStorage.getItem('another_project')).toBe('keep-me');
     expect(reload).toHaveBeenCalledOnce();
   });
 
+  it('resets crash-prone settings without deleting language, location, or forecasts', () => {
+    localStorage.setItem('frank_lang', 'en');
+    localStorage.setItem('frank_location', 'vejle');
+    localStorage.setItem('frank_weather_data_v2_vejle', '{"forecast":true}');
+    localStorage.setItem('frank_settings_vejle', '{"limits":true}');
+    localStorage.setItem('frank_settings_vejle_corrupt', '{broken');
+    localStorage.setItem('frank_custom_saved_vejle', '{"limits":true}');
+    localStorage.setItem('frank_custom_saved_vejle_corrupt', '{broken');
+    localStorage.setItem('frank_last_trip_mode', 'custom');
+    localStorage.setItem('frank_theme_mode', 'dark');
+    localStorage.setItem('another_project', 'keep-me');
+
+    clearFrankSettingsAndTheme(localStorage);
+
+    expect(localStorage.getItem('frank_settings_vejle')).toBeNull();
+    expect(localStorage.getItem('frank_settings_vejle_corrupt')).toBeNull();
+    expect(localStorage.getItem('frank_custom_saved_vejle')).toBeNull();
+    expect(localStorage.getItem('frank_custom_saved_vejle_corrupt')).toBeNull();
+    expect(localStorage.getItem('frank_last_trip_mode')).toBeNull();
+    expect(localStorage.getItem('frank_theme_mode')).toBeNull();
+    expect(localStorage.getItem('frank_lang')).toBe('en');
+    expect(localStorage.getItem('frank_location')).toBe('vejle');
+    expect(localStorage.getItem('frank_weather_data_v2_vejle')).toBe('{"forecast":true}');
+    expect(localStorage.getItem('another_project')).toBe('keep-me');
+  });
+
   it('has a Danish label and interim disclosure', async () => {
-    localStorage.removeItem('ffkajak_lang');
+    localStorage.removeItem('frank_lang');
 
     await act(async () => {
       root.render(<LanguageProvider><PrivacyNotice /></LanguageProvider>);

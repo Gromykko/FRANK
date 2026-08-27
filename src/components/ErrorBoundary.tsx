@@ -1,5 +1,6 @@
 import { Component } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
+import { clearFrankSettingsAndTheme } from '../utils/storage';
 
 // A render throw anywhere below this boundary must never leave a paddler
 // staring at a blank page, unable to tell whether the forecast was good or
@@ -26,7 +27,7 @@ interface State {
 // itself be the thing that crashed.
 function readLanguage(): 'da' | 'en' {
   try {
-    return localStorage.getItem('ffkajak_lang') === 'en' ? 'en' : 'da';
+    return localStorage.getItem('frank_lang') === 'en' ? 'en' : 'da';
   } catch {
     return 'da';
   }
@@ -66,19 +67,11 @@ export default class ErrorBoundary extends Component<Props, State> {
       return;
     }
     try {
-      for (const key of Object.keys(localStorage)) {
-        // Scoped to what the button actually promises ("erase your limits").
-        // The broader `frank_` prefix also owned `frank_location` and
-        // `frank_weather_data_v2`, so a Vejle paddler who tapped reset after a
-        // crash silently landed back on Horsens — a different fjord with
-        // different sector caps — AND lost the offline forecast, at the
-        // shoreline, on a bad connection. Theme is cosmetic and safe to clear.
-        // The language choice is spared too: it shares the ffkajak_ prefix
-        // but is not a limit, and wiping it flipped English users to Danish.
-        if ((key.startsWith('ffkajak_') && key !== 'ffkajak_lang') || key === 'frank_theme_mode') {
-          localStorage.removeItem(key);
-        }
-      }
+      // Scoped to what the button promises: erase limits that may have become
+      // incompatible. Preserve the selected fjord, language, and offline
+      // forecast so recovery does not strand someone on a different location
+      // or discard the last forecast on a poor connection. Theme is cosmetic.
+      clearFrankSettingsAndTheme();
     } catch {
       // Storage blocked — the reload below is still worth attempting.
     }

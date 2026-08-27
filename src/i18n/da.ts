@@ -9,8 +9,6 @@ export const da: Record<string, string> = {
   'safe': 'sikker',
   'caution': 'pas på',
   'danger': 'fare',
-  'rising': 'stigende',
-  'falling': 'faldende',
   'and': 'og',
 
   // Compass points (8-point rose + rose labels; N and S are identical)
@@ -59,8 +57,8 @@ export const da: Record<string, string> = {
   'Columns like 02–08 show a 6-hour block.': 'Kolonner som 02–08 viser en 6-timers blok.',
   'Waves and water temperature: the highest waves and coldest water.':
     'Bølger og vandtemperatur: højeste bølger og koldeste vand.',
-  'Wind and air temperature: MET’s reading for the block.':
-    'Vind og lufttemperatur: METs måling for blokken.',
+  'Wind and air temperature show the forecast at the start of the block.':
+    'Vind og lufttemperatur viser prognosen ved blokkens start.',
   'Water level: high water': 'Niveau: højvande',
   'low water': 'lavvande',
   'both': 'begge',
@@ -76,7 +74,6 @@ export const da: Record<string, string> = {
   'Warnings by': 'Varsler fra',
   'Time delays between this website and the www.meteoalarm.org website are possible. For the most up-to-date awareness information as published by the participating National Meteorological and Hydrological Services, please refer to www.meteoalarm.org.':
     'Der kan forekomme tidsforsinkelser mellem denne hjemmeside og hjemmesiden www.meteoalarm.org. For de senest opdaterede varslingsoplysninger, som de deltagende nationale meteorologiske og hydrologiske tjenester har offentliggjort, henvises der til www.meteoalarm.org.',
-  'Forecast built {0}. Worker checked {1}.': 'Prognose bygget {0}. Server tjekket {1}.',
   'Data and version': 'Data og version',
   'Technical data note': 'Teknisk datanote',
   'FRANK has no user accounts, sets no cookies, does not track your GPS, and includes no advertising or analytics trackers. Your chosen location, your limits, and offline forecasts are stored strictly in this browser.':
@@ -106,7 +103,6 @@ export const da: Record<string, string> = {
   'Forecasts are being prepared': 'Vejrudsigterne gøres klar',
   'The forecast for {0} is being prepared': 'Prognosen for {0} gøres klar',
   'Opening the forecast for {0}': 'Åbner prognosen for {0}',
-  'Checking forecast availability…': 'Tjekker tilgængelige prognoser…',
   'Preparation in progress': 'Klargøring i gang',
   'There is no complete forecast to show yet. Safety verdicts and launch windows stay hidden until forecast data is ready.':
     'Der er endnu ingen komplet prognose at vise. Sikkerhedsvurderinger og rovinduer forbliver skjult, indtil prognosedata er klar.',
@@ -122,10 +118,6 @@ export const da: Record<string, string> = {
     'Du er offline. FRANK fortsætter, så snart enheden er online igen.',
   'Check manually': 'Tjek manuelt',
   'Check manually ({0}s)': 'Tjek manuelt ({0}s)',
-  'Check now': 'Tjek nu',
-  'Check now ({0}s)': 'Tjek nu ({0}s)',
-  'Check again': 'Tjek igen',
-  'Check again ({0}s)': 'Tjek igen ({0}s)',
   'Forecasts ready now': 'Prognoser klar nu',
   'ready': 'klar',
   'preparing': 'klargøres',
@@ -133,7 +125,6 @@ export const da: Record<string, string> = {
     'FRANK kunne ikke gemme stedet i denne browser. Prøv igen, eller kontrollér browserens indstillinger for webstedsdata.',
 
   // ── StatusBar ──────────────────────────────────────────────────────────────
-  '{0}. {1}. FRANK says: {2}.': '{0}. {1}. FRANK siger: {2}.',
   'Refresh forecast': 'Opdater prognosen',
   'Switch to English': 'Skift til engelsk',
   'Switch to Danish': 'Skift til dansk',
@@ -185,7 +176,6 @@ export const da: Record<string, string> = {
   'Couldn’t refresh · {0}': 'Kunne ikke opdatere · {0}',
   'Forecast from {0}.': 'Prognose fra {0}.',
   'Forecast from {0}': 'Prognose fra {0}',
-  ' Last issue: {0}': ' Seneste fejl: {0}',
   'Advisory only — FRANK does not replace official warnings, club rules, or your own look at the water. You are responsible for the decision to launch.':
     'Kun vejledende — FRANK erstatter ikke officielle varsler, klubbens regler eller dit eget blik på vandet. Du har selv ansvaret for beslutningen om at tage ud.',
   'The forecast came back with no hours in it.': 'Prognosen kom tilbage uden timer i.',
@@ -200,7 +190,6 @@ export const da: Record<string, string> = {
   'wave height': 'bølgehøjde',
   'water temperature': 'vandtemperatur',
   'Unknown': 'Ukendt',
-  'sea state unknown': 'ukendt søtilstand',
   'danger from {0}': 'fare fra {0}',
   'Forecast days': 'Prognosedage',
 
@@ -209,20 +198,18 @@ export const da: Record<string, string> = {
     'Vindstyrke: {0} m/s ({1}). Over din faregrænse på {2} m/s.',
   'Wind speed: {0} m/s ({1}). Above your Take care threshold of {2} m/s.':
     'Vindstyrke: {0} m/s ({1}). Over din Pas på-grænse på {2} m/s.',
-  'Wind gusts: {0} m/s. Above your wind danger threshold of {1} m/s.':
-    'Vindstød: {0} m/s. Over din faregrænse for vind på {1} m/s.',
-  'Wind gusts: {0} m/s. Above your Take care threshold of {1} m/s.':
-    'Vindstød: {0} m/s. Over din Pas på-grænse på {1} m/s.',
+  'Wind gusts: {0} m/s. Above your gust danger threshold of {1} m/s.':
+    'Vindstød: {0} m/s. Over din faregrænse for vindstød på {1} m/s.',
+  'Wind gusts: {0} m/s. Above your gust Take care threshold of {1} m/s.':
+    'Vindstød: {0} m/s. Over din Pas på-grænse for vindstød på {1} m/s.',
   'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is over your {4} m/s danger threshold for this direction.':
     'Vindstyrke: {0} m/s ({1}). {2} vind ({3}°) er over din faregrænse på {4} m/s for denne retning.',
   'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is over your {4} m/s Take care threshold for this direction.':
     'Vindstyrke: {0} m/s ({1}). {2} vind ({3}°) er over din Pas på-grænse på {4} m/s for denne retning.',
-  'Wind-against-water-level conflict: wind opposes {0} water level. Expect steeper chop.':
-    'Vind mod vandstand: vinden går imod {0} vandstand. Forvent mere krap sø.',
   "Water temperature: {0}°C — colder than your danger limit of {1}°C. You'd really want a drysuit or heavy thermals for this.":
     'Vandtemperatur: {0}°C — koldere end din faregrænse på {1}°C. Her vil du virkelig ønske dig en tørdragt eller tykt termotøj.',
-  'Water temperature: {0}°C — under your safe limit of {1}°C. Worth layering up.':
-    'Vandtemperatur: {0}°C — under din sikre grænse på {1}°C. Tag et ekstra lag på.',
+  'Water temperature: {0}°C — below your Take care threshold of {1}°C. Thermal clothing may be needed.':
+    'Vandtemperatur: {0}°C — under din Pas på-grænse på {1}°C. Du kan få brug for varmeisolerende rotøj.',
   'Wave height: {0} m ({1}). Exceeds your danger limit of {2} m.':
     'Bølgehøjde: {0} m ({1}). Over din faregrænse på {2} m.',
   'Wave height: {0} m ({1}). Above your Take care threshold of {2} m.':
@@ -233,10 +220,10 @@ export const da: Record<string, string> = {
     'Vindstyrke: {0} m/s ({1}). På din faregrænse på {2} m/s.',
   'Wind speed: {0} m/s ({1}). At your Take care threshold of {2} m/s.':
     'Vindstyrke: {0} m/s ({1}). På din Pas på-grænse på {2} m/s.',
-  'Wind gusts: {0} m/s. At your wind danger threshold of {1} m/s.':
-    'Vindstød: {0} m/s. På din faregrænse for vind på {1} m/s.',
-  'Wind gusts: {0} m/s. At your Take care threshold of {1} m/s.':
-    'Vindstød: {0} m/s. På din Pas på-grænse på {1} m/s.',
+  'Wind gusts: {0} m/s. At your gust danger threshold of {1} m/s.':
+    'Vindstød: {0} m/s. På din faregrænse for vindstød på {1} m/s.',
+  'Wind gusts: {0} m/s. At your gust Take care threshold of {1} m/s.':
+    'Vindstød: {0} m/s. På din Pas på-grænse for vindstød på {1} m/s.',
   'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is at your {4} m/s danger threshold for this direction.':
     'Vindstyrke: {0} m/s ({1}). {2} vind ({3}°) er på din faregrænse på {4} m/s for denne retning.',
   'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is at your {4} m/s Take care threshold for this direction.':
@@ -415,8 +402,6 @@ export const da: Record<string, string> = {
   'More uncertain forecast': 'Mere usikker prognose',
   'Night': 'Nat',
   'Now': 'Nu',
-  'No launch windows in this forecast — the timeline above shows the marginal hours.':
-    'Ingen rovinduer i denne prognose — tidslinjen ovenfor viser de marginale timer.',
   'Launch windows by day, {0} days': 'Rovinduer pr. dag, {0} dage',
   'Selected window': 'Valgt rovindue',
 
@@ -433,11 +418,10 @@ export const da: Record<string, string> = {
   'water {0}°': 'vand {0}°',
   'wind Take care {0}': 'vind Pas på {0}',
   'wind danger {0}': 'vind fare {0}',
-  'wind/gust danger {0}': 'vind/vindstød fare {0}',
   'gust danger {0}': 'vindstød fare {0}',
   'waves Take care {0}': 'bølger Pas på {0}',
   'danger {0}': 'fare {0}',
-  'water min {0}°': 'vand min {0}°',
+  'Take care below {0}°': 'Pas på under {0}°',
   'danger below {0}°': 'fare under {0}°',
 
   // ── WarningStripe (+ planner warning badge) ───────────────────────────────
@@ -476,26 +460,26 @@ export const da: Record<string, string> = {
   'Trip Profile': 'Turprofil',
   'About the modes': 'Om profilerne',
   'How cautious should FRANK be for you?': 'Hvor forsigtig skal FRANK være for dig?',
-  'Chill': 'Rolig',
-  'Normal': 'Normal',
-  'Pro': 'Pro',
+  'Beginner': 'Begynder',
+  'Intermediate': 'Øvet',
+  'Advanced': 'Avanceret',
   'Custom': 'Egen',
   'The built-in profiles use these general wind and significant-wave bands:':
     'De indbyggede profiler bruger disse generelle grænser for vind og signifikant bølgehøjde:',
   'wind Take care from {0} m/s and Rough from {1} m/s; waves Take care from {2} m and Rough from {3} m.':
     'vind Pas på fra {0} m/s og Barskt fra {1} m/s; bølger Pas på fra {2} m og Barskt fra {3} m.',
-  'These are FRANK starting points, not DKF safety limits or proof of skill. Local wind sectors and every other enabled rule may make a verdict stricter.':
-    'Det er FRANKs udgangspunkter, ikke DKF-sikkerhedsgrænser eller bevis på færdigheder. Lokale vindsektorer og alle andre aktiverede regler kan gøre vurderingen strengere.',
-  'Basis: Normal and Pro wind use the numeric conditions in':
-    'Grundlag: Vindgrænserne for Normal og Pro bruger de talfastsatte forhold i',
+  'These are FRANK starting points, not DKF safety limits or proof of skill. Optional local wind sectors and every other enabled rule may make a verdict stricter.':
+    'Det er FRANKs udgangspunkter, ikke DKF-sikkerhedsgrænser eller bevis på færdigheder. Valgfrie lokale vindsektorer og alle andre aktiverede regler kan gøre vurderingen strengere.',
+  'Basis: Intermediate and Advanced wind use the numeric conditions in':
+    'Grundlag: Vindgrænserne for Øvet og Avanceret bruger de talfastsatte forhold i',
   'See the': 'Se',
   'IPP 3 Touring norm': 'IPP 3 Touring-normen',
   'IPP 4 Touring norm': 'IPP 4 Touring-normen',
-  "Touring IPP 2 has no numeric wind limit. Chill's 5 m/s Rough boundary and the red wave boundaries use":
-    'Touring IPP 2 har ingen talfastsat vindgrænse. Rolig-profilens Barskt-grænse på 5 m/s og de røde bølgegrænser bruger',
+  "Touring IPP 2 has no numeric wind limit. Beginner's 5 m/s Rough boundary and the red wave boundaries use":
+    'Touring IPP 2 har ingen talfastsat vindgrænse. Begynder-profilens Barskt-grænse på 5 m/s og de røde bølgegrænser bruger',
   "DKF's 7 May 2026 sea-kayak norm": 'DKFs havkajaknorm af 7. maj 2026',
-  "Chill's 4 m/s and the lower wave Take care boundaries are FRANK's conservative choices.":
-    'Rolig-profilens 4 m/s og de nedre Pas på-grænser for bølger er FRANKs konservative valg.',
+  "Beginner's 4 m/s and the lower wave Take care boundaries are FRANK's conservative choices.":
+    'Begynder-profilens 4 m/s og de nedre Pas på-grænser for bølger er FRANKs konservative valg.',
   'is your own set: change anything in Your Limits below and it lands there.':
     'er dit eget sæt: ændr hvad som helst i Dine grænser nedenfor, og det lander der.',
   'Picking a mode updates the exact numbers in Your Limits — the manual explains every rule.':
@@ -506,8 +490,8 @@ export const da: Record<string, string> = {
   'Your Limits': 'Dine grænser',
   'How FRANK Decides': 'Sådan vurderer FRANK',
   'Your personal limits': 'Dine personlige grænser',
-  'Changes apply immediately and switch you to Custom mode. Pick a preset in the Trip Profile at the top (Chill, Normal, Pro) to go back.':
-    'Ændringer træder i kraft med det samme og skifter dig til Egen. Vælg en forudindstilling i turprofilen øverst (Rolig, Normal, Pro) for at gå tilbage.',
+  'Changes apply immediately and switch you to Custom mode. Pick a preset in the Trip Profile at the top (Beginner, Intermediate, Advanced) to go back.':
+    'Ændringer træder i kraft med det samme og skifter dig til Egen. Vælg en forudindstilling i turprofilen øverst (Begynder, Øvet, Avanceret) for at gå tilbage.',
   'Decrease {0}': 'Sænk {0}',
   'Increase {0}': 'Hæv {0}',
   'Wind — Take care from': 'Vind — Pas på fra',
@@ -515,15 +499,16 @@ export const da: Record<string, string> = {
   'm/s wind': 'm/s vind',
   'wind Take care threshold; Danger stays {0} m/s above': 'Pas på-grænse for vind; Fare forbliver {0} m/s højere',
   '0 calm': '0 stille',
-  'caution to {0}': 'pas på til {0}',
   '25 storm': '25 storm',
   'Gap to Danger': 'Afstand til Fare',
-  'Take care from {0} m/s; +{1} m/s sets Danger from {2} m/s. Gusts get their own higher band ({3} and {4} m/s), because a mean-wind limit already assumes gusty wind.':
-    'Pas på fra {0} m/s; +{1} m/s sætter Barskt fra {2} m/s. Vindstød har deres eget højere bånd ({3} og {4} m/s), fordi en middelvindgrænse allerede regner med, at det blæser i stød.',
+  'Take care from {0} m/s; +{1} m/s sets Danger from {2} m/s.':
+    'Pas på fra {0} m/s; +{1} m/s sætter Fare fra {2} m/s.',
   'Take care from {0} m; +{1} m sets Danger from {2} m. The switch adds the amber band between them.':
     'Pas på fra {0} m; +{1} m sætter Fare fra {2} m. Kontakten tilføjer det gule felt mellem grænserne.',
   'Include gusts in verdict': 'Medtag vindstød i vurderingen',
-  'gusts up to {0} m/s rate Caution': 'vindstød op til {0} m/s vurderes Pas på',
+  'Gusts in verdict': 'Vindstød i vurderingen',
+  "Checks forecast gusts against FRANK's separate 1.6x band: Take care from {0} m/s and Danger from {1} m/s.":
+    'Varslede vindstød vurderes efter FRANKs særskilte grænser på 1,6 gange middelvinden: Pas på fra {0} m/s og Fare fra {1} m/s.',
   'wind Take care-to-Danger gap': 'afstand fra Pas på til Fare for vind',
   'Waves — Take care from': 'Bølger — Pas på fra',
   'Wave-height limit enabled': 'Bølgehøjdegrænse slået til',
@@ -531,22 +516,19 @@ export const da: Record<string, string> = {
   'wave Take care threshold; Danger stays {0} m above': 'Pas på-grænse for bølger; Fare forbliver {0} m højere',
   '0 flat': '0 fladt',
   '3 rough': '3 grov sø',
-  'Show Take care wave band': 'Vis Pas på-bånd for bølger',
-  'waves up to {0} m rate Caution': 'bølger op til {0} m vurderes Pas på',
+  'Use Take care wave band in verdict': 'Brug Pas på-båndet for bølger i vurderingen',
   'wave Take care-to-Danger gap': 'afstand fra Pas på til Fare for bølger',
-  'Min Water Temp': 'Min vandtemperatur',
+  'Water temperature': 'Vandtemperatur',
+  'Take care below {0}°C · Rough below {1}°C': 'Pas på under {0}°C · Barskt under {1}°C',
   'Water temperature limit enabled': 'Grænse for vandtemperatur slået til',
   '°C water': '°C vand',
-  'min water temperature': 'min vandtemperatur',
+  'water temperature Rough threshold': 'Barskt-grænse for vandtemperatur',
   '0 ice': '0 is',
-  'safe from {0}°': 'sikker fra {0}°',
+  'Good to go from {0}°': 'Klar til at ro fra {0}°',
   '25 summer': '25 sommer',
   'Cold-water margin': 'Koldtvandsmargin',
   '{0}–{1} °C asks for thermal wear': '{0}–{1} °C kræver termotøj',
-  'water temperature caution band': 'pas på-bånd for vandtemperatur',
-  'Safe / Comfortable': 'Sikkert / Behageligt',
-  'Caution / Cold Water': 'Pas på / Koldt vand',
-  'Danger / Cold Shock': 'Fare / Kuldechok',
+  'water temperature Take care band': 'Pas på-bånd for vandtemperatur',
   'Advanced — duration, water level, daylight & wind sectors': 'Avanceret — varighed, vandstand, dagslys & vindsektorer',
   'Min Duration': 'Min varighed',
   'Shortest usable launch window': 'Korteste brugbare rovindue',
@@ -560,17 +542,18 @@ export const da: Record<string, string> = {
   'Daylight Only': 'Kun dagslys',
   'Flag night hours as Take care': 'Markér nattetimer som Pas på',
   'Local wind sectors': 'Lokale vindsektorer',
-  'Direction-specific caps for {0}, plus wind-against-water-level chop': 'Retningsbestemte lofter for {0}, plus krap sø ved vind mod vandstand',
-  'Apply local wind-sector caps': 'Anvend lokale vindsektorlofter',
-  'Local direction changes wave exposure and drift risk, so these caps can be stricter than the general profile.':
-    'Den lokale retning ændrer bølgepåvirkning og afdriftsrisiko, så disse lofter kan være strengere end den generelle profil.',
+  'Optional stricter caps for {0}, based on broad area estimates':
+    'Valgfrie, strammere grænser for {0}, baseret på grove skøn for området',
+  'Apply optional FRANK wind-sector caps': 'Anvend FRANKs valgfrie vindsektorgrænser',
+  'These are optional FRANK estimates for a broad area, not current limits published by a kayak club. When enabled, a matching sector can only make the general wind verdict stricter.':
+    'Det er FRANKs valgfrie skøn for et større område, ikke aktuelle grænser offentliggjort af en kajakklub. Når de er slået til, kan en sektor, der passer til vindretningen, kun gøre den generelle vindvurdering strengere.',
   'from {0}': 'fra {0}',
   'Take care from': 'Pas på fra',
   '{0} Take care threshold': '{0} Pas på-grænse',
   'Danger from': 'Fare fra',
   '{0} danger threshold': '{0} faregrænse',
-  'Directions are fixed to the local geography. Only the wind speeds are yours.':
-    'Retningerne er fastlagt efter den lokale geografi. Kun vindstyrkerne er dine.',
+  'The bearings are fixed. You can adjust only the wind speeds.':
+    'Retningerne ligger fast. Du kan kun justere vindstyrkerne.',
   // Curated wind-sector labels & descriptions (config/locations.json)
   'Easterly': 'Østlig',
   'Westerly': 'Vestlig',
@@ -594,17 +577,17 @@ export const da: Record<string, string> = {
   // ── SafetyManualModal ─────────────────────────────────────────────────────
   'HOW FRANK DECIDES': 'SÅDAN VURDERER FRANK',
   'Profile basis': 'Profilernes grundlag',
-  'The built-in modes are FRANK starting points informed by DKF skill conditions. They are not DKF-issued safety limits, proof of competence, or a guarantee that a trip is safe.':
-    'De indbyggede profiler er FRANKs udgangspunkter med afsæt i DKFs færdighedsforhold. De er ikke sikkerhedsgrænser udstedt af DKF, bevis på kompetence eller en garanti for, at en tur er sikker.',
+  "FRANK's built-in modes use DKF skill conditions as starting points. DKF did not publish them as safety limits. Choosing a mode does not prove competence or make a trip safe.":
+    'FRANKs indbyggede profiler tager udgangspunkt i DKFs færdighedsforhold. DKF har ikke offentliggjort dem som sikkerhedsgrænser. Valget af en profil beviser ikke dine færdigheder og gør ikke i sig selv en tur sikker.',
   'general wind Take care from {0} m/s and Rough from {1} m/s; significant waves Take care from {2} m and Rough from {3} m.':
     'generel vind Pas på fra {0} m/s og Barskt fra {1} m/s; signifikante bølger Pas på fra {2} m og Barskt fra {3} m.',
-  'Normal and Pro wind anchors use': 'Vindgrænserne for Normal og Pro bruger',
+  'Intermediate and Advanced wind anchors use': 'Vindgrænserne for Øvet og Avanceret bruger',
   'including the': 'herunder',
-  "Touring IPP 2 gives no numeric wind limit. Chill's 5 m/s Rough boundary and the numeric red wave ceilings use":
-    'Touring IPP 2 angiver ingen talfastsat vindgrænse. Rolig-profilens Barskt-grænse på 5 m/s og de talfastsatte røde bølgegrænser bruger',
+  "Touring IPP 2 gives no numeric wind limit. Beginner's 5 m/s Rough boundary and the numeric red wave ceilings use":
+    'Touring IPP 2 angiver ingen talfastsat vindgrænse. Begynder-profilens Barskt-grænse på 5 m/s og de talfastsatte røde bølgegrænser bruger',
   'Local wind sectors, gusts, temperature, weather, daylight, route, equipment, and club rules can all demand a stricter decision.':
     'Lokale vindsektorer, vindstød, temperatur, vejr, dagslys, rute, udstyr og klubregler kan alle kræve en strengere beslutning.',
-  '1. Wave Height': '1. Bølgehøjde',
+  '1. Wave height': '1. Bølgehøjde',
   'Significant wave height is checked against your Take care threshold and danger margin:':
     'Signifikant bølgehøjde tjekkes mod din Pas på-grænse og faremargen:',
   'Good to go:': 'Klar til at ro:',
@@ -623,47 +606,38 @@ export const da: Record<string, string> = {
     'kun som kontekst; FRANK vurderer den talfastsatte bølgehøjde.',
   'defines significant wave height as the mean height of the highest third of waves and notes that individual waves can be higher. FRANK separately cautions that the number does not describe local surf or short steep chop by itself.':
     'definerer signifikant bølgehøjde som middelhøjden af den højeste tredjedel af bølgerne og bemærker, at enkeltbølger kan være højere. FRANK advarer særskilt om, at tallet ikke i sig selv beskriver lokal brænding eller kort, krap sø.',
-  '2. Wind Speed & Gusts': '2. Vindstyrke & vindstød',
-  'MET supplies a 10-minute mean wind at 10 m and a peak gust based on a much shorter three-second average. Gusts are judged against their own higher band, 1.6x the mean-wind thresholds: a limit written for mean wind already assumes the wind gusts, so measuring a gust against it would count the same gustiness twice. In these fjords the gust is typically 1.66x the mean.':
-    'MET leverer en 10-minutters middelvind i 10 meters højde og et vindstød baseret på et langt kortere tre-sekunders gennemsnit. Vindstød vurderes mod deres eget højere bånd, 1,6 gange middelvindgrænserne: en grænse skrevet for middelvind regner allerede med, at det blæser i stød, så at måle et vindstød mod den ville tælle den samme stødighed to gange. I disse fjorde er vindstødet typisk 1,66 gange middelvinden.',
+  '2. Wind speed and gusts': '2. Vindstyrke og vindstød',
+  "MET forecasts two different wind readings: a 10-minute mean wind at 10 m and a peak gust averaged over three seconds. When gust checks are on, FRANK multiplies the mean-wind Take care and danger thresholds by 1.6 and checks gusts against that separate band. The 1.6 factor is FRANK's forecast heuristic, not a threshold published by DKF, IPP, WMO, or a kayak club.":
+    'MET varsler to forskellige vindtal: middelvinden over 10 minutter i 10 meters højde og det kraftigste vindstød som et gennemsnit over tre sekunder. Når vindstød er med i vurderingen, ganger FRANK middelvindens Pas på- og faregrænser med 1,6 og vurderer vindstødene mod dette særskilte bånd. Faktoren 1,6 er FRANKs egen tommelfingerregel for prognosen, ikke en grænse fra DKF, IPP, WMO eller en kajakklub.',
+  'A one-time sample of 230 MET forecast hours across these four fjord locations had a median gust-to-mean ratio of 1.66. It was forecast data, not observed wind or a safety study, so it does not establish a universal coastal gust factor.':
+    'I en enkelt stikprøve på 230 prognosetimer for de fire områder var medianen for forholdet mellem vindstød og middelvind 1,66. Det var prognosedata, ikke målte vindforhold eller et sikkerhedsstudie, og tallet fastslår derfor ikke en generel vindstødsfaktor for kyster.',
   'Mean wind is below the Take care threshold, and gusts are below their own.':
     'Middelvinden er under Pas på-grænsen, og vindstødene er under deres egen.',
   'Mean wind, or gusts against the gust band, reach Take care but not danger.':
     'Middelvinden, eller vindstødene mod stødbåndet, når Pas på, men ikke Barskt.',
   'Mean wind, or gusts against the gust band, reach the danger threshold.':
     'Middelvinden, eller vindstødene mod stødbåndet, når Barskt-grænsen.',
-  "Normal's general wind band starts Take care at exactly 6.0 m/s and Rough at exactly 8.0 m/s. Enabled local sectors or other rules can make the result stricter. A threshold belongs to the stricter band.":
-    'Normal-profilens generelle vindbånd starter Pas på ved præcis 6,0 m/s og Barskt ved præcis 8,0 m/s. Aktiverede lokale sektorer eller andre regler kan gøre resultatet strengere. En grænse hører til det strengere bånd.',
+  "Intermediate's general wind band starts Take care at exactly 6.0 m/s and Rough at exactly 8.0 m/s. Enabled local sectors or other rules can make the result stricter. A threshold belongs to the stricter band.":
+    'Øvet-profilens generelle vindbånd starter Pas på ved præcis 6,0 m/s og Barskt ved præcis 8,0 m/s. Aktiverede lokale sektorer eller andre regler kan gøre resultatet strengere. En grænse hører til det strengere bånd.',
   'Mean-wind names follow': 'Navnene på middelvind følger',
   "DMI's Beaufort scale": 'DMIs Beaufortskala',
   'A gust is shown only as a number because a short gust is not a Beaufort mean-wind category. Measurement definitions:':
     'Et vindstød vises kun som et tal, fordi et kort vindstød ikke er en Beaufort-kategori for middelvind. Definitioner af målingerne:',
-  'The DKF/IPP material used for these profiles does not publish separate numeric gust bands. Using the selected general band for mean wind or gusts is a conservative FRANK rule, not a DKF limit. An official kayak-facing forecast uses the same sustained-wind-or-gust model:':
-    'Det DKF/IPP-materiale, som profilerne bygger på, offentliggør ikke separate talgrænser for vindstød. At bruge det valgte generelle vindbånd til middelvind eller vindstød er en forsigtig FRANK-regel, ikke en DKF-grænse. En officiel kajakrettet prognose bruger samme model med middelvind eller vindstød:',
-  'Its local Great Lakes numbers are not copied into FRANK.':
-    'De lokale tal for De Store Søer er ikke kopieret til FRANK.',
-  '3. Wind-against-Water-Level Clashing': '3. Vind mod vandstand',
-  'Active only when': 'Kun aktiv når',
-  'is enabled. The app compares the current water level with the next forecast hour to detect rising or falling water. If sustained wind opposes that water movement, short steep chop is more likely:':
-    'er slået til. Appen sammenligner den aktuelle vandstand med næste prognosetime for at se, om vandet stiger eller falder. Hvis vedvarende vind går imod vandets bevægelse, er kort, krap sø mere sandsynlig:',
-  '{0} wind': '{0} vind',
-  'can oppose rising water.': 'kan gå imod stigende vand.',
-  'can oppose falling water.': 'kan gå imod faldende vand.',
-  'If a clash occurs and wind speed > 4.0 m/s, the hour is automatically marked':
-    'Opstår en konflikt, og vindstyrken er > 4,0 m/s, markeres timen automatisk',
+  'The DKF/IPP material behind these profiles does not publish separate numeric gust bands. The':
+    'DKF/IPP-materialet bag profilerne offentliggør ikke særskilte talgrænser for vindstød.',
+  "also treats gusts as relevant in an official kayak forecast. FRANK does not copy that forecast's local Great Lakes thresholds.":
+    'regner også vindstød som relevante i en officiel kajakprognose. FRANK kopierer ikke prognosens lokale grænser for De Store Søer.',
   'Caution': 'Pas på',
   'Danger': 'Fare',
-  '4. Local Wind Sectors': '4. Lokale vindsektorer',
-  'is enabled. Applies separate direction-specific limits for the wind sectors configured for {0}; these can make a profile stricter:':
-    'er slået til. Anvender særskilte retningsbestemte grænser for vindsektorerne for {0}; de kan gøre en profil strengere:',
+  '3. Local wind sectors': '3. Lokale vindsektorer',
+  'These caps are optional and off by default. If you turn them on, FRANK applies separate wind limits to the fixed sectors below for {0}. A sector cap can make your profile stricter.':
+    'Disse grænser er valgfrie og slået fra som standard. Slår du dem til, bruger FRANK særskilte vindgrænser for de faste sektorer nedenfor ved {0}. En sektorgrænse kan gøre din profil strengere.',
   'Take care from {0} m/s; danger from {1} m/s.': 'Pas på fra {0} m/s; fare fra {1} m/s.',
-  'These limits use': 'Disse grænser bruger',
-  'average wind speed only': 'kun middelvind',
-  '(not gusts), as the chop that matters here is driven by sustained wind blowing across a long open stretch of water (its "fetch").':
-    '(ikke vindstød), da den krappe sø, der betyder noget her, skabes af vedvarende vind hen over et langt frit stræk af vand (dets "fetch").',
-  'Directions are fixed to the local geography; only the speed caps are yours to adjust.':
-    'Retningerne er fastlagt efter den lokale geografi; kun vindlofterne kan du justere.',
-  '5. Water Level': '5. Vandstand',
+  'The bearings and starting caps are FRANK-curated broad estimates for the area. They are not club-published rules or a survey of every shoreline.':
+    'Retningerne og startgrænserne er FRANKs grove skøn for hele området. De er ikke klubregler og bygger ikke på en kortlægning af hver kyststrækning.',
+  'Sector caps use average wind, not gusts.': 'Sektorgrænserne bruger middelvind, ikke vindstød.',
+  'You can adjust the speed caps. The bearings stay fixed.': 'Du kan justere vindgrænserne. Retningerne ligger fast.',
+  '4. Water level': '4. Vandstand',
   'Water level comes from a storm-surge forecast model, not an astronomical tide table. The value shown is the forecast water level relative to mean sea level at the nearest model grid point, including wind setup and pressure effects.':
     'Vandstanden kommer fra en stormflodsmodel, ikke en astronomisk tidevandstabel. Den viste værdi er den forudsagte vandstand i forhold til middelvandstand ved nærmeste modelpunkt, inklusive vindstuvning og trykeffekter.',
   'High Water Filter:': 'Højvandsfilter:',
@@ -672,53 +646,53 @@ export const da: Record<string, string> = {
   'Water level ≤ -10 cm.': 'Vandstand ≤ -10 cm.',
   'Rising Only:': 'Kun stigende:',
   'Water level rises through the whole launch window.': 'Vandstanden stiger gennem hele rovinduet.',
-  '6. Weather Condition (Rain, Snow, Sleet, Fog, Thunder)': '6. Vejrforhold (regn, sne, slud, tåge, torden)',
-  "The weather condition comes straight from MET Norway's symbol_code. English follows MET's official":
-    'Vejrforholdet kommer direkte fra MET Norways symbol_code. Den engelske ordlyd følger METs officielle',
+  '5. Weather conditions (rain, snow, sleet, fog and thunder)': '5. Vejrforhold (regn, sne, slud, tåge og torden)',
+  "The weather description follows MET Norway's official":
+    'Vejrbeskrivelsen følger MET Norways officielle',
   'Weathericons legend': 'Weathericons-symbolforklaring',
-  'Danish uses translated': 'Dansk bruger oversat',
+  'Danish wording follows': 'Den danske ordlyd følger',
   'DMI weather terminology': 'DMI-vejrterminologi',
-  'FRANK does not reconstruct rain or lightning from other readings; it assigns each native condition a paddling severity:':
-    'FRANK udleder ikke regn eller lyn af andre målinger; hvert oprindeligt vejrforhold får en ro-vurdering:',
-  'clear, fair, partly cloudy, cloudy, and light rain — no weather flag.':
-    'klart vejr, let skyet, delvist skyet, skyet og let regn — ingen vejrbemærkning.',
-  'rain, fog, light or ordinary snow and sleet, and non-heavy rain showers — worth keeping an eye on.':
-    'regn, tåge, let eller almindelig sne og slud samt ikke-kraftige regnbyger — værd at holde øje med.',
-  'heavy precipitation, snow or sleet showers, and every condition with thunder — probably one to skip.':
-    'kraftig nedbør, sne- eller sludbyger og alle vejrforhold med torden — nok en dag at springe over.',
-  'There is no configurable rain limit or lightning slider: MET decides the condition, and the reason keeps its native meaning (for example "Heavy rain" or "Heavy rain and thunder").':
-    'Der er ingen indstillelig regngrænse eller lyn-skyder: MET afgør vejrforholdet, og begrundelsen bevarer dets oprindelige betydning (for eksempel "Kraftig regn" eller "Kraftig regn med torden").',
-  '7. How Rules Combine': '7. Sådan kombineres reglerne',
-  'Every enabled rule is evaluated for every hour, and the overall rating is the':
-    'Hver aktiveret regel vurderes for hver time, og den samlede vurdering er det',
+  'FRANK does not infer rain or lightning from other readings. It gives each published weather condition a paddling rating:':
+    'FRANK udleder ikke regn eller lyn af andre målinger. Hvert offentliggjort vejrforhold får en vurdering til kajakroning:',
+  'clear, fair, partly cloudy, cloudy, and light rain. These conditions do not add a weather flag.':
+    'klart vejr, let skyet, delvist skyet, skyet og let regn. Disse forhold giver ikke en vejrbemærkning.',
+  'rain, fog, light or ordinary snow and sleet, and non-heavy rain showers. Keep an eye on these conditions.':
+    'regn, tåge, let eller almindelig sne og slud samt ikke-kraftige regnbyger. Hold øje med disse forhold.',
+  'heavy precipitation, snow or sleet showers, and every condition with thunder. These are probably reasons to skip the trip.':
+    'kraftig nedbør, sne- eller sludbyger og alle vejrforhold med torden. Det er sandsynligvis grunde til at springe turen over.',
+  'There is no rain limit or lightning setting. Each forecast description keeps its specific meaning, for example "Heavy rain" or "Heavy rain and thunder".':
+    'Der er ingen indstilling for regn eller lyn. Hver vejrbeskrivelse beholder sin præcise betydning, for eksempel "Kraftig regn" eller "Kraftig regn med torden".',
+  '6. How rules combine': '6. Sådan kombineres reglerne',
+  'FRANK checks every enabled rule for each hour. The':
+    'FRANK kontrollerer hver aktiveret regel for hver time. Det',
   'worst result': 'værste resultat',
-  'among them. A rule can only raise the severity (Good to go → Take care → Rough) — no rule can lower a rating another rule has already set:':
-    'blandt dem. En regel kan kun hæve alvorligheden (Klar til at ro → Pas på → Barskt) — ingen regel kan sænke en vurdering, en anden regel allerede har sat:',
+  'becomes the overall rating. A rule can raise the severity (Good to go → Take care → Rough), but it cannot lower a rating set by another rule:':
+    'bliver den samlede vurdering. En regel kan hæve alvorligheden (Klar til at ro → Pas på → Barskt), men den kan ikke sænke en vurdering, som en anden regel allerede har sat:',
   'If any rule reaches Rough (for example a thunderstorm or heavy-rain forecast), the whole hour is Rough, regardless of how calm everything else looks.':
     'Hvis én regel giver vurderingen Barskt (for eksempel varslet tordenvejr eller kraftig regn), er hele timen Barskt, uanset hvor roligt alt andet ser ud.',
-  'Take-care-only rules (wind-against-water clash > 4 m/s, nighttime) never raise an hour above Take care on their own.':
-    'Regler, der højst giver Pas på (vind mod vandstand > 4 m/s, nat), hæver aldrig en time over Pas på alene.',
+  'A rule that can only mark Take care, such as the daylight rule, cannot make an hour Rough by itself.':
+    'En regel, der højst kan give Pas på, som dagslysreglen, kan ikke alene gøre en time Barskt.',
   'Every distinct triggered hazard is listed. If general and local-sector limits flag the same sustained wind, only the controlling wind explanation is shown.':
     'Hver særskilt udløst fare vises. Hvis den generelle grænse og en lokal sektorgrænse markerer den samme middelvind, vises kun den afgørende vindbegrundelse.',
-  '8. Water Temperature': '8. Vandtemperatur',
-  "Cold shock and hypothermia risk, checked against your configured limits. The defaults are conservative starting points — set them to your own club's rules, your gear, and the season:":
-    'Risiko for kuldechok og hypotermi, tjekket mod dine indstillede grænser. Standardværdierne er forsigtige udgangspunkter — sæt dem efter din klubs regler, dit udstyr og årstiden:',
+  '7. Water temperature': '7. Vandtemperatur',
+  "FRANK checks cold-shock and hypothermia risk against your temperature limits. The defaults are conservative starting points. Set them for your club's rules, your gear, and the season:":
+    'FRANK vurderer risikoen for kuldechok og hypotermi mod dine temperaturgrænser. Standardværdierne er forsigtige udgangspunkter. Tilpas dem til klubbens regler, dit udstyr og årstiden:',
   'Good to go for general paddling clothing.': 'Klar til at ro med almindeligt rotøj.',
   'Take care. Thermal layers or wetsuit strongly recommended.': 'Pas på. Termolag eller våddragt anbefales kraftigt.',
   'Rough. Drysuit or heavy wetsuit required.': 'Barskt. Tørdragt eller tyk våddragt påkrævet.',
-  '9. Daylight Rule': '9. Dagslysregel',
-  'Many clubs prohibit paddling between sunset and sunrise without navigation lights and permission, so when this rule is on, hourly forecasts outside daylight are marked Take care (turn it off if night paddling is fine for you). A longer-range outlook block is marked Take care unless its whole period is daylight. Launch windows are handled separately: periods with no complete daylight hour are dropped, and partial periods show only their longest continuous daylight part.':
-    'Mange klubber forbyder roning mellem solnedgang og solopgang uden lanterner og tilladelse, så når denne regel er slået til, markeres timeprognoser uden for dagslys som Pas på (slå den fra, hvis natroning er i orden for dig). En blok i langtidsudsigten markeres som Pas på, medmindre hele perioden ligger i dagslys. Rovinduer håndteres separat: perioder uden en hel time i dagslys udelades, og delvise perioder viser kun deres længste sammenhængende del i dagslys.',
-  '10. Launch Windows': '10. Rovinduer',
-  'A launch window is an unbroken run of Good-to-go hours — an hour rated Take care or Rough breaks the run:':
-    'Et rovindue er en ubrudt række af Klar til at ro-timer — en time vurderet Pas på eller Barskt bryder rækken:',
+  '8. Daylight rule': '8. Dagslysregel',
+  'Many clubs require navigation lights and permission between sunset and sunrise. When the daylight rule is on, FRANK marks those hours Take care. You can turn it off if your own rules allow night paddling. A longer-range outlook block is marked Take care unless its whole period is in daylight. Launch windows work differently: FRANK removes periods with no complete daylight hour and shows only the longest continuous daylight part of a partial period.':
+    'Mange klubber kræver lanterner og tilladelse mellem solnedgang og solopgang. Når dagslysreglen er slået til, markerer FRANK disse timer som Pas på. Du kan slå reglen fra, hvis dine egne regler tillader natroning. En blok i langtidsudsigten markeres som Pas på, medmindre hele perioden ligger i dagslys. Rovinduer fungerer anderledes: FRANK fjerner perioder uden en hel time i dagslys og viser kun den længste sammenhængende del i dagslys af en delvis periode.',
+  '9. Launch windows': '9. Rovinduer',
+  'A launch window is an unbroken run of Good-to-go hours. An hour rated Take care or Rough breaks the run:':
+    'Et rovindue er en ubrudt række af Klar til at ro-timer. En time vurderet Pas på eller Barskt bryder rækken:',
   'Minimum duration:': 'Minimumsvarighed:',
   'runs shorter than your Min Duration setting are not shown.': 'forløb kortere end din min varighed vises ikke.',
   'Day boundaries:': 'Døgngrænser:',
   'hourly windows split at local midnight, so each belongs to one calendar day; longer-range outlook windows can run past it (the end time then shows its day).':
     'timevinduer deles ved lokal midnat, så hvert hører til én kalenderdag; langtidsudsigtens vinduer kan løbe forbi den (sluttiden viser da sin dag).',
   'Longer range:': 'Længere sigt:',
-  'beyond the hourly forecast, coarser outlook blocks (6 hours, occasionally 12) form windows marked "more uncertain forecast" — treat them as hints, not commitments.':
-    'ud over timeprognosen danner grovere udsigtsblokke (6 timer, af og til 12) vinduer markeret "mere usikker prognose" — tag dem som fingerpeg, ikke løfter.',
+  'beyond the hourly forecast, coarser outlook blocks (6 hours, occasionally 12) form windows marked "more uncertain forecast". Treat them as hints, not commitments.':
+    'ud over timeprognosen danner grovere udsigtsblokke (6 timer, af og til 12) vinduer markeret "mere usikker prognose". Betragt dem som fingerpeg, ikke løfter.',
   'Close': 'Luk',
 };

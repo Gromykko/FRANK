@@ -83,4 +83,17 @@ describe('Danish dictionary covers every translated literal', () => {
       .toEqual([]);
     expect(da['Unknown weather']).toBe('Ukendt vejr');
   });
+
+  it('covers gust-boundary phrases selected dynamically by the safety engine', () => {
+    // These keys are passed through limitReason() before translate(), so the
+    // literal-call scanner cannot see them directly.
+    const keys = [
+      'Wind gusts: {0} m/s. At your gust danger threshold of {1} m/s.',
+      'Wind gusts: {0} m/s. Above your gust danger threshold of {1} m/s.',
+      'Wind gusts: {0} m/s. At your gust Take care threshold of {1} m/s.',
+      'Wind gusts: {0} m/s. Above your gust Take care threshold of {1} m/s.',
+    ];
+
+    for (const key of keys) expect(da, `missing Danish translation for ${key}`).toHaveProperty(key);
+  });
 });

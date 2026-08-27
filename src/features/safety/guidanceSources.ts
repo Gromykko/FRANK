@@ -19,7 +19,7 @@ export const SAFETY_GUIDANCE_SOURCES = {
 } as const;
 
 export const GUIDED_PROFILE_MODES = [
-  { mode: 'beginner', label: 'Chill', level: 'IPP 2' },
-  { mode: 'default', label: 'Normal', level: 'IPP 3' },
-  { mode: 'pro', label: 'Pro', level: 'IPP 4' },
+  { mode: 'beginner', label: 'Beginner', level: 'IPP 2' },
+  { mode: 'default', label: 'Intermediate', level: 'IPP 3' },
+  { mode: 'pro', label: 'Advanced', level: 'IPP 4' },
 ] as const;
