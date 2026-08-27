@@ -24,13 +24,16 @@ export interface ForecastLocation {
   // demonstrably excludes the town, never add a local claim.
   kommuneAliases?: string[];
   // Area-specific wind geometry and thresholds. A location may have any
-  // number of onshore, offshore, or cross-shore sectors.
+  // number of onshore and offshore sectors.
   windSectors: WindSector[];
 }
 
 // Which way a sector faces relative to launch: onshore pushes waves toward
-// shore, offshore blows away from it, and cross-shore runs along it.
-export type SectorExposure = 'onshore' | 'offshore' | 'crossshore';
+// shore, offshore blows away from it. A 'crossshore' member existed for a
+// case no fjord defines, no config produced and no screen could render -
+// it only made every exposure branch carry a third arm that never ran. Add
+// it back the day a location actually needs one.
+export type SectorExposure = 'onshore' | 'offshore';
 
 export interface WindSector {
   // Stable key used by per-user cap overrides.

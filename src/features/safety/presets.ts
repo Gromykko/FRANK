@@ -1,4 +1,5 @@
 import { CURRENT_LOCATION } from '../../config/locations';
+import type { SectorExposure } from '../../config/locationTypes';
 
 // Per-sector wind-speed caps, keyed by sector id. Angles/labels live in the
 // (curated) location config; only these caps are user-tunable.
@@ -68,7 +69,7 @@ export const CUSTOM_SETTINGS_STORAGE_KEY = `ffkajak_custom_saved_${CURRENT_LOCAT
 // dropping to an unusable value. Cross-shore uses the (stricter) onshore delta.
 // null = identity (use the sector's configured caps as-is: default/custom).
 const SECTOR_SAFE_FLOOR = 2.5;
-const PRESET_SECTOR_DELTAS: Record<SafetySettings['tripMode'], Record<'onshore' | 'offshore', number> | null> = {
+const PRESET_SECTOR_DELTAS: Record<SafetySettings['tripMode'], Record<SectorExposure, number> | null> = {
   beginner: { onshore: -0.5, offshore: -1.0 },
   pro: { onshore: 1.0, offshore: 1.0 },
   default: null,
@@ -87,7 +88,7 @@ function buildSectorLimits(mode: SafetySettings['tripMode']): Record<string, Sec
       out[sector.id] = { safe: sector.safeLimit, caution: sector.cautionLimit };
       continue;
     }
-    const delta = deltas[sector.exposure === 'offshore' ? 'offshore' : 'onshore'];
+    const delta = deltas[sector.exposure];
     const safe = Math.max(sector.safeLimit + delta, SECTOR_SAFE_FLOOR);
     const caution = floorCaution(safe, sector.cautionLimit + delta);
     out[sector.id] = { safe, caution };
