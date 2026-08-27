@@ -5,14 +5,12 @@ import './index.css'
 import App from './App.tsx'
 import { LanguageProvider } from './i18n'
 import ErrorBoundary from './components/ErrorBoundary.tsx'
-import PixelSky from './components/PixelSky.tsx'
 import { startReleaseUpdateManager } from './pwa/releaseUpdate.ts'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>
       <LanguageProvider>
-        <PixelSky />
         <App />
       </LanguageProvider>
     </ErrorBoundary>

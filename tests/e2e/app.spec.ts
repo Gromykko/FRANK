@@ -219,12 +219,6 @@ test('zero ready locations produce one calm app-wide preparation screen', async 
   expect(retryShape.height).toBeGreaterThanOrEqual(44);
   expect(retryShape.radius).toBeLessThanOrEqual(8);
 
-  const skyMask = await page.locator('.pixel-sky').evaluate((sky) => {
-    const style = getComputedStyle(sky);
-    return style.maskImage || style.getPropertyValue('-webkit-mask-image');
-  });
-  expect(skyMask).toBe('none');
-
   const requestsBeforeRetry = mock.requests.length;
   await retry.click();
   await expect.poll(() => mock.requests.length).toBe(requestsBeforeRetry + 1);
