@@ -24,9 +24,9 @@ const EYES = [
 ];
 
 const MOUTHS: Record<DisplayStatus, string[]> = {
-  // No verdict: a shorter, flatter mouth than 'caution', and the shell paints
-  // it in muted grey rather than a safety colour. FRANK has no expression
-  // because it has been asked not to have an opinion.
+  // No verdict: a smaller smile than 'safe', and the shell paints it in muted
+  // grey rather than a safety colour. FRANK is friendly while off duty without
+  // borrowing the wide green expression that communicates a safety verdict.
   none: [
     '................',
     '................',
@@ -37,7 +37,7 @@ const MOUTHS: Record<DisplayStatus, string[]> = {
     '................',
     '................',
     '................',
-    '................',
+    '.....x....x.....',
     '......xxxx......',
     '................',
     '................',
@@ -126,7 +126,7 @@ export default function GertyFace({ rating }: { rating: DisplayStatus }) {
           as a fault; a face glancing away says "not watching this for you"
           while still obviously switched on. */}
       <g className="gerty-eyes">{gridRects(EYES)}</g>
-      {gridRects(MOUTHS[rating])}
+      <g className="gerty-mouth">{gridRects(MOUTHS[rating])}</g>
     </svg>
   );
 }

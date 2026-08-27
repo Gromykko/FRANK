@@ -59,7 +59,7 @@ describe('safety presets', () => {
     expect(s.maxWaveHeightCaution).toBe(2.0);
     expect(s.waveCautionMargin).toBe(1.5);
     expect(s.minDuration).toBe(1);
-    // Pro loosens both exposures by +1.0 on the sector's own caps.
+    // The visible Advanced profile loosens both exposures by +1.0 on each sector's own caps.
     expect(s.sectorLimits.onshore.safe).toBe(onshore.safeLimit + 1.0);
     expect(s.sectorLimits.onshore.caution).toBe(Math.max(onshore.cautionLimit + 1.0, s.sectorLimits.onshore.safe + 0.5));
     expect(s.sectorLimits.offshore.safe).toBe(offshore.safeLimit + 1.0);
@@ -122,7 +122,7 @@ describe('safety presets', () => {
       expect(b.sectorLimits[id].caution).toBeLessThanOrEqual(d.sectorLimits[id].caution);
       expect(d.sectorLimits[id].caution).toBeLessThanOrEqual(p.sectorLimits[id].caution);
     }
-    // Pro accepts shorter windows than beginner/default.
+    // The visible Advanced profile accepts shorter windows than Beginner/Intermediate.
     expect(p.minDuration).toBeLessThanOrEqual(d.minDuration);
     expect(d.minDuration).toBeLessThanOrEqual(b.minDuration);
   });

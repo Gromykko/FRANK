@@ -11,6 +11,7 @@ import { da } from '../../../src/i18n/da';
 import { interpolate } from '../../../src/i18n/interpolate';
 import type { HourlyData } from '../../../src/features/forecast/types';
 import type { SafetySettings } from '../../../src/features/safety/presets';
+import { getPresetSettings } from '../../../src/features/safety/presets';
 
 const baseSettings = {
   maxWindSpeedSafe: 5,
@@ -340,7 +341,7 @@ describe('gust margin math', () => {
     const result = analyzeSafetyConditions({ ...baseData, windSpeed: 3, windGust: 8.4 }, baseSettings);
     const gustReason = result.reasons.find((reason) => reason.text.startsWith('Wind gusts:'));
 
-    expect(gustReason?.text).toBe('Wind gusts: 8.4 m/s. Above your gust danger threshold of 8.0 m/s.');
+    expect(gustReason?.text).toBe('Wind gusts: 8.4 m/s. Above your wind danger threshold of 8.0 m/s.');
     expect(gustReason?.text).not.toMatch(/\([^)]*(?:Breeze|Gale|Storm|Hurricane)[^)]*\)/);
   });
 
@@ -499,9 +500,9 @@ describe('custom wind direction sectors', () => {
     expect(at(135).rating).toBe('caution');  // easterly max inclusive
     // "Outside" now means outside the bearing the app DISPLAYS. 44.9 renders as
     // "45 deg NE" - the manual's Easterly zone - so treating it as outside made
-    // the app disagree with its own compass reading. Rounding pulls a borderline
-    // bearing into the sector, and a sector cap is never looser than the flat
-    // cap, so this can only tighten a verdict.
+    // the app disagree with its own compass reading. The rule therefore evaluates
+    // the same whole-degree bearing that it shows, regardless of which of the
+    // general or sector thresholds controls the selected profile.
     expect(at(44.9).rating).toBe('caution');  // displays as 45, so judged as 45
     expect(at(135.1).rating).toBe('caution'); // displays as 135
     expect(at(44.4).rating).toBe('safe');     // displays as 44, genuinely outside
@@ -550,12 +551,8 @@ describe('custom wind direction sectors', () => {
       rating: 'danger',
       reasons: [
         {
-          severity: 'caution',
-          text: 'Wind speed: 7.8 m/s (Moderate Breeze). Above your Take care threshold of 5.0 m/s.',
-        },
-        {
           severity: 'danger',
-          text: 'Westerly wind (315°) is over your 7.0 m/s danger threshold for this direction.',
+          text: 'Wind speed: 7.8 m/s (Moderate Breeze). Westerly wind (315°) is over your 7.0 m/s danger threshold for this direction.',
         },
         {
           severity: 'caution',
@@ -563,6 +560,77 @@ describe('custom wind direction sectors', () => {
         },
       ],
     });
+  });
+
+  it('shows the general reason when it is stricter than a looser active sector', () => {
+    const settings = {
+      ...getPresetSettings('beginner'),
+      enableWindGust: false,
+    } as SafetySettings;
+    const result = analyzeSafetyConditions(
+      { ...baseData, windDirection: 90, windSpeed: 5, tideLevel: 0 },
+      settings,
+      -0.5,
+    );
+
+    expect(result.rating).toBe('danger');
+    expect(result.reasons[0]).toEqual({
+      severity: 'danger',
+      text: 'Wind speed: 5.0 m/s (Gentle Breeze). At your danger limit of 5.0 m/s.',
+    });
+    expect(result.reasons.some((reason) => reason.text.includes('Easterly wind'))).toBe(false);
+    expect(result.reasons.some((reason) => reason.text.includes('wind opposes falling water'))).toBe(true);
+  });
+
+  it('prefers the local-sector explanation when both danger limits are identical', () => {
+    const settings = {
+      ...getPresetSettings('default'),
+      enableWindGust: false,
+    } as SafetySettings;
+    const result = analyzeSafetyConditions(
+      { ...baseData, windDirection: 90, windSpeed: 8 },
+      settings,
+    );
+
+    expect(result.rating).toBe('danger');
+    expect(result.reasons).toHaveLength(1);
+    expect(result.reasons[0].text).toContain('Easterly wind (90°)');
+    expect(result.reasons[0].text).toContain('8.0 m/s danger threshold for this direction');
+  });
+
+  it('keeps the lower controlling threshold when general and sector severity match', () => {
+    const settings = {
+      ...getPresetSettings('default'),
+      enableWindGust: false,
+    } as SafetySettings;
+    const result = analyzeSafetyConditions(
+      { ...baseData, windDirection: 90, windSpeed: 6 },
+      settings,
+    );
+
+    expect(result.rating).toBe('caution');
+    expect(result.reasons).toHaveLength(1);
+    expect(result.reasons[0].text).toContain('Easterly wind (90°)');
+    expect(result.reasons[0].text).toContain('5.0 m/s Take care threshold for this direction');
+  });
+
+  it('keeps sustained wind, gusts, and tide conflict as distinct hazards in that order', () => {
+    const settings = {
+      ...baseSettings,
+      enableCustomWindDirs: true,
+    } as SafetySettings;
+    const result = analyzeSafetyConditions(
+      { ...baseData, windDirection: 270, windSpeed: 7.8, windGust: 9, tideLevel: 0 },
+      settings,
+      0.5,
+    );
+
+    expect(result.rating).toBe('danger');
+    expect(result.reasons.map((reason) => reason.text)).toEqual([
+      'Wind speed: 7.8 m/s (Moderate Breeze). Westerly wind (270°) is over your 7.0 m/s danger threshold for this direction.',
+      'Wind gusts: 9.0 m/s. Above your wind danger threshold of 8.0 m/s.',
+      'Wind-against-water-level conflict: wind opposes rising water level. Expect steeper chop.',
+    ]);
   });
 
   it('easterly caps: caution at safe cap, danger at caution cap (>= semantics)', () => {

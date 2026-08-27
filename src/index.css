@@ -1,7 +1,7 @@
 @import './components.css';
 
 /* ==========================================================================
-   Clean Instrument — one design language (dark default)
+   Clean Instrument — one design language (light first visit, dark available)
    Inspired by modern marine electronics: flat, high-contrast, data-dense.
    Color carries meaning only (safe/caution/danger); primary blue marks
    interactive affordances. The --housing*, --plate-shadow, --shadow-hard*,

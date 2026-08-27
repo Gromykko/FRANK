@@ -45,7 +45,7 @@ describe('SafetyLimitsPanel terminology', () => {
       const labels = [...host.querySelectorAll('[aria-label]')]
         .map((element) => element.getAttribute('aria-label'));
       expect(labels).toContain('Wind limit enabled');
-      expect(labels).toContain('Check wind gusts');
+      expect(labels).toContain('Include gusts in verdict');
       expect(labels).toContain('Wave-height limit enabled');
       expect(labels).toContain('Show Take care wave band');
       expect(labels).toContain('Increase wind Take care threshold; Danger stays 2.0 m/s above');

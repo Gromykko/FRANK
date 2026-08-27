@@ -377,7 +377,7 @@ export function useSettings() {
   const activeLoadFailedRef = useRef<string | null>(null);
   // The active choice and the remembered Custom profile are two independent
   // records. A corrupt custom record must not be replaced merely because the
-  // user switches from Default to Pro; it becomes replaceable only when a
+  // user switches from Intermediate to Advanced; it becomes replaceable only when a
   // valid active Custom profile can recover it during an intentional mode
   // change, or the user deliberately edits that profile.
   const customLoadFailedRef = useRef<string | null>(null);
@@ -420,10 +420,16 @@ export function useSettings() {
         return getPresetSettings(parsed.tripMode);
       } catch {
         activeLoadFailedRef.current = saved;
-        return DEFAULT_SETTINGS;
+        // A profile we cannot read is no authority for a safety verdict. Keep
+        // its bytes for recovery, but show raw weather until the user makes a
+        // deliberate profile choice.
+        return getPresetSettings('weather');
       }
     }
-    return DEFAULT_SETTINGS;
+    // No skill/profile has been chosen on a first visit. Raw weather is the
+    // honest default; selecting Beginner, Intermediate, or Advanced opts into
+    // FRANK's personal-limit verdicts and is then remembered per location.
+    return getPresetSettings('weather');
   });
   // The active choice and remembered Custom profile are separate records and
   // can fail independently (for example, replacing the existing active value

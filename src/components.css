@@ -2902,7 +2902,7 @@ button.legend-toggle.is-on {
 }
 
 /* Nothing in the bank is selected while weather-only is active - leaving the
-   pill parked on Chill would claim a caution level that is not being applied. */
+   pill parked on Beginner would claim a caution level that is not being applied. */
 .frank-mode-bank.is-unset .frank-mode-indicator {
   opacity: 0;
 }

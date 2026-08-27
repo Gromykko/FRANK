@@ -117,15 +117,15 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
               })}
             </ul>
             <p className="manual-note">
-              {t('Normal and Pro wind anchors use')}{' '}
+              {t('Intermediate and Advanced wind anchors use')}{' '}
               <a href={SAFETY_GUIDANCE_SOURCES.dkfTouring} target="_blank" rel="noreferrer">DKF Touring</a>
               {', '}{t('including the')}{' '}
               <a href={SAFETY_GUIDANCE_SOURCES.dkfIpp3Touring} target="_blank" rel="noreferrer">{t('IPP 3 Touring norm')}</a>,
               {' '}{t('and')}{' '}
               <a href={SAFETY_GUIDANCE_SOURCES.dkfIpp4Touring} target="_blank" rel="noreferrer">{t('IPP 4 Touring norm')}</a>.
-              {' '}{t("Touring IPP 2 gives no numeric wind limit. Chill's 5 m/s Rough boundary and the numeric red wave ceilings use")}{' '}
+              {' '}{t("Touring IPP 2 gives no numeric wind limit. Beginner's 5 m/s Rough boundary and the numeric red wave ceilings use")}{' '}
               <a href={SAFETY_GUIDANCE_SOURCES.dkfSeaKayakNorm} target="_blank" rel="noreferrer">{t("DKF's 7 May 2026 sea-kayak norm")}</a>.
-              {' '}{t("Chill's 4 m/s and the lower wave Take care boundaries are FRANK's conservative choices.")}
+              {' '}{t("Beginner's 4 m/s and the lower wave Take care boundaries are FRANK's conservative choices.")}
               {' '}{t('Local wind sectors, gusts, temperature, weather, daylight, route, equipment, and club rules can all demand a stricter decision.')}
             </p>
           </div>
@@ -150,20 +150,25 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
 
           <div>
             <h3 className="manual-h">{t('2. Wind Speed & Gusts')}</h3>
-            <p className="manual-p">{t('MET supplies a 10-minute mean wind at 10 m and a peak gust based on a much shorter three-second average. FRANK checks both against the same Take care threshold; the Danger margin sets where each becomes Rough:')}</p>
+            <p className="manual-p">{t('MET supplies a 10-minute mean wind at 10 m and a peak gust based on a much shorter three-second average. When gust checking is on, FRANK checks both against the same general wind band; the Danger margin sets where each becomes Rough:')}</p>
             <ul className="manual-list">
               <li><strong>{t('Good to go:')}</strong> {t('Both mean wind and gusts are below the Take care threshold.')}</li>
               <li><strong>{t('Take care:')}</strong> {t('Mean wind or gusts are at or above the Take care threshold, but below the danger threshold.')}</li>
               <li><strong>{t('Rough:')}</strong> {t('Mean wind or gusts are at or above the danger threshold.')}</li>
             </ul>
             <p className="manual-note">
-              {t("Normal's general wind band starts Take care at exactly 6.0 m/s and Rough at exactly 8.0 m/s. Enabled local sectors or other rules can make the result stricter. A threshold belongs to the stricter band.")}
+              {t("Intermediate's general wind band starts Take care at exactly 6.0 m/s and Rough at exactly 8.0 m/s. Enabled local sectors or other rules can make the result stricter. A threshold belongs to the stricter band.")}
             </p>
             <p className="manual-note">
               {t('Mean-wind names follow')}{' '}
               <a href={SAFETY_GUIDANCE_SOURCES.dmiBeaufort} target="_blank" rel="noreferrer">{t("DMI's Beaufort scale")}</a>.
               {' '}{t('A gust is shown only as a number because a short gust is not a Beaufort mean-wind category. Measurement definitions:')}{' '}
               <a href={SAFETY_GUIDANCE_SOURCES.metForecastDataModel} target="_blank" rel="noreferrer">MET Norway</a>.
+            </p>
+            <p className="manual-note">
+              {t('The DKF/IPP material used for these profiles does not publish separate numeric gust bands. Using the selected general band for mean wind or gusts is a conservative FRANK rule, not a DKF limit. An official kayak-facing forecast uses the same sustained-wind-or-gust model:')}{' '}
+              <a href={SAFETY_GUIDANCE_SOURCES.nwsKayakWindHazards} target="_blank" rel="noreferrer">US National Weather Service</a>.
+              {' '}{t('Its local Great Lakes numbers are not copied into FRANK.')}
             </p>
           </div>
 
@@ -228,7 +233,7 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
             <ul className="manual-list spaced">
               <li>{t('If any rule reaches Rough (for example a thunderstorm or heavy-rain forecast), the whole hour is Rough, regardless of how calm everything else looks.')}</li>
               <li>{t('Take-care-only rules (wind-against-water clash > 4 m/s, nighttime) never raise an hour above Take care on their own.')}</li>
-              <li>{t('Every triggered rule is listed in the assessment, so you always see all reasons — not just the worst one.')}</li>
+              <li>{t('Every distinct triggered hazard is listed. If general and local-sector limits flag the same sustained wind, only the controlling wind explanation is shown.')}</li>
             </ul>
           </div>
 

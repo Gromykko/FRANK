@@ -244,7 +244,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
         <div className="settings-body">
 
           <p className="settings-autosave-note">
-            {t('Changes apply immediately and switch you to Custom mode. Pick a preset in the Trip Profile at the top (Chill, Normal, Pro) to go back.')}
+            {t('Changes apply immediately and switch you to Custom mode. Pick a preset in the Trip Profile at the top (Beginner, Intermediate, Advanced) to go back.')}
           </p>
 
           <div className="limit-cards">
@@ -292,7 +292,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
               <div className={`limit-caution-row has-toggle ${settings.enableWindSpeed ? '' : 'is-off'}`}>
                 <div className="limit-caution-copy">
                   <span className="limit-caution-name">{t('Gap to Danger')}</span>
-                  <span className="limit-caution-hint">{t('Take care from {0} m/s; +{1} m/s sets Danger from {2} m/s. The switch also checks gusts against it.', settings.maxWindSpeedSafe.toFixed(1), settings.gustMargin.toFixed(1), windCautionAt.toFixed(1))}</span>
+                  <span className="limit-caution-hint">{t('Take care from {0} m/s; +{1} m/s sets Danger from {2} m/s. If gust checking is on, gusts use this same general wind band.', settings.maxWindSpeedSafe.toFixed(1), settings.gustMargin.toFixed(1), windCautionAt.toFixed(1))}</span>
                 </div>
                 <Stepper
                   compact
@@ -306,7 +306,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
                   small
                   checked={settings.enableWindSpeed && settings.enableWindGust}
                   onChange={checked => updateCriteria({ enableWindGust: checked })}
-                  label={t('Check wind gusts')}
+                  label={t('Include gusts in verdict')}
                   disabled={!settings.enableWindSpeed}
                 />
               </div>

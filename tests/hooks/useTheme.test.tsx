@@ -54,6 +54,7 @@ afterAll(() => {
 });
 
 beforeEach(() => {
+  localStorage.clear();
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
@@ -72,8 +73,8 @@ afterEach(async () => {
 });
 
 describe('useTheme', () => {
-  it('follows live OS changes only until the user makes an explicit choice', async () => {
-    const system = installSystemTheme(false);
+  it('starts light regardless of the OS and persists only an explicit user choice', async () => {
+    const system = installSystemTheme(true);
     const lightMeta = document.createElement('meta');
     lightMeta.name = 'theme-color';
     lightMeta.media = '(prefers-color-scheme: light)';
@@ -84,24 +85,26 @@ describe('useTheme', () => {
     expect(document.documentElement.dataset.theme).toBe('light');
     expect(localStorage.getItem('frank_theme_mode')).toBeNull();
 
-    await act(async () => system.setDark(true));
+    await act(async () => system.setDark(false));
+    expect(current.themeMode).toBe('light');
+    expect(document.documentElement.dataset.theme).toBe('light');
+    expect(lightMeta.content).toBe('#f5f7fa');
+    expect(lightMeta.hasAttribute('media')).toBe(false);
+    expect(localStorage.getItem('frank_theme_mode')).toBeNull();
+    expect(system.query.addEventListener).not.toHaveBeenCalled();
+
+    await act(async () => current.cycleThemeMode());
     expect(current.themeMode).toBe('dark');
     expect(document.documentElement.dataset.theme).toBe('dark');
     expect(lightMeta.content).toBe('#0c1117');
-    expect(lightMeta.hasAttribute('media')).toBe(false);
-    expect(localStorage.getItem('frank_theme_mode')).toBeNull();
-
-    await act(async () => current.cycleThemeMode());
-    expect(current.themeMode).toBe('light');
-    expect(localStorage.getItem('frank_theme_mode')).toBe('light');
+    expect(localStorage.getItem('frank_theme_mode')).toBe('dark');
     expect(document.documentElement.dataset.themeSource).toBe('saved');
-    expect(system.query.removeEventListener).toHaveBeenCalled();
 
     await act(async () => {
-      system.setDark(false);
       system.setDark(true);
+      system.setDark(false);
     });
-    expect(current.themeMode).toBe('light');
+    expect(current.themeMode).toBe('dark');
   });
 
   it('uses the pre-paint saved marker even if storage becomes blocked before React starts', async () => {

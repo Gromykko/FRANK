@@ -49,7 +49,7 @@ export const CUSTOM_SETTINGS_STORAGE_KEY = `ffkajak_custom_saved_${CURRENT_LOCAT
 // rather than clamping to an absolute ceiling. This preserves whatever ordering
 // a fjord defines — e.g. Vejle deliberately caps offshore LOWER than onshore for
 // fralandsvind drift risk, which an absolute per-exposure ceiling would silently
-// invert. Beginner tightens, Pro loosens; a floor stops a tightened cap from
+// invert. Beginner tightens, Advanced loosens; a floor stops a tightened cap from
 // dropping to an unusable value. Cross-shore uses the (stricter) onshore delta.
 // null = identity (use the sector's configured caps as-is: default/custom).
 const SECTOR_SAFE_FLOOR = 2.5;
@@ -81,7 +81,7 @@ function buildSectorLimits(mode: SafetySettings['tripMode']): Record<string, Sec
 }
 
 const BASE_SETTINGS: SafetySettings = {
-  // Normal is IPP3-like: DKF Touring describes its central working condition
+  // Intermediate is IPP3-like: DKF Touring describes its central working condition
   // as around 6 m/s and an assessment envelope reaching 8 m/s. These are
   // FRANK's general wind bands, not a claim that DKF defines green/amber/red.
   // https://www.kano-kajak.dk/uddannelse-og-kurser/ipp-roeruddannelse/touring-tur/

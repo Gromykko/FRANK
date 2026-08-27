@@ -51,6 +51,8 @@ export interface SafetyReason {
   severity: DisplayStatus;
 }
 
+type VerdictReason = SafetyReason & { severity: SafetyRating };
+
 export interface SafetyAnalysis {
   rating: SafetyRating;
   reasons: SafetyReason[];
@@ -150,7 +152,9 @@ export function getWaveHeightLabel(height: number): string {
 
 // Rules only ratchet the rating up, never down: every enabled rule runs, any
 // can push safe -> caution -> danger, and none can walk back a level another
-// rule already set. Every triggered reason is kept.
+// rule already set. Distinct hazards are kept; when the same sustained-wind
+// reading trips both the general and direction-specific bands, only the more
+// useful of those two explanations is shown.
 export function analyzeSafetyConditions(
   data: HourlyData,
   settings: SafetySettings,
@@ -168,10 +172,12 @@ export function analyzeSafetyConditions(
   // returned early, so a rule that CAN run (a gale) still gets to speak.
   const missing: string[] = [];
 
-  const addReason = (severity: SafetyRating, text: string) => {
-    reasons.push({ severity, text });
+  const addReason = (severity: SafetyRating, text: string): VerdictReason => {
+    const reason: VerdictReason = { severity, text };
+    reasons.push(reason);
     if (severity === 'danger') rating = 'danger';
     else if (severity === 'caution' && rating !== 'danger') rating = 'caution';
+    return reason;
   };
 
   // These thresholds are inclusive (value ≥ limit triggers), so a reading that
@@ -198,25 +204,41 @@ export function analyzeSafetyConditions(
   const waveForSafety = roundToDecimals(data.waveHeight, READING_DECIMALS.waveHeight);
   const waterTempForSafety = roundToDecimals(data.tempWater, READING_DECIMALS.tempWater);
   const hasWindSpeed = isNonnegativeReading(windSpeedForSafety);
+  const windLabelForSafety = hasWindSpeed
+    ? translate(getWindSpeedLabel(windSpeedForSafety))
+    : '';
 
   // Wind speed feeds both the general limit and the per-sector caps, so it is
   // required as soon as either is on.
   if ((enableWindSpeed || enableCustom) && !hasWindSpeed) missing.push('wind speed');
 
+  type SustainedWindCandidate = {
+    reason: VerdictReason;
+    threshold: number;
+    sectorSpecific: boolean;
+  };
+  let generalWindCandidate: SustainedWindCandidate | null = null;
   if (enableWindSpeed && hasWindSpeed) {
-    const windLabel = translate(getWindSpeedLabel(windSpeedForSafety));
     if (windSpeedForSafety >= settings.maxWindSpeedCaution) {
       rating = 'danger';
-      addReason('danger', limitReason(windSpeedForSafety, settings.maxWindSpeedCaution, 1,
-        'Wind speed: {0} m/s ({1}). At your danger limit of {2} m/s.',
-        'Wind speed: {0} m/s ({1}). Exceeds your danger limit of {2} m/s.',
-        windSpeedForSafety.toFixed(1), windLabel, settings.maxWindSpeedCaution.toFixed(1)));
+      generalWindCandidate = {
+        reason: addReason('danger', limitReason(windSpeedForSafety, settings.maxWindSpeedCaution, 1,
+          'Wind speed: {0} m/s ({1}). At your danger limit of {2} m/s.',
+          'Wind speed: {0} m/s ({1}). Exceeds your danger limit of {2} m/s.',
+          windSpeedForSafety.toFixed(1), windLabelForSafety, settings.maxWindSpeedCaution.toFixed(1))),
+        threshold: settings.maxWindSpeedCaution,
+        sectorSpecific: false,
+      };
     } else if (windSpeedForSafety >= settings.maxWindSpeedSafe) {
       rating = 'caution';
-      addReason('caution', limitReason(windSpeedForSafety, settings.maxWindSpeedSafe, 1,
-        'Wind speed: {0} m/s ({1}). At your Take care threshold of {2} m/s.',
-        'Wind speed: {0} m/s ({1}). Above your Take care threshold of {2} m/s.',
-        windSpeedForSafety.toFixed(1), windLabel, settings.maxWindSpeedSafe.toFixed(1)));
+      generalWindCandidate = {
+        reason: addReason('caution', limitReason(windSpeedForSafety, settings.maxWindSpeedSafe, 1,
+          'Wind speed: {0} m/s ({1}). At your Take care threshold of {2} m/s.',
+          'Wind speed: {0} m/s ({1}). Above your Take care threshold of {2} m/s.',
+          windSpeedForSafety.toFixed(1), windLabelForSafety, settings.maxWindSpeedSafe.toFixed(1))),
+        threshold: settings.maxWindSpeedSafe,
+        sectorSpecific: false,
+      };
     }
   }
 
@@ -230,17 +252,18 @@ export function analyzeSafetyConditions(
   // there is a known limit of the source, not a hole in this hour's data.
   const hasWindGust = isNonnegativeReading(gustForSafety);
   if (enableWindGust && !hasWindGust && (!data.blockSpanHours || isReading(gustForSafety))) missing.push('wind gusts');
+  let gustWindReason: VerdictReason | null = null;
   if (enableWindGust && hasWindGust) {
     // Beaufort describes sustained/mean wind, not a short gust. Keep the gust
     // numeric instead of assigning it a misleading Beaufort force name.
     const gustDangerLimit = settings.maxWindSpeedSafe + (settings.gustMargin ?? 2.0);
     if (gustForSafety >= gustDangerLimit) {
-      addReason('danger', limitReason(gustForSafety, gustDangerLimit, 1,
-        'Wind gusts: {0} m/s. At your gust danger threshold of {1} m/s.',
-        'Wind gusts: {0} m/s. Above your gust danger threshold of {1} m/s.',
+      gustWindReason = addReason('danger', limitReason(gustForSafety, gustDangerLimit, 1,
+        'Wind gusts: {0} m/s. At your wind danger threshold of {1} m/s.',
+        'Wind gusts: {0} m/s. Above your wind danger threshold of {1} m/s.',
         gustForSafety.toFixed(1), gustDangerLimit.toFixed(1)));
     } else if (gustForSafety >= settings.maxWindSpeedSafe) {
-      addReason('caution', limitReason(gustForSafety, settings.maxWindSpeedSafe, 1,
+      gustWindReason = addReason('caution', limitReason(gustForSafety, settings.maxWindSpeedSafe, 1,
         'Wind gusts: {0} m/s. At your Take care threshold of {1} m/s.',
         'Wind gusts: {0} m/s. Above your Take care threshold of {1} m/s.',
         gustForSafety.toFixed(1), settings.maxWindSpeedSafe.toFixed(1)));
@@ -258,13 +281,14 @@ export function analyzeSafetyConditions(
     : [];
   let windIsOnshore = false;
   let windIsOffshore = false;
+  const sectorWindCandidates: SustainedWindCandidate[] = [];
   // 359.6° rounds to 360, which is not a bearing — wrap it back to 0.
   // Rounded and wrapped once, then used for BOTH the sector test and the text.
   // Testing the raw bearing meant 44.6 deg printed as "45 deg NE" - the manual's
   // Easterly zone, with its tighter cap - while the rule read 44.6, missed the
-  // sector, and applied the looser general cap instead. Rounding pulls a
-  // borderline bearing INTO the sector, and a sector cap is never looser than
-  // the flat one, so this can only ever tighten a verdict.
+  // sector, and applied the general cap instead. Rounding makes the rule and
+  // displayed whole-degree bearing agree; the controlling-reason selection
+  // below still handles profiles whose sector cap is looser than the general one.
   const windDir = ((Math.round(data.windDirection) % 360) + 360) % 360;
   for (const sector of sectors) {
     if (!inSector(windDir, sector.min, sector.max)) continue;
@@ -273,16 +297,69 @@ export function analyzeSafetyConditions(
     // In user copy the upper boundary is always the DANGER cap — calling it a
     // "caution cap" on a red reason read as caution, not Rough.
     if (windSpeedForSafety >= sector.cautionLimit) {
-      addReason('danger', limitReason(windSpeedForSafety, sector.cautionLimit, 1,
-        '{0} wind ({1}°) is at your {2} m/s danger threshold for this direction.',
-        '{0} wind ({1}°) is over your {2} m/s danger threshold for this direction.',
-        translate(sector.label), windDir, sector.cautionLimit.toFixed(1)));
+      sectorWindCandidates.push({
+        reason: addReason('danger', limitReason(windSpeedForSafety, sector.cautionLimit, 1,
+          'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is at your {4} m/s danger threshold for this direction.',
+          'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is over your {4} m/s danger threshold for this direction.',
+          windSpeedForSafety.toFixed(1), windLabelForSafety, translate(sector.label), windDir,
+          sector.cautionLimit.toFixed(1))),
+        threshold: sector.cautionLimit,
+        sectorSpecific: true,
+      });
     } else if (windSpeedForSafety >= sector.safeLimit) {
       if (rating !== 'danger') rating = 'caution';
-      addReason('caution', limitReason(windSpeedForSafety, sector.safeLimit, 1,
-        '{0} wind ({1}°) is at your {2} m/s Take care threshold for this direction.',
-        '{0} wind ({1}°) is over your {2} m/s Take care threshold for this direction.',
-        translate(sector.label), windDir, sector.safeLimit.toFixed(1)));
+      sectorWindCandidates.push({
+        reason: addReason('caution', limitReason(windSpeedForSafety, sector.safeLimit, 1,
+          'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is at your {4} m/s Take care threshold for this direction.',
+          'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is over your {4} m/s Take care threshold for this direction.',
+          windSpeedForSafety.toFixed(1), windLabelForSafety, translate(sector.label), windDir,
+          sector.safeLimit.toFixed(1))),
+        threshold: sector.safeLimit,
+        sectorSpecific: true,
+      });
+    }
+  }
+
+  // General and sector caps judge the SAME sustained-wind reading. Listing
+  // both says the same thing twice, and can bury the separate tide-conflict
+  // signal below it. Keep the higher-severity explanation; at equal severity,
+  // keep the lower (controlling) threshold; only an exact threshold tie prefers
+  // the sector because it names why this bearing has a local cap. Beginner and
+  // Custom sectors can be looser than the general band, so blindly suppressing
+  // the general reason would hide the rule that actually set the verdict.
+  const sustainedWindCandidates = [
+    ...(generalWindCandidate ? [generalWindCandidate] : []),
+    ...sectorWindCandidates,
+  ];
+  const severityRank: Record<SafetyRating, number> = { safe: 0, caution: 1, danger: 2 };
+  const preferredSustainedWindCandidate = sustainedWindCandidates.length > 0
+    ? sustainedWindCandidates.reduce((best, candidate) => {
+      const candidateRank = severityRank[candidate.reason.severity];
+      const bestRank = severityRank[best.reason.severity];
+      if (candidateRank !== bestRank) return candidateRank > bestRank ? candidate : best;
+      if (candidate.threshold !== best.threshold) {
+        return candidate.threshold < best.threshold ? candidate : best;
+      }
+      return candidate.sectorSpecific && !best.sectorSpecific ? candidate : best;
+    })
+    : null;
+  if (preferredSustainedWindCandidate) {
+    for (const candidate of sustainedWindCandidates) {
+      if (candidate === preferredSustainedWindCandidate) continue;
+      const index = reasons.indexOf(candidate.reason);
+      if (index !== -1) reasons.splice(index, 1);
+    }
+
+    // The general check runs before gusts, while sectors are resolved after
+    // them. If a sector is the controlling sustained-wind explanation, put it
+    // back in that natural order: sustained wind, gust, then distinct hazards.
+    if (gustWindReason) {
+      const sustainedIndex = reasons.indexOf(preferredSustainedWindCandidate.reason);
+      const gustIndex = reasons.indexOf(gustWindReason);
+      if (sustainedIndex > gustIndex && gustIndex !== -1) {
+        reasons.splice(sustainedIndex, 1);
+        reasons.splice(gustIndex, 0, preferredSustainedWindCandidate.reason);
+      }
     }
   }
 

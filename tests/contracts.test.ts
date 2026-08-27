@@ -169,6 +169,7 @@ describe('pre-paint theme shell contract', () => {
     const serviceWorker = readFileSync(resolve(process.cwd(), 'public/sw.js'), 'utf8');
     const vite = readFileSync(resolve(process.cwd(), 'vite.config.ts'), 'utf8');
 
+    expect(index).toContain('<html lang="da" data-theme="light">');
     expect(index).toContain('<script src="/theme-init.js"></script>');
     expect(serviceWorker).toContain("'theme-init.js',");
     expect(vite).toContain('`${APP_BASE}theme-init.js`,');

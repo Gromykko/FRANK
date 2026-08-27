@@ -72,6 +72,7 @@ afterAll(() => {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  localStorage.clear();
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
@@ -85,6 +86,17 @@ afterEach(async () => {
 });
 
 describe('useSettings persistence lifecycle', () => {
+  it('starts a first-time visitor in Weather-only without inventing a saved choice', async () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem');
+
+    await renderHook();
+    await flushSettingsWrite();
+
+    expect(current.settings).toEqual(getPresetSettings('weather'));
+    expect(current.settings.tripMode).toBe('weather');
+    expect(setItem.mock.calls.some(([key]) => key === SETTINGS_STORAGE_KEY)).toBe(false);
+  });
+
   it('does not read unsuffixed prelaunch settings keys', async () => {
     const oldActive = JSON.stringify(customSettings({ maxWindSpeedSafe: 4.0 }));
     const oldCustom = JSON.stringify(customSettings({ maxWindSpeedSafe: 4.1 }));
@@ -94,7 +106,7 @@ describe('useSettings persistence lifecycle', () => {
     await renderHook();
     await flushSettingsWrite();
 
-    expect(current.settings).toEqual(DEFAULT_SETTINGS);
+    expect(current.settings).toEqual(getPresetSettings('weather'));
     expect(localStorage.getItem(SETTINGS_STORAGE_KEY)).toBeNull();
     expect(localStorage.getItem(CUSTOM_SETTINGS_STORAGE_KEY)).toBeNull();
     expect(localStorage.getItem('ffkajak_settings')).toBe(oldActive);
@@ -173,7 +185,7 @@ describe('useSettings persistence lifecycle', () => {
 
     await renderHook();
     await flushSettingsWrite();
-    expect(current.settings).toEqual(DEFAULT_SETTINGS);
+    expect(current.settings).toEqual(getPresetSettings('weather'));
     expect(localStorage.getItem(SETTINGS_STORAGE_KEY)).toBe(unreadable);
     expect(localStorage.getItem(`${SETTINGS_STORAGE_KEY}_corrupt`)).toBeNull();
 

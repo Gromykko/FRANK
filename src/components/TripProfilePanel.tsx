@@ -5,9 +5,9 @@ import { GUIDED_PROFILE_MODES, SAFETY_GUIDANCE_SOURCES } from '../features/safet
 import type { SafetySettings } from '../hooks/useSettings';
 
 const MODES: { value: SafetySettings['tripMode']; label: string }[] = [
-  { value: 'beginner', label: 'Chill' },
-  { value: 'default', label: 'Normal' },
-  { value: 'pro', label: 'Pro' },
+  { value: 'beginner', label: 'Beginner' },
+  { value: 'default', label: 'Intermediate' },
+  { value: 'pro', label: 'Advanced' },
   { value: 'custom', label: 'Custom' },
 ];
 
@@ -24,7 +24,7 @@ export default function TripProfilePanel({ tripMode, onTripModeChange }: TripPro
   const { t } = useLang();
   // 'weather' is deliberately NOT a fifth detent in the bank. The bank is a
   // scale of caution; switching every check off is a different kind of choice,
-  // and a detent sitting next to Pro could be slid onto by accident, silently
+  // and a detent sitting next to Advanced could be slid onto by accident, silently
   // removing the verdict. It also keeps the bank's four-column grid intact.
   const weatherOnly = tripMode === 'weather';
   const activeIdx = Math.max(0, MODES.findIndex((m) => m.value === tripMode));
@@ -133,7 +133,7 @@ export default function TripProfilePanel({ tripMode, onTripModeChange }: TripPro
 
       {/* BELOW the mode bank, and in normal flow rather than floating over it.
           As an absolutely-positioned popover hanging off the header it covered
-          the four buttons it exists to describe (Chill and Normal were hidden
+          the four buttons it exists to describe (Beginner and Intermediate were hidden
           entirely) and spilled past the panel edge onto the conditions card
           underneath. An explainer must not hide its own subject; growing the
           panel while it is open is the smaller cost. */}
@@ -163,15 +163,15 @@ export default function TripProfilePanel({ tripMode, onTripModeChange }: TripPro
             {t('These are FRANK starting points, not DKF safety limits or proof of skill. Local wind sectors and every other enabled rule may make a verdict stricter.')}
           </p>
           <p className="trip-profile-info-note">
-            {t('Basis: Normal and Pro wind use the numeric conditions in')}{' '}
+            {t('Basis: Intermediate and Advanced wind use the numeric conditions in')}{' '}
             <a href={SAFETY_GUIDANCE_SOURCES.dkfTouring} target="_blank" rel="noreferrer">DKF Touring</a>.
             {' '}{t('See the')}{' '}
             <a href={SAFETY_GUIDANCE_SOURCES.dkfIpp3Touring} target="_blank" rel="noreferrer">{t('IPP 3 Touring norm')}</a>
             {' '}{t('and')}{' '}
             <a href={SAFETY_GUIDANCE_SOURCES.dkfIpp4Touring} target="_blank" rel="noreferrer">{t('IPP 4 Touring norm')}</a>.
-            {' '}{t("Touring IPP 2 has no numeric wind limit. Chill's 5 m/s Rough boundary and the red wave boundaries use")}{' '}
+            {' '}{t("Touring IPP 2 has no numeric wind limit. Beginner's 5 m/s Rough boundary and the red wave boundaries use")}{' '}
             <a href={SAFETY_GUIDANCE_SOURCES.dkfSeaKayakNorm} target="_blank" rel="noreferrer">{t("DKF's 7 May 2026 sea-kayak norm")}</a>.
-            {' '}{t("Chill's 4 m/s and the lower wave Take care boundaries are FRANK's conservative choices.")}
+            {' '}{t("Beginner's 4 m/s and the lower wave Take care boundaries are FRANK's conservative choices.")}
           </p>
           <p>
             <strong>{t('Custom')}</strong> {t('is your own set: change anything in Your Limits below and it lands there.')}
