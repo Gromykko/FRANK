@@ -99,6 +99,39 @@ describe('useSettings persistence lifecycle', () => {
     expect(setItem.mock.calls.some(([key]) => key === SETTINGS_STORAGE_KEY)).toBe(false);
   });
 
+  it('seeds a city it has never opened from the profile chosen in another one', async () => {
+    // A profile describes the paddler, not the water, so it is the one record
+    // that is not location-suffixed. This city has no settings of its own.
+    localStorage.setItem('ffkajak_last_trip_mode', 'pro');
+
+    await renderHook();
+    await flushSettingsWrite();
+
+    expect(current.settings.tripMode).toBe('pro');
+    // Carried judgement, not carried numbers: the caps still come from this
+    // location's own configured sector geometry.
+    expect(current.settings).toEqual(getPresetSettings('pro'));
+  });
+
+  it('does not carry Custom into a city that has no Custom record', async () => {
+    // Custom's numbers live in a per-city slot this city does not have, so
+    // there is nothing to carry and the cautious first-visit guess applies.
+    localStorage.setItem('ffkajak_last_trip_mode', 'custom');
+
+    await renderHook();
+    await flushSettingsWrite();
+
+    expect(current.settings.tripMode).toBe('beginner');
+  });
+
+  it('remembers a deliberate profile choice for the next city', async () => {
+    await renderHook();
+    await act(async () => current.setTripMode('pro'));
+    await flushSettingsWrite();
+
+    expect(localStorage.getItem('ffkajak_last_trip_mode')).toBe('pro');
+  });
+
   it('does not read unsuffixed prelaunch settings keys', async () => {
     const oldActive = JSON.stringify(customSettings({ maxWindSpeedSafe: 4.0 }));
     const oldCustom = JSON.stringify(customSettings({ maxWindSpeedSafe: 4.1 }));

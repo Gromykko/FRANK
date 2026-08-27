@@ -226,6 +226,24 @@ const BOOLEAN_FLAGS = [
 ] as const;
 
 const TRIP_MODES: readonly SafetySettings['tripMode'][] = ['default', 'beginner', 'pro', 'custom', 'weather'];
+
+// Deliberately NOT suffixed with a location id. Every other settings record
+// is per city, because caps describe water; this one describes the paddler,
+// and the paddler is the thing that should follow them between fjords.
+const LAST_TRIP_MODE_KEY = 'ffkajak_last_trip_mode';
+
+function isTripMode(value: string): value is SafetySettings['tripMode'] {
+  return (TRIP_MODES as readonly string[]).includes(value);
+}
+
+function rememberTripMode(mode: SafetySettings['tripMode']): void {
+  try {
+    localStorage.setItem(LAST_TRIP_MODE_KEY, mode);
+  } catch {
+    // A convenience only: a blocked store just means the next new city
+    // falls back to the cautious first-visit guess.
+  }
+}
 const TIDE_PREFERENCES: readonly SafetySettings['tidePreference'][] = ['any', 'high', 'low', 'incoming'];
 
 function coerceNumericLimits(s: SafetySettings): SafetySettings {
@@ -426,6 +444,18 @@ export function useSettings() {
         // first visit gets.
         return getPresetSettings('beginner');
       }
+    }
+    // Not this city, but perhaps another one. A profile describes the paddler,
+    // not the water: driving from Horsens to Aarhus does not make someone less
+    // able, so the last profile chosen anywhere seeds a fjord they have not
+    // opened before. What carries over is the judgement, never the numbers -
+    // the presets derive every sector cap from this location's own geometry.
+    //
+    // Custom is the exception: its numbers live in a per-city record this city
+    // does not have, so there is nothing to carry and the guess below applies.
+    const remembered = readStorage(LAST_TRIP_MODE_KEY);
+    if (remembered !== null && remembered !== 'custom' && isTripMode(remembered)) {
+      return getPresetSettings(remembered);
     }
     // No profile has been chosen on a first visit, so FRANK guesses - and the
     // two ways of guessing wrong are not equally expensive. A verdict that is
@@ -667,6 +697,7 @@ export function useSettings() {
 
   const setTripMode = useCallback((mode: SafetySettings['tripMode']) => {
     hasEditedRef.current = true;
+    rememberTripMode(mode);
     activeWriteNeededRef.current = true;
     if (mode === 'custom') {
       const custom = customProfileRef.current ?? getPresetSettings('custom');
