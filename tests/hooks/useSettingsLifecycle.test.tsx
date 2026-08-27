@@ -86,14 +86,16 @@ afterEach(async () => {
 });
 
 describe('useSettings persistence lifecycle', () => {
-  it('starts a first-time visitor in Weather-only without inventing a saved choice', async () => {
+  it('starts a first-time visitor on the most cautious profile, without inventing a saved choice', async () => {
     const setItem = vi.spyOn(Storage.prototype, 'setItem');
 
     await renderHook();
     await flushSettingsWrite();
 
-    expect(current.settings).toEqual(getPresetSettings('weather'));
-    expect(current.settings.tripMode).toBe('weather');
+    // Guessing is unavoidable on a first visit; guess where being wrong sends
+    // somebody home rather than onto the water.
+    expect(current.settings).toEqual(getPresetSettings('beginner'));
+    expect(current.settings.tripMode).toBe('beginner');
     expect(setItem.mock.calls.some(([key]) => key === SETTINGS_STORAGE_KEY)).toBe(false);
   });
 
@@ -106,7 +108,7 @@ describe('useSettings persistence lifecycle', () => {
     await renderHook();
     await flushSettingsWrite();
 
-    expect(current.settings).toEqual(getPresetSettings('weather'));
+    expect(current.settings).toEqual(getPresetSettings('beginner'));
     expect(localStorage.getItem(SETTINGS_STORAGE_KEY)).toBeNull();
     expect(localStorage.getItem(CUSTOM_SETTINGS_STORAGE_KEY)).toBeNull();
     expect(localStorage.getItem('ffkajak_settings')).toBe(oldActive);
@@ -185,7 +187,9 @@ describe('useSettings persistence lifecycle', () => {
 
     await renderHook();
     await flushSettingsWrite();
-    expect(current.settings).toEqual(getPresetSettings('weather'));
+    // An unreadable profile is no authority for a verdict, but silence is not
+    // the safe failure either: fall back to the most cautious profile.
+    expect(current.settings).toEqual(getPresetSettings('beginner'));
     expect(localStorage.getItem(SETTINGS_STORAGE_KEY)).toBe(unreadable);
     expect(localStorage.getItem(`${SETTINGS_STORAGE_KEY}_corrupt`)).toBeNull();
 

@@ -420,16 +420,23 @@ export function useSettings() {
         return getPresetSettings(parsed.tripMode);
       } catch {
         activeLoadFailedRef.current = saved;
-        // A profile we cannot read is no authority for a safety verdict. Keep
-        // its bytes for recovery, but show raw weather until the user makes a
-        // deliberate profile choice.
-        return getPresetSettings('weather');
+        // A profile we cannot read is no authority for a safety verdict, but
+        // silence is not the safe failure either. Keep the unreadable bytes for
+        // recovery and fall back to the most cautious profile, the same guess a
+        // first visit gets.
+        return getPresetSettings('beginner');
       }
     }
-    // No skill/profile has been chosen on a first visit. Raw weather is the
-    // honest default; selecting Chill, Normal, or Pro opts into
-    // FRANK's personal-limit verdicts and is then remembered per location.
-    return getPresetSettings('weather');
+    // No profile has been chosen on a first visit, so FRANK guesses - and the
+    // two ways of guessing wrong are not equally expensive. A verdict that is
+    // too cautious sends somebody home; one that is too permissive puts them
+    // on the water. Guess in the direction you can survive being wrong about.
+    //
+    // Raw weather looks like the humble answer and is the worse one: the
+    // product IS the verdict, so a first-time visitor would meet a weather app
+    // and never learn FRANK has an opinion. The profile bank sits directly
+    // above the readings for anyone who disagrees with this one.
+    return getPresetSettings('beginner');
   });
   // The active choice and remembered Custom profile are separate records and
   // can fail independently (for example, replacing the existing active value
