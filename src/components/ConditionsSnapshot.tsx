@@ -1,7 +1,6 @@
 import { ArrowDown, Sun, Sunrise, Sunset } from 'lucide-react';
 import WeatherWidgetIcon from './WeatherWidgetIcon';
 import { blockHourRange } from '../features/forecast/blockHours';
-import { getCompactWeatherDescription } from '../features/forecast/weatherCodes';
 import { useLang } from '../i18n';
 import { formatWeekday, locationHourLabel } from '../utils/date';
 import { formatReading, formatLevelCm, NO_READING_TEXT } from '../utils/number';
@@ -76,7 +75,6 @@ export default function ConditionsSnapshot({
     : formatReading(data.windGust, 1);
   const gustText = t('gusts {0}', gustValue);
   const compactGustText = t('gust {0}', gustValue);
-  const compactWeatherDesc = t(getCompactWeatherDescription(data.weatherCode));
   const daylightRange = [sunrise, sunset].filter(Boolean).join('–');
 
   return (
@@ -88,10 +86,9 @@ export default function ConditionsSnapshot({
             {/* An outlook row describes a period, not its start instant. Its
                 isDay flag only reflects that start mark, so turning the whole
                 period into a moon icon would make a false night claim. */}
-            <WeatherWidgetIcon code={data.weatherCode} isNight={!data.isDay && !isBlock} size={18} />
+            <WeatherWidgetIcon symbolCode={data.symbolCode} suppressPhase={isBlock} size={18} />
             <span className="snapshot-value snapshot-desc" title={weatherDesc}>
-              <span className="snapshot-weather-full" aria-hidden="true">{weatherDesc}</span>
-              <span className="snapshot-weather-compact" aria-hidden="true">{compactWeatherDesc}</span>
+              <span aria-hidden="true">{weatherDesc}</span>
               <span className="sr-only">{weatherDesc}</span>
             </span>
           </span>

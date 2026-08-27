@@ -207,13 +207,19 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
 
           <div>
             <h3 className="manual-h">{t('6. Weather Condition (Rain, Snow, Sleet, Fog, Thunder)')}</h3>
-            <p className="manual-p">{t("The weather condition comes straight from the forecast's own symbol (MET Norway's symbol_code) — FRANK does not compute its own rain or lightning judgement. Each condition maps to a severity:")}</p>
+            <p className="manual-p">
+              {t("The weather condition comes straight from MET Norway's symbol_code. English follows MET's official")}{' '}
+              <a href={SAFETY_GUIDANCE_SOURCES.metWeatherSymbolLegend} target="_blank" rel="noreferrer">{t('Weathericons legend')}</a>.
+              {' '}{t('Danish uses translated')}{' '}
+              <a href={SAFETY_GUIDANCE_SOURCES.dmiForecastVocabulary} target="_blank" rel="noreferrer">{t('DMI weather terminology')}</a>.
+              {' '}{t('FRANK does not reconstruct rain or lightning from other readings; it assigns each native condition a paddling severity:')}
+            </p>
             <ul className="manual-list spaced">
-              <li><strong>{t('Good to go:')}</strong> {t('clear, cloudy, light drizzle, and light rain — no weather flag.')}</li>
-              <li><strong>{t('Take care:')}</strong> {t('moderate rain, light snow, sleet, fog, and rain showers — worth keeping an eye on.')}</li>
-              <li><strong>{t('Rough:')}</strong> {t('heavy rain, heavier snow or sleet, snow showers, and thunderstorms — probably one to skip.')}</li>
+              <li><strong>{t('Good to go:')}</strong> {t('clear, fair, partly cloudy, cloudy, and light rain — no weather flag.')}</li>
+              <li><strong>{t('Take care:')}</strong> {t('rain, fog, light or ordinary snow and sleet, and non-heavy rain showers — worth keeping an eye on.')}</li>
+              <li><strong>{t('Rough:')}</strong> {t('heavy precipitation, snow or sleet showers, and every condition with thunder — probably one to skip.')}</li>
             </ul>
-            <p className="manual-note">{t('There is no configurable rain limit or lightning slider: the forecast decides the condition, and the reason shows its plain description (for example "Heavy rain" or "Thunderstorm").')}</p>
+            <p className="manual-note">{t('There is no configurable rain limit or lightning slider: MET decides the condition, and the reason keeps its native meaning (for example "Heavy rain" or "Heavy rain and thunder").')}</p>
           </div>
 
           <div>

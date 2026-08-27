@@ -117,7 +117,7 @@ describe('block windows with no sun schedule', () => {
     time: '2026-08-08T06:00:00Z',
     tempAir: 18, tempWater: 18, windSpeed: 2, windGust: 3, windDirection: 180,
     waveHeight: 0.1, wavePeriod: 3, waveDirection: 180, tideLevel: 0,
-    precipitation: 0, symbolCode: 'clearsky_day', weatherCode: 0,
+    precipitation: 0, symbolCode: 'clearsky_day',
     currentSpeed: 0, currentDirection: 0, isDay: true,
     isLowConfidence: true, blockSpanHours: 6,
   } as HourlyData;

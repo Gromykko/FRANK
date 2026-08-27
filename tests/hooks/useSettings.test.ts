@@ -21,7 +21,7 @@ function currentRecord(overrides: Record<string, unknown> = {}): string {
 const baseData: HourlyData = {
   time: '2026-07-08T12:00:00Z', tempAir: 20, tempWater: 18, windSpeed: 3, windGust: 4,
   windDirection: 180, waveHeight: 0.1, wavePeriod: 3, waveDirection: 180, tideLevel: 0,
-  precipitation: 0, symbolCode: 'clearsky_day', weatherCode: 0, currentSpeed: 0, currentDirection: 0, isDay: true,
+  precipitation: 0, symbolCode: 'clearsky_day', currentSpeed: 0, currentDirection: 0, isDay: true,
 };
 
 describe('healSectorCautions', () => {

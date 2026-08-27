@@ -43,7 +43,6 @@ function currentHorsensForecast(nowMs = Date.now()): ForecastData {
       tempAir: 15,
       precipitation: 0,
       symbolCode: 'clearsky_day',
-      weatherCode: 0,
       windSpeed: 2,
       windDirection: 180,
       windGust: 3,
@@ -139,14 +138,15 @@ describe('Worker runtime integration contract', () => {
     expect(stored?.sources.location?.id).toBe(HORSENS.id);
     expect(stored?.sources.payloadVersion).toBe(FORECAST_PAYLOAD_VERSION);
 
-    const response = await dispatch('/api/v1/forecast/horsens');
+    const response = await dispatch('/api/v2/forecast/horsens');
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe('application/json; charset=utf-8');
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(response.headers.get('access-control-allow-origin')).toBe('*');
     expect(response.headers.get('x-content-type-options')).toBe('nosniff');
     expect(response.headers.get('access-control-expose-headers')).toContain('X-FRANK-Worker-Version');
-    expect(response.headers.get('x-frank-api-schema')).toBe('1');
+    expect(response.headers.get('x-frank-api-schema'))
+      .toBe(String(CURRENT_RELEASE.apiSchemaVersion));
     expect(response.headers.get('x-frank-model-revision'))
       .toBe(String(CURRENT_RELEASE.modelRevision));
     expect(response.headers.get('x-frank-data-generation'))
@@ -164,12 +164,13 @@ describe('Worker runtime integration contract', () => {
     expect(body.sources.payloadVersion).toBe(FORECAST_PAYLOAD_VERSION);
     expect(body.sources.cacheHealth?.status).toBe('current');
     expect(body.hourly).toHaveLength(1);
+    expect(body.hourly[0]).not.toHaveProperty('weatherCode');
     expect(providerFetch).not.toHaveBeenCalled();
   });
 
   it('serves deployment cache-readiness mode from real KV without provider work', async () => {
     const providerFetch = rejectLiveNetwork();
-    const response = await dispatch('/api/v1/forecast/horsens?warm=1', 'GET', WARM_TOKEN);
+    const response = await dispatch('/api/v2/forecast/horsens?warm=1', 'GET', WARM_TOKEN);
 
     expect(response.status).toBe(200);
     const body = await response.json<ForecastData>();
@@ -180,26 +181,10 @@ describe('Worker runtime integration contract', () => {
 
   it('hides unauthenticated deployment warming without provider work', async () => {
     const providerFetch = rejectLiveNetwork();
-    const response = await dispatch('/api/v1/forecast/horsens?warm=1');
+    const response = await dispatch('/api/v2/forecast/horsens?warm=1');
 
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: 'Not found' });
-    expect(providerFetch).not.toHaveBeenCalled();
-  });
-
-  it('serves the unversioned bootstrap route as the same canonical representation', async () => {
-    const providerFetch = rejectLiveNetwork();
-    const [unversioned, versioned] = await Promise.all([
-      dispatch('/forecast/horsens'),
-      dispatch('/api/v1/forecast/horsens'),
-    ]);
-
-    expect(unversioned.status).toBe(200);
-    expect(versioned.status).toBe(200);
-    expect(await unversioned.json<ForecastData>()).toEqual(
-      await versioned.json<ForecastData>(),
-    );
-    expect(unversioned.headers.get('X-FRANK-Generation-Ready')).toBe('true');
     expect(providerFetch).not.toHaveBeenCalled();
   });
 
@@ -210,7 +195,7 @@ describe('Worker runtime integration contract', () => {
     const raw = JSON.stringify(currentHorsensForecast());
     await env.FRANK_FORECAST_CACHE.put(historicalKey, raw);
 
-    const response = await dispatch('/api/v1/forecast/horsens');
+    const response = await dispatch('/api/v2/forecast/horsens');
 
     expect(response.status).toBe(503);
     expect(response.headers.get('X-FRANK-Generation-Ready')).toBe('false');
@@ -228,7 +213,7 @@ describe('Worker runtime integration contract', () => {
     );
     vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    const first = await dispatch('/api/v1/forecast/horsens?warm=1', 'GET', WARM_TOKEN);
+    const first = await dispatch('/api/v2/forecast/horsens?warm=1', 'GET', WARM_TOKEN);
     expect(first.status).toBe(503);
     expect(first.headers.get('retry-after')).toBe('90');
     expectCurrentWorkerVersion(first);
@@ -257,13 +242,13 @@ describe('Worker runtime integration contract', () => {
     });
 
     const callsAfterFirst = providerFetch.mock.calls.length;
-    const repeatedWarm = await dispatch('/api/v1/forecast/horsens?warm=1', 'GET', WARM_TOKEN);
+    const repeatedWarm = await dispatch('/api/v2/forecast/horsens?warm=1', 'GET', WARM_TOKEN);
     expect(repeatedWarm.status).toBe(503);
     expect(repeatedWarm.headers.get('retry-after')).toBe('90');
     expect((await repeatedWarm.json<ForecastInitializingPayload>()).retryAfterSeconds).toBe(90);
     expect(providerFetch).toHaveBeenCalledTimes(callsAfterFirst);
 
-    const publicResponse = await dispatch('/api/v1/forecast/horsens');
+    const publicResponse = await dispatch('/api/v2/forecast/horsens');
     expect(publicResponse.status).toBe(503);
     expect(publicResponse.headers.get('retry-after')).toBe('600');
     expect((await publicResponse.json<ForecastInitializingPayload>()).retryAfterSeconds).toBe(600);
@@ -273,13 +258,13 @@ describe('Worker runtime integration contract', () => {
   it('preserves the read-only HTTP contract for HEAD, OPTIONS, and unknown paths', async () => {
     const providerFetch = rejectLiveNetwork();
 
-    const head = await dispatch('/forecast/horsens', 'HEAD');
+    const head = await dispatch('/api/v2/forecast/horsens', 'HEAD');
     expect(head.status).toBe(200);
     expect(await head.text()).toBe('');
     expect(head.headers.get('content-type')).toBe('application/json; charset=utf-8');
     expectCurrentWorkerVersion(head);
 
-    const options = await dispatch('/forecast/horsens', 'OPTIONS');
+    const options = await dispatch('/api/v2/forecast/horsens', 'OPTIONS');
     expect(options.status).toBe(204);
     expect(options.headers.get('allow')).toBe('GET, HEAD, OPTIONS');
     expect(options.headers.get('access-control-allow-methods')).toBe('GET, HEAD, OPTIONS');
@@ -289,6 +274,10 @@ describe('Worker runtime integration contract', () => {
     expect(unknown.status).toBe(404);
     expect(await unknown.json()).toEqual({ error: 'Not found' });
     expect(unknown.headers.get('access-control-allow-origin')).toBe('*');
+
+    const retiredAlias = await dispatch('/forecast/horsens');
+    expect(retiredAlias.status).toBe(404);
+    expect(await retiredAlias.json()).toEqual({ error: 'Not found' });
     expectCurrentWorkerVersion(unknown);
     expect(providerFetch).not.toHaveBeenCalled();
   });

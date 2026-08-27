@@ -40,7 +40,6 @@ import type {
 import {
   FORECAST_PROVIDER_PARAMETERS,
   FORECAST_SOURCE_POLICY,
-  PAYLOAD_VERSION,
   assessMarineRunCoverage,
   assembleForecastFromSources,
   canUseMetFallback,
@@ -93,10 +92,9 @@ import { marineIngredientKey, metRawKey } from './generation';
 import { putKvWithLog } from './kvWriteLogging';
 const WARNING_EXECUTION_BUDGET_MS = 5_000;
 
-// Compatibility aliases preserve the public Worker test/API surface while the
-// implementation lives at the generation-owned semantic boundary.
+// Selected generation-owned decisions are re-exported for focused provider
+// tests while the implementation remains at the semantic boundary.
 export {
-  PAYLOAD_VERSION,
   degradedMarineSourcesAfterProbe,
   degradedSourcesAfterProbe,
   deriveMarineSeedsFromPayload,

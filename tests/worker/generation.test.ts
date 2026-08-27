@@ -131,10 +131,12 @@ describe('release generation identity and storage isolation', () => {
   it('can locate an explicitly audited N-1 generation with its own cache schema', () => {
     const previous = {
       ...CURRENT_RELEASE,
+      apiSchemaVersion: 1,
       modelRevision: 6,
       assembledCacheSchema: 4,
       marineCacheSchema: 1,
       dataGenerationId: 'api1-model6',
+      payloadVersion: 7,
     };
 
     expect(assembledForecastKeyForRelease(previous, LOCATION)).toBe(
@@ -143,11 +145,12 @@ describe('release generation identity and storage isolation', () => {
   });
 
   it('resolves only supported API routes to their exact release descriptor', () => {
-    expect(versionedForecastRoute('/api/v1/forecast/horsens')).toEqual({
+    expect(versionedForecastRoute('/api/v2/forecast/horsens')).toEqual({
       locationId: 'horsens',
       release: CURRENT_RELEASE,
     });
-    expect(versionedForecastRoute('/api/v2/forecast/horsens')).toBeNull();
+    expect(versionedForecastRoute('/api/v1/forecast/horsens')).toBeNull();
+    expect(versionedForecastRoute('/api/v3/forecast/horsens')).toBeNull();
     expect(versionedForecastRoute('/forecast/horsens')).toBeNull();
   });
 });

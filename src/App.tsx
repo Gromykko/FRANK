@@ -6,7 +6,7 @@ import {
   ChevronUp,
 } from 'lucide-react';
 import { analyzeSafetyConditions, RATING_WORD } from './features/safety/analyzeSafetyConditions';
-import { getWeatherDescription } from './features/forecast/weatherCodes';
+import { getMetWeatherDescription } from './features/forecast/weatherSymbols';
 import { getDisplayHourlyData, nextHourTideFor } from './features/forecast/displayData';
 import { deriveCacheStatus } from './features/forecast/cacheStatusView';
 import { getWorkerContactMs } from './features/forecast/cache';
@@ -258,7 +258,7 @@ export default function App() {
   const windRotation = Number.isFinite(currentHourData.windDirection)
     ? Math.round(currentHourData.windDirection)
     : null;
-  const weatherDesc = t(getWeatherDescription(currentHourData.weatherCode));
+  const weatherDesc = t(getMetWeatherDescription(currentHourData.symbolCode));
 
   const formatWindDirection = (degrees: number) =>
     Number.isFinite(degrees) ? `${Math.round(degrees) % 360}° ${t(compassPoint(degrees))}` : NO_READING_TEXT;
@@ -271,7 +271,6 @@ export default function App() {
     view: statusView,
     expandedDetail: cacheStatusExpandedDetail,
     showRefreshWarning: showCacheRefreshWarning,
-    workerOutdated,
     forecastAgeLabel,
     refreshFailureConfirmed,
   } = deriveCacheStatus({
@@ -338,12 +337,6 @@ export default function App() {
           <div className="forecast-warning" role="alert">
             <AlertTriangle size={15} />
             <span>{t(error)}</span>
-          </div>
-        )}
-        {workerOutdated && (
-          <div className="forecast-warning" role="alert">
-            <AlertTriangle size={15} />
-            <span>{t('The forecast is briefly out of date while FRANK updates behind the scenes. Please check back in a few minutes.')}</span>
           </div>
         )}
         {showCacheRefreshWarning && (
@@ -472,7 +465,7 @@ export default function App() {
             </p>
             <ForecastAttribution
               dmiModels={dmiModels}
-              areaName={weatherData.sources.location?.areaName ?? CURRENT_LOCATION.areaName}
+              areaName={weatherData.sources.location.areaName}
               hasWarnings={Boolean(weatherData.warnings?.length)}
             />
             <PrivacyNotice

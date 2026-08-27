@@ -1,5 +1,5 @@
 import type { HourlyData } from '../forecast/types';
-import { getWeatherDescription } from '../forecast/weatherCodes';
+import { getMetWeatherDescription, getMetWeatherSeverity } from '../forecast/weatherSymbols';
 import { CURRENT_LOCATION } from '../../config/locations';
 import type { ForecastLocation, WindSector } from '../../config/locations';
 import { assessBlockDaylight } from './blockDaylight';
@@ -41,57 +41,6 @@ const WATER_LEVEL_TREND_TOLERANCE_M = 0.005;
 // then "at or past min OR at or before max".
 const inSector = (deg: number, min: number, max: number) =>
   min <= max ? deg >= min && deg <= max : deg >= min || deg <= max;
-
-// MET Norway decides the weather condition (its own symbol_code). FRANK
-// only maps that symbol to a severity — no custom weather derivation, no raw
-// lightning probability. Thunder and heavy precipitation are Danger; fog, snow,
-// sleet, and moderate rain are Caution; light rain and dry skies are safe.
-function severityFromMetSymbol(symbol: string | undefined): SafetyRating {
-  if (!symbol) return 'safe';
-  const base = symbol.replace(/_(day|night|polartwilight)$/, '');
-  if (base.includes('thunder')) return 'danger';
-  if (base.includes('fog')) return 'caution';
-  // Frozen precipitation implies cold, wintry water — always at least Caution.
-  // Snow SHOWERS are Danger like the WMO 85/86 fallback and the manual say
-  // (squally, low-visibility bursts), matching heavy snow.
-  if (base.includes('snow')) {
-    return base.includes('heavy') || base.includes('showers') ? 'danger' : 'caution';
-  }
-  if (base.includes('sleet')) {
-    // Sleet showers are as squally and low-visibility as snow showers, and
-    // colder-wet — rated the same rather than one band softer.
-    return base.includes('heavy') || base.includes('showers') ? 'danger' : 'caution';
-  }
-  if (base.includes('rain')) {
-    if (base.includes('heavy')) return 'danger';
-    // Showers are gusty/squally even when light — at least Caution (WMO 80).
-    if (base.includes('showers')) return 'caution';
-    if (base.includes('light')) return 'safe';
-    return 'caution';
-  }
-  return 'safe'; // clearsky, fair, partlycloudy, cloudy
-}
-
-// Fallback for any legacy cache entry that predates symbol_code: map the WMO
-// weather_code (WMO 4677) to the same severity bands. These MUST agree with
-// severityFromMetSymbol above via metSymbolToWmoCode — where they disagreed,
-// identical weather rated differently depending on how old the payload was.
-const WEATHER_CODE_SEVERITY: Record<number, SafetyRating> = {
-  0: 'safe', 1: 'safe', 2: 'safe', 3: 'safe',   // clear -> overcast
-  45: 'caution', 48: 'caution',                 // fog
-  51: 'safe', 53: 'caution', 55: 'caution',     // drizzle
-  56: 'caution', 57: 'caution',                 // freezing drizzle
-  61: 'safe', 63: 'caution', 65: 'danger',      // rain ('lightrain' is safe)
-  // 66 hosts both plain/light sleet (caution live) AND sleet showers (danger
-  // live) — metSymbolToWmoCode folds all four into it, so exact agreement is
-  // impossible. Take the stricter band: a legacy row must never under-warn.
-  66: 'danger', 67: 'danger',                   // freezing rain / sleet
-  71: 'caution', 73: 'caution', 75: 'danger',   // snow ('snow' is caution)
-  77: 'caution',                                // snow grains
-  80: 'caution', 81: 'caution', 82: 'danger',   // rain showers
-  85: 'danger', 86: 'danger',                   // snow showers
-  95: 'danger', 96: 'danger', 99: 'danger',     // thunderstorm
-};
 
 // Verdict-producing reasons carry the severity they produced, so the UI can
 // colour them independently from the hour's overall rating.
@@ -391,36 +340,18 @@ export function analyzeSafetyConditions(
     }
   }
 
-  // Weather condition severity. MET Norway's symbol_code decides the condition
-  // (rain, snow, fog, thunderstorm); we only map it to a severity and surface
-  // the human-readable description (via the symbol's mapped WMO code). No custom
-  // derivation, no lightning probability, no configurable rain limit. The
-  // weather_code path is a fallback for any pre-symbol_code cache entry.
-  // Unknown weather is not safe weather — on either path.
-  //
-  // The old guard (`!data.symbolCode && !isReading(data.weatherCode)`) was
-  // unreachable in production: normalize.ts drops any MET entry without a
-  // symbol_code, so every live row HAS one and the first half was never true.
-  // An unrecognised symbol therefore fell through severityFromMetSymbol's
-  // closing `return 'safe'` straight into a genuine all-clear that read
-  // "Everything's within your limits — …, unknown weather."
-  //
-  // On the live path `weatherCode` is metSymbolToWmoCode(symbolCode), i.e. NaN
-  // exactly when the symbol was unrecognised. On the legacy pre-symbol_code
-  // path the code is real but may not be in our table, which defaults to
-  // 'safe' — so check for presence there instead.
-  const weatherKnown = data.symbolCode
-    ? isReading(data.weatherCode)
-    : data.weatherCode in WEATHER_CODE_SEVERITY;
-  if (!weatherKnown) missing.push('weather');
-  const weatherSeverity = data.symbolCode
-    ? severityFromMetSymbol(data.symbolCode)
-    : WEATHER_CODE_SEVERITY[data.weatherCode] ?? 'safe';
-  const weatherDesc = translate(getWeatherDescription(data.weatherCode));
-  if (weatherSeverity === 'danger') {
+  // MET's native symbol_code decides the condition and its official English
+  // wording. FRANK assigns the paddling severity in the same exhaustive table;
+  // it does not translate the symbol through a numeric weather vocabulary.
+  // A future/unrecognised symbol is missing evidence, never safe weather.
+  const nativeWeatherSeverity = getMetWeatherSeverity(data.symbolCode);
+  const weatherDesc = translate(getMetWeatherDescription(data.symbolCode));
+  if (!nativeWeatherSeverity) {
+    missing.push('weather');
+  } else if (nativeWeatherSeverity === 'danger') {
     rating = 'danger';
     addReason('danger', translate('{0} — rough out there, probably one to skip.', weatherDesc));
-  } else if (weatherSeverity === 'caution') {
+  } else if (nativeWeatherSeverity === 'caution') {
     if (rating !== 'danger') rating = 'caution';
     addReason('caution', translate('{0} — worth keeping an eye on.', weatherDesc));
   }

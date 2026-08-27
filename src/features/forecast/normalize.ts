@@ -1,6 +1,4 @@
 import type { HourlyData, SeriesPoint } from './types';
-import { metSymbolToWmoCode } from './weatherCodes';
-
 export interface DmiFeature {
   type: 'Feature';
   geometry?: {
@@ -20,7 +18,9 @@ export interface DmiFeatureCollection {
 // MET Norway Locationforecast 2.0 (the "complete" product). Only the fields
 // FRANK reads are typed here.
 interface MetPeriod {
-  summary?: { symbol_code?: string };
+  // Provider JSON is untrusted at runtime. The mappers below admit only a
+  // non-empty string, so a malformed truthy value cannot reach symbol lookup.
+  summary?: { symbol_code?: unknown };
   details?: { precipitation_amount?: number };
 }
 
@@ -49,6 +49,10 @@ export interface MetForecastResponse {
   };
 }
 
+function isNonBlankString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
 // Shared forecast-core helpers. Exported so the Worker imports the one canonical
 // copy instead of maintaining its own (they must never drift — they compute the
 // numbers the safety verdict runs on).
@@ -62,7 +66,7 @@ export const NO_READING = NaN;
 
 // The numeric HourlyData fields, i.e. everything NO_READING can land in.
 const READING_FIELDS = [
-  'tempAir', 'precipitation', 'weatherCode', 'windSpeed', 'windDirection', 'windGust',
+  'tempAir', 'precipitation', 'windSpeed', 'windDirection', 'windGust',
   'waveHeight', 'waveDirection', 'wavePeriod', 'tempWater', 'tideLevel',
   'currentSpeed', 'currentDirection',
   'windSpeedMin', 'windSpeedMax', 'windSpeedP90', 'windGustMax', 'waveHeightMin', 'waveHeightMax',
@@ -178,7 +182,7 @@ export function mapMetTimeseries(data: MetForecastResponse): SeriesPoint[] {
     .map((entry): SeriesPoint | null => {
       const time = entry.time;
       const symbolCode = entry.data?.next_1_hours?.summary?.symbol_code;
-      if (!time || !symbolCode) return null;
+      if (!time || !isNonBlankString(symbolCode)) return null;
 
       const date = new Date(time);
       if (Number.isNaN(date.getTime())) return null;
@@ -189,7 +193,6 @@ export function mapMetTimeseries(data: MetForecastResponse): SeriesPoint[] {
         time: date.toISOString(),
         timeMs: date.getTime(),
         symbolCode,
-        weatherCode: metSymbolToWmoCode(symbolCode),
         tempAir: asNumber(instant.air_temperature),
         precipitation: asNumber(entry.data?.next_1_hours?.details?.precipitation_amount) ?? 0,
         windSpeed: asNumber(instant.wind_speed),
@@ -209,7 +212,6 @@ export interface MetBlock {
   timeMs: number;
   spanHours: number;
   symbolCode: string;
-  weatherCode: number;
   tempAir?: number;
   windSpeed?: number;
   // MET complete-product uncertainty estimate at this instant. It is not a
@@ -229,9 +231,15 @@ export function mapMetBlocks(data: MetForecastResponse): MetBlock[] {
       const time = entry.time;
       const six = entry.data?.next_6_hours;
       const twelve = entry.data?.next_12_hours;
-      const period = six?.summary?.symbol_code ? six : twelve?.summary?.symbol_code ? twelve : undefined;
+      const sixSymbol = six?.summary?.symbol_code;
+      const twelveSymbol = twelve?.summary?.symbol_code;
+      const period = isNonBlankString(sixSymbol)
+        ? six
+        : isNonBlankString(twelveSymbol)
+          ? twelve
+          : undefined;
       const symbolCode = period?.summary?.symbol_code;
-      if (!time || !period || !symbolCode) return null;
+      if (!time || !period || !isNonBlankString(symbolCode)) return null;
 
       const date = new Date(time);
       if (Number.isNaN(date.getTime())) return null;
@@ -243,7 +251,6 @@ export function mapMetBlocks(data: MetForecastResponse): MetBlock[] {
         timeMs: date.getTime(),
         spanHours: period === six ? 6 : 12,
         symbolCode,
-        weatherCode: metSymbolToWmoCode(symbolCode),
         tempAir: asNumber(instant.air_temperature),
         windSpeed: asNumber(instant.wind_speed),
         windSpeedP90: asNumber(instant.wind_speed_percentile_90),
@@ -343,7 +350,6 @@ export function assembleBlockRow(block: MetBlock, marine: BlockMarine, isDay: bo
     tempAir: block.tempAir ?? NO_READING,
     precipitation: block.precipitation ?? 0,
     symbolCode: block.symbolCode,
-    weatherCode: block.weatherCode,
     windSpeed,
     windDirection: block.windDirection ?? NO_READING,
     windGust,
@@ -390,8 +396,6 @@ export function assembleHourlyRow(
     tempAir: weather.tempAir ?? NO_READING,
     precipitation: weather.precipitation ?? 0,
     symbolCode: weather.symbolCode ?? '',
-    // 0 is "clear sky" — a missing condition must not read as a fine day.
-    weatherCode: weather.weatherCode ?? NO_READING,
     windSpeed: weather.windSpeed ?? NO_READING,
     windDirection: weather.windDirection ?? NO_READING,
     windGust: weather.windGust ?? NO_READING,

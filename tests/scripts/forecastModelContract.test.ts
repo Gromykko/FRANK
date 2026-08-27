@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import locationData from '../../src/config/locations.json';
 import { CURRENT_RELEASE } from '../../src/features/forecast/releaseContract';
 import type { ReleaseMetadata } from '../../src/features/forecast/releaseContract';
+import { parseReleasePolicy } from '../../scripts/load-release-contract.mjs';
 import {
   FORECAST_SEMANTIC_BOUNDARY_ID,
   FORECAST_SEMANTIC_INPUT_FILES,
@@ -59,6 +60,24 @@ function snapshot({
 }
 
 describe('forecast model release guard', () => {
+  it('permits only the explicitly retired pre-launch API while keeping it unrouted', async () => {
+    const source = await readFile('src/features/forecast/releaseContract.ts', 'utf8');
+    expect(parseReleasePolicy(source)).toMatchObject({
+      supportedApiSchemaVersions: [2],
+      retiredApiSchemaVersions: [1],
+      auditedPriorApiReleases: [{ apiSchemaVersion: 1, modelRevision: 57 }],
+    });
+
+    expect(() => parseReleasePolicy(source.replace(
+      'RETIRED_FORECAST_API_SCHEMA_VERSIONS = [1]',
+      'RETIRED_FORECAST_API_SCHEMA_VERSIONS = []',
+    ))).toThrow('non-retired audited prior release descriptors');
+    expect(() => parseReleasePolicy(source.replace(
+      'RETIRED_FORECAST_API_SCHEMA_VERSIONS = [1]',
+      'RETIRED_FORECAST_API_SCHEMA_VERSIONS = [2]',
+    ))).toThrow('cannot also be retired');
+  });
+
   it('enforces the generation-owned/operational module boundary', async () => {
     await expect(assertForecastSemanticBoundary()).resolves.toMatchObject({
       id: FORECAST_SEMANTIC_BOUNDARY_ID,

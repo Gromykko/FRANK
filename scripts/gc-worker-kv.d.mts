@@ -11,6 +11,7 @@ export interface ListedKvKey {
 export interface ForecastReleaseContract {
   release: Readonly<ReleaseMetadata>;
   auditedPreviousReleases: readonly Readonly<ReleaseMetadata>[];
+  retiredApiSchemaVersions?: readonly number[];
 }
 
 export interface WorkerKvGcPlan {
@@ -40,6 +41,7 @@ export function planWorkerKvGc(options: {
   listedKeys: unknown;
   currentRelease: Readonly<ReleaseMetadata>;
   auditedPreviousReleases?: readonly Readonly<ReleaseMetadata>[];
+  retiredApiSchemaVersions?: readonly number[];
 }): WorkerKvGcPlan;
 export function listRemoteForecastKvKeys(options?: {
   execFileImpl?: ExecFileImpl;

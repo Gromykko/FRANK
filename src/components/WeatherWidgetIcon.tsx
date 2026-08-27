@@ -1,9 +1,10 @@
-import { Sun, Cloud, CloudRain, CloudSnow, CloudLightning, CloudSun, CloudDrizzle, CloudOff } from 'lucide-react';
+import { Sun, Cloud, CloudRain, CloudSnow, CloudLightning, CloudSun, CloudOff } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { getMetWeatherIconKind, getMetWeatherSymbolVariant } from '../features/forecast/weatherSymbols';
 
 interface WeatherWidgetIconProps {
-  code: number;
-  isNight: boolean;
+  symbolCode: string;
+  suppressPhase?: boolean;
   size?: number;
 }
 
@@ -13,18 +14,12 @@ interface IconSpec {
   icon: ReactNode;
 }
 
-// WMO weather codes grouped into simplified states:
-// 0-1 clear, 2-3 cloudy, 45/48 fog, 51-57 drizzle,
-// 61-67 + 80-82 rain, 71-77 + 85-86 snow, 95-99 thunderstorm.
-function getIconSpec(code: number, isNight: boolean, size: number): IconSpec {
-  // A missing reading arrives as NaN, and every comparison below is false
-  // against it — so an unknown condition fell through to the final `return`
-  // and drew a spinning sun, right next to the caption "Unknown weather".
-  // The icon is the part people actually look at. Draw the absence instead.
-  if (!Number.isFinite(code)) {
+function getIconSpec(symbolCode: string, isNight: boolean, size: number): IconSpec {
+  const kind = getMetWeatherIconKind(symbolCode);
+  if (kind === 'unknown') {
     return { animation: '', tone: 'tone-cloud', icon: <CloudOff size={size} /> };
   }
-  if (isNight && (code === 0 || code === 1)) {
+  if (isNight && kind === 'clear') {
     return {
       animation: 'moon-pulse',
       tone: 'tone-moon',
@@ -35,38 +30,38 @@ function getIconSpec(code: number, isNight: boolean, size: number): IconSpec {
       ),
     };
   }
-  if (isNight && (code === 2 || code === 3)) {
+  if (isNight && (kind === 'fair' || kind === 'partly-cloudy' || kind === 'cloudy')) {
     return { animation: 'cloud-drift', tone: 'tone-cloud', icon: <Cloud size={size} /> };
   }
-  if (code === 0 || code === 1) {
+  if (kind === 'clear') {
     return { animation: 'sun-spin', tone: 'tone-sun', icon: <Sun size={size} /> };
   }
-  if (code === 2) {
+  if (kind === 'fair' || kind === 'partly-cloudy') {
     return { animation: 'sun-cloud-drift', tone: 'tone-cloud', icon: <CloudSun size={size} /> };
   }
-  if (code === 3 || code === 45 || code === 48) {
+  if (kind === 'cloudy' || kind === 'fog') {
     return { animation: 'cloud-drift', tone: 'tone-cloud', icon: <Cloud size={size} /> };
   }
-  if (code >= 51 && code <= 57) {
-    return { animation: 'rain-fall', tone: 'tone-drizzle', icon: <CloudDrizzle size={size} /> };
-  }
-  if ((code >= 61 && code <= 67) || (code >= 80 && code <= 82)) {
+  if (kind === 'rain') {
     return { animation: 'rain-fall', tone: 'tone-rain', icon: <CloudRain size={size} /> };
   }
-  if ((code >= 71 && code <= 77) || code === 85 || code === 86) {
+  if (kind === 'sleet' || kind === 'snow') {
     return { animation: 'snow-spin', tone: 'tone-snow', icon: <CloudSnow size={size} /> };
   }
-  if (code >= 95 && code <= 99) {
+  if (kind === 'thunder') {
     return { animation: 'lightning-flash', tone: 'tone-storm', icon: <CloudLightning size={size} /> };
   }
-  // The payload contract currently accepts the full 0..99 numeric range, while
-  // WMO leaves several values unassigned. Unknown must look unknown: a sunny
-  // fallback would quietly turn malformed/new provider data into reassurance.
+  // Exhaustive above, but retain a fail-closed visual if a future kind reaches
+  // this component before its artwork is wired.
   return { animation: '', tone: 'tone-cloud', icon: <CloudOff size={size} /> };
 }
 
-export default function WeatherWidgetIcon({ code, isNight, size = 32 }: WeatherWidgetIconProps) {
-  const spec = getIconSpec(code, isNight, size);
+export default function WeatherWidgetIcon({ symbolCode, suppressPhase = false, size = 32 }: WeatherWidgetIconProps) {
+  // MET has already encoded the artwork phase in symbol_code. Do not
+  // recalculate it from sunrise; that can disagree at the provider boundary.
+  // Outlook symbols describe a whole period, so their start phase is suppressed.
+  const isNight = !suppressPhase && getMetWeatherSymbolVariant(symbolCode) === 'night';
+  const spec = getIconSpec(symbolCode, isNight, size);
 
   return (
     <div className="weather-widget-wrap" aria-hidden="true">

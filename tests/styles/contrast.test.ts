@@ -10,7 +10,6 @@ const ratingAndIconTokens = [
   '--color-danger',
   '--icon-sun',
   '--icon-moon',
-  '--icon-drizzle',
   '--icon-rain',
   '--icon-snow',
 ] as const;

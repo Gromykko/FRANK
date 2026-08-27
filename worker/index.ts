@@ -575,7 +575,6 @@ function isUsableCurrentForecastCache(
   // cannot make two structurally different contracts safe by itself.
   return hasUsableForecastStructure(value)
     && isValidForecastPayload(value, location, {
-      requireReleaseMetadata: true,
       sourceClockLeadToleranceMs: FORECAST_SERVER_CLOCK_LEAD_TOLERANCE_MS,
     })
     && isForecastForRelease(value, CURRENT_RELEASE)
@@ -843,13 +842,7 @@ function healthSeverity(
   health: Partial<WorkerCacheHealth> | null | undefined,
 ): readonly number[] {
   if (!health) return [0, 0, 0, 0];
-  const status = health.status === 'stale'
-    ? 4
-    : health.status === 'fallback'
-      ? 3
-      : health.status === 'pending'
-        ? 2
-        : 1;
+  const status = health.status === 'stale' ? 2 : 1;
   return [
     status,
     health.needsRebuild ? 1 : 0,
@@ -951,7 +944,7 @@ async function _refreshForecastCache(
     : await readCachedForecast(env, location, policy);
   const cachedNeedsRecovery = (() => {
     const health = cached?.sources?.cacheHealth;
-    return health?.status === 'stale' || health?.status === 'fallback' || health?.needsRebuild;
+    return health?.status === 'stale' || health?.needsRebuild;
   })();
 
   const minIntervalMs = options.minIntervalMs ?? CRON_CHECK_MIN_INTERVAL_MS;
@@ -1520,7 +1513,6 @@ async function handleForecastRequest(
   ctx: ExecutionContext,
   locationId: string,
   eventMemo: EventMemo,
-  versionedApiRoute: boolean,
 ): Promise<Response> {
   const location = findLocation(locationId);
   if (!location) {
@@ -1528,7 +1520,7 @@ async function handleForecastRequest(
   }
 
   const url = new URL(request.url);
-  const deploymentWarm = versionedApiRoute && isWarmQueryRequested(url);
+  const deploymentWarm = isWarmQueryRequested(url);
   const forceRebuildRequested = url.searchParams.get('rebuild') === '1' || url.searchParams.get('rebuild') === 'true';
 
   if (forceRebuildRequested) {
@@ -1778,16 +1770,12 @@ const worker = {
       } else if (route.kind === 'status') {
         response = await handleStatusRequest(env);
       } else {
-        // Temporary bootstrap alias: the unversioned route serves the exact
-        // current contract without re-stamping it. New clients use /api/vN;
-        // removing this alias later changes no storage or release semantics.
         response = await handleForecastRequest(
           request,
           env,
           ctx,
           route.locationId,
           eventMemo,
-          Boolean(apiRoute),
         );
       }
 

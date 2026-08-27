@@ -17,7 +17,6 @@ const benignHour: HourlyData = {
   tideLevel: 0,
   precipitation: 0,
   symbolCode: 'clearsky_day',
-  weatherCode: 0,
   currentSpeed: 0,
   currentDirection: 0,
   isDay: true,
@@ -95,4 +94,3 @@ describe('IPP-aligned profile boundaries', () => {
     },
   );
 });
-

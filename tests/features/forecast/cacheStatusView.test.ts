@@ -42,7 +42,7 @@ describe('getCacheStatusView', () => {
       interpolate(da[key] ?? key, ...args);
     const v = getCacheStatusView({
       refreshing: false,
-      cacheHealth: { status: 'fallback', lastAttemptAt: '' } as Health,
+      cacheHealth: { status: 'stale', lastAttemptAt: '' } as Health,
       forecastAtLabel: '12:10',
       forecastAgeLabel: '8 t',
       offline: true,
@@ -92,19 +92,17 @@ describe('getCacheStatusView', () => {
     expect(v).toMatchObject({ label: 'Update in progress…', detail: '', tone: 'neutral' });
   });
 
-  it('uses one label for an active refresh, Worker preparation, and a pending build', () => {
+  it('uses one label for an active refresh and Worker preparation', () => {
     const health = { status: 'current', lastAttemptAt: '' } as Health;
     const states = [
       getCacheStatusView({ refreshing: true, cacheHealth: health, forecastAtLabel: '20:07' }),
       getCacheStatusView({ refreshing: false, preparing: true, cacheHealth: health, forecastAtLabel: '20:07' }),
-      getCacheStatusView({ refreshing: false, cacheHealth: { status: 'pending', lastAttemptAt: '' } as Health, forecastAtLabel: '20:07' }),
     ];
     expect(states.map(({ label }) => label)).toEqual([
       'Update in progress…',
       'Update in progress…',
-      'Update in progress…',
     ]);
-    expect(states.map(({ tone }) => tone)).toEqual(['neutral', 'neutral', 'watch']);
+    expect(states.map(({ tone }) => tone)).toEqual(['neutral', 'neutral']);
   });
 
   it('keeps an old saved forecast honestly amber while it is being checked', () => {
@@ -256,7 +254,6 @@ describe('deriveCacheStatus freshness', () => {
     expect(result.expandedDetail.match(/Update in progress/g)).toHaveLength(1);
     expect(result.expandedDetail).not.toMatch(/could not|fail/i);
     expect(result.showRefreshWarning).toBe(false);
-    expect(result.workerOutdated).toBe(false);
   });
 
   it('raises the warning only after the check completes as a failure', () => {

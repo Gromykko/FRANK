@@ -38,7 +38,6 @@ function buildHourly(startMs: number) {
     tempAir: 18,
     precipitation: 0,
     symbolCode: 'partlycloudy_day',
-    weatherCode: 2,
     windSpeed: 2.8,
     windDirection: 250,
     windGust: 4.1,

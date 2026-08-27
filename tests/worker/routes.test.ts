@@ -97,7 +97,6 @@ function cachedForecast(locationId = 'horsens'): ForecastData {
       tempAir: 15,
       precipitation: 0,
       symbolCode: 'clearsky_day',
-      weatherCode: 0,
       windSpeed: 2,
       windDirection: 180,
       windGust: 3,
@@ -340,9 +339,18 @@ describe('Worker route HTTP contract', () => {
     '/',
     '/health',
     '/status',
-    '/forecast/horsens',
-    '/api/v1/forecast/horsens',
+    '/api/v2/forecast/horsens',
   ];
+
+  it('advertises only the current forecast API', async () => {
+    const runtime = makeRuntime();
+    const response = await worker.fetch(request('/'), runtime.env, runtime.ctx);
+    const body = await response.json<{ endpoints: string[] }>();
+
+    expect(body.endpoints).toContain('/api/v2/forecast/horsens');
+    expect(body.endpoints.some((endpoint) => endpoint.includes('/api/v1/'))).toBe(false);
+    expect(body.endpoints.some((endpoint) => endpoint.startsWith('/forecast/'))).toBe(false);
+  });
 
   it.each(knownPaths)('rejects mutating methods consistently on %s', async (path) => {
     const runtime = makeRuntime();
@@ -362,7 +370,7 @@ describe('Worker route HTTP contract', () => {
     );
   });
 
-  it.each(['/health', '/forecast/horsens', '/api/v1/forecast/horsens'])(
+  it.each(['/health', '/api/v2/forecast/horsens'])(
     'models HEAD without a response body on %s',
     async (path) => {
       const runtime = makeRuntime();
@@ -420,7 +428,7 @@ describe('Worker route HTTP contract', () => {
     const runtime = makeRuntime();
     const [unknown, futureApi, unknownOptions] = await Promise.all([
       worker.fetch(request('/forecast/not-a-place'), runtime.env, runtime.ctx),
-      worker.fetch(request('/api/v2/forecast/horsens'), runtime.env, runtime.ctx),
+      worker.fetch(request('/api/v3/forecast/horsens'), runtime.env, runtime.ctx),
       worker.fetch(request('/missing', 'OPTIONS'), runtime.env, runtime.ctx),
     ]);
     expect(unknown.status).toBe(404);
@@ -1077,31 +1085,10 @@ async function readInitializingPayload(
     expect(horsensCard).toContain('release-candidate');
   });
 
-  it('keeps the unversioned bootstrap route as an exact canonical alias', async () => {
-    const runtime = makeRuntime();
-    const providerFetch = rejectProviderWork();
-    const [unversionedRoute, versionedRoute] = await Promise.all([
-      worker.fetch(request('/forecast/horsens'), runtime.env, runtime.ctx),
-      worker.fetch(request('/api/v1/forecast/horsens'), runtime.env, runtime.ctx),
-    ]);
-    expect(unversionedRoute.status).toBe(200);
-    expect(versionedRoute.status).toBe(200);
-    const unversionedBody = await unversionedRoute.json<ForecastData>();
-    const versionedBody = await versionedRoute.json<ForecastData>();
-    expect(unversionedBody).toEqual(versionedBody);
-    expect(unversionedBody.sources.payloadVersion).toBe(7);
-    expect(unversionedBody.sources.release).toEqual(CURRENT_RELEASE);
-    expect(versionedBody.sources.payloadVersion).toBe(7);
-    expect(versionedBody.sources.release).toEqual(CURRENT_RELEASE);
-    expect(unversionedRoute.headers.get(RELEASE_HEADER.generationReady)).toBe('true');
-    expect(versionedRoute.headers.get(RELEASE_HEADER.generationReady)).toBe('true');
-    expect(providerFetch).not.toHaveBeenCalled();
-  });
-
   it('returns exact release metadata in body and CORS-visible headers', async () => {
     const runtime = makeRuntime();
     const response = await worker.fetch(
-      request('/api/v1/forecast/horsens'),
+      request('/api/v2/forecast/horsens'),
       runtime.env,
       runtime.ctx,
     );
@@ -1123,7 +1110,7 @@ async function readInitializingPayload(
     expect(response.headers.get('X-FRANK-Worker-Version')).toBe(WORKER_VERSION_ID);
   });
 
-  it.each(['/forecast/horsens', '/forecast/horsens?refresh=1'])(
+  it.each(['/api/v2/forecast/horsens', '/api/v2/forecast/horsens?refresh=1'])(
     'keeps browser request %s a pure prepared-snapshot read',
     async (path) => {
       const runtime = makeRuntime();
@@ -1142,7 +1129,7 @@ async function readInitializingPayload(
     const runtime = makeRuntime({ exact: false });
     const providerFetch = rejectProviderWork();
     const response = await worker.fetch(
-      request('/forecast/aarhus'),
+      request('/api/v2/forecast/aarhus'),
       runtime.env,
       runtime.ctx,
     );
@@ -1163,8 +1150,8 @@ async function readInitializingPayload(
   });
 
   it.each([
-    ['missing authorization', request('/api/v1/forecast/aarhus?warm=1')],
-    ['wrong authorization', authorizedWarmRequest('/api/v1/forecast/aarhus?warm=true', 'wrong-token')],
+    ['missing authorization', request('/api/v2/forecast/aarhus?warm=1')],
+    ['wrong authorization', authorizedWarmRequest('/api/v2/forecast/aarhus?warm=true', 'wrong-token')],
   ])('hides candidate warming for %s before any cache or provider I/O', async (_label, warmRequest) => {
     const runtime = makeRuntime({ exact: false });
     const providerFetch = rejectProviderWork();
@@ -1182,7 +1169,7 @@ async function readInitializingPayload(
   it('requires warm authorization before method handling', async () => {
     const runtime = makeRuntime({ exact: false });
     const response = await worker.fetch(
-      request('/api/v1/forecast/aarhus?warm=1', 'OPTIONS'),
+      request('/api/v2/forecast/aarhus?warm=1', 'OPTIONS'),
       runtime.env,
       runtime.ctx,
     );
@@ -1197,7 +1184,7 @@ async function readInitializingPayload(
     const providerFetch = rejectProviderWork();
 
     const response = await worker.fetch(
-      authorizedWarmRequest('/api/v1/forecast/aarhus?warm=1'),
+      authorizedWarmRequest('/api/v2/forecast/aarhus?warm=1'),
       runtime.env,
       runtime.ctx,
     );
@@ -1208,7 +1195,7 @@ async function readInitializingPayload(
     expect(providerFetch).not.toHaveBeenCalled();
   });
 
-  it('does not expose candidate warming through the unversioned alias', async () => {
+  it('keeps the retired unversioned alias unavailable even with warm authorization', async () => {
     const runtime = makeRuntime({ exact: false });
     const providerFetch = rejectProviderWork();
     const response = await worker.fetch(
@@ -1216,8 +1203,26 @@ async function readInitializingPayload(
       runtime.env,
       runtime.ctx,
     );
-    expect(response.status).toBe(503);
-    expect((await readInitializingPayload(response)).code).toBe('FORECAST_INITIALIZING');
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: 'Not found' });
+    expect(runtime.gets).toHaveLength(0);
+    expect(runtime.puts).toHaveLength(0);
+    expect(runtime.waits).toHaveLength(0);
+    expect(providerFetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps the retired v1 API unavailable even with warm authorization', async () => {
+    const runtime = makeRuntime({ exact: false });
+    const providerFetch = rejectProviderWork();
+    const response = await worker.fetch(
+      authorizedWarmRequest('/api/v1/forecast/aarhus?warm=1'),
+      runtime.env,
+      runtime.ctx,
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: 'Not found' });
+    expect(runtime.gets).toHaveLength(0);
     expect(runtime.puts).toHaveLength(0);
     expect(runtime.waits).toHaveLength(0);
     expect(providerFetch).not.toHaveBeenCalled();
@@ -1246,7 +1251,7 @@ async function readInitializingPayload(
       vi.spyOn(console, 'error').mockImplementation(() => {});
 
       const response = await worker.fetch(
-        authorizedWarmRequest('/api/v1/forecast/aarhus?warm=1'),
+        authorizedWarmRequest('/api/v2/forecast/aarhus?warm=1'),
         runtime.env,
         runtime.ctx,
       );
@@ -1277,7 +1282,7 @@ async function readInitializingPayload(
         ({ key }) => key === CRON_HEARTBEAT_KEY,
       ).length;
       const repeated = await worker.fetch(
-        authorizedWarmRequest('/api/v1/forecast/aarhus?warm=1'),
+        authorizedWarmRequest('/api/v2/forecast/aarhus?warm=1'),
         runtime.env,
         runtime.ctx,
       );
@@ -1331,7 +1336,7 @@ async function readInitializingPayload(
 
       let responseSettled = false;
       const responsePromise = worker.fetch(
-        authorizedWarmRequest('/api/v1/forecast/aarhus?warm=1'),
+        authorizedWarmRequest('/api/v2/forecast/aarhus?warm=1'),
         runtime.env,
         runtime.ctx,
       ).then((response) => {
@@ -1424,7 +1429,7 @@ async function readInitializingPayload(
       vi.spyOn(console, 'error').mockImplementation(() => {});
 
       const first = await worker.fetch(
-        authorizedWarmRequest('/api/v1/forecast/aarhus?warm=1'),
+        authorizedWarmRequest('/api/v2/forecast/aarhus?warm=1'),
         runtime.env,
         runtime.ctx,
       );
@@ -1435,7 +1440,7 @@ async function readInitializingPayload(
       expect(runtime.puts.map(({ key }) => key)).not.toContain(initializationStateKey(location));
 
       const repeated = await worker.fetch(
-        authorizedWarmRequest('/api/v1/forecast/aarhus?warm=1'),
+        authorizedWarmRequest('/api/v2/forecast/aarhus?warm=1'),
         runtime.env,
         runtime.ctx,
       );
@@ -1460,7 +1465,7 @@ async function readInitializingPayload(
     vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const first = await worker.fetch(
-      authorizedWarmRequest('/api/v1/forecast/aarhus?warm=1'),
+      authorizedWarmRequest('/api/v2/forecast/aarhus?warm=1'),
       runtime.env,
       runtime.ctx,
     );
@@ -1514,7 +1519,7 @@ async function readInitializingPayload(
 
     const callsAfterFirst = providerFetch.mock.calls.length;
     const repeated = await worker.fetch(
-      authorizedWarmRequest('/api/v1/forecast/aarhus?warm=1'),
+      authorizedWarmRequest('/api/v2/forecast/aarhus?warm=1'),
       runtime.env,
       runtime.ctx,
     );
@@ -1524,7 +1529,7 @@ async function readInitializingPayload(
     expect(providerFetch).toHaveBeenCalledTimes(callsAfterFirst);
 
     const publicResponse = await worker.fetch(
-      request('/api/v1/forecast/aarhus'),
+      request('/api/v2/forecast/aarhus'),
       runtime.env,
       runtime.ctx,
     );
@@ -1554,7 +1559,7 @@ async function readInitializingPayload(
       vi.spyOn(console, 'error').mockImplementation(() => {});
 
       const response = await worker.fetch(
-        authorizedWarmRequest('/api/v1/forecast/vejle?warm=1'),
+        authorizedWarmRequest('/api/v2/forecast/vejle?warm=1'),
         runtime.env,
         runtime.ctx,
       );
@@ -1590,7 +1595,7 @@ async function readInitializingPayload(
       vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       const first = await worker.fetch(
-        authorizedWarmRequest('/api/v1/forecast/kolding?warm=1'),
+        authorizedWarmRequest('/api/v2/forecast/kolding?warm=1'),
         runtime.env,
         runtime.ctx,
       );
@@ -1601,7 +1606,7 @@ async function readInitializingPayload(
 
       vi.setSystemTime(new Date('2030-08-23T10:01:31.000Z'));
       const second = await worker.fetch(
-        authorizedWarmRequest('/api/v1/forecast/kolding?warm=1'),
+        authorizedWarmRequest('/api/v2/forecast/kolding?warm=1'),
         runtime.env,
         runtime.ctx,
       );
@@ -1633,7 +1638,7 @@ async function readInitializingPayload(
     });
     const providerFetch = rejectProviderWork();
     const response = await worker.fetch(
-      authorizedWarmRequest('/api/v1/forecast/kolding?warm=1'),
+      authorizedWarmRequest('/api/v2/forecast/kolding?warm=1'),
       runtime.env,
       runtime.ctx,
     );
@@ -1726,7 +1731,7 @@ async function readInitializingPayload(
     });
     const providerFetch = rejectProviderWork();
     const response = await worker.fetch(
-      authorizedWarmRequest('/api/v1/forecast/vejle?warm=1'),
+      authorizedWarmRequest('/api/v2/forecast/vejle?warm=1'),
       runtime.env,
       runtime.ctx,
     );
@@ -1742,7 +1747,7 @@ async function readInitializingPayload(
     ));
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const response = await worker.fetch(
-      authorizedWarmRequest('/api/v1/forecast/vejle?warm=1'),
+      authorizedWarmRequest('/api/v2/forecast/vejle?warm=1'),
       runtime.env,
       runtime.ctx,
     );
@@ -1765,7 +1770,7 @@ async function readInitializingPayload(
     });
     const providerFetch = rejectProviderWork();
     const response = await worker.fetch(
-      request('/api/v1/forecast/horsens'),
+      request('/api/v2/forecast/horsens'),
       runtime.env,
       runtime.ctx,
     );
@@ -1789,7 +1794,7 @@ async function readInitializingPayload(
       },
     });
     const response = await worker.fetch(
-      request('/api/v1/forecast/horsens'),
+      request('/api/v2/forecast/horsens'),
       runtime.env,
       runtime.ctx,
     );

@@ -2,10 +2,14 @@
 // internal cache format must not make an otherwise compatible browser reject
 // the public forecast API, and rebuilding the same model must not look like a
 // new software contract.
-export const FORECAST_API_SCHEMA_VERSION = 1;
-export const SUPPORTED_FORECAST_API_SCHEMA_VERSIONS = [1] as const;
-export const FORECAST_MODEL_REVISION = 57;
-export const ASSEMBLED_FORECAST_CACHE_SCHEMA_VERSION = 1;
+export const FORECAST_API_SCHEMA_VERSION = 2;
+export const SUPPORTED_FORECAST_API_SCHEMA_VERSIONS = [2] as const;
+// API 1 was explicitly retired before the app had users when its lossy numeric
+// weather condition was removed. Retired schemas are not routed or advertised;
+// this list is a permanent audit fact, not a compatibility promise.
+export const RETIRED_FORECAST_API_SCHEMA_VERSIONS = [1] as const;
+export const FORECAST_MODEL_REVISION = 58;
+export const ASSEMBLED_FORECAST_CACHE_SCHEMA_VERSION = 2;
 
 // Unlike the versions above, this one is a CROSS-RELEASE contract, not a
 // private cache tag: the marine ingredient lives in the shared raw layer
@@ -22,14 +26,12 @@ export const MARINE_INGREDIENT_CACHE_SCHEMA_VERSION = 3;
 // new generation in parallel, proves every public location is complete, and
 // only then receives production traffic. Never replace this with an eventually
 // consistent KV "active generation" pointer.
-export const FORECAST_DATA_GENERATION_ID = 'api1-model57';
+export const FORECAST_DATA_GENERATION_ID = 'api2-model58';
 
-// `payloadVersion` is the historical browser/Worker payload stamp. It remains
-// independent from the API, model and storage identities, but there is no
-// pre-launch client-compatibility bridge: the canonical baseline is v7.
-// Future breaking APIs get a new /api/vN route.
-export const LEGACY_FORECAST_PAYLOAD_VERSION = 7;
-export const SUPPORTED_LEGACY_FORECAST_PAYLOAD_VERSIONS = [7] as const;
+// `payloadVersion` is the browser/Worker payload-shape stamp. It remains
+// independent from the API, model, and storage identities.
+export const FORECAST_PAYLOAD_VERSION = 8;
+export const SUPPORTED_FORECAST_PAYLOAD_VERSIONS = [8] as const;
 
 export interface ReleaseMetadata {
   apiSchemaVersion: number;
@@ -64,10 +66,10 @@ export type ForecastReleaseMetadata = ReleaseMetadata;
 export const AUDITED_PREVIOUS_FORECAST_GENERATIONS: readonly Readonly<ReleaseMetadata>[] = Object.freeze([
   Object.freeze({
     apiSchemaVersion: 1,
-    modelRevision: 56,
+    modelRevision: 57,
     assembledCacheSchema: 1,
     marineCacheSchema: 3,
-    dataGenerationId: 'api1-model56',
+    dataGenerationId: 'api1-model57',
     payloadVersion: 7,
   }),
 ]);
@@ -78,15 +80,15 @@ export const CURRENT_RELEASE: Readonly<ReleaseMetadata> = Object.freeze({
   assembledCacheSchema: ASSEMBLED_FORECAST_CACHE_SCHEMA_VERSION,
   marineCacheSchema: MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
   dataGenerationId: FORECAST_DATA_GENERATION_ID,
-  payloadVersion: LEGACY_FORECAST_PAYLOAD_VERSION,
+  payloadVersion: FORECAST_PAYLOAD_VERSION,
 });
 
 export const CURRENT_FORECAST_RELEASE = CURRENT_RELEASE;
 
-export function isSupportedLegacyForecastPayloadVersion(value: unknown): value is number {
+export function isSupportedForecastPayloadVersion(value: unknown): value is number {
   return typeof value === 'number'
     && Number.isInteger(value)
-    && (SUPPORTED_LEGACY_FORECAST_PAYLOAD_VERSIONS as readonly number[]).includes(value);
+    && (SUPPORTED_FORECAST_PAYLOAD_VERSIONS as readonly number[]).includes(value);
 }
 
 export function isSupportedForecastApiSchemaVersion(value: unknown): value is number {

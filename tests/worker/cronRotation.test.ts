@@ -137,7 +137,6 @@ function cachedForecast(
       tempAir: 15,
       precipitation: 0,
       symbolCode: 'clearsky_day',
-      weatherCode: 0,
       windSpeed: 2,
       windDirection: 180,
       windGust: 3,

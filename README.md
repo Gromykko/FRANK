@@ -29,6 +29,15 @@ FRANK currently covers **Horsens Fjord**, **Vejle Fjord**, **Kolding Fjord**, an
 
 Provider attribution is also shown in the app. Forecast values are model-grid estimates at configured coordinates, not local measurements.
 
+Weather-condition wording comes directly from MET's native `symbol_code` and
+[official Weathericons legend](https://raw.githubusercontent.com/metno/weathericons/main/weather/legend.csv).
+FRANK does not translate it through a numeric WMO-style weather code. English
+therefore keeps MET's exact 41 condition names; Danish uses DMI-aligned terms
+from [DMI's weather-symbol guide](https://www.dmi.dk/dmis-vejrprodukter/vejrsymboler/)
+and [forecast vocabulary](https://www.dmi.dk/nyheder/2019/faa-det-store-koerekort-til-vejrudsigten/).
+The icon family and paddling severity remain explicit FRANK decisions, not
+claims made by MET or DMI.
+
 ## How it works
 
 ```text

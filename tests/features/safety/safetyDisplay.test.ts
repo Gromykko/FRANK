@@ -4,7 +4,6 @@ import {
   getSafetyDisplay,
   hasActiveSafetyChecks,
 } from '../../../src/features/safety/safetyDisplay';
-import { metSymbolToWmoCode } from '../../../src/features/forecast/weatherCodes';
 import { DEFAULT_SETTINGS } from '../../../src/features/safety/presets';
 import type { HourlyData } from '../../../src/features/forecast/types';
 import type { SafetySettings } from '../../../src/features/safety/presets';
@@ -35,7 +34,6 @@ const baseData: HourlyData = {
   tideLevel: 0,
   precipitation: 0,
   symbolCode: 'clearsky_day',
-  weatherCode: 0,
   currentSpeed: 0,
   currentDirection: 0,
   isDay: true,
@@ -44,7 +42,6 @@ const baseData: HourlyData = {
 const withWeather = (symbolCode: string): HourlyData => ({
   ...baseData,
   symbolCode,
-  weatherCode: metSymbolToWmoCode(symbolCode),
 });
 
 describe('raw-mode safety display', () => {
@@ -60,7 +57,7 @@ describe('raw-mode safety display', () => {
   // the advice clause.
   //
   // Seeing it running showed the fact was redundant too. The snapshot directly
-  // above already prints the same data.weatherCode beside the weather icon, so
+  // above already prints the same native condition beside the weather icon, so
   // the quiet mode was repeating itself and ended up noisier than the judging
   // one. Now: no verdict, no restatement - only the line explaining that limits
   // are off.

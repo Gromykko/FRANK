@@ -6,7 +6,6 @@ import {
   getWindSpeedLabel,
   resolveSectors,
 } from '../../../src/features/safety/analyzeSafetyConditions';
-import { metSymbolToWmoCode } from '../../../src/features/forecast/weatherCodes';
 import { CURRENT_LOCATION } from '../../../src/config/locations';
 import { da } from '../../../src/i18n/da';
 import { interpolate } from '../../../src/i18n/interpolate';
@@ -43,7 +42,6 @@ const baseData: HourlyData = {
   tideLevel: 0,
   precipitation: 0,
   symbolCode: 'clearsky_day',
-  weatherCode: 0,
   currentSpeed: 0,
   currentDirection: 0,
   isDay: true,
@@ -77,18 +75,15 @@ describe('analyzeSafetyConditions', () => {
   });
 
   it('rates the weather condition from the MET symbol_code', () => {
-    // Mirror normalize.ts: weatherCode is ALWAYS derived from the symbol
-    // (NaN when the symbol is unrecognised). A fixture that pairs a symbol
-    // with an unrelated code tests a row the pipeline can never produce.
-    const withSymbol = (symbolCode: string) => ({ ...baseData, symbolCode, weatherCode: metSymbolToWmoCode(symbolCode) });
+    const withSymbol = (symbolCode: string) => ({ ...baseData, symbolCode });
     // Thunder -> danger
     expect(analyzeSafetyConditions(withSymbol('heavyrainandthunder'), baseSettings).rating).toBe('danger');
     // Heavy rain -> danger
     expect(analyzeSafetyConditions(withSymbol('heavyrain'), baseSettings).rating).toBe('danger');
-    // Moderate rain -> caution
+    // Rain -> caution
     expect(analyzeSafetyConditions(withSymbol('rain'), baseSettings).rating).toBe('caution');
     // Light rain -> safe (minor for kayaking)
-    expect(analyzeSafetyConditions(withSymbol('lightrain_day'), baseSettings).rating).toBe('safe');
+    expect(analyzeSafetyConditions(withSymbol('lightrain'), baseSettings).rating).toBe('safe');
     // Fog -> caution
     expect(analyzeSafetyConditions(withSymbol('fog'), baseSettings).rating).toBe('caution');
     // Snow -> caution
@@ -97,14 +92,10 @@ describe('analyzeSafetyConditions', () => {
     expect(analyzeSafetyConditions(withSymbol('clearsky_night'), baseSettings).rating).toBe('safe');
   });
 
-  it('falls back to the WMO weather_code when no symbol_code is present', () => {
-    const noSymbol = { ...baseData, symbolCode: '' };
-    // 95 = thunderstorm -> danger
-    expect(analyzeSafetyConditions({ ...noSymbol, weatherCode: 95 }, baseSettings).rating).toBe('danger');
-    // 65 = heavy rain -> danger
-    expect(analyzeSafetyConditions({ ...noSymbol, weatherCode: 65 }, baseSettings).rating).toBe('danger');
-    // 2 = partly cloudy -> safe
-    expect(analyzeSafetyConditions({ ...noSymbol, weatherCode: 2 }, baseSettings).rating).toBe('safe');
+  it('treats a missing native symbol as unassessable', () => {
+    const result = analyzeSafetyConditions({ ...baseData, symbolCode: '' }, baseSettings);
+    expect(result.rating).toBe('caution');
+    expect(result.reasons.some((reason) => /cannot clear/i.test(reason.text))).toBe(true);
   });
 
   it('evaluates water temp correctly', () => {
@@ -679,7 +670,7 @@ describe('custom wind direction sectors', () => {
 describe('rating combination rules', () => {
   it('a danger rule is never lowered by later caution/safe rules; all reasons kept', () => {
     // Wind danger (9 >= 8), water temp caution (12 < 15), weather caution (rain).
-    const data = { ...baseData, windSpeed: 9, tempWater: 12, symbolCode: 'rain', weatherCode: 63 };
+    const data = { ...baseData, windSpeed: 9, tempWater: 12, symbolCode: 'rain' };
     const result = analyzeSafetyConditions(data, baseSettings);
     expect(result.rating).toBe('danger');
     expect(result.reasons).toHaveLength(3);
@@ -726,8 +717,7 @@ describe('rating combination rules', () => {
 // Weather severity gaps (beyond the cases already tested above).
 // ---------------------------------------------------------------------------
 describe('weather severity (additional symbol_code cases)', () => {
-  // Mirror normalize.ts — see the note on the other withSymbol above.
-  const withSymbol = (symbolCode: string) => ({ ...baseData, symbolCode, weatherCode: metSymbolToWmoCode(symbolCode) });
+  const withSymbol = (symbolCode: string) => ({ ...baseData, symbolCode });
 
   it('sleet family: caution unless heavy', () => {
     expect(analyzeSafetyConditions(withSymbol('sleet'), baseSettings).rating).toBe('caution');
@@ -741,43 +731,33 @@ describe('weather severity (additional symbol_code cases)', () => {
   });
 
   it('strips day/night/polartwilight suffixes before matching', () => {
-    expect(analyzeSafetyConditions(withSymbol('rainandthunder_polartwilight'), baseSettings).rating).toBe('danger');
-    expect(analyzeSafetyConditions(withSymbol('fog_night'), baseSettings).rating).toBe('caution');
+    expect(analyzeSafetyConditions(withSymbol('rainshowersandthunder_polartwilight'), baseSettings).rating).toBe('danger');
+    expect(analyzeSafetyConditions(withSymbol('fair_night'), baseSettings).rating).toBe('safe');
   });
 
   // Weather FRANK cannot identify must never produce an all-clear. This used
   // to assert 'safe' — the engine's own header says unknown is the one verdict
   // the app must never invent, and MET can ship a symbol we don't know at any
   // time (a new code, a renamed variant).
-  it('unknown symbol and unknown WMO fallback code are reported as unassessable, not safe', () => {
+  it('an unknown native symbol is reported as unassessable, not safe', () => {
     const unknownSymbol = analyzeSafetyConditions(withSymbol('sunshowersoffrogs'), baseSettings);
     expect(unknownSymbol.rating).toBe('caution');
     expect(unknownSymbol.reasons.some((r) => /cannot clear/i.test(r.text))).toBe(true);
-
-    const unknownCode = analyzeSafetyConditions({ ...baseData, symbolCode: '', weatherCode: 42 }, baseSettings);
-    expect(unknownCode.rating).toBe('caution');
-    expect(unknownCode.reasons.some((r) => /cannot clear/i.test(r.text))).toBe(true);
   });
 
   it('a recognised symbol in otherwise-clear conditions still rates safe', () => {
     expect(analyzeSafetyConditions(withSymbol('clearsky_day'), baseSettings).rating).toBe('safe');
   });
 
-  it('legacy WMO fallback rates snow showers (85) as danger', () => {
-    expect(analyzeSafetyConditions({ ...baseData, symbolCode: '', weatherCode: 85 }, baseSettings).rating).toBe('danger');
+  it('rates snow showers as danger, matching the manual', () => {
+    expect(analyzeSafetyConditions({ ...baseData, symbolCode: 'snowshowers_day' }, baseSettings).rating).toBe('danger');
+    expect(analyzeSafetyConditions({ ...baseData, symbolCode: 'lightsnowshowers_night' }, baseSettings).rating).toBe('danger');
   });
 
-  // Snow showers must match the WMO 85 fallback and the Safety Manual, which
-  // both rate them Danger (squally, low-visibility bursts).
-  it('rates snowshowers as danger, matching the WMO 85 fallback and the manual', () => {
-    expect(analyzeSafetyConditions({ ...baseData, symbolCode: 'snowshowers' }, baseSettings).rating).toBe('danger');
-    expect(analyzeSafetyConditions({ ...baseData, symbolCode: 'lightsnowshowers' }, baseSettings).rating).toBe('danger');
-  });
-
-  // Rain showers are gusty even when light — at least Caution, matching the
-  // WMO 80 fallback and the manual (only steady light rain is no-warning).
-  it('rates lightrainshowers consistently with its WMO 80 fallback (caution)', () => {
-    expect(analyzeSafetyConditions({ ...baseData, symbolCode: 'lightrainshowers' }, baseSettings).rating).toBe('caution');
+  // Rain showers are gusty even when light — at least Caution; only steady
+  // light rain is no-warning.
+  it('rates light rain showers as caution', () => {
+    expect(analyzeSafetyConditions({ ...baseData, symbolCode: 'lightrainshowers_day' }, baseSettings).rating).toBe('caution');
   });
 });
 

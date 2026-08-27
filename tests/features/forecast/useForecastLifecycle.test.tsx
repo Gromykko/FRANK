@@ -29,7 +29,6 @@ function forecast(): WeatherData {
       tempAir: 17,
       precipitation: 0,
       symbolCode: 'clearsky_day',
-      weatherCode: 0,
       windSpeed: 3,
       windDirection: 90,
       windGust: 4,
@@ -499,7 +498,7 @@ describe('useForecast startup lifecycle', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const requestedUrl = String(fetchMock.mock.calls[0][0]);
-    expect(requestedUrl).toBe(`https://frank-forecast.alswatchs.workers.dev/api/v1/forecast/${CURRENT_LOCATION.id}`);
+    expect(requestedUrl).toBe(`https://frank-forecast.alswatchs.workers.dev/api/v2/forecast/${CURRENT_LOCATION.id}`);
     expect(requestedUrl).not.toContain('refresh=1');
     expect(latest?.loading).toBe(false);
     expect(latest?.checkState).toBe('succeeded');
@@ -547,7 +546,7 @@ describe('useForecast startup lifecycle', () => {
     rollbackWorker.sources.release = {
       ...CURRENT_RELEASE,
       modelRevision: CURRENT_RELEASE.modelRevision - 1,
-      dataGenerationId: 'api1-model6',
+      dataGenerationId: 'api2-model57',
     };
     rollbackWorker.sources.fetchedAt = '2026-08-20T14:36:00.000Z';
     rollbackWorker.sources.cacheHealth = {
@@ -567,7 +566,7 @@ describe('useForecast startup lifecycle', () => {
     });
 
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(latest?.weatherData?.sources.release?.dataGenerationId).toBe('api1-model6');
+    expect(latest?.weatherData?.sources.release?.dataGenerationId).toBe('api2-model57');
     expect(latest?.weatherData?.sources.fetchedAt).toBe(rollbackWorker.sources.fetchedAt);
     expect(latest?.weatherData?.sources.cacheHealth?.status).toBe('current');
     expect(latest?.checkState).toBe('succeeded');
@@ -589,7 +588,7 @@ describe('useForecast startup lifecycle', () => {
     availabilityFallback.sources.release = {
       ...CURRENT_RELEASE,
       modelRevision: CURRENT_RELEASE.modelRevision - 1,
-      dataGenerationId: 'api1-model6',
+      dataGenerationId: 'api2-model57',
     };
     availabilityFallback.sources.fetchedAt = '2026-08-20T14:50:00.000Z';
     availabilityFallback.sources.cacheHealth = {

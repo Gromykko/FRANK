@@ -478,7 +478,6 @@
 .weather-widget-icon.tone-sun { color: var(--icon-sun); }
 .weather-widget-icon.tone-moon { color: var(--icon-moon); }
 .weather-widget-icon.tone-cloud { color: var(--text-muted); }
-.weather-widget-icon.tone-drizzle { color: var(--icon-drizzle); }
 .weather-widget-icon.tone-rain { color: var(--icon-rain); }
 .weather-widget-icon.tone-snow { color: var(--icon-snow); }
 .weather-widget-icon.tone-storm { color: var(--color-caution-text); }
@@ -668,7 +667,7 @@
 /* Timeline weather-icon and wind-arrow tones */
 .tl-icon-sun { color: var(--icon-sun); }
 .tl-icon-cloud { color: var(--text-muted); }
-.tl-icon-rain { color: var(--icon-drizzle); }
+.tl-icon-rain { color: var(--icon-rain); }
 .tl-icon-snow { color: var(--icon-snow); }
 .tl-icon-storm { color: var(--color-caution-text); }
 
@@ -3600,20 +3599,6 @@ button.legend-toggle.is-on {
   font-weight: 500;
 }
 
-.snapshot-weather-compact {
-  display: none;
-}
-
-@media (max-width: 600px) {
-  .snapshot-weather-full {
-    display: none;
-  }
-
-  .snapshot-weather-compact {
-    display: inline;
-  }
-}
-
 /* Longer-range block detail: a calm note that this is lower-confidence data. */
 .snapshot-lowconf-note {
   margin-top: 10px;
@@ -3735,9 +3720,8 @@ button.legend-toggle.is-on {
   background: var(--color-danger);
 }
 
-/* Full descriptions can wrap on wider canvases. Phones render the compact,
-   hazard-preserving category; text enlargement may still reflow rather than
-   clipping safety information. */
+/* MET's native condition can be long (for example, heavy sleet showers and
+   thunder). It may wrap rather than being shortened into a different fact. */
 .snapshot-value.snapshot-desc {
   min-width: 0;
   white-space: normal;

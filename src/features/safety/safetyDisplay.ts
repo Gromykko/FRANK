@@ -46,9 +46,7 @@ export function getSafetyDisplay(
   //
   // The hazard itself is not repeated here. It was briefly shown as a bare
   // observation ("Heavy rain"), which read as a second opinion on something the
-  // snapshot directly above already states: both come from the same
-  // data.weatherCode, one via getCompactWeatherDescription beside the weather
-  // icon and one via getWeatherDescription. Saying it twice made the quiet mode
-  // noisier than the judging one.
+  // snapshot directly above already states from the same native MET symbol.
+  // Saying it twice made the quiet mode noisier than the judging one.
   return { rating: 'none', reasons: [limitsOffReason] };
 }

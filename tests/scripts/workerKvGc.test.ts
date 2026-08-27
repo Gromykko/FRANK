@@ -76,6 +76,26 @@ describe('Worker KV generation garbage collection', () => {
     expect(plan.stalePrefixes).toEqual([generationKeyPrefix(OLD)]);
   });
 
+  it('retains one explicitly retired cross-API rollback and deletes older retired data', () => {
+    const currentV2 = {
+      ...CURRENT,
+      apiSchemaVersion: 2,
+      dataGenerationId: 'api2-model8',
+    };
+    const plan = planWorkerKvGc({
+      listedKeys: listed(key(currentV2), key(PREVIOUS), key(OLD)),
+      currentRelease: currentV2,
+      auditedPreviousReleases: [PREVIOUS],
+      retiredApiSchemaVersions: [1],
+    });
+
+    expect(plan.retainedPrefixes).toEqual([
+      generationKeyPrefix(currentV2),
+      generationKeyPrefix(PREVIOUS),
+    ]);
+    expect(plan.deleteKeys).toEqual([key(OLD)]);
+  });
+
   it('refuses ambiguous same/newer or cross-API generations before deletion', () => {
     const sameModelOtherGeneration = {
       ...CURRENT,
@@ -110,7 +130,7 @@ describe('Worker KV generation garbage collection', () => {
     }
   });
 
-  it('fails closed instead of guessing among multiple or cross-API audited releases', () => {
+  it('fails closed instead of guessing among multiple or unretired cross-API releases', () => {
     expect(() => planWorkerKvGc({
       listedKeys: [],
       currentRelease: CURRENT,
@@ -125,7 +145,13 @@ describe('Worker KV generation garbage collection', () => {
         apiSchemaVersion: 2,
         dataGenerationId: 'api2-model7',
       }],
-    })).toThrow('Cross-API KV generation cleanup');
+    })).toThrow('requires that API to be explicitly retired');
+
+    expect(() => planWorkerKvGc({
+      listedKeys: [],
+      currentRelease: CURRENT,
+      retiredApiSchemaVersions: [CURRENT.apiSchemaVersion],
+    })).toThrow('Retired API schema retention policy is invalid');
 
     expect(() => planWorkerKvGc({
       listedKeys: [],
@@ -149,6 +175,30 @@ describe('Worker KV generation garbage collection', () => {
     expect(result.applied).toBe(false);
     expect(result.deleteKeys).toEqual([key(OLD)]);
     expect(deleteKeysImpl).not.toHaveBeenCalled();
+  });
+
+  it('passes explicit API retirement through the loaded cleanup contract', async () => {
+    const currentV2 = {
+      ...CURRENT,
+      apiSchemaVersion: 2,
+      dataGenerationId: 'api2-model8',
+    };
+    const result = await gcWorkerKv({
+      contract: {
+        release: currentV2,
+        auditedPreviousReleases: [PREVIOUS],
+        retiredApiSchemaVersions: [1],
+      },
+      listKeysImpl: vi.fn().mockResolvedValue(listed(key(currentV2), key(PREVIOUS), key(OLD))),
+      deleteKeysImpl: vi.fn(),
+      logger: { info: vi.fn() },
+    });
+
+    expect(result.retainedPrefixes).toEqual([
+      generationKeyPrefix(currentV2),
+      generationKeyPrefix(PREVIOUS),
+    ]);
+    expect(result.deleteKeys).toEqual([key(OLD)]);
   });
 
   it('reconfirms, deletes, and verifies the exact stale-key plan when apply is explicit', async () => {

@@ -43,7 +43,7 @@ export interface WorkerCacheHealth
 
 export interface WorkerSources extends Omit<WeatherData['sources'], 'cacheHealth'> {
   payloadVersion: number;
-  release?: ReleaseMetadata;
+  release: ReleaseMetadata;
   cacheHealth?: WorkerCacheHealth;
 }
 

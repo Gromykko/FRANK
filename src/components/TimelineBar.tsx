@@ -1,11 +1,12 @@
 import { memo, useState, useEffect, useMemo, useRef } from 'react';
-import { Sun, Cloud, CloudRain, CloudLightning, CloudSnow, CloudSun, ArrowDown, ArrowUp, ArrowUpDown, Minus } from 'lucide-react';
+import { Sun, Cloud, CloudRain, CloudLightning, CloudSnow, CloudSun, CloudOff, ArrowDown, ArrowUp, ArrowUpDown, Minus } from 'lucide-react';
 import { formatDateMedium, isSameLocationDay, locationHourLabel } from '../utils/date';
 import { formatReading, formatLevelCm, NO_READING_TEXT } from '../utils/number';
 import { HIGH_WATER_M } from '../features/planner/findLaunchWindows';
 import { blockHourRange } from '../features/forecast/blockHours';
 import { useLang } from '../i18n';
 import type { HourlyData } from '../features/forecast/types';
+import { getMetWeatherIconKind } from '../features/forecast/weatherSymbols';
 import { RATING_WORD } from '../features/safety/analyzeSafetyConditions';
 import type { DisplayStatus } from '../features/safety/analyzeSafetyConditions';
 
@@ -33,16 +34,15 @@ const WIND_ARROW_SIZE = 14;
 // block water level stopped being a pair of numbers.
 const LEVEL_TREND_SIZE = 15;
 
-function getWeatherIcon(code: number, size: number) {
-  if (code === 0 || code === 1) return <Sun size={size} className="tl-icon-sun" />;
-  if (code === 2) return <CloudSun size={size} className="tl-icon-cloud" />;
-  if (code === 3 || code === 45 || code === 48) return <Cloud size={size} className="tl-icon-cloud" />;
-  if (code >= 51 && code <= 67) return <CloudRain size={size} className="tl-icon-rain" />;
-  if (code >= 71 && code <= 77) return <CloudSnow size={size} className="tl-icon-snow" />;
-  if (code >= 80 && code <= 82) return <CloudRain size={size} className="tl-icon-rain" />;
-  if (code >= 85 && code <= 86) return <CloudSnow size={size} className="tl-icon-snow" />;
-  if (code >= 95 && code <= 99) return <CloudLightning size={size} className="tl-icon-storm" />;
-  return <Cloud size={size} className="tl-icon-cloud" />;
+function getWeatherIcon(symbolCode: string, size: number) {
+  const kind = getMetWeatherIconKind(symbolCode);
+  if (kind === 'clear') return <Sun size={size} className="tl-icon-sun" />;
+  if (kind === 'fair' || kind === 'partly-cloudy') return <CloudSun size={size} className="tl-icon-cloud" />;
+  if (kind === 'cloudy' || kind === 'fog') return <Cloud size={size} className="tl-icon-cloud" />;
+  if (kind === 'rain') return <CloudRain size={size} className="tl-icon-rain" />;
+  if (kind === 'sleet' || kind === 'snow') return <CloudSnow size={size} className="tl-icon-snow" />;
+  if (kind === 'thunder') return <CloudLightning size={size} className="tl-icon-storm" />;
+  return <CloudOff size={size} className="tl-icon-cloud" />;
 }
 
 // The arrow stays neutral: the hour strip above already carries the safety
@@ -525,7 +525,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
             <div className="meteogram-row" title={t('Weather')} aria-hidden="true">
               {allHours.map((h) => (
                 <div key={h.actualIndex} className={meteogramCellClass(h)}>
-                  {getWeatherIcon(h.data.weatherCode, WEATHER_ICON_SIZE)}
+                  {getWeatherIcon(h.data.symbolCode, WEATHER_ICON_SIZE)}
                 </div>
               ))}
             </div>

@@ -2,10 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join, sep } from 'node:path';
 import { da } from '../src/i18n/da';
-import {
-  getCompactWeatherDescription,
-  getWeatherDescription,
-} from '../src/features/forecast/weatherCodes';
+import { MET_WEATHER_SYMBOLS } from '../src/features/forecast/weatherSymbols';
 
 // A missing Danish entry soft-fails to English by design, which is the right
 // runtime behaviour and a terrible development one: the app keeps working, in
@@ -77,18 +74,13 @@ describe('Danish dictionary covers every translated literal', () => {
       .toBe('Niveau: højvande, lavvande, begge eller omkring middel.');
   });
 
-  it('covers every full and compact weather-code description', () => {
-    // Weather labels are returned from lookup tables and then passed to t(), so
-    // the literal-call scanner above cannot see them. Walking the complete WMO
-    // code range catches both mapped descriptions and the unknown fallbacks.
-    const descriptions = new Set<string>();
-    for (let code = 0; code <= 99; code += 1) {
-      descriptions.add(getWeatherDescription(code));
-      descriptions.add(getCompactWeatherDescription(code));
-    }
-
-    const missing = [...descriptions].filter(description => !(description in da));
+  it('covers every native MET weather-symbol description', () => {
+    // Weather labels come from the provider catalog and are then passed to t(),
+    // so the literal-call scanner above cannot see them.
+    const descriptions = Object.values(MET_WEATHER_SYMBOLS).map(({ description }) => description);
+    const missing = descriptions.filter(description => !(description in da));
     expect(missing, `weather descriptions missing Danish translations: ${missing.join(', ')}`)
       .toEqual([]);
+    expect(da['Unknown weather']).toBe('Ukendt vejr');
   });
 });

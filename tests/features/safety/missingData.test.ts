@@ -15,7 +15,6 @@ const goodHour: HourlyData = {
   tempAir: 20,
   precipitation: 0,
   symbolCode: 'clearsky_day',
-  weatherCode: 0,
   windSpeed: 3,
   windDirection: 90,
   windGust: 4,
@@ -78,7 +77,7 @@ describe('missing readings are never rated safe', () => {
 describe('normalize does not fabricate readings', () => {
   it('leaves an absent marine value non-finite instead of 0', () => {
     const row = assembleHourlyRow(
-      { time: goodHour.time, timeMs: 0, windSpeed: 3, windDirection: 90, windGust: 4, symbolCode: 'clearsky_day', weatherCode: 0, tempAir: 20 },
+      { time: goodHour.time, timeMs: 0, windSpeed: 3, windDirection: 90, windGust: 4, symbolCode: 'clearsky_day', tempAir: 20 },
       { time: goodHour.time, timeMs: 0 },
       { time: goodHour.time, timeMs: 0 },
       true
@@ -163,7 +162,7 @@ describe('a missing reading survives the JSON round trip', () => {
 
   it('does not invent a gust from the sustained wind', () => {
     const row = assembleHourlyRow(
-      { time: goodHour.time, timeMs: 0, windSpeed: 6.1, windDirection: 90, symbolCode: 'clearsky_day', weatherCode: 0, tempAir: 20 },
+      { time: goodHour.time, timeMs: 0, windSpeed: 6.1, windDirection: 90, symbolCode: 'clearsky_day', tempAir: 20 },
       { time: goodHour.time, timeMs: 0, tempWater: 18, tideLevel: 0 },
       { time: goodHour.time, timeMs: 0, waveHeight: 0.1 },
       true

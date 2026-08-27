@@ -62,18 +62,16 @@
   --transition-smooth: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 
   /* Weather-icon palette */
-  /* Icons reuse the functional palette — sun/heat wears amber, rain wears the
-     primary blue, drizzle the aqua water hue. Only moon/snow keep their own
-     neutral tints. */
+  /* Icons reuse the functional palette — sun/heat wears amber and rain wears
+     the primary blue. Only moon/snow keep their own neutral tints. */
   --icon-sun: var(--color-caution);
   --icon-moon: #cbd5e1;
-  --icon-drizzle: var(--data-wave);
   --icon-rain: var(--primary);
   --icon-snow: #e0f2fe;
 
   /* Chart data-series palette. Two blues only: --primary (interactive + wind
-     + water temperature) and one aqua for water bulk (waves, water level,
-     drizzle). Amber covers gusts, air temperature, and the sun icon; the
+     + water temperature) and one aqua for water bulk (waves and water level).
+     Amber covers gusts, air temperature, and the sun icon; the
      wave-period companion line is a neutral gray. */
   --data-wind: var(--primary);
   --data-gust: var(--color-caution);

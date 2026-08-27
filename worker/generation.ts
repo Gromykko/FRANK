@@ -125,8 +125,9 @@ export interface VersionedForecastRoute {
   release: Readonly<ForecastReleaseMetadata>;
 }
 
-// The version is matched rather than hard-coded so a future breaking /api/v2
-// is a route this Worker knowingly declines, not an unrecognized path.
+// The version is matched rather than embedded in the route expression so a
+// future breaking /api/vN is a route this Worker knowingly declines, not an
+// unrecognized path.
 export function versionedForecastRoute(pathname: string): VersionedForecastRoute | null {
   const normalized = pathname.replace(/\/+$/, '') || '/';
   const match = normalized.match(/^\/api\/v([1-9][0-9]*)\/forecast\/([a-z0-9-]+)$/);

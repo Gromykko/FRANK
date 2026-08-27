@@ -20,10 +20,18 @@ function payload(
     sunrise: [],
     sunset: [],
     sources: {
+      payloadVersion: CURRENT_RELEASE.payloadVersion,
+      release: { ...CURRENT_RELEASE },
       weather: 'MET',
       waves: 'DMI',
       water: 'DMI',
       coordinate: { latitude: 55, longitude: 9 },
+      location: {
+        id: 'test',
+        forecastConfigRevision: 1,
+        name: 'Test',
+        areaName: 'Test area',
+      },
       fetchedAt,
       cacheHealth: { status, lastAttemptAt },
     },
@@ -31,12 +39,6 @@ function payload(
 }
 
 describe('forecast refresh ordering', () => {
-  it('lets completed health clear pending without requiring a new fetchedAt', () => {
-    const pending = payload('pending');
-    const completed = payload('current');
-    expect(shouldApplyForecastUpdate(pending, completed)).toBe(true);
-  });
-
   it('applies later stable health for the same forecast build', () => {
     const current = payload('current', '2026-08-20T10:01:00.000Z');
     const failed = payload('stale', '2026-08-20T10:02:00.000Z');
@@ -45,9 +47,8 @@ describe('forecast refresh ordering', () => {
     expect(shouldApplyForecastUpdate(current, failed)).toBe(true);
   });
 
-  it('does not regress stable health to a late pending or older check', () => {
+  it('does not regress stable health to an older or identical check', () => {
     const current = payload('current', '2026-08-20T10:02:00.000Z');
-    expect(shouldApplyForecastUpdate(current, payload('pending', '2026-08-20T10:02:00.000Z'))).toBe(false);
     expect(shouldApplyForecastUpdate(current, payload('stale', '2026-08-20T10:01:00.000Z'))).toBe(false);
     expect(shouldApplyForecastUpdate(current, structuredClone(current))).toBe(false);
   });

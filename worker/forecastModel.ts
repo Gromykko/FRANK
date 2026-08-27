@@ -17,7 +17,7 @@ import {
 } from '../src/features/forecast/providerUrls';
 import {
   CURRENT_RELEASE,
-  LEGACY_FORECAST_PAYLOAD_VERSION,
+  FORECAST_PAYLOAD_VERSION,
   MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
 } from '../src/features/forecast/releaseContract';
 import { buildSunSchedule } from '../src/features/forecast/sun';
@@ -123,7 +123,7 @@ export const FORECAST_PROVIDER_PARAMETERS = Object.freeze({
   waves: WAM_PARAMETERS,
 });
 
-export const PAYLOAD_VERSION = LEGACY_FORECAST_PAYLOAD_VERSION;
+export const PAYLOAD_VERSION = FORECAST_PAYLOAD_VERSION;
 
 export interface MarineProbeDecision {
   shouldProbe: boolean;

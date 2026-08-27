@@ -8,8 +8,7 @@ const baseData: HourlyData = {
   time: '2026-08-12T13:00:00Z',
   tempAir: 23.4,
   precipitation: 0,
-  symbolCode: 'heavyrainandthunder_day',
-  weatherCode: 99,
+  symbolCode: 'heavyrainandthunder',
   windSpeed: 25.5,
   windDirection: 272,
   windGust: 35,
@@ -25,12 +24,12 @@ const baseData: HourlyData = {
 
 const props = {
   data: baseData,
-  weatherDesc: 'Thunderstorm with heavy hail',
+  weatherDesc: 'Heavy rain and thunder',
   windDirectionLabel: '272° W',
   windRotation: 272,
   sunrise: '05.45',
   sunset: '21.04',
-  reasons: [{ severity: 'danger' as const, text: 'Thunderstorm with heavy hail.' }],
+  reasons: [{ severity: 'danger' as const, text: 'Heavy rain and thunder.' }],
   rating: 'danger' as const,
 };
 
@@ -38,7 +37,7 @@ function renderSnapshot(danish = false) {
   const container = document.createElement('div');
   container.innerHTML = renderToStaticMarkup(
     danish
-      ? <LanguageProvider><ConditionsSnapshot {...props} /></LanguageProvider>
+      ? <LanguageProvider><ConditionsSnapshot {...props} weatherDesc="Kraftig regn med torden" /></LanguageProvider>
       : <ConditionsSnapshot {...props} />
   );
   return container;
@@ -60,26 +59,24 @@ describe('ConditionsSnapshot', () => {
     expect(rows[3].textContent).toContain('21.04');
   });
 
-  it('shows compact phone copy while retaining complete accessible wording', () => {
+  it('keeps MET’s complete wording visible and accessible at every width', () => {
     const container = renderSnapshot();
 
-    expect(container.querySelector('.snapshot-weather-compact')?.textContent)
-      .toBe('Thunder/hail');
-    expect(container.querySelector('.snapshot-weather-full')?.textContent)
-      .toBe('Thunderstorm with heavy hail');
+    expect(container.querySelector('.snapshot-desc > span:not(.sr-only)')?.textContent)
+      .toBe('Heavy rain and thunder');
     expect(container.querySelector('.snapshot-desc .sr-only')?.textContent)
-      .toBe('Thunderstorm with heavy hail');
+      .toBe('Heavy rain and thunder');
     expect(container.querySelector('.snapshot-gust-full')?.textContent).toBe('gusts 35.0');
     expect(container.querySelector('.snapshot-gust-compact')?.textContent).toBe('gust 35.0');
     expect(container.querySelector('.snapshot-wind > .sr-only')?.textContent)
       .toBe('25.5 m/s, gusts 35.0');
   });
 
-  it('localises the compact labels rather than falling back to clipped English', () => {
+  it('localises the native condition rather than inventing a compact category', () => {
     const container = renderSnapshot(true);
 
-    expect(container.querySelector('.snapshot-weather-compact')?.textContent)
-      .toBe('Torden/hagl');
+    expect(container.querySelector('.snapshot-desc > span:not(.sr-only)')?.textContent)
+      .toBe('Kraftig regn med torden');
     expect([...container.querySelectorAll('.snapshot-label')].map((el) => el.textContent))
       .toContain('Niveau');
     expect(container.querySelector('.snapshot-gust-full')?.textContent).toBe('vindstød 35.0');
@@ -140,7 +137,6 @@ describe('ConditionsSnapshot', () => {
         weatherDesc="Clear"
         data={{
           ...baseData,
-          weatherCode: 0,
           symbolCode: 'clearsky_night',
           isDay: false,
           isLowConfidence: true,
@@ -154,13 +150,13 @@ describe('ConditionsSnapshot', () => {
     expect(icon?.classList.contains('moon-pulse')).toBe(false);
   });
 
-  it('renders an unknown finite WMO code as unavailable rather than sunny', () => {
+  it('renders an unknown MET symbol as unavailable rather than sunny', () => {
     const container = document.createElement('div');
     container.innerHTML = renderToStaticMarkup(
       <ConditionsSnapshot
         {...props}
         weatherDesc="Unknown"
-        data={{ ...baseData, weatherCode: 4 }}
+        data={{ ...baseData, symbolCode: 'future-provider-symbol' }}
       />,
     );
 

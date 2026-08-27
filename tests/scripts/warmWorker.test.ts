@@ -60,7 +60,7 @@ describe('deployment Worker warm-up', () => {
 
     expect(fetchImpl.mock.calls.map(([url]) => String(url))).toEqual(
       WARM_LOCATION_IDS.map((locationId) =>
-        `${BASE_URL}/api/v1/forecast/${locationId}?warm=1`),
+        `${BASE_URL}/api/v2/forecast/${locationId}?warm=1`),
     );
     expect(maximumInFlight).toBe(1);
     expect(requestStarts).toEqual(WARM_LOCATION_IDS.map((_, index) =>

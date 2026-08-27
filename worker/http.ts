@@ -27,18 +27,14 @@ export async function hasValidWarmAuthorization(
 export type WorkerRoute =
   | { kind: 'root' }
   | { kind: 'health' }
-  | { kind: 'status' }
-  | { kind: 'forecast'; locationId: string };
+  | { kind: 'status' };
 
 export function matchRoute(pathname: string): WorkerRoute | null {
   const normalizedPath = pathname.replace(/\/+$/, '') || '/';
   if (normalizedPath === '/') return { kind: 'root' };
   if (normalizedPath === '/health') return { kind: 'health' };
   if (normalizedPath === '/status') return { kind: 'status' };
-  const forecastMatch = normalizedPath.match(/^\/forecast\/([a-z0-9-]+)$/);
-  return forecastMatch
-    ? { kind: 'forecast', locationId: forecastMatch[1] }
-    : null;
+  return null;
 }
 
 export function corsHeaders(): Record<string, string> {

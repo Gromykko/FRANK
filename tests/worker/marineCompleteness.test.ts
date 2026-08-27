@@ -95,7 +95,6 @@ function assembleWithWater(water: Awaited<ReturnType<typeof fetchCandidate>>, no
         tempAir: 16,
         precipitation: 0,
         symbolCode: 'clearsky_day',
-        weatherCode: 0,
         windSpeed: 3,
         windDirection: 90,
         windGust: 4,

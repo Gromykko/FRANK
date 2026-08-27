@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import {
-  metSymbolToWmoCode,
-  getWeatherDescription,
-  getCompactWeatherDescription,
-} from '../../../src/features/forecast/weatherCodes';
-import {
   mapMetTimeseries,
   mapMetBlocks,
   assembleBlockRow,
@@ -16,69 +11,6 @@ import {
 import { blockHourRange } from '../../../src/features/forecast/blockHours';
 import type { MetForecastResponse } from '../../../src/features/forecast/normalize';
 import type { SeriesPoint } from '../../../src/features/forecast/types';
-
-describe('metSymbolToWmoCode', () => {
-  it('maps every thunder variant onto the WMO thunderstorm family', () => {
-    expect(metSymbolToWmoCode('rainandthunder')).toBe(95);
-    expect(metSymbolToWmoCode('sleetandthunder')).toBe(95);
-    expect(metSymbolToWmoCode('snowandthunder')).toBe(95);
-    expect(metSymbolToWmoCode('lightrainshowersandthunder_day')).toBe(95);
-    expect(metSymbolToWmoCode('heavyrainandthunder')).toBe(99);
-    expect(metSymbolToWmoCode('heavysnowshowersandthunder_night')).toBe(99);
-  });
-
-  it('maps the sleet family onto freezing-rain codes', () => {
-    expect(metSymbolToWmoCode('lightsleet')).toBe(66);
-    expect(metSymbolToWmoCode('sleet')).toBe(66);
-    expect(metSymbolToWmoCode('sleetshowers')).toBe(66);
-    expect(metSymbolToWmoCode('lightsleetshowers')).toBe(66);
-    expect(metSymbolToWmoCode('heavysleet')).toBe(67);
-    expect(metSymbolToWmoCode('heavysleetshowers')).toBe(67);
-  });
-
-  it('strips day/night/polartwilight suffixes before lookup', () => {
-    expect(metSymbolToWmoCode('clearsky_day')).toBe(0);
-    expect(metSymbolToWmoCode('clearsky_night')).toBe(0);
-    expect(metSymbolToWmoCode('fair_polartwilight')).toBe(1);
-    expect(metSymbolToWmoCode('partlycloudy_day')).toBe(2);
-  });
-
-  it('reports an unknown or missing symbol as no reading, not as overcast', () => {
-    // Defaulting to WMO 3 stated "Overcast" — with a cloud icon and a safe
-    // rating — for weather the app could not identify. A non-finite code
-    // renders as "Unknown weather" and trips the missing-data rule instead.
-    expect(metSymbolToWmoCode('someunknownsymbol')).toBeNaN();
-    expect(metSymbolToWmoCode(undefined)).toBeNaN();
-    expect(metSymbolToWmoCode('')).toBeNaN();
-  });
-
-  it('maps the core precipitation family as documented', () => {
-    expect(metSymbolToWmoCode('lightrain')).toBe(61);
-    expect(metSymbolToWmoCode('rain')).toBe(63);
-    expect(metSymbolToWmoCode('heavyrain')).toBe(65);
-    expect(metSymbolToWmoCode('lightrainshowers')).toBe(80);
-    expect(metSymbolToWmoCode('rainshowers')).toBe(81);
-    expect(metSymbolToWmoCode('heavyrainshowers')).toBe(82);
-    expect(metSymbolToWmoCode('lightsnow')).toBe(71);
-    expect(metSymbolToWmoCode('snow')).toBe(73);
-    expect(metSymbolToWmoCode('heavysnow')).toBe(75);
-    expect(metSymbolToWmoCode('snowshowers')).toBe(85);
-    expect(metSymbolToWmoCode('heavysnowshowers')).toBe(86);
-    expect(metSymbolToWmoCode('fog')).toBe(45);
-  });
-
-  it('getWeatherDescription falls back for unknown codes', () => {
-    expect(getWeatherDescription(42)).toBe('Unknown weather');
-    expect(getWeatherDescription(95)).toBe('Thunderstorm risk');
-  });
-
-  it('keeps compact ledger labels short without hiding the hazard family', () => {
-    expect(getCompactWeatherDescription(2)).toBe('Partly cloudy');
-    expect(getCompactWeatherDescription(67)).toBe('Heavy icy rain');
-    expect(getCompactWeatherDescription(99)).toBe('Thunder/hail');
-    expect(getCompactWeatherDescription(42)).toBe('Unknown');
-  });
-});
 
 describe('mapMetTimeseries', () => {
   it('keeps only entries with an hourly symbol, maps fields, and sorts by time', () => {
@@ -124,7 +56,6 @@ describe('mapMetTimeseries', () => {
     expect(points[1].time).toBe('2026-07-08T13:00:00.000Z');
     // Field mapping on the full entry.
     expect(points[1].symbolCode).toBe('rain');
-    expect(points[1].weatherCode).toBe(63);
     expect(points[1].tempAir).toBe(18);
     expect(points[1].precipitation).toBe(1.2);
     expect(points[1].windSpeed).toBe(4);
@@ -138,6 +69,29 @@ describe('mapMetTimeseries', () => {
   it('returns an empty array for a malformed response', () => {
     expect(mapMetTimeseries({})).toEqual([]);
     expect(mapMetTimeseries({ properties: {} })).toEqual([]);
+  });
+
+  it('keeps an unfamiliar string fail-closed but drops a malformed symbol safely', () => {
+    const points = mapMetTimeseries({
+      properties: {
+        timeseries: [
+          {
+            time: '2026-07-08T12:00:00Z',
+            data: { next_1_hours: { summary: { symbol_code: 'futuremetsymbol_day' } } },
+          },
+          {
+            time: '2026-07-08T13:00:00Z',
+            data: { next_1_hours: { summary: { symbol_code: 42 } } },
+          },
+          {
+            time: '2026-07-08T14:00:00Z',
+            data: { next_1_hours: { summary: { symbol_code: '   ' } } },
+          },
+        ],
+      },
+    });
+
+    expect(points.map(({ symbolCode }) => symbolCode)).toEqual(['futuremetsymbol_day']);
   });
 });
 
@@ -161,7 +115,6 @@ describe('mapMetBlocks', () => {
     expect(blocks).toHaveLength(1);
     expect(blocks[0].spanHours).toBe(6);
     expect(blocks[0].symbolCode).toBe('rain');
-    expect(blocks[0].weatherCode).toBe(63);
     expect(blocks[0].precipitation).toBe(2); // from the chosen 6h period
     expect(blocks[0].windDirection).toBe(270); // -90 normalized
   });
@@ -190,6 +143,42 @@ describe('mapMetBlocks', () => {
     expect(blocks[0].spanHours).toBe(12);
     expect(blocks[0].symbolCode).toBe('cloudy');
     expect(blocks[0].precipitation).toBe(1);
+  });
+
+  it('does not let a malformed 6-hour symbol suppress a valid 12-hour period', () => {
+    const blocks = mapMetBlocks({
+      properties: {
+        timeseries: [{
+          time: '2026-07-13T06:00:00Z',
+          data: {
+            next_6_hours: { summary: { symbol_code: { malformed: true } } },
+            next_12_hours: { summary: { symbol_code: 'cloudy' } },
+          },
+        }],
+      },
+    });
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].spanHours).toBe(12);
+    expect(blocks[0].symbolCode).toBe('cloudy');
+  });
+
+  it('does not let a blank 6-hour symbol suppress a valid 12-hour period', () => {
+    const blocks = mapMetBlocks({
+      properties: {
+        timeseries: [{
+          time: '2026-07-13T06:00:00Z',
+          data: {
+            next_6_hours: { summary: { symbol_code: '   ' } },
+            next_12_hours: { summary: { symbol_code: 'cloudy' } },
+          },
+        }],
+      },
+    });
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].spanHours).toBe(12);
+    expect(blocks[0].symbolCode).toBe('cloudy');
   });
 
   it('keeps the complete-product p90 as start-instant uncertainty, not a block max', () => {
@@ -351,7 +340,7 @@ describe('reviveReadings', () => {
     };
     // Every numeric field the app reads, all missing at once.
     const numericFields = [
-      'tempAir', 'precipitation', 'weatherCode', 'windSpeed', 'windDirection', 'windGust',
+      'tempAir', 'precipitation', 'windSpeed', 'windDirection', 'windGust',
       'waveHeight', 'waveDirection', 'wavePeriod', 'tempWater', 'tideLevel',
       'currentSpeed', 'currentDirection',
       'windSpeedMin', 'windSpeedMax', 'windSpeedP90', 'windGustMax', 'waveHeightMin', 'waveHeightMax',

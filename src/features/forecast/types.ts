@@ -4,10 +4,9 @@ export interface HourlyData {
   time: string;
   tempAir: number;
   precipitation: number;
-  // MET Norway's own condition symbol (e.g. "clearsky_day"); it decides the
-  // weather severity and drives the icon/label via its mapped WMO code.
+  // MET Norway's own condition symbol (e.g. "clearsky_day"). This single
+  // native field drives the condition label, icon and weather severity.
   symbolCode: string;
-  weatherCode: number;
   windSpeed: number;
   windDirection: number;
   windGust: number;
@@ -80,10 +79,6 @@ export interface WeatherWarning {
   coverage?: 'confirmed' | 'excluded' | 'unknown';
 }
 
-// Re-export the historical payload stamp so existing callers keep their stable
-// import path. Stable API/model/cache identities now live independently in
-// releaseContract.ts.
-export { FORECAST_PAYLOAD_VERSION } from './payloadVersion';
 export {
   ASSEMBLED_FORECAST_CACHE_SCHEMA_VERSION,
   CURRENT_FORECAST_RELEASE,
@@ -91,9 +86,10 @@ export {
   FORECAST_API_SCHEMA_VERSION,
   FORECAST_DATA_GENERATION_ID,
   FORECAST_MODEL_REVISION,
+  FORECAST_PAYLOAD_VERSION,
   MARINE_INGREDIENT_CACHE_SCHEMA_VERSION,
   SUPPORTED_FORECAST_API_SCHEMA_VERSIONS,
-  SUPPORTED_LEGACY_FORECAST_PAYLOAD_VERSIONS,
+  SUPPORTED_FORECAST_PAYLOAD_VERSIONS,
 } from './releaseContract';
 export type { ForecastReleaseMetadata, ReleaseMetadata } from './releaseContract';
 
@@ -105,10 +101,9 @@ export interface WeatherData {
   // or absent — the warning feed is advisory and never blocks a forecast).
   warnings?: WeatherWarning[];
   sources: {
-    payloadVersion?: number;
-    // Additive release identity for the stable /api/vN contract. Legacy
-    // payloads may omit it; versioned API responses must include it.
-    release?: ForecastReleaseMetadata;
+    payloadVersion: number;
+    // Exact release identity for the stable /api/vN contract.
+    release: ForecastReleaseMetadata;
     weather: string;
     waves: string;
     water: string;
@@ -116,7 +111,7 @@ export interface WeatherData {
       latitude: number;
       longitude: number;
     };
-    location?: {
+    location: {
       id: string;
       forecastConfigRevision: number;
       name: string;
@@ -125,7 +120,7 @@ export interface WeatherData {
     // When the Worker last successfully BUILT this payload. Precise.
     fetchedAt: string;
     cacheHealth?: {
-      status: 'current' | 'pending' | 'stale' | 'fresh' | 'fallback';
+      status: 'current' | 'stale';
       // When the Worker last successfully reached upstream — a COARSE,
       // operator-facing contact time. Keep it on /health and /status; main-page
       // forecast freshness must use fetchedAt.

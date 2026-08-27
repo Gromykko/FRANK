@@ -108,41 +108,56 @@ function listedKeyNames(value) {
   return names;
 }
 
-function retainedReleases(currentRelease, auditedPreviousReleases) {
-  if (!validRelease(currentRelease) || !Array.isArray(auditedPreviousReleases)) {
+function retainedReleases(
+  currentRelease,
+  auditedPreviousReleases,
+  retiredApiSchemaVersions,
+) {
+  if (!validRelease(currentRelease)
+    || !Array.isArray(auditedPreviousReleases)
+    || !Array.isArray(retiredApiSchemaVersions)) {
     throw new Error('Forecast release retention policy is invalid.');
   }
   if (!auditedPreviousReleases.every(validRelease)) {
     throw new Error('An audited previous forecast release is malformed.');
   }
-  const sameApiPrevious = auditedPreviousReleases.filter(
-    (release) => release.apiSchemaVersion === currentRelease.apiSchemaVersion,
-  );
-  if (auditedPreviousReleases.length !== sameApiPrevious.length) {
-    throw new Error('Cross-API KV generation cleanup needs an explicit compatibility retention policy.');
+  if (retiredApiSchemaVersions.some((version) => !positiveInteger(version))
+    || new Set(retiredApiSchemaVersions).size !== retiredApiSchemaVersions.length
+    || retiredApiSchemaVersions.includes(currentRelease.apiSchemaVersion)) {
+    throw new Error('Retired API schema retention policy is invalid.');
   }
-  if (sameApiPrevious.length > 1) {
+  if (auditedPreviousReleases.length > 1) {
     throw new Error('KV GC accepts at most one audited previous generation; ordering is ambiguous.');
   }
-  if (sameApiPrevious[0] && sameRelease(sameApiPrevious[0], currentRelease)) {
+  const previous = auditedPreviousReleases[0];
+  if (previous
+    && previous.apiSchemaVersion !== currentRelease.apiSchemaVersion
+    && !retiredApiSchemaVersions.includes(previous.apiSchemaVersion)) {
+    throw new Error('Cross-API KV generation retention requires that API to be explicitly retired.');
+  }
+  if (previous && sameRelease(previous, currentRelease)) {
     throw new Error('The audited previous generation duplicates CURRENT_RELEASE.');
   }
-  if (sameApiPrevious[0]
-    && sameApiPrevious[0].modelRevision >= currentRelease.modelRevision) {
+  if (previous && previous.modelRevision >= currentRelease.modelRevision) {
     throw new Error('The audited previous generation must have an older model revision.');
   }
-  return [currentRelease, ...sameApiPrevious];
+  return [currentRelease, ...auditedPreviousReleases];
 }
 
 function requireAttestedActiveRelease(
   attestedActiveRelease,
   currentRelease,
   auditedPreviousReleases,
+  retiredApiSchemaVersions,
 ) {
   if (!validRelease(attestedActiveRelease)) {
     throw new Error('KV GC apply requires an attested captured Worker release.');
   }
-  const retained = retainedReleases(currentRelease, auditedPreviousReleases);
+  const retained = retainedReleases(
+    currentRelease,
+    auditedPreviousReleases,
+    retiredApiSchemaVersions,
+  );
   if (!retained.some((release) => sameRelease(release, attestedActiveRelease))) {
     throw new Error('Attested captured Worker release is outside the current/N-1 retention policy.');
   }
@@ -152,9 +167,14 @@ export function planWorkerKvGc({
   listedKeys,
   currentRelease,
   auditedPreviousReleases = [],
+  retiredApiSchemaVersions = [],
 }) {
   const keyNames = listedKeyNames(listedKeys);
-  const keepReleases = retainedReleases(currentRelease, auditedPreviousReleases);
+  const keepReleases = retainedReleases(
+    currentRelease,
+    auditedPreviousReleases,
+    retiredApiSchemaVersions,
+  );
   const retainedPrefixes = keepReleases.map(generationKeyPrefix);
   const retainedPrefixSet = new Set(retainedPrefixes);
   const oldestRetainedModelRevision = Math.min(
@@ -177,11 +197,13 @@ export function planWorkerKvGc({
       continue;
     }
 
-    // Model revision is the only monotonic semantic release axis. A different
-    // API or a same/newer model could belong to a future or concurrent release;
-    // never guess its age from a free-form generation label or cache schema.
-    if (parsed.release.apiSchemaVersion !== currentRelease.apiSchemaVersion
-      || parsed.release.modelRevision >= oldestRetainedModelRevision) {
+    // Model revision is the monotonic semantic release axis. A schema other
+    // than the current one is comparable only after the release contract has
+    // explicitly retired it; an unknown schema may belong to a future or
+    // concurrent release and must never be guessed old.
+    const comparableApi = parsed.release.apiSchemaVersion === currentRelease.apiSchemaVersion
+      || retiredApiSchemaVersions.includes(parsed.release.apiSchemaVersion);
+    if (!comparableApi || parsed.release.modelRevision >= oldestRetainedModelRevision) {
       ambiguousPrefixes.add(parsed.prefix);
       continue;
     }
@@ -288,12 +310,14 @@ export async function gcWorkerKv({
   const policy = {
     currentRelease: resolvedContract.release,
     auditedPreviousReleases: resolvedContract.auditedPreviousReleases,
+    retiredApiSchemaVersions: resolvedContract.retiredApiSchemaVersions ?? [],
   };
   if (apply) {
     requireAttestedActiveRelease(
       attestedActiveRelease,
       policy.currentRelease,
       policy.auditedPreviousReleases,
+      policy.retiredApiSchemaVersions,
     );
   }
   const firstPlan = planWorkerKvGc({

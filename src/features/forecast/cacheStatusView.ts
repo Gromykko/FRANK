@@ -1,5 +1,4 @@
 import type { WeatherData } from './types';
-import { FORECAST_PAYLOAD_VERSION } from './types';
 import { formatDateTime, formatTime } from '../../utils/date';
 import { interpolate } from '../../i18n/interpolate';
 import type { Translate } from '../../i18n/interpolate';
@@ -79,15 +78,14 @@ export function getCacheStatusView({
   refreshFailed,
 }: CacheStatusInput, translate: Translate = interpolate): CacheStatusView {
   const status = cacheHealth?.status;
-  const isStale = status === 'stale' || status === 'fallback';
+  const isStale = status === 'stale';
   const failedRefresh = refreshFailed ?? isStale;
-  const isPending = status === 'pending';
   const degraded = cacheHealth?.degradedSources ?? [];
 
   const degradedUpdateDetail = delayedForecastUpdate(degraded, translate);
   const hasDegraded = degradedUpdateDetail !== '';
-  const partiallyDegraded = !isStale && !refreshing && !isPending && hasDegraded;
-  const degradedSourceDisclosure = (status === 'current' || status === 'fresh') && hasDegraded
+  const partiallyDegraded = !isStale && !refreshing && hasDegraded;
+  const degradedSourceDisclosure = status === 'current' && hasDegraded
     ? degradedUpdateDetail
     : '';
   const savedForecastDetail = forecastAgeLabel
@@ -130,11 +128,11 @@ export function getCacheStatusView({
       ? (isStale ? 'watch' : 'neutral')
       : needsVerification
         ? (isStale ? 'watch' : 'neutral')
-        : (isStale || hasDegraded || isPending) ? 'watch' : 'fresh';
+        : (isStale || hasDegraded) ? 'watch' : 'fresh';
 
   // The settled header names the forecast's own build time. Operational check
   // time belongs on /status; transient states keep forecast age in the detail.
-  const updateInProgress = refreshing || preparing || isPending;
+  const updateInProgress = refreshing || preparing;
   const label = updateInProgress
     ? translate('Update in progress…')
     : needsVerification || (isStale && !failedRefresh)
@@ -197,7 +195,6 @@ export interface DerivedCacheStatus {
   // Stale AND old enough (6h+) to warrant the amber page-level warning.
   showRefreshWarning: boolean;
   // Payload built by older worker logic than this client expects.
-  workerOutdated: boolean;
   forecastAgeLabel: string;
   // True only when a request or the Worker payload confirms a failed refresh.
   // A forecast can be old without this being true.
@@ -289,7 +286,7 @@ export function deriveCacheStatus(args: {
   // Age alone still forces the amber and the banner - that part was right. It
   // just stops borrowing a cause it cannot support.
   const sourceStatus = sources.cacheHealth?.status;
-  const sourceRefreshFailed = sourceStatus === 'stale' || sourceStatus === 'fallback';
+  const sourceRefreshFailed = sourceStatus === 'stale';
   const refreshFailureConfirmed = completedFailure || sourceRefreshFailed;
   const staleFromAgeOnly = dataStale && !refreshFailureConfirmed;
   const cacheHealth = completedFailure || dataStale
@@ -304,8 +301,7 @@ export function deriveCacheStatus(args: {
     : sources.cacheHealth;
 
   const status = cacheHealth?.status;
-  const isPending = status === 'pending';
-  const isStale = status === 'stale' || status === 'fallback';
+  const isStale = status === 'stale';
 
   const attemptSettled = !needsVerification && (
     !hasExplicitCheckState
@@ -316,14 +312,6 @@ export function deriveCacheStatus(args: {
   // saved forecast is old. Reserve the large failure-style banner for a
   // settled result. Offline is known immediately and remains immediate.
   const showRefreshWarning = dataStale && (!online || (!refreshing && attemptSettled));
-  // A payload stamped with an older version was built by outdated worker
-  // logic — surface it instead of silently rendering mismatched data.
-  // During an explicit preparation response, the saved forecast can naturally
-  // be from the prior compatible contract. The single preparation status below
-  // already explains that transition; a second "out of date" alert is noise.
-  const workerOutdated = !isInitializing
-    && (sources.payloadVersion ?? 0) < FORECAST_PAYLOAD_VERSION;
-
   const view = getCacheStatusView({
     refreshing,
     cacheHealth,
@@ -356,7 +344,7 @@ export function deriveCacheStatus(args: {
     : sentence;
   const expandedDetail = !online
     ? appendDegradedSource(translate('Offline · {0}', showingSavedForecast), delayedSourceDetail)
-    : refreshing || isInitializing || isPending
+    : refreshing || isInitializing
       ? translate('Update in progress · {0}', isStale || isInitializing
         ? showingSavedForecast
         : showingForecast)
@@ -372,7 +360,6 @@ export function deriveCacheStatus(args: {
     view,
     expandedDetail,
     showRefreshWarning,
-    workerOutdated,
     forecastAgeLabel: formatRelativeAge(cacheAgeMs, translate),
     refreshFailureConfirmed,
   };

@@ -19,7 +19,7 @@ export const DEFAULT_CONTRACT_FILE = path.join(
   'releaseContract.ts',
 );
 
-export const IMPLEMENTED_CONTINUOUS_API_SCHEMA_VERSION = 1;
+export const IMPLEMENTED_CONTINUOUS_API_SCHEMA_VERSION = 2;
 
 export class ContractError extends Error {
   constructor(message) {
@@ -142,9 +142,9 @@ function evaluateContractConstant(initializers, name, stack = new Set()) {
   return evaluate(initializer);
 }
 
-function positiveUniqueApiVersions(value) {
+function uniqueApiVersions(value, { allowEmpty = false } = {}) {
   return Array.isArray(value)
-    && value.length > 0
+    && (allowEmpty || value.length > 0)
     && value.every((version) => Number.isSafeInteger(version) && version > 0)
     && new Set(value).size === value.length;
 }
@@ -156,6 +156,10 @@ export function parseReleasePolicy(source) {
   const supportedApiSchemaVersions = evaluateContractConstant(
     initializers,
     'SUPPORTED_FORECAST_API_SCHEMA_VERSIONS',
+  );
+  const retiredApiSchemaVersions = evaluateContractConstant(
+    initializers,
+    'RETIRED_FORECAST_API_SCHEMA_VERSIONS',
   );
   const auditedPreviousReleases = evaluateContractConstant(
     initializers,
@@ -171,8 +175,15 @@ export function parseReleasePolicy(source) {
       + 'implement and test an old-format adapter before changing the current API schema.',
     );
   }
-  if (!positiveUniqueApiVersions(supportedApiSchemaVersions)) {
+  if (!uniqueApiVersions(supportedApiSchemaVersions)) {
     throw new ContractError('The supported API schema list is invalid.');
+  }
+  if (!uniqueApiVersions(retiredApiSchemaVersions, { allowEmpty: true })) {
+    throw new ContractError('The retired API schema list is invalid.');
+  }
+  if (retiredApiSchemaVersions.includes(release.apiSchemaVersion)
+    || retiredApiSchemaVersions.some((version) => supportedApiSchemaVersions.includes(version))) {
+    throw new ContractError('A current or supported API schema cannot also be retired.');
   }
   if (!Array.isArray(auditedPreviousReleases)
     || !auditedPreviousReleases.every(validReleaseMetadata)) {
@@ -193,20 +204,23 @@ export function parseReleasePolicy(source) {
     auditedPriorApiReleases.push(previous);
   }
 
+  const activePriorApiReleases = auditedPriorApiReleases.filter(
+    (previous) => !retiredApiSchemaVersions.includes(previous.apiSchemaVersion),
+  );
   const descriptorApiVersions = new Set([
     release.apiSchemaVersion,
-    ...auditedPriorApiReleases.map((previous) => previous.apiSchemaVersion),
+    ...activePriorApiReleases.map((previous) => previous.apiSchemaVersion),
   ]);
   if (!sameStringSet(
     supportedApiSchemaVersions.map(String),
     [...descriptorApiVersions].map(String),
   )) {
     throw new ContractError(
-      'Supported API schema versions must exactly match the current and audited prior release descriptors.',
+      'Supported API schema versions must exactly match the current and non-retired audited prior release descriptors.',
     );
   }
-  if (auditedPriorApiReleases.length > 0) {
-    const schemas = auditedPriorApiReleases
+  if (activePriorApiReleases.length > 0) {
+    const schemas = activePriorApiReleases
       .map((previous) => `v${previous.apiSchemaVersion}`)
       .join(', ');
     throw new ContractError(
@@ -219,6 +233,7 @@ export function parseReleasePolicy(source) {
   return {
     release,
     supportedApiSchemaVersions: [...supportedApiSchemaVersions],
+    retiredApiSchemaVersions: [...retiredApiSchemaVersions],
     auditedPreviousReleases: [...auditedPreviousReleases],
     auditedPriorApiReleases,
   };
@@ -287,6 +302,7 @@ export async function loadReleaseContract({
     expectedVersion,
     release,
     supportedApiSchemaVersions: policy.supportedApiSchemaVersions,
+    retiredApiSchemaVersions: policy.retiredApiSchemaVersions,
     auditedPreviousReleases: policy.auditedPreviousReleases,
     auditedPriorApiReleases: policy.auditedPriorApiReleases,
   };

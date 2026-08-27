@@ -73,7 +73,7 @@ async function requestLocation({
   const remainingMs = deadlineAt - now();
   if (remainingMs <= 0) return { ready: false, retryInMs: Number.POSITIVE_INFINITY };
 
-  const url = `${baseUrl}/api/v1/forecast/${encodeURIComponent(locationId)}?warm=1`;
+  const url = `${baseUrl}/api/v2/forecast/${encodeURIComponent(locationId)}?warm=1`;
   let response;
   try {
     response = await fetchImpl(url, {

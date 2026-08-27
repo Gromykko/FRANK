@@ -43,8 +43,6 @@ export const da: Record<string, string> = {
   'Switch to dark theme': 'Skift til mørkt tema',
   'Switch to light theme': 'Skift til lyst tema',
   'built {0}': 'bygget {0}',
-  'The forecast is briefly out of date while FRANK updates behind the scenes. Please check back in a few minutes.':
-    'Prognosen er kortvarigt forældet, mens FRANK opdaterer i baggrunden. Kig tilbage om et par minutter.',
   'The forecast could not be refreshed. You are seeing data from {0} — {1} old, so treat it with extra caution. FRANK retries by itself roughly every 10 minutes.':
     'Prognosen kunne ikke opdateres. Du ser data fra {0} — {1} gamle, så brug dem med ekstra forsigtighed. FRANK prøver selv igen cirka hvert 10. minut.',
   'This forecast has not updated as expected. You are seeing data from {0} — {1} old, so treat it with extra caution while FRANK checks again.':
@@ -284,58 +282,52 @@ export const da: Record<string, string> = {
   'Very high sea': 'Meget høj sø',
   'Phenomenal sea': 'Ekstrem sø',
 
-  // ── Weather code descriptions (weatherCodes.ts, translated at display) ────
-  'Clear sky': 'Skyfrit',
-  'Mainly clear': 'Overvejende klart',
+  // ── MET Weathericons symbol descriptions ─────────────────────────────────
+  // English keys are MET's official legend verbatim. MET publishes no Danish
+  // column; these are DMI-aligned Danish terms. In particular, MET `lightrain`
+  // means light rain, not the distinct DMI phenomenon finregn/drizzle.
+  'Clear sky': 'Klart vejr',
+  'Fair': 'Let skyet',
   'Partly cloudy': 'Delvist skyet',
-  'Overcast': 'Overskyet',
-  'Fog': 'Tåge',
-  'Depositing rime fog': 'Rimtåge',
-  'Light drizzle': 'Let støvregn',
-  'Moderate drizzle': 'Moderat støvregn',
-  'Dense drizzle': 'Tæt støvregn',
-  'Light freezing drizzle': 'Let frysende støvregn',
-  'Dense freezing drizzle': 'Tæt frysende støvregn',
-  'Slight rain': 'Let regn',
-  'Moderate rain': 'Moderat regn',
-  'Heavy rain': 'Kraftig regn',
-  'Light freezing rain': 'Let isslag',
-  'Heavy freezing rain': 'Kraftigt isslag',
-  'Slight snow fall': 'Let snefald',
-  'Moderate snow fall': 'Moderat snefald',
-  'Heavy snow fall': 'Kraftigt snefald',
-  'Snow grains': 'Snekorn',
-  'Slight rain showers': 'Lette regnbyger',
-  'Moderate rain showers': 'Moderate regnbyger',
-  'Violent rain showers': 'Voldsomme regnbyger',
-  'Slight snow showers': 'Lette snebyger',
+  'Cloudy': 'Skyet',
+  'Light rain showers': 'Lette regnbyger',
+  'Rain showers': 'Regnbyger',
+  'Heavy rain showers': 'Kraftige regnbyger',
+  'Light rain showers and thunder': 'Lette regnbyger med torden',
+  'Rain showers and thunder': 'Regnbyger med torden',
+  'Heavy rain showers and thunder': 'Kraftige regnbyger med torden',
+  'Light sleet showers': 'Lette sludbyger',
+  'Sleet showers': 'Sludbyger',
+  'Heavy sleet showers': 'Kraftige sludbyger',
+  'Light sleet showers and thunder': 'Lette sludbyger med torden',
+  'Sleet showers and thunder': 'Sludbyger med torden',
+  'Heavy sleet showers and thunder': 'Kraftige sludbyger med torden',
+  'Light snow showers': 'Lette snebyger',
+  'Snow showers': 'Snebyger',
   'Heavy snow showers': 'Kraftige snebyger',
-  'Thunderstorm risk': 'Risiko for tordenvejr',
-  'Thunderstorm with slight hail': 'Tordenvejr med let hagl',
-  'Thunderstorm with heavy hail': 'Tordenvejr med kraftig hagl',
-  'Unknown weather': 'Ukendt vejr',
-
-  // Compact weather categories for the phone-sized conditions ledger. The
-  // full forecast description remains in the assessment below it.
-  'Clear': 'Klart',
-  'Mostly clear': 'Mest klart',
-  'Rime fog': 'Rimtåge',
-  'Drizzle': 'Støvregn',
-  'Heavy drizzle': 'Tæt støvregn',
-  'Icy drizzle': 'Isslag',
-  'Rain': 'Regn',
-  'Icy rain': 'Isslag',
-  'Heavy icy rain': 'Kraftigt isslag',
+  'Light snow showers and thunder': 'Lette snebyger med torden',
+  'Snow showers and thunder': 'Snebyger med torden',
+  'Heavy snow showers and thunder': 'Kraftige snebyger med torden',
   'Light rain': 'Let regn',
+  'Rain': 'Regn',
+  'Heavy rain': 'Kraftig regn',
+  'Light rain and thunder': 'Let regn med torden',
+  'Rain and thunder': 'Regn med torden',
+  'Heavy rain and thunder': 'Kraftig regn med torden',
+  'Light sleet': 'Let slud',
+  'Sleet': 'Slud',
+  'Heavy sleet': 'Kraftig slud',
+  'Light sleet and thunder': 'Let slud med torden',
+  'Sleet and thunder': 'Slud med torden',
+  'Heavy sleet and thunder': 'Kraftig slud med torden',
   'Light snow': 'Let sne',
   'Snow': 'Sne',
   'Heavy snow': 'Kraftig sne',
-  'Light showers': 'Lette byger',
-  'Rain showers': 'Regnbyger',
-  'Heavy showers': 'Kraftige byger',
-  'Snow showers': 'Snebyger',
-  'Thunder risk': 'Tordenrisiko',
-  'Thunder/hail': 'Torden/hagl',
+  'Light snow and thunder': 'Let sne med torden',
+  'Snow and thunder': 'Sne med torden',
+  'Heavy snow and thunder': 'Kraftig sne med torden',
+  'Fog': 'Tåge',
+  'Unknown weather': 'Ukendt vejr',
 
   // ── ConditionsSnapshot ────────────────────────────────────────────────────
   'Current conditions': 'Aktuelle forhold',
@@ -677,15 +669,21 @@ export const da: Record<string, string> = {
   'Rising Only:': 'Kun stigende:',
   'Water level rises through the whole launch window.': 'Vandstanden stiger gennem hele rovinduet.',
   '6. Weather Condition (Rain, Snow, Sleet, Fog, Thunder)': '6. Vejrforhold (regn, sne, slud, tåge, torden)',
-  "The weather condition comes straight from the forecast's own symbol (MET Norway's symbol_code) — FRANK does not compute its own rain or lightning judgement. Each condition maps to a severity:":
-    'Vejrforholdet kommer direkte fra prognosens eget symbol (MET Norways symbol_code) — FRANK beregner ikke sin egen regn- eller lynvurdering. Hvert forhold svarer til en alvorlighed:',
-  'clear, cloudy, light drizzle, and light rain — no weather flag.': 'klart, skyet, let støvregn og let regn — ingen vejrbemærkning.',
-  'moderate rain, light snow, sleet, fog, and rain showers — worth keeping an eye on.':
-    'moderat regn, let sne, slud, tåge og regnbyger — værd at holde øje med.',
-  'heavy rain, heavier snow or sleet, snow showers, and thunderstorms — probably one to skip.':
-    'kraftig regn, kraftigere sne eller slud, snebyger og tordenvejr — nok en dag at springe over.',
-  'There is no configurable rain limit or lightning slider: the forecast decides the condition, and the reason shows its plain description (for example "Heavy rain" or "Thunderstorm").':
-    'Der er ingen indstillelig regngrænse eller lyn-skyder: prognosen afgør forholdet, og begrundelsen viser dets almindelige beskrivelse (for eksempel "Kraftig regn" eller "Tordenvejr").',
+  "The weather condition comes straight from MET Norway's symbol_code. English follows MET's official":
+    'Vejrforholdet kommer direkte fra MET Norways symbol_code. Den engelske ordlyd følger METs officielle',
+  'Weathericons legend': 'Weathericons-symbolforklaring',
+  'Danish uses translated': 'Dansk bruger oversat',
+  'DMI weather terminology': 'DMI-vejrterminologi',
+  'FRANK does not reconstruct rain or lightning from other readings; it assigns each native condition a paddling severity:':
+    'FRANK udleder ikke regn eller lyn af andre målinger; hvert oprindeligt vejrforhold får en ro-vurdering:',
+  'clear, fair, partly cloudy, cloudy, and light rain — no weather flag.':
+    'klart vejr, let skyet, delvist skyet, skyet og let regn — ingen vejrbemærkning.',
+  'rain, fog, light or ordinary snow and sleet, and non-heavy rain showers — worth keeping an eye on.':
+    'regn, tåge, let eller almindelig sne og slud samt ikke-kraftige regnbyger — værd at holde øje med.',
+  'heavy precipitation, snow or sleet showers, and every condition with thunder — probably one to skip.':
+    'kraftig nedbør, sne- eller sludbyger og alle vejrforhold med torden — nok en dag at springe over.',
+  'There is no configurable rain limit or lightning slider: MET decides the condition, and the reason keeps its native meaning (for example "Heavy rain" or "Heavy rain and thunder").':
+    'Der er ingen indstillelig regngrænse eller lyn-skyder: MET afgør vejrforholdet, og begrundelsen bevarer dets oprindelige betydning (for eksempel "Kraftig regn" eller "Kraftig regn med torden").',
   '7. How Rules Combine': '7. Sådan kombineres reglerne',
   'Every enabled rule is evaluated for every hour, and the overall rating is the':
     'Hver aktiveret regel vurderes for hver time, og den samlede vurdering er det',

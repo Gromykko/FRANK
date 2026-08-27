@@ -7,27 +7,21 @@ export interface ForecastOrderingOptions {
   // than "always accept the network": within one generation, an older edge/KV
   // snapshot must still lose to newer bytes already on screen.
   incomingIsServerAuthority?: boolean;
-  // A ready=false response is an audited availability fallback for the
-  // Worker's target release. It may fill an empty screen, but it must not move
-  // an already displayed exact generation backwards during KV propagation.
+  // A ready=false response is not proof of the Worker's target release. It may
+  // fill an empty screen when structurally compatible, but it must not move an
+  // already displayed exact generation backwards.
   incomingIsServerFallback?: boolean;
   nowMs?: number;
 }
 
 function forecastRepresentation(data: WeatherData): string {
   const release = data.sources.release;
-  if (release) {
-    return [
-      `api:${release.apiSchemaVersion}`,
-      `model:${release.modelRevision}`,
-      `generation:${release.dataGenerationId}`,
-      `payload:${release.payloadVersion}`,
-      `location-config:${data.sources.location?.forecastConfigRevision ?? 'missing'}`,
-    ].join(':');
-  }
   return [
-    `legacy:payload:${data.sources.payloadVersion ?? 'missing'}`,
-    `location-config:${data.sources.location?.forecastConfigRevision ?? 'missing'}`,
+    `api:${release.apiSchemaVersion}`,
+    `model:${release.modelRevision}`,
+    `generation:${release.dataGenerationId}`,
+    `payload:${release.payloadVersion}`,
+    `location-config:${data.sources.location.forecastConfigRevision}`,
   ].join(':');
 }
 
@@ -93,29 +87,10 @@ export function shouldApplyForecastUpdate(
   if (incomingFetchedMs > currentFetchedMs) return true;
   if (incomingFetchedMs < currentFetchedMs) return false;
 
-  // A legacy unversioned copy and a versioned Worker response can represent
-  // the same build timestamp. Prefer the more explicit compatible contract so
-  // the durable cache naturally migrates forward; never downgrade it again.
-  const currentVersion = current.sources.payloadVersion ?? 0;
-  const incomingVersion = incoming.sources.payloadVersion ?? 0;
-  if (incomingVersion > currentVersion) return true;
-  if (incomingVersion < currentVersion) return false;
-
-  // The explicit /api/vN copy and the historical /forecast copy can describe
-  // the same immutable build. Prefer the one that proves its stable API
-  // contract so the new app migrates to its fully release-scoped offline slot,
-  // while old installed apps keep their independent `_vN` slot untouched.
-  const currentApiVersion = current.sources.release?.apiSchemaVersion ?? 0;
-  const incomingApiVersion = incoming.sources.release?.apiSchemaVersion ?? 0;
-  if (incomingApiVersion > currentApiVersion) return true;
-  if (incomingApiVersion < currentApiVersion) return false;
-
   const currentHealth = current.sources.cacheHealth;
   const incomingHealth = incoming.sources.cacheHealth;
-  if (incomingHealth?.status === 'pending' && currentHealth?.status !== 'pending') return false;
   if (!incomingHealth && currentHealth) return false;
   if (cacheHealthSignature(current) === cacheHealthSignature(incoming)) return false;
-  if (currentHealth?.status === 'pending' && incomingHealth?.status !== 'pending') return true;
 
   const currentAttemptMs = Date.parse(currentHealth?.lastAttemptAt ?? current.sources.fetchedAt);
   const incomingAttemptMs = Date.parse(incomingHealth?.lastAttemptAt ?? incoming.sources.fetchedAt);

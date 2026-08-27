@@ -1,7 +1,7 @@
 import type { ForecastLocation } from '../../config/locationTypes';
 import {
   isSupportedForecastApiSchemaVersion,
-  isSupportedLegacyForecastPayloadVersion,
+  isSupportedForecastPayloadVersion,
 } from './releaseContract';
 import type { WeatherData } from './types';
 import {
@@ -13,13 +13,6 @@ import {
 type UnknownRecord = Record<string, unknown>;
 
 export interface ForecastPayloadValidationOptions {
-  // Payload versions pre-date some browser caches. Those saved copies may
-  // still be used offline if they satisfy every current structural invariant,
-  // but an unversioned network response must never become a new trusted copy.
-  allowLegacyMissingVersion?: boolean;
-  // The explicit /api/vN route must prove which stable contract answered. A
-  // legacy endpoint/local slot may omit the additive release envelope.
-  requireReleaseMetadata?: boolean;
   // Injectable for deterministic boundary tests. Production callers use the
   // browser clock and tolerate the documented device-clock lead.
   nowMs?: number;
@@ -31,7 +24,6 @@ export interface ForecastPayloadValidationOptions {
 const REQUIRED_READING_FIELDS = [
   'tempAir',
   'precipitation',
-  'weatherCode',
   'windSpeed',
   'windDirection',
   'windGust',
@@ -138,7 +130,6 @@ function isValidReading(field: string, value: unknown): value is number {
   if (Number.isNaN(value)) return true;
   if (NON_NEGATIVE_READING_FIELDS.has(field)) return value >= 0;
   if (DIRECTION_READING_FIELDS.has(field)) return value >= 0 && value < 360;
-  if (field === 'weatherCode') return Number.isInteger(value) && value >= 0 && value <= 99;
   // Tide and temperature may legitimately be negative.
   return true;
 }
@@ -241,7 +232,7 @@ function hasValidCacheHealth(
 ): boolean {
   if (value === undefined) return true;
   if (!isRecord(value)) return false;
-  if (!['current', 'pending', 'stale', 'fresh', 'fallback'].includes(value.status as string)) return false;
+  if (value.status !== 'current' && value.status !== 'stale') return false;
   const lastAttemptMs = timestampMs(value.lastAttemptAt);
   if (
     lastAttemptMs === null
@@ -278,8 +269,7 @@ function hasValidCacheHealth(
 // Sunrise/sunset and the per-row isDay flag are one derived contract. Checking
 // their shapes independently lets a corrupt cache mark midnight as daylight,
 // after which Daylight Only and the launch planner both trust the forged flag.
-// Empty schedules remain valid for legacy/offline payloads; whenever a schedule
-// is present it must cover every forecast day and agree with every row.
+// The schedule must cover every forecast day and agree with every row.
 function hasConsistentDaylight(
   hourly: unknown,
   sunrise: string[],
@@ -334,14 +324,7 @@ function hasConsistentDaylight(
   return [...forecastDays].every((key) => intervals.has(key));
 }
 
-function hasCompatibleVersion(sources: UnknownRecord, allowLegacyMissingVersion: boolean): boolean {
-  const version = sources.payloadVersion;
-  if (version === undefined) return allowLegacyMissingVersion;
-  return isSupportedLegacyForecastPayloadVersion(version);
-}
-
-function hasValidReleaseMetadata(value: unknown, required: boolean, payloadVersion: unknown): boolean {
-  if (value === undefined) return !required;
+function hasValidReleaseMetadata(value: unknown, payloadVersion: unknown): boolean {
   if (!isRecord(value)) return false;
 
   return isSupportedForecastApiSchemaVersion(value.apiSchemaVersion)
@@ -352,7 +335,7 @@ function hasValidReleaseMetadata(value: unknown, required: boolean, payloadVersi
     && (value.assembledCacheSchema as number) > 0
     && Number.isInteger(value.marineCacheSchema)
     && (value.marineCacheSchema as number) > 0
-    && isSupportedLegacyForecastPayloadVersion(value.payloadVersion)
+    && isSupportedForecastPayloadVersion(value.payloadVersion)
     && value.payloadVersion === payloadVersion;
 }
 
@@ -391,16 +374,9 @@ export function isValidForecastPayload(
 
   const sources = value.sources;
   if (!isRecord(sources)) return false;
-  // Every current Worker assembly derives a non-empty solar schedule. Empty
-  // arrays remain a deliberate compatibility allowance only for release-less
-  // legacy/offline representations.
-  if (value.sunrise.length === 0 && sources.release !== undefined) return false;
-  if (!hasCompatibleVersion(sources, options.allowLegacyMissingVersion === true)) return false;
-  if (!hasValidReleaseMetadata(
-    sources.release,
-    options.requireReleaseMetadata === true,
-    sources.payloadVersion,
-  )) return false;
+  if (value.sunrise.length === 0) return false;
+  if (!isSupportedForecastPayloadVersion(sources.payloadVersion)) return false;
+  if (!hasValidReleaseMetadata(sources.release, sources.payloadVersion)) return false;
   if (!isNonEmptyString(sources.weather) || !isNonEmptyString(sources.waves) || !isNonEmptyString(sources.water)) return false;
   const fetchedAtMs = timestampMs(sources.fetchedAt);
   if (

@@ -10,7 +10,6 @@ const data: HourlyData = {
   tempAir: 18,
   precipitation: 0,
   symbolCode: 'clearsky_day',
-  weatherCode: 0,
   windSpeed: 3,
   windDirection: 180,
   windGust: 4,

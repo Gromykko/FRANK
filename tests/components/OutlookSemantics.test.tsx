@@ -18,7 +18,6 @@ const outlookBlock: HourlyData = {
   tideLevelMax: 0.05,
   precipitation: 0,
   symbolCode: 'clearsky_night',
-  weatherCode: 0,
   currentSpeed: 0,
   currentDirection: 0,
   // This is only the block's start mark, not a statement about all six hours.

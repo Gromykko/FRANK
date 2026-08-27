@@ -19,12 +19,12 @@ const AUTHORITY_MARKER_SCHEMA_VERSION = 1;
 const AUTHORITY_MARKERS_TO_RETAIN = 8;
 const FORECAST_GENERATIONS_TO_RETAIN = 2;
 
-function getLegacyWeatherCacheKey(location: Pick<ForecastLocation, 'id'>): string {
+function getWeatherCacheKeyRoot(location: Pick<ForecastLocation, 'id'>): string {
   return `${WEATHER_CACHE_KEY_PREFIX}_${location.id}`;
 }
 
 function getAuthorityMarkerPrefix(location: ForecastLocation): string {
-  return `${getLegacyWeatherCacheKey(location)}_config${location.forecastConfigRevision}_authority_`;
+  return `${getWeatherCacheKeyRoot(location)}_config${location.forecastConfigRevision}_authority_`;
 }
 
 type BrowserForecastReleaseIdentity = Pick<
@@ -41,7 +41,7 @@ export function forecastReleaseCacheKey(
     throw new Error(`Invalid forecast config revision for location ${location.id}.`);
   }
   return [
-    getLegacyWeatherCacheKey(location),
+    getWeatherCacheKeyRoot(location),
     `config${location.forecastConfigRevision}`,
     `api${release.apiSchemaVersion}`,
     `model${release.modelRevision}`,
@@ -71,20 +71,16 @@ function getWeatherCacheKey(location: ForecastLocation, data: WeatherData): stri
     return forecastReleaseCacheKey(location, release);
   }
 
-  if (!Number.isSafeInteger(payloadVersion) || (payloadVersion as number) <= 0) return null;
-  return `${getLegacyWeatherCacheKey(location)}_v${payloadVersion}`;
+  return null;
 }
 
 function getWeatherCacheKeys(location: ForecastLocation): string[] {
-  const legacyKey = getLegacyWeatherCacheKey(location);
-  const escapedLegacyKey = legacyKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const cacheKeyRoot = getWeatherCacheKeyRoot(location);
+  const escapedCacheKeyRoot = cacheKeyRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const versionedKeyPattern = new RegExp(
-    `^${escapedLegacyKey}_(?:config${location.forecastConfigRevision}_api\\d+_model\\d+_generation_.+_payload\\d+|v\\d+)$`,
+    `^${escapedCacheKeyRoot}_config${location.forecastConfigRevision}_api\\d+_model\\d+_generation_.+_payload\\d+$`,
   );
-  return [
-    ...Object.keys(localStorage).filter((key) => versionedKeyPattern.test(key)),
-    legacyKey,
-  ];
+  return Object.keys(localStorage).filter((key) => versionedKeyPattern.test(key));
 }
 
 interface AuthorityMarker {
@@ -158,14 +154,14 @@ function compatibleAuthorityMarkerEntries(
       const data = reviveReadings(JSON.parse(raw));
       if (
         data.sources?.release
-        && isValidForecastPayload(data, location, { requireReleaseMetadata: true })
+        && isValidForecastPayload(data, location)
         && getWeatherCacheKey(location, data) === cacheKey
       ) {
         compatibleReleaseSlots.add(cacheKey);
       }
     } catch {
-      // Corrupt, legacy and future-contract slots are never GC evidence. They
-      // remain available to the shell that owns their contract.
+      // Corrupt and future-contract slots are never GC evidence. They remain
+      // available to the shell that owns their contract.
     }
   }
 
@@ -256,7 +252,7 @@ function pruneObsoleteForecastGenerations(location: ForecastLocation): void {
     }
 
     // `cacheKey` came from a fully validated, exact release-scoped slot. Never
-    // enumerate broad application prefixes here: legacy forecasts, user
+    // enumerate broad application prefixes here: unrelated forecasts, user
     // preferences, safety limits and the service worker's Cache Storage are
     // intentionally outside this generation-only garbage collector.
     localStorage.removeItem(cacheKey);
@@ -279,8 +275,8 @@ function rememberServerAuthority(
     const random = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
     const storageKey = `${prefix}${Math.trunc(requestStartedAtMs)}_${random}`;
     // Make space before the append. If quota pressure still wins, remove only
-    // compatible FRANK authority markers and retry once. Future-contract and
-    // legacy markers remain owned by the shells that wrote them.
+    // compatible FRANK authority markers and retry once. Future-contract
+    // markers remain owned by the shells that wrote them.
     trimCompatibleAuthorityJournal(location, AUTHORITY_MARKERS_TO_RETAIN - 1);
     try {
       localStorage.setItem(storageKey, JSON.stringify(marker));
@@ -323,17 +319,10 @@ function persistCachedWeatherData(
   data: WeatherData,
   location: ForecastLocation,
 ): string | null {
-  // New writes must always carry an explicit compatible version and matching
-  // location. The relaxed unversioned policy is only for already-saved legacy
-  // data in readLocalCachedWeatherData below.
+  // New writes must carry the exact release envelope and matching location.
   if (!isValidForecastPayload(data, location)) return null;
   const cacheKey = getWeatherCacheKey(location, data);
   if (!cacheKey) return null;
-
-  // `pending` is a historical response-only health state. Prepared-snapshot
-  // routes never emit it, and persisting an older response would leave
-  // "Checking…" stuck across reloads.
-  if (data.sources.cacheHealth?.status === 'pending') return null;
 
   try {
     const existingRaw = localStorage.getItem(cacheKey);
@@ -341,7 +330,7 @@ function persistCachedWeatherData(
       try {
         const existing = reviveReadings(JSON.parse(existingRaw));
         if (
-          isValidForecastPayload(existing, location, { allowLegacyMissingVersion: true })
+          isValidForecastPayload(existing, location)
           && !shouldApplyForecastUpdate(existing, data)
         ) {
           return cacheKey;
@@ -352,9 +341,8 @@ function persistCachedWeatherData(
         // recovery forever.
       }
     }
-    // Do not write the pre-versioned legacy key. An older still-open app reads
-    // that slot and cannot validate a future payload contract. Keeping one
-    // slot per contract lets old/new tabs and rollback builds coexist safely.
+    // One exact slot per release lets current and rollback builds coexist
+    // without reinterpreting each other's bytes.
     localStorage.setItem(cacheKey, JSON.stringify(data));
     return cacheKey;
   } catch {
@@ -414,54 +402,18 @@ function readLocalCachedWeatherData(location: ForecastLocation): WeatherData | n
       // deriveCacheStatus marks data older than six hours as stale and App shows
       // the caution banner. Rejecting it here instead strands an offline paddler
       // on the no-forecast screen despite having actionable hours on the device.
-      if (!isValidForecastPayload(parsed, location, { allowLegacyMissingVersion: true }) || !hasCurrentForecastWindow(parsed)) {
+      if (!isValidForecastPayload(parsed, location) || !hasCurrentForecastWindow(parsed)) {
         continue;
       }
 
-      // New release-stamped writes always use the exact slot derived from all
-      // browser-facing axes. Retain `_vN`/unversioned recovery for an older
-      // installed shell, but never accept a partially scoped API slot such as
-      // the pre-hardening `_apiN_generation_X` form.
+      // Every readable payload must occupy the exact slot derived from all
+      // browser-facing release axes. Partially scoped or pre-versioned slots
+      // are deliberately outside the v2 contract.
       const expectedCacheKey = getWeatherCacheKey(location, parsed);
-      const legacyVersionKey = Number.isSafeInteger(parsed.sources.payloadVersion)
-        ? `${getLegacyWeatherCacheKey(location)}_v${parsed.sources.payloadVersion}`
-        : null;
-      if (
-        parsed.sources.release
-        && expectedCacheKey !== cacheKey
-        && cacheKey !== getLegacyWeatherCacheKey(location)
-        && cacheKey !== legacyVersionKey
-      ) continue;
-      if (
-        !parsed.sources.release
-        && cacheKey !== getLegacyWeatherCacheKey(location)
-        && expectedCacheKey !== cacheKey
-      ) continue;
+      if (expectedCacheKey !== cacheKey) continue;
 
-      let candidate = parsed;
-      if (parsed.sources.cacheHealth?.status === 'pending') {
-        // Heal copies written by older clients before pending became
-        // response-only. The overwritten completed status cannot be recovered,
-        // so stale is the conservative stable state: usable data, amber honesty,
-        // and never a permanent in-flight claim. Write back to the same key so
-        // an unversioned legacy copy is healed without recursing through save.
-        candidate = {
-          ...parsed,
-          sources: {
-            ...parsed.sources,
-            cacheHealth: { ...parsed.sources.cacheHealth, status: 'stale' },
-          },
-        };
-        try {
-          localStorage.setItem(cacheKey, JSON.stringify(candidate));
-        } catch {
-          // The healed in-memory copy is still safer for this session when a
-          // browser policy blocks the best-effort persistence repair.
-        }
-      }
-
-      candidates.set(cacheKey, candidate);
-      if (!best || shouldApplyForecastUpdate(best, candidate)) best = candidate;
+      candidates.set(cacheKey, parsed);
+      if (!best || shouldApplyForecastUpdate(best, parsed)) best = parsed;
     } catch {
       // One corrupt copy/version must not mask another valid offline forecast.
     }
@@ -560,9 +512,9 @@ export async function resolveForecastApiResponse(
 
     targetInitialization ??= initialization;
     if (index < paths.length - 1) {
-      // Expand-contract rollout: /api/v2 may still be preparing at this edge
-      // while the audited /api/v1 representation is complete. Try only the
-      // explicitly supported N-1 route; generic errors remain fail-closed.
+      // Expand-contract rollout: the target API may still be preparing at this
+      // edge while an explicitly supported N-1 representation is complete.
+      // Generic errors remain fail-closed.
       usedAvailabilityFallback = true;
       continue;
     }
@@ -598,7 +550,7 @@ async function readWorkerCachedWeatherData(
     const deadlineAt = requestStartedAtMs + timeoutMs;
     const fetchEndpoint = async (path: string): Promise<Response> => {
       // One total deadline covers every explicitly supported API revision. A
-      // future client may try /api/v2 then /api/v1 during an expand-contract
+      // future client may try /api/vN then its supported N-1 during rollout;
       // release; a stalled request must not earn another full timeout.
       const remainingMs = Math.max(1, deadlineAt - Date.now());
       const response = await fetch(`${FORECAST_WORKER_BASE}${path}`, {
@@ -649,29 +601,15 @@ async function readWorkerCachedWeatherData(
     // when the worker's cron stalled, an 11-hour-old but perfectly renderable
     // forecast — hourly rows running days ahead — was refused here, so
     // loadCachedWeatherData returned null and users got the dead "Kan ikke nå
-    // prognosen" screen instead of the forecast plus "Viser ældre data". Same
-    // Explicitly audited compatible generations stay accepted so Worker and
-    // Pages can expand before they contract. An unknown payload contract is
-    // different: this client must not render it or overwrite a validated copy.
-    // A stable API response must identify the release that produced it. The
+    // prognosen" screen instead of the forecast plus "Viser ældre data".
+    // An unknown payload contract must not render or overwrite a validated
+    // copy. A stable API response must identify the release that produced it. The
     // release gate owns target-generation readiness; this trust boundary owns
     // the shape that a kayaker's browser is allowed to render and persist.
     if (
-      isValidForecastPayload(parsed, location, { requireReleaseMetadata: true })
+      isValidForecastPayload(parsed, location)
       && hasCurrentForecastWindow(parsed)
     ) {
-      // Prepared-snapshot routes never return an in-flight health overlay.
-      // Treat one as an incompatible response rather than persisting a state
-      // that has no completion/pickup contract in this architecture.
-      if (parsed.sources.cacheHealth?.status === 'pending') {
-        return {
-          data: null,
-          initialization: null,
-          failureKind: 'response',
-          serverAuthority: false,
-          serverFallback: false,
-        };
-      }
       const generationRole = resolved.usedAvailabilityFallback
         ? 'fallback'
         : classifyResponseGeneration(response, parsed);
@@ -684,7 +622,7 @@ async function readWorkerCachedWeatherData(
       if (serverAuthority) {
         // Only a completed, fully validated HTTP 200 can change offline
         // generation authority. Initialization, malformed/error responses,
-        // local saves and transient pending overlays never create a marker.
+        // and local saves never create a marker.
         await persistServerAuthoritativeWeatherData(
           parsed,
           location,
