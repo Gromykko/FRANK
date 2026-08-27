@@ -59,12 +59,12 @@ export const da: Record<string, string> = {
     'Bølger og vandtemperatur: højeste bølger og koldeste vand.',
   'Wind and air temperature show the forecast at the start of the block.':
     'Vind og lufttemperatur viser prognosen ved blokkens start.',
-  'Water level: high water': 'Niveau: højvande',
-  'low water': 'lavvande',
-  'both': 'begge',
-  'or near mean': 'eller omkring middel',
-  'Water level: high water, low water, both, or near mean.':
-    'Niveau: højvande, lavvande, begge eller omkring middel.',
+  'Water level: above mean': 'Niveau: over middel',
+  'below mean': 'under middel',
+  'spans both sides': 'på begge sider',
+  'or at mean': 'eller ved middel',
+  'Water level: above mean, below mean, spans both sides, or at mean.':
+    'Niveau: over middel, under middel, på begge sider eller ved middel.',
   'Tap a block for its numbers.': 'Tryk på en blok for at se tallene.',
   'Detailed Graphs': 'Detaljerede grafer',
   'Wind, waves, water level, and temperature': 'Vind, bølger, niveau og temperatur',
@@ -363,8 +363,6 @@ export const da: Record<string, string> = {
   'Calendar': 'Kalender',
   'There are safe hours, but never {0} in a row. Lower the minimum duration in Advanced settings, or try another trip mode.':
     'Der er sikre timer, men aldrig {0} i træk. Sænk minimumsvarigheden under Avanceret, eller prøv en anden turprofil.',
-  'There are safe hours, but never {0} in a row at your preferred water level. Lower the minimum duration or clear the water-level preference in Advanced settings.':
-    'Der er sikre timer, men aldrig {0} i træk ved din foretrukne vandstand. Sænk minimumsvarigheden eller ryd vandstandspræferencen under Avanceret.',
   'No good windows in the forecast yet — conditions stay above your limits for now. Check back as it updates.':
     'Ingen gode vinduer i prognosen endnu — forholdene ligger over dine grænser for nu. Kig tilbage, når den opdateres.',
   'Your personal limits are switched off, so there is nothing to measure the forecast against and no window can be recommended. Turn a limit back on to see suggested windows.':
@@ -529,16 +527,11 @@ export const da: Record<string, string> = {
   'Cold-water margin': 'Koldtvandsmargin',
   '{0}–{1} °C asks for thermal wear': '{0}–{1} °C kræver termotøj',
   'water temperature Take care band': 'Pas på-bånd for vandtemperatur',
-  'Advanced — duration, water level, daylight & wind sectors': 'Avanceret — varighed, vandstand, dagslys & vindsektorer',
+  'Advanced — duration, daylight & wind sectors': 'Avanceret — varighed, dagslys & vindsektorer',
   'Min Duration': 'Min varighed',
   'Shortest usable launch window': 'Korteste brugbare rovindue',
   '1 hour': '1 time',
   '{0} hours': '{0} timer',
-  'Preferred water level for launching': 'Foretrukken vandstand ved isætning',
-  'Any Level': 'Alle vandstande',
-  'High Water': 'Højvande',
-  'Low Water': 'Lavvande',
-  'Rising': 'Stigende',
   'Daylight Only': 'Kun dagslys',
   'Flag night hours as Take care': 'Markér nattetimer som Pas på',
   'Local wind sectors': 'Lokale vindsektorer',
@@ -640,12 +633,8 @@ export const da: Record<string, string> = {
   '4. Water level': '4. Vandstand',
   'Water level comes from a storm-surge forecast model, not an astronomical tide table. The value shown is the forecast water level relative to mean sea level at the nearest model grid point, including wind setup and pressure effects.':
     'Vandstanden kommer fra en stormflodsmodel, ikke en astronomisk tidevandstabel. Den viste værdi er den forudsagte vandstand i forhold til middelvandstand ved nærmeste modelpunkt, inklusive vindstuvning og trykeffekter.',
-  'High Water Filter:': 'Højvandsfilter:',
-  'Water level ≥ +10 cm. Useful for shallow areas.': 'Vandstand ≥ +10 cm. Nyttigt i lavvandede områder.',
-  'Low Water Filter:': 'Lavvandsfilter:',
-  'Water level ≤ -10 cm.': 'Vandstand ≤ -10 cm.',
-  'Rising Only:': 'Kun stigende:',
-  'Water level rises through the whole launch window.': 'Vandstanden stiger gennem hele rovinduet.',
+  'Water level is shown for planning context only. It does not change the safety verdict or filter launch windows.':
+    'Vandstanden vises kun som hjælp til planlægningen. Den ændrer ikke sikkerhedsvurderingen og filtrerer ikke rovinduer.',
   '5. Weather conditions (rain, snow, sleet, fog and thunder)': '5. Vejrforhold (regn, sne, slud, tåge og torden)',
   "The weather description follows MET Norway's official":
     'Vejrbeskrivelsen følger MET Norways officielle',

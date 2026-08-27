@@ -59,8 +59,7 @@ describe('stepper snap math (as composed in SafetyLimitsPanel)', () => {
   });
 });
 
-// Water level is displayed in centimetres everywhere (DMI publishes vandstand
-// in whole cm relative to DVR90) while the model and the safety rules keep
+// Water level is displayed in centimetres everywhere while the model carries
 // metres. This is the only place that conversion happens.
 describe('formatLevelCm', () => {
   it('converts metres to whole signed centimetres', () => {

@@ -401,7 +401,6 @@ export default function App() {
             startIndex={nowIndex}
             limitsOff={!activeSafetyChecks}
             minDuration={settings.minDuration}
-            waterLevelFiltered={settings.tidePreference !== 'any'}
           />
 
           {/* ⑤ Safety limits — customize thresholds (collapsed) */}

@@ -17,7 +17,6 @@ const baseSettings = {
   enableWaterTemp: true,
   daylightOnly: true,
   minDuration: 2, // requires 3 consecutive safe hours (0 to 2)
-  tidePreference: 'any',
   windDangerGap: 3,
   waveDangerGap: 0.5,
 } as SafetySettings;
@@ -86,30 +85,6 @@ describe('findLaunchWindows', () => {
     });
   });
 
-  it('filters based on tide preference', () => {
-    const data = generateData(4);
-    // 0: -0.2, 1: -0.2, 2: -0.2, 3: -0.2 (low tide)
-    data.forEach(d => d.tideLevel = -0.2);
-    
-    const settingsHigh = { ...baseSettings, tidePreference: 'high' as const };
-    const windowsHigh = findLaunchWindows(data, settingsHigh, 0);
-    expect(windowsHigh).toHaveLength(0); // Fails high tide filter
-    
-    const settingsLow = { ...baseSettings, tidePreference: 'low' as const };
-    const windowsLow = findLaunchWindows(data, settingsLow, 0);
-    expect(windowsLow).toHaveLength(1); // Passes low tide filter
-  });
-
-  it('filters based on incoming tide', () => {
-    const data = generateData(4);
-    // 0: 0.1, 1: 0.2, 2: 0.3, 3: 0.4 (incoming)
-    data.forEach((d, i) => d.tideLevel = i * 0.1);
-
-    const settingsIncoming = { ...baseSettings, tidePreference: 'incoming' as const };
-    const windows = findLaunchWindows(data, settingsIncoming, 0);
-    expect(windows).toHaveLength(1); // Passes incoming tide filter
-  });
-
   it('produces a low-confidence window for a safe longer-range block', () => {
     // 3 safe hourly samples (one exact window), then a safe 6-hour interval
     // whose start and closing endpoint are both independently safe.
@@ -161,6 +136,53 @@ describe('findLaunchWindows', () => {
     };
     const windows = findLaunchWindows([...hourly, block], baseSettings, 0);
     expect(windows.some((w) => w.lowConfidence)).toBe(false);
+  });
+});
+
+describe('findLaunchWindows — water level is informational', () => {
+  it('returns identical exact-hour windows for high, low, changing, or missing levels', () => {
+    const baseline = generateData(4);
+    const expected = findLaunchWindows(baseline, baseSettings, 0);
+    const levelSeries = [
+      [0.4, 0.4, 0.4, 0.4],
+      [-0.4, -0.4, -0.4, -0.4],
+      [-0.3, -0.1, 0.1, 0.3],
+      [0.3, 0.1, -0.1, -0.3],
+      [Number.NaN, Number.NaN, Number.NaN, Number.NaN],
+    ];
+
+    for (const levels of levelSeries) {
+      const data = baseline.map((hour, index) => ({ ...hour, tideLevel: levels[index] }));
+      expect(findLaunchWindows(data, baseSettings, 0), String(levels)).toEqual(expected);
+    }
+  });
+
+  it('returns the same outlook window regardless of centre or range levels', () => {
+    const makeBlock = (time: string, tideLevel: number, tideLevelMin: number, tideLevelMax: number): HourlyData => ({
+      ...baseData,
+      time,
+      tideLevel,
+      tideLevelMin,
+      tideLevelMax,
+      isLowConfidence: true,
+      blockSpanHours: 6,
+    });
+    const settings = { ...baseSettings, daylightOnly: false } as SafetySettings;
+    const expected = findLaunchWindows([
+      makeBlock('2026-07-11T06:00:00Z', 0, -0.1, 0.1),
+      makeBlock('2026-07-11T12:00:00Z', 0, -0.1, 0.1),
+    ], settings, 0);
+    const missing = findLaunchWindows([
+      makeBlock('2026-07-11T06:00:00Z', Number.NaN, Number.NaN, Number.NaN),
+      makeBlock('2026-07-11T12:00:00Z', Number.NaN, Number.NaN, Number.NaN),
+    ], settings, 0);
+    const extreme = findLaunchWindows([
+      makeBlock('2026-07-11T06:00:00Z', -0.8, -1.2, 0.6),
+      makeBlock('2026-07-11T12:00:00Z', 0.9, -0.4, 1.3),
+    ], settings, 0);
+
+    expect(missing).toEqual(expected);
+    expect(extreme).toEqual(expected);
   });
 });
 
@@ -229,48 +251,6 @@ describe('findLaunchWindows — endpoint rule and window shaping', () => {
     );
     const settings = { ...baseSettings, minDuration: 1 } as SafetySettings;
     expect(findLaunchWindows(data, settings, 0)).toHaveLength(12);
-  });
-});
-
-describe('findLaunchWindows — tide preference boundaries', () => {
-  const settings1h = { ...baseSettings, minDuration: 1 } as SafetySettings;
-
-  it('high water requires every sample at or above +0.1 m', () => {
-    const pass = atLocalTimes(['2026-07-08T10:00:00', '2026-07-08T11:00:00'], { tideLevel: 0.1 });
-    expect(findLaunchWindows(pass, { ...settings1h, tidePreference: 'high' }, 0)).toHaveLength(1);
-
-    const fail = atLocalTimes(['2026-07-08T10:00:00', '2026-07-08T11:00:00'], { tideLevel: 0.09 });
-    expect(findLaunchWindows(fail, { ...settings1h, tidePreference: 'high' }, 0)).toHaveLength(0);
-  });
-
-  it('low water requires every sample at or below -0.1 m', () => {
-    const pass = atLocalTimes(['2026-07-08T10:00:00', '2026-07-08T11:00:00'], { tideLevel: -0.1 });
-    expect(findLaunchWindows(pass, { ...settings1h, tidePreference: 'low' }, 0)).toHaveLength(1);
-
-    const fail = atLocalTimes(['2026-07-08T10:00:00', '2026-07-08T11:00:00'], { tideLevel: -0.09 });
-    expect(findLaunchWindows(fail, { ...settings1h, tidePreference: 'low' }, 0)).toHaveLength(0);
-  });
-
-  it('incoming rejects flat and falling water levels', () => {
-    const flat = generateData(3); // all tideLevel 0
-    expect(findLaunchWindows(flat, { ...baseSettings, tidePreference: 'incoming' }, 0)).toHaveLength(0);
-
-    const falling = generateData(3);
-    falling.forEach((d, i) => (d.tideLevel = -i * 0.1));
-    expect(findLaunchWindows(falling, { ...baseSettings, tidePreference: 'incoming' }, 0)).toHaveLength(0);
-  });
-
-  it('tide preference filters block windows too', () => {
-    const block: HourlyData = {
-      ...baseData,
-      time: '2026-07-11T06:00:00',
-      isLowConfidence: true,
-      blockSpanHours: 6,
-      tideLevel: -0.2,
-    };
-    const closingEndpoint = { ...block, time: '2026-07-11T12:00:00' };
-    const windows = findLaunchWindows([block, closingEndpoint], { ...baseSettings, tidePreference: 'high' } as SafetySettings, 0);
-    expect(windows).toHaveLength(0);
   });
 });
 
@@ -347,34 +327,6 @@ describe('findLaunchWindows — longer-range block windows', () => {
     ]);
   });
 
-  it('fails closed on missing or invalid tide preference at the block boundary', () => {
-    const blocks = [
-      makeBlock('2026-07-11T06:00:00'),
-      makeBlock('2026-07-11T12:00:00'),
-    ];
-    const missing = { ...baseSettings, daylightOnly: false, tidePreference: undefined } as unknown as SafetySettings;
-    const invalid = { ...baseSettings, daylightOnly: false, tidePreference: 'surging' } as unknown as SafetySettings;
-
-    expect(findLaunchWindows(blocks, missing, 0)).toEqual([]);
-    expect(findLaunchWindows(blocks, invalid, 0)).toEqual([]);
-  });
-
-  it('fails closed on missing long-range tide readings when a preference is active', () => {
-    const blocks = [
-      makeBlock('2026-07-11T06:00:00', { tideLevel: Number.NaN }),
-      makeBlock('2026-07-11T12:00:00', { tideLevel: Number.NaN }),
-    ];
-    for (const tidePreference of ['high', 'low', 'incoming'] as const) {
-      const settings = { ...baseSettings, daylightOnly: false, tidePreference } as SafetySettings;
-      expect(findLaunchWindows(blocks, settings, 0), tidePreference).toEqual([]);
-    }
-    expect(findLaunchWindows(
-      blocks,
-      { ...baseSettings, daylightOnly: false, tidePreference: 'any' },
-      0,
-    )).toHaveLength(1);
-  });
-
   it('withholds block windows entirely when Daylight Only is on but no sun schedule is known', () => {
     // Without sunrise/sunset there is no way to tell how much of a 6-hour block
     // is daylight, and a block is never itself marked as night — so offering it
@@ -439,37 +391,6 @@ describe('findLaunchWindows — longer-range block windows', () => {
       expect(windows).toHaveLength(1);
       expect(windows[0].daylightPartial).toBeUndefined();
     });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Water-level preference must FAIL CLOSED on missing data. Every other filter
-// in the app treats "no reading" as "cannot clear"; 'incoming' used to be the
-// one that quietly said yes.
-// ---------------------------------------------------------------------------
-describe('tidePreference with no water-level readings', () => {
-  const noTide = (hours: number) =>
-    generateData(hours).map((h) => ({ ...h, tideLevel: Number.NaN }));
-
-  it("'incoming' offers no windows when the tide series is missing", () => {
-    const settings = { ...baseSettings, tidePreference: 'incoming', minDuration: 1 } as SafetySettings;
-    // NaN <= NaN is false, so the old rejection never fired and the loop fell
-    // through to `return true` — recommending a rising-water launch built on a
-    // water level FRANK never read.
-    expect(findLaunchWindows(noTide(6), settings, 0)).toEqual([]);
-  });
-
-  it("'high' and 'low' already fail closed the same way", () => {
-    for (const tidePreference of ['high', 'low'] as const) {
-      const settings = { ...baseSettings, tidePreference, minDuration: 1 } as SafetySettings;
-      expect(findLaunchWindows(noTide(6), settings, 0)).toEqual([]);
-    }
-  });
-
-  it("'incoming' still offers a window when the water IS genuinely rising", () => {
-    const settings = { ...baseSettings, tidePreference: 'incoming', minDuration: 1 } as SafetySettings;
-    const rising = generateData(6).map((h, i) => ({ ...h, tideLevel: i * 0.05 }));
-    expect(findLaunchWindows(rising, settings, 0).length).toBeGreaterThan(0);
   });
 });
 

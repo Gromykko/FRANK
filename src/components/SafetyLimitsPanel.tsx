@@ -445,7 +445,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
             aria-expanded={advancedOpen}
             onClick={() => setAdvancedOpen(!advancedOpen)}
           >
-            <span>{t('Advanced — duration, water level, daylight & wind sectors')}</span>
+            <span>{t('Advanced — duration, daylight & wind sectors')}</span>
             {advancedOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
           </button>
 
@@ -470,27 +470,6 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
                     { value: 3, label: t('{0} hours', 3) },
                     { value: 4, label: t('{0} hours', 4) },
                     { value: 6, label: t('{0} hours', 6) }
-                  ]}
-                />
-              </div>
-
-              <div className="advanced-row">
-                <div className="advanced-row-label">
-                    <Navigation size={18} className="setting-icon" />
-                  <div className="limit-titles">
-                    <span className="limit-name">{t('Water level')}</span>
-                    <span className="limit-hint">{t('Preferred water level for launching')}</span>
-                  </div>
-                </div>
-                <CustomSelect
-                  ariaLabel={t('Water level')}
-                  value={settings.tidePreference}
-                  onChange={val => updateCriteria({ tidePreference: val })}
-                  options={[
-                    { value: 'any', label: t('Any Level') },
-                    { value: 'high', label: t('High Water') },
-                    { value: 'low', label: t('Low Water') },
-                    { value: 'incoming', label: t('Rising') }
                   ]}
                 />
               </div>

@@ -37,7 +37,6 @@ export interface SafetySettings {
   tripMode: 'default' | 'beginner' | 'pro' | 'custom' | 'weather';
   daylightOnly: boolean;
   minDuration: number;
-  tidePreference: 'any' | 'high' | 'low' | 'incoming';
   windDangerGap: number;
   waveDangerGap: number;
   enableWindSpeed: boolean;
@@ -121,7 +120,6 @@ const BASE_SETTINGS: SafetySettings = {
   tripMode: 'default',
   daylightOnly: true,
   minDuration: 2,
-  tidePreference: 'any',
   windDangerGap: 2.0,
   waveDangerGap: 0.7,
   enableWindSpeed: true,

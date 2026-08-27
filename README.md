@@ -10,7 +10,7 @@ FRANK is a small, installable web app that helps sea-kayakers judge when conditi
 
 - Rates every forecast period as **Good to go**, **Take care**, or **Rough** against the selected safety profile.
 - Shows the exact reasons behind a rating; colour is never the only explanation.
-- Finds uninterrupted launch windows that satisfy duration, daylight, and water-level preferences.
+- Finds uninterrupted launch windows that satisfy the selected safety limits, duration, and daylight rule.
 - Keeps missing readings unknown. A missing value is never converted to zero or treated as safe.
 - Names stale or degraded sources instead of pretending every value is equally fresh.
 - Stores personal limits, selected location, language, and theme only in the browser.
@@ -56,7 +56,7 @@ Browser / Installed PWA
 * **Rotating Ingestion Cron**: A Cloudflare cron wakes every minute (`* * * * *`) and refreshes one rotating location. Every location is reached once per 4 minutes while each Free-plan invocation still processes only one city.
 * **Write-Aware Storage Optimization**: Timestamp-only forecast rewrites are suppressed, provider ingredients are reused where possible, and the shared heartbeat is throttled to protect the daily KV write allowance.
 * **Resilient Multi-Tier Fallbacks**: If DMI or MET experiences a temporary rate limit or outage, FRANK automatically falls back to held previous simulations and retained raw ingredients, keeping forecasts live with clear degradation indicators.
-* **Client-Side Safety Engine**: Risk assessment calculations (wind, gusts, waves, daylight, water temperature, and optional wind-sector caps) run 100% locally in the paddler's browser against their own chosen safety profile. Water level is used only by the optional launch-window filter; it does not change the safety verdict.
+* **Client-Side Safety Engine**: Risk assessment calculations (wind, gusts, waves, daylight, water temperature, and optional wind-sector caps) run 100% locally in the paddler's browser against their own chosen safety profile. Water level remains visible for planning context but does not change the safety verdict or filter launch windows.
 
 ### Safety profiles and condition language
 

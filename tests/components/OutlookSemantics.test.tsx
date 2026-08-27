@@ -64,6 +64,9 @@ describe('outlook period semantics', () => {
     expect(visualRows.every((row) => row.getAttribute('aria-hidden') === 'true')).toBe(true);
     expect(container.querySelector('.timeline-overlay-grid')?.getAttribute('role')).toBe('listbox');
     expect(container.querySelector('.timeline-overlay-grid')?.hasAttribute('aria-hidden')).toBe(false);
+    expect(container.querySelector('.timeline-overlay-cell')?.getAttribute('aria-label'))
+      .toContain('Level -5 to +5 cm');
+    expect(container.querySelector('.meteogram-row[title="Water level (cm)"]')).not.toBeNull();
   });
 
   it('explains block timing without provider jargon', () => {
@@ -80,6 +83,8 @@ describe('outlook period semantics', () => {
 
     const note = container.querySelector('.timeline-outlook-note')?.textContent ?? '';
     expect(note).toContain('Wind and air temperature show the forecast at the start of the block.');
+    expect(note).toContain('Water level: above mean');
+    expect(note).not.toContain('high water');
     expect(note).not.toMatch(/\bMET\b/);
   });
 });

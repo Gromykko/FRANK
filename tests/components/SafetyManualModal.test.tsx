@@ -47,6 +47,13 @@ describe('SafetyManualModal profile evidence', () => {
     expect(host.textContent).toContain("Beginner's 4 m/s and the lower wave Take care boundaries are FRANK's conservative choices");
     expect(host.textContent).not.toMatch(/\b(?:Chill|Normal|Pro)\b/);
     expect(host.textContent).toContain('3. Local wind sectors');
+    expect(host.textContent).toContain('4. Water level');
+    expect(host.textContent).toContain('nearest model grid point');
+    expect(host.textContent).toContain('planning context only');
+    expect(host.textContent).toContain('does not change the safety verdict or filter launch windows');
+    expect(host.textContent).not.toContain('High Water Filter');
+    expect(host.textContent).not.toContain('Low Water Filter');
+    expect(host.textContent).not.toContain('Rising Only');
     expect(host.textContent).toContain('9. Launch windows');
     expect(host.textContent).not.toContain('Wind-against-Water-Level');
     expect(host.textContent).not.toContain('wind-against-water clash');

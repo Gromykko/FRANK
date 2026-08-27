@@ -53,8 +53,8 @@ export function formatReading(value: number | undefined, decimals: number): stri
 // Water level, in centimetres with a sign, e.g. "+26" / "-14".
 //
 // The model gives metres, but every display in the app shows centimetres,
-// because that is how DMI publishes vandstand to the public (cm relative to
-// DVR90, no decimals) and how a Dane reads it. It also happens to be the
+// because DMI documents this model field in metres while public water-level
+// displays are commonly read in whole centimetres. It also happens to be the
 // cheapest format on screen: "+0.26" is five glyphs plus the width the sign
 // steals from centring, which made the meteogram's Level row the only one
 // pressed flat against its 44px cell. "+26" is three.

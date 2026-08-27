@@ -69,9 +69,9 @@ describe('Danish dictionary covers every translated literal', () => {
     expect(da.Level).toBe('Niveau');
     expect(da['Water level']).toBe('Niveau');
     expect(da['Water level (cm)']).toBe('Niveau (cm)');
-    expect(da['Water level: high water']).toBe('Niveau: højvande');
-    expect(da['Water level: high water, low water, both, or near mean.'])
-      .toBe('Niveau: højvande, lavvande, begge eller omkring middel.');
+    expect(da['Water level: above mean']).toBe('Niveau: over middel');
+    expect(da['Water level: above mean, below mean, spans both sides, or at mean.'])
+      .toBe('Niveau: over middel, under middel, på begge sider eller ved middel.');
   });
 
   it('covers every native MET weather-symbol description', () => {

@@ -56,7 +56,6 @@ describe('versioned settings storage', () => {
       tripMode: 'custom' as const,
       windTakeCareAt: 4.2,
       windDangerGap: 1.8,
-      tidePreference: 'incoming' as const,
       futureCompatibleField: { retain: true },
     };
 
@@ -66,7 +65,6 @@ describe('versioned settings storage', () => {
       tripMode: 'custom',
       windTakeCareAt: 4.2,
       windDangerGap: 1.8,
-      tidePreference: 'incoming',
       futureCompatibleField: { retain: true },
     });
 
@@ -75,7 +73,7 @@ describe('versioned settings storage', () => {
     expect(storedRecord.windDangerGap).toBe(1.8);
     expect(storedRecord).not.toHaveProperty('windDangerAt');
     expect(storedRecord).not.toHaveProperty('waveDangerAt');
-    expect(storedRecord.tidePreference).toBe('incoming');
+    expect(storedRecord).not.toHaveProperty('tidePreference');
     expect(storedRecord.futureCompatibleField).toEqual({ retain: true });
     expect(storedRecord[SETTINGS_STORAGE_METADATA_KEY]).toEqual({
       kind: 'frank-safety-settings',
@@ -196,10 +194,9 @@ describe('parseStoredSettings hardening', () => {
     expect(analyzeSafetyConditions({ ...baseData, windSpeed: 30 }, parsed).rating).toBe('danger');
   });
 
-  it('restores unknown enum strings instead of passing them into preset/planner branching', () => {
-    const parsed = parse({ tripMode: 'expert', tidePreference: 'surging' });
+  it('restores an unknown trip mode instead of passing it into preset branching', () => {
+    const parsed = parse({ tripMode: 'expert' });
     expect(parsed.tripMode).toBe(DEFAULT_SETTINGS.tripMode);
-    expect(parsed.tidePreference).toBe(DEFAULT_SETTINGS.tidePreference);
   });
 
   it('clamps sector caps to the range both UI steppers can represent', () => {

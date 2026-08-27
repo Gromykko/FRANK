@@ -23,7 +23,7 @@ export type { SafetySettings } from '../features/safety/presets';
 // marker lets us reject records from another location or an incompatible
 // format. This pre-launch schema deliberately starts fresh when the shape
 // changes; advancing it requires an explicit decision about decode behavior.
-export const SETTINGS_STORAGE_SCHEMA_VERSION = 2;
+export const SETTINGS_STORAGE_SCHEMA_VERSION = 3;
 export const SETTINGS_STORAGE_METADATA_KEY = '__frankSettingsStorage';
 const SETTINGS_STORAGE_KIND = 'frank-safety-settings';
 
@@ -60,7 +60,6 @@ const SETTINGS_FIELD_KEYS: SettingsFieldKey[] = [
   'tripMode',
   'daylightOnly',
   'minDuration',
-  'tidePreference',
   'windDangerGap',
   'waveDangerGap',
   'enableWindSpeed',
@@ -246,8 +245,6 @@ function rememberTripMode(mode: SafetySettings['tripMode']): void {
     // falls back to the cautious first-visit guess.
   }
 }
-const TIDE_PREFERENCES: readonly SafetySettings['tidePreference'][] = ['any', 'high', 'low', 'incoming'];
-
 function coerceNumericLimits(s: SafetySettings): SafetySettings {
   const out = { ...s };
   for (const { key, decimals, min, max } of NUMERIC_LIMITS) {
@@ -261,10 +258,8 @@ function coerceNumericLimits(s: SafetySettings): SafetySettings {
     if (typeof out[flag] !== 'boolean') (out[flag] as boolean) = DEFAULT_SETTINGS[flag];
   }
   // TypeScript types stop at the localStorage boundary. Unknown enum strings
-  // must not reach getPresetSettings (where they select no preset) or the
-  // planner (where an unknown tide preference silently behaves like "any").
+  // must not reach getPresetSettings, where an unknown mode selects no preset.
   if (!TRIP_MODES.includes(out.tripMode)) out.tripMode = DEFAULT_SETTINGS.tripMode;
-  if (!TIDE_PREFERENCES.includes(out.tidePreference)) out.tidePreference = DEFAULT_SETTINGS.tidePreference;
   // Sector caps come from the same untrusted blob and feed the same comparisons.
   const sectorLimits: SafetySettings['sectorLimits'] = {};
   const isFiniteNumber = (value: unknown): value is number =>

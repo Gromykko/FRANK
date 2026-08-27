@@ -6,13 +6,6 @@ import { assessBlockDaylight } from '../safety/blockDaylight';
 import { hasActiveSafetyChecks } from '../safety/safetyDisplay';
 import type { SunTimes } from '../safety/blockDaylight';
 
-// What this app calls high or low water: 10 cm either side of mean, in metres
-// because that is the unit the model carries. Exported because the meteogram's
-// outlook blocks mark the same threshold, and two definitions of "high water"
-// in one app is one too many — the Launch Windows filter and the block arrows
-// have to agree or the planner offers a window the matrix calls low.
-export const HIGH_WATER_M = 0.1;
-
 export interface LaunchWindow {
   startIndex: number;
   endIndex: number;
@@ -75,43 +68,6 @@ export function findLaunchWindows(
 ): LaunchWindow[] {
   if (!data || data.length === 0) return [];
 
-  const matchesWaterLevelPreference = (start: number, end: number) => {
-    const endpoints = data.slice(start, end + 1);
-
-    switch (settings.tidePreference) {
-      case 'high':
-        return endpoints.every((hour) => hour.tideLevel >= HIGH_WATER_M);
-      case 'low':
-        return endpoints.every((hour) => hour.tideLevel <= -HIGH_WATER_M);
-      case 'incoming':
-        // A single-sample window (one safe outlook block) has no pair inside
-        // it to compare, and the zero-iteration loop below would pass it as
-        // "rising" unread. Judge it against the next sample instead, and
-        // reject it when the forecast ends here.
-        if (start === end) {
-          return Boolean(data[end + 1]) && data[end + 1].tideLevel > data[end].tideLevel;
-        }
-        for (let i = start; i < end; i++) {
-          // Negated `>` rather than `<=`: with no water-level reading both
-          // sides are NaN, and `NaN <= NaN` is false — the window would have
-          // passed, asserting rising water FRANK never read. The 'high' and
-          // 'low' cases already reject NaN for the same reason.
-          if (!data[i + 1] || !(data[i + 1].tideLevel > data[i].tideLevel)) {
-            return false;
-          }
-        }
-        return true;
-      case 'any':
-        return true;
-      default:
-        // Settings hydration supplies the legacy default (`any`) and rejects
-        // unknown enum strings. If an unvalidated/missing value nevertheless
-        // reaches this recommendation boundary, fail closed rather than
-        // silently weakening it to no tide preference.
-        return false;
-    }
-  };
-
   // With every personal limit switched off there is nothing left to check, so
   // there is nothing to recommend. Without this the planner offered a gale as a
   // launch window while the header said "limits are off, raw forecast only" -
@@ -146,7 +102,7 @@ export function findLaunchWindows(
       && (nowMs as number) < endMs;
     const effectiveStartMs = shouldClipStart ? nowMs as number : nominalStartMs;
     const duration = (endMs - effectiveStartMs) / HOUR_MS;
-    if (duration >= settings.minDuration && matchesWaterLevelPreference(start, end)) {
+    if (duration >= settings.minDuration) {
       slots.push({
         startIndex: start,
         endIndex: end,
@@ -180,9 +136,6 @@ export function findLaunchWindows(
   const blockSlots: LaunchWindow[] = [];
   let blockStart: number | null = null;
   const addBlockSlot = (start: number, end: number) => {
-    // `end` names the last block interval; end + 1 is its closing forecast
-    // sample. Apply water-level preferences to the whole covered interval too.
-    if (!matchesWaterLevelPreference(start, end + 1)) return;
     const spanHours = data
       .slice(start, end + 1)
       .reduce((sum, hour) => sum + (hour.blockSpanHours ?? 0), 0);

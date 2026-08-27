@@ -2,7 +2,6 @@ import { memo, useState, useEffect, useMemo, useRef } from 'react';
 import { Sun, Cloud, CloudRain, CloudLightning, CloudSnow, CloudSun, CloudOff, ArrowDown, ArrowUp, ArrowUpDown, Minus } from 'lucide-react';
 import { formatDateMedium, isSameLocationDay, locationHourLabel } from '../utils/date';
 import { formatReading, formatLevelCm, NO_READING_TEXT } from '../utils/number';
-import { HIGH_WATER_M } from '../features/planner/findLaunchWindows';
 import { blockHourRange } from '../features/forecast/blockHours';
 import { useLang } from '../i18n';
 import type { HourlyData } from '../features/forecast/types';
@@ -32,7 +31,7 @@ const WEATHER_ICON_SIZE = 15;
 const WIND_ARROW_SIZE = 14;
 // Bigger than the 10px text it replaced: legibility was half the reason the
 // block water level stopped being a pair of numbers.
-const LEVEL_TREND_SIZE = 15;
+const LEVEL_POSITION_SIZE = 15;
 
 function getWeatherIcon(symbolCode: string, size: number) {
   const kind = getMetWeatherIconKind(symbolCode);
@@ -576,7 +575,9 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
                 // whole point of a level is the swing, and a block spanning +44
                 // to -2 cm printed "+5". The pair reads as "it moves between
                 // these", which is the honest answer at three days out.
-                // A 6-hour block gets a direction, not a number.
+                // A 6-hour block gets a compact position relative to the model
+                // mean; its exact range remains in the accessible cell label
+                // and the snapshot opened by tapping the block.
                 //
                 // It first showed the sample nearest the block's centre, which
                 // summarised six hours of moving water by whatever it happened
@@ -585,31 +586,28 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
                 // series held a single sample printed one number while its
                 // neighbours printed two, which looks like a fault.
                 //
-                // Nobody plans around a water level four days out anyway. What
-                // is worth knowing is whether the block reaches the marks this
-                // app already uses for high and low water (HIGH_WATER_M, the
-                // same +/-10 cm the Launch Windows tide filter tests), so that
-                // is what the arrow says. The numbers are one tap away.
+                // The arrows deliberately do not classify high/low water or
+                // imply a trend: they only say whether the forecast range sits
+                // above, below, or across the model mean. The numbers are one
+                // tap away.
                 if (h.data.blockSpanHours) {
-                  // NaN comparisons are false either way, so a missing end
-                  // simply never trips its arrow.
                   const top = h.data.tideLevelMax ?? Number.NaN;
                   const bottom = h.data.tideLevelMin ?? Number.NaN;
-                  const high = top >= HIGH_WATER_M;
-                  const low = bottom <= -HIGH_WATER_M;
                   const known = Number.isFinite(top) || Number.isFinite(bottom);
+                  const rangeTop = Number.isFinite(top) ? top : bottom;
+                  const rangeBottom = Number.isFinite(bottom) ? bottom : top;
+                  const aboveMean = rangeBottom >= 0 && rangeTop > 0;
+                  const belowMean = rangeTop <= 0 && rangeBottom < 0;
+                  const spansMean = rangeBottom < 0 && rangeTop > 0;
                   return (
                     <div key={h.actualIndex} className={meteogramCellClass(h)}>
                       {known ? (
-                        <span className="meteogram-level-trend">
-                          {high && low
-                            ? <ArrowUpDown size={LEVEL_TREND_SIZE} aria-hidden="true" />
-                            : high ? <ArrowUp size={LEVEL_TREND_SIZE} aria-hidden="true" />
-                            : low ? <ArrowDown size={LEVEL_TREND_SIZE} aria-hidden="true" />
-                            // Stays inside +/-10 cm for the whole block: near
-                            // mean water, which is its own answer and not the
-                            // same as "no reading" (that keeps the dash).
-                            : <Minus size={LEVEL_TREND_SIZE} aria-hidden="true" />}
+                        <span className="meteogram-level-position">
+                          {spansMean
+                            ? <ArrowUpDown size={LEVEL_POSITION_SIZE} aria-hidden="true" />
+                            : aboveMean ? <ArrowUp size={LEVEL_POSITION_SIZE} aria-hidden="true" />
+                            : belowMean ? <ArrowDown size={LEVEL_POSITION_SIZE} aria-hidden="true" />
+                            : <Minus size={LEVEL_POSITION_SIZE} aria-hidden="true" />}
                         </span>
                       ) : (
                         <span className="meteogram-value">{NO_READING_TEXT}</span>
@@ -752,12 +750,12 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
           <ul className="outlook-note-list">
             <li>{t('Waves and water temperature: the highest waves and coldest water.')}</li>
             <li>{t('Wind and air temperature show the forecast at the start of the block.')}</li>
-            <li aria-label={t('Water level: high water, low water, both, or near mean.')}>
+            <li aria-label={t('Water level: above mean, below mean, spans both sides, or at mean.')}>
               <span aria-hidden="true">
-                {t('Water level: high water')} <ArrowUp size={12} />,{' '}
-                {t('low water')} <ArrowDown size={12} />,{' '}
-                {t('both')} <ArrowUpDown size={12} />{' '}
-                {t('or near mean')} <Minus size={12} />.
+                {t('Water level: above mean')} <ArrowUp size={12} />,{' '}
+                {t('below mean')} <ArrowDown size={12} />,{' '}
+                {t('spans both sides')} <ArrowUpDown size={12} />{' '}
+                {t('or at mean')} <Minus size={12} />.
               </span>
             </li>
           </ul>

@@ -45,9 +45,16 @@ describe('SafetyLimitsPanel terminology', () => {
       expect(host.textContent).not.toContain('Max Wind');
       expect(host.textContent).not.toContain('Max Wave');
       expect(host.textContent).not.toContain('Safe cap');
+      expect(host.querySelector('.advanced-toggle')?.textContent).not.toContain('water level');
+      expect(host.textContent).not.toContain('Preferred water level for launching');
+      expect(host.textContent).not.toContain('Any Level');
+      expect(host.textContent).not.toContain('High Water');
+      expect(host.textContent).not.toContain('Low Water');
+      expect(host.textContent).not.toContain('Rising');
 
       const labels = [...host.querySelectorAll('[aria-label]')]
         .map((element) => element.getAttribute('aria-label'));
+      expect(labels).not.toContain('Water level');
       expect(labels).toContain('Wind limit enabled');
       expect(labels).toContain('Include gusts in verdict');
       expect(labels).toContain('Apply optional FRANK wind-sector caps');

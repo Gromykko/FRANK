@@ -166,8 +166,8 @@
   padding-right: 1ch;
 }
 
-/* A block's water level is a direction, not a number. See TimelineBar. */
-.meteogram-level-trend {
+/* A block's compact mark locates its range relative to the model mean. */
+.meteogram-level-position {
   display: flex;
   align-items: center;
   justify-content: center;
