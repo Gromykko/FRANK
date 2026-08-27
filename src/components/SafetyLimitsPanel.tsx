@@ -244,7 +244,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
         <div className="settings-body">
 
           <p className="settings-autosave-note">
-            {t('Changes apply immediately and switch you to Custom mode. Pick a preset in the Trip Profile at the top (Beginner, Intermediate, Advanced) to go back.')}
+            {t('Changes apply immediately and switch you to Custom mode. Pick a preset in the Trip Profile at the top (Chill, Normal, Pro) to go back.')}
           </p>
 
           <div className="limit-cards">

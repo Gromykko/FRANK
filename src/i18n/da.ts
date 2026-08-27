@@ -476,9 +476,9 @@ export const da: Record<string, string> = {
   'Trip Profile': 'Turprofil',
   'About the modes': 'Om profilerne',
   'How cautious should FRANK be for you?': 'Hvor forsigtig skal FRANK være for dig?',
-  'Beginner': 'Begynder',
-  'Intermediate': 'Øvet',
-  'Advanced': 'Avanceret',
+  'Chill': 'Rolig',
+  'Normal': 'Normal',
+  'Pro': 'Pro',
   'Custom': 'Egen',
   'The built-in profiles use these general wind and significant-wave bands:':
     'De indbyggede profiler bruger disse generelle grænser for vind og signifikant bølgehøjde:',
@@ -486,16 +486,16 @@ export const da: Record<string, string> = {
     'vind Pas på fra {0} m/s og Barskt fra {1} m/s; bølger Pas på fra {2} m og Barskt fra {3} m.',
   'These are FRANK starting points, not DKF safety limits or proof of skill. Local wind sectors and every other enabled rule may make a verdict stricter.':
     'Det er FRANKs udgangspunkter, ikke DKF-sikkerhedsgrænser eller bevis på færdigheder. Lokale vindsektorer og alle andre aktiverede regler kan gøre vurderingen strengere.',
-  'Basis: Intermediate and Advanced wind use the numeric conditions in':
-    'Grundlag: Vindgrænserne for Øvet og Avanceret bruger de talfastsatte forhold i',
+  'Basis: Normal and Pro wind use the numeric conditions in':
+    'Grundlag: Vindgrænserne for Normal og Pro bruger de talfastsatte forhold i',
   'See the': 'Se',
   'IPP 3 Touring norm': 'IPP 3 Touring-normen',
   'IPP 4 Touring norm': 'IPP 4 Touring-normen',
-  "Touring IPP 2 has no numeric wind limit. Beginner's 5 m/s Rough boundary and the red wave boundaries use":
-    'Touring IPP 2 har ingen talfastsat vindgrænse. Begynderprofilens Barskt-grænse på 5 m/s og de røde bølgegrænser bruger',
+  "Touring IPP 2 has no numeric wind limit. Chill's 5 m/s Rough boundary and the red wave boundaries use":
+    'Touring IPP 2 har ingen talfastsat vindgrænse. Rolig-profilens Barskt-grænse på 5 m/s og de røde bølgegrænser bruger',
   "DKF's 7 May 2026 sea-kayak norm": 'DKFs havkajaknorm af 7. maj 2026',
-  "Beginner's 4 m/s and the lower wave Take care boundaries are FRANK's conservative choices.":
-    'Begynderprofilens 4 m/s og de nedre Pas på-grænser for bølger er FRANKs konservative valg.',
+  "Chill's 4 m/s and the lower wave Take care boundaries are FRANK's conservative choices.":
+    'Rolig-profilens 4 m/s og de nedre Pas på-grænser for bølger er FRANKs konservative valg.',
   'is your own set: change anything in Your Limits below and it lands there.':
     'er dit eget sæt: ændr hvad som helst i Dine grænser nedenfor, og det lander der.',
   'Picking a mode updates the exact numbers in Your Limits — the manual explains every rule.':
@@ -506,8 +506,8 @@ export const da: Record<string, string> = {
   'Your Limits': 'Dine grænser',
   'How FRANK Decides': 'Sådan vurderer FRANK',
   'Your personal limits': 'Dine personlige grænser',
-  'Changes apply immediately and switch you to Custom mode. Pick a preset in the Trip Profile at the top (Beginner, Intermediate, Advanced) to go back.':
-    'Ændringer træder i kraft med det samme og skifter dig til Egen. Vælg en forudindstilling i turprofilen øverst (Begynder, Øvet, Avanceret) for at gå tilbage.',
+  'Changes apply immediately and switch you to Custom mode. Pick a preset in the Trip Profile at the top (Chill, Normal, Pro) to go back.':
+    'Ændringer træder i kraft med det samme og skifter dig til Egen. Vælg en forudindstilling i turprofilen øverst (Rolig, Normal, Pro) for at gå tilbage.',
   'Decrease {0}': 'Sænk {0}',
   'Increase {0}': 'Hæv {0}',
   'Wind — Take care from': 'Vind — Pas på fra',
@@ -598,10 +598,10 @@ export const da: Record<string, string> = {
     'De indbyggede profiler er FRANKs udgangspunkter med afsæt i DKFs færdighedsforhold. De er ikke sikkerhedsgrænser udstedt af DKF, bevis på kompetence eller en garanti for, at en tur er sikker.',
   'general wind Take care from {0} m/s and Rough from {1} m/s; significant waves Take care from {2} m and Rough from {3} m.':
     'generel vind Pas på fra {0} m/s og Barskt fra {1} m/s; signifikante bølger Pas på fra {2} m og Barskt fra {3} m.',
-  'Intermediate and Advanced wind anchors use': 'Vindgrænserne for Øvet og Avanceret bruger',
+  'Normal and Pro wind anchors use': 'Vindgrænserne for Normal og Pro bruger',
   'including the': 'herunder',
-  "Touring IPP 2 gives no numeric wind limit. Beginner's 5 m/s Rough boundary and the numeric red wave ceilings use":
-    'Touring IPP 2 angiver ingen talfastsat vindgrænse. Begynderprofilens Barskt-grænse på 5 m/s og de talfastsatte røde bølgegrænser bruger',
+  "Touring IPP 2 gives no numeric wind limit. Chill's 5 m/s Rough boundary and the numeric red wave ceilings use":
+    'Touring IPP 2 angiver ingen talfastsat vindgrænse. Rolig-profilens Barskt-grænse på 5 m/s og de talfastsatte røde bølgegrænser bruger',
   'Local wind sectors, gusts, temperature, weather, daylight, route, equipment, and club rules can all demand a stricter decision.':
     'Lokale vindsektorer, vindstød, temperatur, vejr, dagslys, rute, udstyr og klubregler kan alle kræve en strengere beslutning.',
   '1. Wave Height': '1. Bølgehøjde',
@@ -632,8 +632,8 @@ export const da: Record<string, string> = {
     'Middelvind eller vindstød er på eller over Pas på-grænsen, men under faregrænsen.',
   'Mean wind or gusts are at or above the danger threshold.':
     'Middelvind eller vindstød er på eller over faregrænsen.',
-  "Intermediate's general wind band starts Take care at exactly 6.0 m/s and Rough at exactly 8.0 m/s. Enabled local sectors or other rules can make the result stricter. A threshold belongs to the stricter band.":
-    'Øvet-profilens generelle vindbånd starter Pas på ved præcis 6,0 m/s og Barskt ved præcis 8,0 m/s. Aktiverede lokale sektorer eller andre regler kan gøre resultatet strengere. En grænse hører til det strengere bånd.',
+  "Normal's general wind band starts Take care at exactly 6.0 m/s and Rough at exactly 8.0 m/s. Enabled local sectors or other rules can make the result stricter. A threshold belongs to the stricter band.":
+    'Normal-profilens generelle vindbånd starter Pas på ved præcis 6,0 m/s og Barskt ved præcis 8,0 m/s. Aktiverede lokale sektorer eller andre regler kan gøre resultatet strengere. En grænse hører til det strengere bånd.',
   'Mean-wind names follow': 'Navnene på middelvind følger',
   "DMI's Beaufort scale": 'DMIs Beaufortskala',
   'A gust is shown only as a number because a short gust is not a Beaufort mean-wind category. Measurement definitions:':

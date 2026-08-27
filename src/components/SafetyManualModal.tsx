@@ -117,15 +117,15 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
               })}
             </ul>
             <p className="manual-note">
-              {t('Intermediate and Advanced wind anchors use')}{' '}
+              {t('Normal and Pro wind anchors use')}{' '}
               <a href={SAFETY_GUIDANCE_SOURCES.dkfTouring} target="_blank" rel="noreferrer">DKF Touring</a>
               {', '}{t('including the')}{' '}
               <a href={SAFETY_GUIDANCE_SOURCES.dkfIpp3Touring} target="_blank" rel="noreferrer">{t('IPP 3 Touring norm')}</a>,
               {' '}{t('and')}{' '}
               <a href={SAFETY_GUIDANCE_SOURCES.dkfIpp4Touring} target="_blank" rel="noreferrer">{t('IPP 4 Touring norm')}</a>.
-              {' '}{t("Touring IPP 2 gives no numeric wind limit. Beginner's 5 m/s Rough boundary and the numeric red wave ceilings use")}{' '}
+              {' '}{t("Touring IPP 2 gives no numeric wind limit. Chill's 5 m/s Rough boundary and the numeric red wave ceilings use")}{' '}
               <a href={SAFETY_GUIDANCE_SOURCES.dkfSeaKayakNorm} target="_blank" rel="noreferrer">{t("DKF's 7 May 2026 sea-kayak norm")}</a>.
-              {' '}{t("Beginner's 4 m/s and the lower wave Take care boundaries are FRANK's conservative choices.")}
+              {' '}{t("Chill's 4 m/s and the lower wave Take care boundaries are FRANK's conservative choices.")}
               {' '}{t('Local wind sectors, gusts, temperature, weather, daylight, route, equipment, and club rules can all demand a stricter decision.')}
             </p>
           </div>
@@ -157,7 +157,7 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
               <li><strong>{t('Rough:')}</strong> {t('Mean wind or gusts are at or above the danger threshold.')}</li>
             </ul>
             <p className="manual-note">
-              {t("Intermediate's general wind band starts Take care at exactly 6.0 m/s and Rough at exactly 8.0 m/s. Enabled local sectors or other rules can make the result stricter. A threshold belongs to the stricter band.")}
+              {t("Normal's general wind band starts Take care at exactly 6.0 m/s and Rough at exactly 8.0 m/s. Enabled local sectors or other rules can make the result stricter. A threshold belongs to the stricter band.")}
             </p>
             <p className="manual-note">
               {t('Mean-wind names follow')}{' '}

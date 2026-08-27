@@ -15,15 +15,15 @@ describe('SafetyManualModal profile evidence', () => {
     );
 
     expect(host.textContent).toContain('Profile basis');
-    expect(host.textContent).toContain('Beginner · IPP 2: general wind Take care from 4.0 m/s and Rough from 5.0 m/s; significant waves Take care from 0.20 m and Rough from 0.50 m.');
-    expect(host.textContent).toContain('Intermediate · IPP 3: general wind Take care from 6.0 m/s and Rough from 8.0 m/s; significant waves Take care from 0.30 m and Rough from 1.00 m.');
-    expect(host.textContent).toContain('Advanced · IPP 4: general wind Take care from 8.0 m/s and Rough from 10.0 m/s; significant waves Take care from 0.50 m and Rough from 2.00 m.');
+    expect(host.textContent).toContain('Chill · IPP 2: general wind Take care from 4.0 m/s and Rough from 5.0 m/s; significant waves Take care from 0.20 m and Rough from 0.50 m.');
+    expect(host.textContent).toContain('Normal · IPP 3: general wind Take care from 6.0 m/s and Rough from 8.0 m/s; significant waves Take care from 0.30 m and Rough from 1.00 m.');
+    expect(host.textContent).toContain('Pro · IPP 4: general wind Take care from 8.0 m/s and Rough from 10.0 m/s; significant waves Take care from 0.50 m and Rough from 2.00 m.');
     expect(host.textContent).toContain('not DKF-issued safety limits');
     expect(host.textContent).toContain('mean height of the highest third of waves');
     expect(host.textContent).toContain('10-minute mean wind at 10 m');
     expect(host.textContent).toContain('A gust is shown only as a number');
     expect(host.textContent).toContain('these can make a profile stricter');
-    expect(host.textContent).toContain("Intermediate's general wind band starts Take care at exactly 6.0 m/s");
+    expect(host.textContent).toContain("Normal's general wind band starts Take care at exactly 6.0 m/s");
     expect(host.textContent).toContain('The DKF/IPP material used for these profiles does not publish separate numeric gust bands');
     expect(host.textContent).toContain('same sustained-wind-or-gust model');
     expect(host.textContent).toContain('only the controlling wind explanation is shown');
@@ -31,7 +31,7 @@ describe('SafetyManualModal profile evidence', () => {
     expect(host.textContent).toContain('If any rule reaches Rough');
     expect(host.textContent).toContain('Take-care-only rules');
     expect(host.textContent).toContain('marked Take care');
-    expect(host.textContent).toContain("Beginner's 4 m/s and the lower wave Take care boundaries are FRANK's conservative choices");
+    expect(host.textContent).toContain("Chill's 4 m/s and the lower wave Take care boundaries are FRANK's conservative choices");
     expect(host.querySelector('a[href*="ipp-roeruddannelse/touring-tur"]')).not.toBeNull();
     expect(host.querySelector('a[href*="14lUb_7t5ZV1vp49sOBmCmlXuOnSWmQMX"]')).not.toBeNull();
     expect(host.querySelector('a[href*="1iagdhW-B3ZXvHUmEBSfxVESyne5qevb2"]')).not.toBeNull();

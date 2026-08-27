@@ -377,7 +377,7 @@ export function useSettings() {
   const activeLoadFailedRef = useRef<string | null>(null);
   // The active choice and the remembered Custom profile are two independent
   // records. A corrupt custom record must not be replaced merely because the
-  // user switches from Intermediate to Advanced; it becomes replaceable only when a
+  // user switches from Normal to Pro; it becomes replaceable only when a
   // valid active Custom profile can recover it during an intentional mode
   // change, or the user deliberately edits that profile.
   const customLoadFailedRef = useRef<string | null>(null);
@@ -427,7 +427,7 @@ export function useSettings() {
       }
     }
     // No skill/profile has been chosen on a first visit. Raw weather is the
-    // honest default; selecting Beginner, Intermediate, or Advanced opts into
+    // honest default; selecting Chill, Normal, or Pro opts into
     // FRANK's personal-limit verdicts and is then remembered per location.
     return getPresetSettings('weather');
   });
