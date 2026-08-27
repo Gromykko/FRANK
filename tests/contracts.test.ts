@@ -169,7 +169,10 @@ describe('pre-paint theme shell contract', () => {
     const serviceWorker = readFileSync(resolve(process.cwd(), 'public/sw.js'), 'utf8');
     const vite = readFileSync(resolve(process.cwd(), 'vite.config.ts'), 'utf8');
 
-    expect(index).toContain('<html lang="da" data-theme="light">');
+    // No data-theme in the markup: the blocking script resolves it from the OS
+    // preference or a saved choice before CSS paints. A hardcoded attribute
+    // would have to be wrong for one of the two.
+    expect(index).not.toMatch(/<html[^>]*data-theme=/);
     expect(index).toContain('<script src="/theme-init.js"></script>');
     expect(serviceWorker).toContain("'theme-init.js',");
     expect(vite).toContain('`${APP_BASE}theme-init.js`,');

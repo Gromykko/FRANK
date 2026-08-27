@@ -1,10 +1,10 @@
-import { useLayoutEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import { readStorage } from '../utils/storage';
 
 const THEME_STORAGE_KEY = 'frank_theme_mode';
 
-// Keep the mobile browser chrome (theme-color) in sync with the manual
-// light/dark toggle. The document starts light; an explicit saved choice wins.
+// Keep the mobile browser chrome (theme-color) in sync with the resolved
+// theme, whether that came from the OS or from the manual toggle.
 const THEME_COLORS: Record<ThemeMode, string> = {
   light: '#f5f7fa',
   dark: '#0c1117',
@@ -20,6 +20,17 @@ interface ThemeState {
 function readSavedThemeMode(): ThemeMode | null {
   const saved = readStorage(THEME_STORAGE_KEY);
   return saved === 'dark' || saved === 'light' ? saved : null;
+}
+
+// Until someone touches the toggle, the OS decides. Stamping every first
+// visit light ignores a phone that is set to dark, and on an installed PWA
+// it leaves a light document sitting under a dark system status bar.
+function systemThemeMode(): ThemeMode {
+  try {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  } catch {
+    return 'light';
+  }
 }
 
 function readInitialThemeState(): ThemeState {
@@ -38,9 +49,9 @@ function readInitialThemeState(): ThemeState {
       return { mode: prepaint, saved: true };
     }
   } catch {
-    // The hook still has the light fallback below.
+    // The hook still has the OS fallback below.
   }
-  return { mode: 'light', saved: false };
+  return { mode: systemThemeMode(), saved: false };
 }
 
 export function useTheme() {
@@ -70,6 +81,30 @@ export function useTheme() {
       }
     }
   }, [theme]);
+
+  // A phone that flips to dark at sunset should take the app with it, but only
+  // for someone who has never pressed the toggle. One explicit press ends this
+  // for good - that is what `saved` means.
+  useEffect(() => {
+    if (theme.saved) return;
+
+    let query: MediaQueryList;
+    try {
+      query = window.matchMedia('(prefers-color-scheme: dark)');
+    } catch {
+      return;
+    }
+
+    const syncSystemTheme = () => {
+      const mode = query.matches ? 'dark' : 'light';
+      setTheme((current) => (
+        current.saved || current.mode === mode ? current : { ...current, mode }
+      ));
+    };
+    syncSystemTheme();
+    query.addEventListener('change', syncSystemTheme);
+    return () => query.removeEventListener('change', syncSystemTheme);
+  }, [theme.saved]);
 
   const cycleThemeMode = () => {
     setTheme((current) => ({

@@ -73,7 +73,7 @@ afterEach(async () => {
 });
 
 describe('useTheme', () => {
-  it('starts light regardless of the OS and persists only an explicit user choice', async () => {
+  it('follows the OS until an explicit choice, then stops following it', async () => {
     const system = installSystemTheme(true);
     const lightMeta = document.createElement('meta');
     lightMeta.name = 'theme-color';
@@ -81,17 +81,21 @@ describe('useTheme', () => {
     document.head.append(lightMeta);
     await renderHook();
 
-    expect(current.themeMode).toBe('light');
-    expect(document.documentElement.dataset.theme).toBe('light');
+    // A phone set to dark opens the app dark, and nothing is persisted: the
+    // user has not chosen anything yet.
+    expect(current.themeMode).toBe('dark');
+    expect(document.documentElement.dataset.theme).toBe('dark');
     expect(localStorage.getItem('frank_theme_mode')).toBeNull();
+    expect(system.query.addEventListener).toHaveBeenCalled();
 
+    // Sunrise on the phone takes the app with it, still without persisting.
     await act(async () => system.setDark(false));
     expect(current.themeMode).toBe('light');
     expect(document.documentElement.dataset.theme).toBe('light');
     expect(lightMeta.content).toBe('#f5f7fa');
     expect(lightMeta.hasAttribute('media')).toBe(false);
     expect(localStorage.getItem('frank_theme_mode')).toBeNull();
-    expect(system.query.addEventListener).not.toHaveBeenCalled();
+    expect(document.documentElement.dataset.themeSource).toBeUndefined();
 
     await act(async () => current.cycleThemeMode());
     expect(current.themeMode).toBe('dark');
@@ -100,6 +104,7 @@ describe('useTheme', () => {
     expect(localStorage.getItem('frank_theme_mode')).toBe('dark');
     expect(document.documentElement.dataset.themeSource).toBe('saved');
 
+    // One press ends the following for good.
     await act(async () => {
       system.setDark(true);
       system.setDark(false);
