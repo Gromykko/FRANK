@@ -518,8 +518,8 @@ export const da: Record<string, string> = {
   'caution to {0}': 'pas på til {0}',
   '25 storm': '25 storm',
   'Gap to Danger': 'Afstand til Fare',
-  'Take care from {0} m/s; +{1} m/s sets Danger from {2} m/s. If gust checking is on, gusts use this same general wind band.':
-    'Pas på fra {0} m/s; +{1} m/s sætter Fare fra {2} m/s. Er vindstødstjek slået til, bruges det samme generelle vindbånd til vindstød.',
+  'Take care from {0} m/s; +{1} m/s sets Danger from {2} m/s. Gusts get their own higher band ({3} and {4} m/s), because a mean-wind limit already assumes gusty wind.':
+    'Pas på fra {0} m/s; +{1} m/s sætter Barskt fra {2} m/s. Vindstød har deres eget højere bånd ({3} og {4} m/s), fordi en middelvindgrænse allerede regner med, at det blæser i stød.',
   'Take care from {0} m; +{1} m sets Danger from {2} m. The switch adds the amber band between them.':
     'Pas på fra {0} m; +{1} m sætter Fare fra {2} m. Kontakten tilføjer det gule felt mellem grænserne.',
   'Include gusts in verdict': 'Medtag vindstød i vurderingen',
@@ -624,14 +624,14 @@ export const da: Record<string, string> = {
   'defines significant wave height as the mean height of the highest third of waves and notes that individual waves can be higher. FRANK separately cautions that the number does not describe local surf or short steep chop by itself.':
     'definerer signifikant bølgehøjde som middelhøjden af den højeste tredjedel af bølgerne og bemærker, at enkeltbølger kan være højere. FRANK advarer særskilt om, at tallet ikke i sig selv beskriver lokal brænding eller kort, krap sø.',
   '2. Wind Speed & Gusts': '2. Vindstyrke & vindstød',
-  'MET supplies a 10-minute mean wind at 10 m and a peak gust based on a much shorter three-second average. When gust checking is on, FRANK checks both against the same general wind band; the Danger margin sets where each becomes Rough:':
-    'MET leverer 10-minutters middelvind i 10 meters højde og et maksimalt vindstød baseret på et langt kortere 3-sekunders gennemsnit. Når vindstødstjek er slået til, tjekker FRANK begge mod det samme generelle vindbånd; faremargenen bestemmer, hvor vurderingen bliver Barskt:',
-  'Both mean wind and gusts are below the Take care threshold.':
-    'Både middelvind og vindstød er under Pas på-grænsen.',
-  'Mean wind or gusts are at or above the Take care threshold, but below the danger threshold.':
-    'Middelvind eller vindstød er på eller over Pas på-grænsen, men under faregrænsen.',
-  'Mean wind or gusts are at or above the danger threshold.':
-    'Middelvind eller vindstød er på eller over faregrænsen.',
+  'MET supplies a 10-minute mean wind at 10 m and a peak gust based on a much shorter three-second average. Gusts are judged against their own higher band, 1.6x the mean-wind thresholds: a limit written for mean wind already assumes the wind gusts, so measuring a gust against it would count the same gustiness twice. In these fjords the gust is typically 1.66x the mean.':
+    'MET leverer en 10-minutters middelvind i 10 meters højde og et vindstød baseret på et langt kortere tre-sekunders gennemsnit. Vindstød vurderes mod deres eget højere bånd, 1,6 gange middelvindgrænserne: en grænse skrevet for middelvind regner allerede med, at det blæser i stød, så at måle et vindstød mod den ville tælle den samme stødighed to gange. I disse fjorde er vindstødet typisk 1,66 gange middelvinden.',
+  'Mean wind is below the Take care threshold, and gusts are below their own.':
+    'Middelvinden er under Pas på-grænsen, og vindstødene er under deres egen.',
+  'Mean wind, or gusts against the gust band, reach Take care but not danger.':
+    'Middelvinden, eller vindstødene mod stødbåndet, når Pas på, men ikke Barskt.',
+  'Mean wind, or gusts against the gust band, reach the danger threshold.':
+    'Middelvinden, eller vindstødene mod stødbåndet, når Barskt-grænsen.',
   "Normal's general wind band starts Take care at exactly 6.0 m/s and Rough at exactly 8.0 m/s. Enabled local sectors or other rules can make the result stricter. A threshold belongs to the stricter band.":
     'Normal-profilens generelle vindbånd starter Pas på ved præcis 6,0 m/s og Barskt ved præcis 8,0 m/s. Aktiverede lokale sektorer eller andre regler kan gøre resultatet strengere. En grænse hører til det strengere bånd.',
   'Mean-wind names follow': 'Navnene på middelvind følger',

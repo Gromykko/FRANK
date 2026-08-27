@@ -150,11 +150,11 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
 
           <div>
             <h3 className="manual-h">{t('2. Wind Speed & Gusts')}</h3>
-            <p className="manual-p">{t('MET supplies a 10-minute mean wind at 10 m and a peak gust based on a much shorter three-second average. When gust checking is on, FRANK checks both against the same general wind band; the Danger margin sets where each becomes Rough:')}</p>
+            <p className="manual-p">{t('MET supplies a 10-minute mean wind at 10 m and a peak gust based on a much shorter three-second average. Gusts are judged against their own higher band, 1.6x the mean-wind thresholds: a limit written for mean wind already assumes the wind gusts, so measuring a gust against it would count the same gustiness twice. In these fjords the gust is typically 1.66x the mean.')}</p>
             <ul className="manual-list">
-              <li><strong>{t('Good to go:')}</strong> {t('Both mean wind and gusts are below the Take care threshold.')}</li>
-              <li><strong>{t('Take care:')}</strong> {t('Mean wind or gusts are at or above the Take care threshold, but below the danger threshold.')}</li>
-              <li><strong>{t('Rough:')}</strong> {t('Mean wind or gusts are at or above the danger threshold.')}</li>
+              <li><strong>{t('Good to go:')}</strong> {t('Mean wind is below the Take care threshold, and gusts are below their own.')}</li>
+              <li><strong>{t('Take care:')}</strong> {t('Mean wind, or gusts against the gust band, reach Take care but not danger.')}</li>
+              <li><strong>{t('Rough:')}</strong> {t('Mean wind, or gusts against the gust band, reach the danger threshold.')}</li>
             </ul>
             <p className="manual-note">
               {t("Normal's general wind band starts Take care at exactly 6.0 m/s and Rough at exactly 8.0 m/s. Enabled local sectors or other rules can make the result stricter. A threshold belongs to the stricter band.")}

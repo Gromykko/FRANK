@@ -330,44 +330,53 @@ describe('safety rule enable toggles', () => {
 // ---------------------------------------------------------------------------
 describe('gust margin math', () => {
   // The configured Take care threshold plus the danger margin sets the gust ceiling.
-  it('derives the gust danger threshold from the configured Take care threshold and margin', () => {
-    const at72 = analyzeSafetyConditions({ ...baseData, windGust: 7.2 }, baseSettings);
-    expect(at72.rating).toBe('caution');
-    const at84 = analyzeSafetyConditions({ ...baseData, windGust: 8.4 }, baseSettings);
-    expect(at84.rating).toBe('danger');
+  // baseSettings: wind 5.0 / 8.0, so the gust band is 8.0 / 12.8 (x1.6). A
+  // mean-wind limit is written for wind that already gusts - in these fjords the
+  // gust runs about 1.66x the mean - so judging a gust against the mean number
+  // counts the same gustiness twice. Measured against the old thresholds, gusts
+  // alone made 51% of Normal's hours red while sustained wind sat at 59% of its
+  // own cap; the supplement was outvoting the rule it supplements.
+  it('derives both gust ceilings from the wind band, scaled by the gust factor', () => {
+    // 7.2 used to be caution and 8.4 used to be danger, on the mean numbers.
+    expect(analyzeSafetyConditions({ ...baseData, windGust: 7.2 }, baseSettings).rating).toBe('safe');
+    expect(analyzeSafetyConditions({ ...baseData, windGust: 8.4 }, baseSettings).rating).toBe('caution');
+    expect(analyzeSafetyConditions({ ...baseData, windGust: 12.8 }, baseSettings).rating).toBe('danger');
   });
 
   it('keeps gusts numeric instead of assigning a Beaufort mean-wind label', () => {
-    const result = analyzeSafetyConditions({ ...baseData, windSpeed: 3, windGust: 8.4 }, baseSettings);
+    const result = analyzeSafetyConditions({ ...baseData, windSpeed: 3, windGust: 13.4 }, baseSettings);
     const gustReason = result.reasons.find((reason) => reason.text.startsWith('Wind gusts:'));
 
-    expect(gustReason?.text).toBe('Wind gusts: 8.4 m/s. Above your wind danger threshold of 8.0 m/s.');
+    expect(gustReason?.text).toBe('Wind gusts: 13.4 m/s. Above your gust danger threshold of 12.8 m/s.');
     expect(gustReason?.text).not.toMatch(/\([^)]*(?:Breeze|Gale|Storm|Hurricane)[^)]*\)/);
   });
 
   it('uses >= semantics at both gust boundaries', () => {
-    // Judged at the precision it is shown at, so 4.94 reads "4.9" and clears
-    // while 4.99 reads "5.0" and does not. Previously 4.99 printed "5.0" beside
-    // a limit of 5 and still rated safe, so the screen contradicted the verdict.
-    expect(analyzeSafetyConditions({ ...baseData, windGust: 4.94 }, baseSettings).rating).toBe('safe');
-    expect(analyzeSafetyConditions({ ...baseData, windGust: 4.99 }, baseSettings).rating).toBe('caution');
-    expect(analyzeSafetyConditions({ ...baseData, windGust: 5.0 }, baseSettings).rating).toBe('caution');
-    expect(analyzeSafetyConditions({ ...baseData, windGust: 8.0 }, baseSettings).rating).toBe('danger');
+    // Judged at the precision it is shown at, so 7.94 reads "7.9" and clears
+    // while 7.99 reads "8.0" and does not.
+    expect(analyzeSafetyConditions({ ...baseData, windGust: 7.94 }, baseSettings).rating).toBe('safe');
+    expect(analyzeSafetyConditions({ ...baseData, windGust: 7.99 }, baseSettings).rating).toBe('caution');
+    expect(analyzeSafetyConditions({ ...baseData, windGust: 8.0 }, baseSettings).rating).toBe('caution');
+    expect(analyzeSafetyConditions({ ...baseData, windGust: 12.7 }, baseSettings).rating).toBe('caution');
+    expect(analyzeSafetyConditions({ ...baseData, windGust: 12.8 }, baseSettings).rating).toBe('danger');
   });
 
-  it('gust danger ceiling below the wind caution limit (margin 1.5 => ceiling 6.5, not 8)', () => {
-    const settings = { ...baseSettings, gustMargin: 1.5 } as SafetySettings;
-    // 6.5 = 5 + 1.5 is well below maxWindSpeedCaution (8) and must already be danger.
-    expect(analyzeSafetyConditions({ ...baseData, windGust: 6.5 }, settings).rating).toBe('danger');
-    expect(analyzeSafetyConditions({ ...baseData, windGust: 6.4 }, settings).rating).toBe('caution');
+  it('tracks the wind danger limit itself, not the margin field beside it', () => {
+    // The panel keeps maxWindSpeedCaution equal to safe + gustMargin, but the
+    // stored caution value is the wind band's real upper edge and is what the
+    // gust ceiling scales from. Tighten it and the gust ceiling follows.
+    const settings = { ...baseSettings, maxWindSpeedCaution: 6.5, gustMargin: 1.5 } as SafetySettings;
+    expect(analyzeSafetyConditions({ ...baseData, windGust: 10.3 }, settings).rating).toBe('caution');
+    expect(analyzeSafetyConditions({ ...baseData, windGust: 10.4 }, settings).rating).toBe('danger');
   });
 
-  it('gust danger ceiling above the wind caution limit (margin 5 => ceiling 10, not 8)', () => {
-    const settings = { ...baseSettings, gustMargin: 5 } as SafetySettings;
-    // A 9 m/s gust exceeds the wind caution limit (8) but not safe+margin (10):
-    // it must stay caution, proving the ceiling is safe+margin, not the caution limit.
-    expect(analyzeSafetyConditions({ ...baseData, windGust: 9 }, settings).rating).toBe('caution');
-    expect(analyzeSafetyConditions({ ...baseData, windGust: 10 }, settings).rating).toBe('danger');
+  it('never lets an inverted stored band put the gust ceiling under its own floor', () => {
+    // floorCaution keeps the danger edge at least MIN_CAUTION_GAP above safe, so
+    // a corrupt caution value cannot produce a gust ceiling below the caution one.
+    const settings = { ...baseSettings, maxWindSpeedCaution: 3 } as SafetySettings;
+    const calm = { ...baseData, windSpeed: 1 };
+    expect(analyzeSafetyConditions({ ...calm, windGust: 8.7 }, settings).rating).toBe('caution');
+    expect(analyzeSafetyConditions({ ...calm, windGust: 8.8 }, settings).rating).toBe('danger');
   });
 });
 
@@ -620,7 +629,7 @@ describe('custom wind direction sectors', () => {
       enableCustomWindDirs: true,
     } as SafetySettings;
     const result = analyzeSafetyConditions(
-      { ...baseData, windDirection: 270, windSpeed: 7.8, windGust: 9, tideLevel: 0 },
+      { ...baseData, windDirection: 270, windSpeed: 7.8, windGust: 13, tideLevel: 0 },
       settings,
       0.5,
     );
@@ -628,7 +637,7 @@ describe('custom wind direction sectors', () => {
     expect(result.rating).toBe('danger');
     expect(result.reasons.map((reason) => reason.text)).toEqual([
       'Wind speed: 7.8 m/s (Moderate Breeze). Westerly wind (270°) is over your 7.0 m/s danger threshold for this direction.',
-      'Wind gusts: 9.0 m/s. Above your wind danger threshold of 8.0 m/s.',
+      'Wind gusts: 13.0 m/s. Above your gust danger threshold of 12.8 m/s.',
       'Wind-against-water-level conflict: wind opposes rising water level. Expect steeper chop.',
     ]);
   });

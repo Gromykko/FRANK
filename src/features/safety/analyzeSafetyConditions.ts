@@ -76,7 +76,7 @@ export interface SafetyAnalysisContext {
 }
 
 import type { SafetySettings } from './presets';
-import { floorCaution } from './presets';
+import { GUST_FACTOR, floorCaution } from './presets';
 import { READING_DECIMALS, roundToDecimals } from '../../utils/number';
 import { interpolate } from '../../i18n/interpolate';
 import type { Translate } from '../../i18n/interpolate';
@@ -244,9 +244,9 @@ export function analyzeSafetyConditions(
 
   // Gusts are a sub-limit of the wind rule (the UI disables the gust toggle
   // when wind is off), so turning wind off also silences the gust check. The
-  // gust danger ceiling is the Take care threshold + the user's margin — built-in
-  // presets place that exactly on the caution limit, but a custom margin
-  // moves the ceiling with it, as the settings panel and manual describe.
+  // gust ceilings are the wind ceilings scaled by GUST_FACTOR: a mean-wind
+  // limit already assumes gusty wind, so judging a gust against the mean
+  // number counts the same gustiness twice. See the constant for the numbers.
   const enableWindGust = enableWindSpeed && (settings.enableWindGust ?? true);
   // MET issues no gust forecast for the longer-range blocks, so an absent gust
   // there is a known limit of the source, not a hole in this hour's data.
@@ -256,17 +256,19 @@ export function analyzeSafetyConditions(
   if (enableWindGust && hasWindGust) {
     // Beaufort describes sustained/mean wind, not a short gust. Keep the gust
     // numeric instead of assigning it a misleading Beaufort force name.
-    const gustDangerLimit = settings.maxWindSpeedSafe + (settings.gustMargin ?? 2.0);
+    const gustCautionLimit = roundToDecimals(settings.maxWindSpeedSafe * GUST_FACTOR, 1);
+    const gustDangerLimit = roundToDecimals(
+      floorCaution(settings.maxWindSpeedSafe, settings.maxWindSpeedCaution) * GUST_FACTOR, 1);
     if (gustForSafety >= gustDangerLimit) {
       gustWindReason = addReason('danger', limitReason(gustForSafety, gustDangerLimit, 1,
-        'Wind gusts: {0} m/s. At your wind danger threshold of {1} m/s.',
-        'Wind gusts: {0} m/s. Above your wind danger threshold of {1} m/s.',
+        'Wind gusts: {0} m/s. At your gust danger threshold of {1} m/s.',
+        'Wind gusts: {0} m/s. Above your gust danger threshold of {1} m/s.',
         gustForSafety.toFixed(1), gustDangerLimit.toFixed(1)));
-    } else if (gustForSafety >= settings.maxWindSpeedSafe) {
-      gustWindReason = addReason('caution', limitReason(gustForSafety, settings.maxWindSpeedSafe, 1,
-        'Wind gusts: {0} m/s. At your Take care threshold of {1} m/s.',
-        'Wind gusts: {0} m/s. Above your Take care threshold of {1} m/s.',
-        gustForSafety.toFixed(1), settings.maxWindSpeedSafe.toFixed(1)));
+    } else if (gustForSafety >= gustCautionLimit) {
+      gustWindReason = addReason('caution', limitReason(gustForSafety, gustCautionLimit, 1,
+        'Wind gusts: {0} m/s. At your gust Take care threshold of {1} m/s.',
+        'Wind gusts: {0} m/s. Above your gust Take care threshold of {1} m/s.',
+        gustForSafety.toFixed(1), gustCautionLimit.toFixed(1)));
     }
   }
 

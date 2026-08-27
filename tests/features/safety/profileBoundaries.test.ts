@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { analyzeSafetyConditions } from '../../../src/features/safety/analyzeSafetyConditions';
-import { getPresetSettings } from '../../../src/features/safety/presets';
+import { GUST_FACTOR, getPresetSettings } from '../../../src/features/safety/presets';
+import { roundToDecimals } from '../../../src/utils/number';
 import type { HourlyData } from '../../../src/features/forecast/types';
 import type { SafetySettings } from '../../../src/features/safety/presets';
 
@@ -71,14 +72,25 @@ describe('IPP-aligned profile boundaries', () => {
     },
   );
 
+  // Gusts get the wind band scaled by GUST_FACTOR, not the wind band itself: a
+  // mean-wind limit is written for wind that already gusts, so measuring a gust
+  // against it counts the same gustiness twice. Chill 6.4/8.0, Normal 9.6/12.8,
+  // Pro 12.8/16.0.
   it.each(profiles)(
-    '%s gust uses the same %s / %s boundaries without a Beaufort label',
-    (mode, takeCareAt, roughAt) => {
+    '%s gusts are judged against %s / %s scaled by the gust factor, without a Beaufort label',
+    (mode, windTakeCareAt, windRoughAt) => {
       const settings = gustOnly(mode);
+      const takeCareAt = roundToDecimals(windTakeCareAt * GUST_FACTOR, 1);
+      const roughAt = roundToDecimals(windRoughAt * GUST_FACTOR, 1);
+
+      // The old rule called this hour Rough; the mean wind it implies is ordinary.
+      expect(analyzeSafetyConditions({ ...benignHour, windGust: windRoughAt }, settings).rating).toBe('safe');
+
       expect(analyzeSafetyConditions({ ...benignHour, windGust: takeCareAt - 0.1 }, settings).rating).toBe('safe');
       const caution = analyzeSafetyConditions({ ...benignHour, windGust: takeCareAt }, settings);
       expect(caution.rating).toBe('caution');
       expect(caution.reasons.find((reason) => reason.text.startsWith('Wind gusts:'))?.text).not.toContain('(');
+      expect(analyzeSafetyConditions({ ...benignHour, windGust: roughAt - 0.1 }, settings).rating).toBe('caution');
       expect(analyzeSafetyConditions({ ...benignHour, windGust: roughAt }, settings).rating).toBe('danger');
     },
   );

@@ -8,6 +8,21 @@ export type SectorCap = { safe: number; caution: number };
 // assessment never runs an inverted band. One rule, one place — every site that
 // enforces it (presets, healing, the editor, and the engine) uses this.
 export const MIN_CAUTION_GAP = 0.5;
+
+// Real wind is gusty, so a club's mean-wind limit was never gust-blind: it was
+// calibrated on days that already gusted. Judging a gust against the mean limit
+// therefore counts the same gustiness twice, and the double-count is not small.
+// Measured over 230 forecast hours across all four fjords, the local gust/mean
+// ratio has a median of 1.66 (p75 1.81, p90 2.04) - coastal roughness runs well
+// above the 1.3-1.5 typical of open water. Against the mean thresholds, gusts
+// alone painted 51% of Normal's hours red while sustained wind sat at a median
+// 4.7 m/s, 59% of its own cap. The supplement was outvoting the rule.
+//
+// So the gust ceiling is the mean ceiling times the gustiness a limit at that
+// speed already implies. 1.6 sits just under the measured median, which leaves
+// the rule slightly conservative, and it drops gusts-alone red to 5% of hours -
+// a supplement again, firing on genuinely squally air rather than on Tuesday.
+export const GUST_FACTOR = 1.6;
 export function floorCaution(safe: number, caution: number): number {
   return Math.max(caution, safe + MIN_CAUTION_GAP);
 }

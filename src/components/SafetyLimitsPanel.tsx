@@ -5,7 +5,7 @@ import SafetyManualModal from './SafetyManualModal';
 import CustomSelect from './CustomSelect';
 import CompassRose from './CompassRose';
 import type { SafetySettings } from '../hooks/useSettings';
-import { floorCaution, MIN_CAUTION_GAP } from '../features/safety/presets';
+import { GUST_FACTOR, floorCaution, MIN_CAUTION_GAP } from '../features/safety/presets';
 import { CURRENT_LOCATION } from '../config/locations';
 import type { WindSector } from '../config/locations';
 import { clampNumber, roundToDecimals } from '../utils/number';
@@ -292,7 +292,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
               <div className={`limit-caution-row has-toggle ${settings.enableWindSpeed ? '' : 'is-off'}`}>
                 <div className="limit-caution-copy">
                   <span className="limit-caution-name">{t('Gap to Danger')}</span>
-                  <span className="limit-caution-hint">{t('Take care from {0} m/s; +{1} m/s sets Danger from {2} m/s. If gust checking is on, gusts use this same general wind band.', settings.maxWindSpeedSafe.toFixed(1), settings.gustMargin.toFixed(1), windCautionAt.toFixed(1))}</span>
+                  <span className="limit-caution-hint">{t('Take care from {0} m/s; +{1} m/s sets Danger from {2} m/s. Gusts get their own higher band ({3} and {4} m/s), because a mean-wind limit already assumes gusty wind.', settings.maxWindSpeedSafe.toFixed(1), settings.gustMargin.toFixed(1), windCautionAt.toFixed(1), (settings.maxWindSpeedSafe * GUST_FACTOR).toFixed(1), (windCautionAt * GUST_FACTOR).toFixed(1))}</span>
                 </div>
                 <Stepper
                   compact
