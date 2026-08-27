@@ -4,7 +4,7 @@ import StatusBar from '../../src/components/StatusBar';
 import { LanguageProvider } from '../../src/i18n';
 
 describe('StatusBar status presentation', () => {
-  it('renders the changing cache sentence as an atomic polite status', () => {
+  it('keeps exact visible detail in the label and a stable sentence in the live region', () => {
     const html = renderToStaticMarkup(
       <LanguageProvider>
         <StatusBar
@@ -16,7 +16,8 @@ describe('StatusBar status presentation', () => {
           sourceLabel="Opdaterer…"
           cacheDetail=""
           cacheClass="neutral"
-          cacheAriaLabel="Opdaterer prognosen."
+          cacheAriaLabel="Opdaterer prognosen. Gemt prognose · 8 t gammel."
+          cacheAnnouncement="Opdatering i gang. Viser gemt prognose fra 14:50."
           refreshing
           onRefresh={vi.fn()}
           themeMode="light"
@@ -28,7 +29,9 @@ describe('StatusBar status presentation', () => {
 
     const document = new DOMParser().parseFromString(html, 'text/html');
     const announcement = document.querySelector('[role="status"][aria-atomic="true"]');
-    expect(announcement?.textContent).toBe('Opdaterer prognosen.');
+    expect(announcement?.textContent).toBe('Opdatering i gang. Viser gemt prognose fra 14:50.');
+    expect(document.querySelector('.frank-cache')?.getAttribute('aria-label'))
+      .toBe('Opdaterer prognosen. Gemt prognose · 8 t gammel.');
   });
 
   // This asserted the opposite for good reason: the verdict must never hide
@@ -50,6 +53,7 @@ describe('StatusBar status presentation', () => {
           cacheDetail=""
           cacheClass="fresh"
           cacheAriaLabel="Frisk prognose."
+          cacheAnnouncement="Frisk prognose fra 14:50."
           refreshing={false}
           onRefresh={vi.fn()}
           themeMode="light"
@@ -75,7 +79,7 @@ describe('StatusBar status presentation', () => {
   });
 
   it('keeps degraded-source detail visible in the status bar', () => {
-    const detail = 'Marine forecast update delayed';
+    const detail = 'Delayed update: marine data';
     const html = renderToStaticMarkup(
       <LanguageProvider>
         <StatusBar
@@ -88,6 +92,7 @@ describe('StatusBar status presentation', () => {
           cacheDetail={detail}
           cacheClass="watch"
           cacheAriaLabel={`Degraded. ${detail}.`}
+          cacheAnnouncement={`Forecast from 14:50. ${detail}.`}
           refreshing={false}
           onRefresh={vi.fn()}
           themeMode="light"

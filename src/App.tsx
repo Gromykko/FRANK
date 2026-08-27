@@ -273,6 +273,7 @@ export default function App() {
     showRefreshWarning: showCacheRefreshWarning,
     workerOutdated,
     forecastAgeLabel,
+    refreshFailureConfirmed,
   } = deriveCacheStatus({
     sources: weatherData.sources,
     refreshing,
@@ -286,7 +287,14 @@ export default function App() {
   const cacheStatusClass = statusView.tone;
   const sourceLabel = statusView.label;
   const cacheStatusDetail = statusView.detail;
-  const cacheAriaLabel = `${sourceLabel.replace(/[.!?]+$/, '')}. ${cacheStatusExpandedDetail.replace(/[.!?]+$/, '')}.`;
+  // The labelled group exposes the exact visible state, including relative age
+  // and a delayed source. Its live announcement uses the stable absolute-time
+  // sentence instead, so the minute heartbeat does not repeatedly speak.
+  const cacheAriaLabel = `${[sourceLabel, cacheStatusDetail]
+    .filter(Boolean)
+    .join('. ')
+    .replace(/[.!?…]+$/u, '')}.`;
+  const cacheAnnouncement = `${cacheStatusExpandedDetail.replace(/[.!?…]+$/u, '')}.`;
   // One attribution per provider: MET carries the license, DMI lists the
   // marine models in parentheses.
   const dmiModels = [weatherData.sources.waves, weatherData.sources.water]
@@ -311,6 +319,7 @@ export default function App() {
         cacheDetail={cacheStatusDetail}
         cacheClass={cacheStatusClass}
         cacheAriaLabel={cacheAriaLabel}
+        cacheAnnouncement={cacheAnnouncement}
         refreshing={refreshing}
         onRefresh={() => {
           void requestPreparedAppReleaseCheck();
@@ -340,7 +349,9 @@ export default function App() {
         {showCacheRefreshWarning && (
           <div className="forecast-warning" role="alert">
             <AlertTriangle size={15} />
-            {!online ? (
+            {!forecastAgeLabel ? (
+              <span>{t('The saved forecast time could not be verified. Treat it with extra caution and check an official source before launching.')}</span>
+            ) : !online ? (
               // Offline needs its own sentence. The banner keys on DATA AGE, which
               // is right — a paddler on the water with a six-hour-old forecast
               // must be told, connection or not — but the "refresh keeps failing"
@@ -348,8 +359,10 @@ export default function App() {
               // correctly said "Offline". Nothing is failing; there is simply no
               // connection to try over.
               <span>{t('You have been offline for a while, so this forecast is from {0} — {1} old. Treat it with extra caution; it will update by itself once you are back online.', formatDateTime(weatherData.sources.fetchedAt), forecastAgeLabel)}</span>
-            ) : (
+            ) : refreshFailureConfirmed ? (
               <span>{t('The forecast could not be refreshed. You are seeing data from {0} — {1} old, so treat it with extra caution. FRANK retries by itself roughly every 10 minutes.', formatDateTime(weatherData.sources.fetchedAt), forecastAgeLabel)}</span>
+            ) : (
+              <span>{t('This forecast has not updated as expected. You are seeing data from {0} — {1} old, so treat it with extra caution while FRANK checks again.', formatDateTime(weatherData.sources.fetchedAt), forecastAgeLabel)}</span>
             )}
           </div>
         )}

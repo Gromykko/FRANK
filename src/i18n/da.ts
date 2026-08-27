@@ -47,6 +47,10 @@ export const da: Record<string, string> = {
     'Prognosen er kortvarigt forældet, mens FRANK opdaterer i baggrunden. Kig tilbage om et par minutter.',
   'The forecast could not be refreshed. You are seeing data from {0} — {1} old, so treat it with extra caution. FRANK retries by itself roughly every 10 minutes.':
     'Prognosen kunne ikke opdateres. Du ser data fra {0} — {1} gamle, så brug dem med ekstra forsigtighed. FRANK prøver selv igen cirka hvert 10. minut.',
+  'This forecast has not updated as expected. You are seeing data from {0} — {1} old, so treat it with extra caution while FRANK checks again.':
+    'Prognosen er ikke blevet opdateret som forventet. Du ser data fra {0} — {1} gamle, så brug dem med ekstra forsigtighed, mens FRANK tjekker igen.',
+  'The saved forecast time could not be verified. Treat it with extra caution and check an official source before launching.':
+    'Tidspunktet for den gemte prognose kunne ikke bekræftes. Brug den med ekstra forsigtighed, og tjek en officiel kilde, før du tager ud.',
   // Offline AND old: the age warning still fires (a paddler on the water needs
   // it), but nothing is "failing" — there is no connection to try over.
   'You have been offline for a while, so this forecast is from {0} — {1} old. Treat it with extra caution; it will update by itself once you are back online.':
@@ -160,41 +164,28 @@ export const da: Record<string, string> = {
 
   // ── Cache status (cacheStatusView.ts) ─────────────────────────────────────
   'Offline': 'Offline',
-  'Showing your saved forecast from {0}': 'Viser din gemte prognose fra {0}',
-  'Showing your older saved forecast from {0}': 'Viser din ældre gemte prognose fra {0}',
+  'Saved forecast': 'Gemt prognose',
+  'Saved forecast · {0} old': 'Gemt prognose · {0} gammel',
   'wind': 'vind',
+  'water level': 'vandstand',
   'waves': 'bølger',
-  'Refreshing…': 'Opdaterer…',
-  'Preparing update…': 'Klargør opdatering…',
-  'Saved forecast · {0}': 'Gemt prognose · {0}',
-  'Showing saved forecast · {0} old': 'Viser gemt prognose · {0} gammel',
-  'Needs a new check': 'Skal tjekkes igen',
+  'marine data': 'havdata',
+  'Delayed update: {0}': 'Forsinket opdatering: {0}',
+  'Update in progress…': 'Opdatering i gang…',
   'Checking…': 'Tjekker…',
   'Couldn’t refresh': 'Kunne ikke opdatere',
-  'Retrying automatically': 'Prøver igen automatisk',
-  'Water-level forecast update delayed': 'Opdateringen af vandstandsprognosen er forsinket',
-  'Wave forecast update delayed': 'Opdateringen af bølgeprognosen er forsinket',
-  'Marine forecast update delayed': 'Opdateringen af havprognosen er forsinket',
-  'Wind forecast update delayed': 'Opdateringen af vindprognosen er forsinket',
-  'Wind and water-level forecast updates delayed': 'Opdateringen af vind- og vandstandsprognoserne er forsinket',
-  'Wind and wave forecast updates delayed': 'Opdateringen af vind- og bølgeprognoserne er forsinket',
-  'Wind and marine forecast updates delayed': 'Opdateringen af vind- og havprognoserne er forsinket',
-  'Showing your saved forecast from {0} · {1}': 'Viser din gemte prognose fra {0} · {1}',
   '{0} min': '{0} min',
   '{0} h': '{0} t',
   '{0} d': '{0} d',
-  "You're offline, so FRANK is showing your last saved forecast from {0}. It will refresh on its own once you're back online.":
-    'Du er offline, så FRANK viser din senest gemte prognose fra {0}. Den opdateres af sig selv, når du er online igen.',
-  'FRANK is updating now; meanwhile it is showing the saved forecast from {0}, which is {1} old.':
-    'FRANK opdaterer nu; imens vises den gemte prognose fra {0}, som er {1} gammel.',
-  'FRANK reached the forecast service, which is preparing a complete update. It will retry automatically; meanwhile you are seeing the saved forecast from {0}.':
-    'FRANK har kontakt med prognosetjenesten, som klargør en komplet opdatering. FRANK prøver igen automatisk; imens ser du den gemte prognose fra {0}.',
-  'The saved forecast from {0} needs a new check.':
-    'Den gemte prognose fra {0} skal tjekkes igen.',
-  'The forecast could not be refreshed; FRANK is retrying automatically. You are seeing the last good forecast from {0}.':
-    'Prognosen kunne ikke opdateres; FRANK prøver igen automatisk. Du ser den seneste gode prognose fra {0}.',
-  'Forecast from {0}. {1}.': 'Prognose fra {0}. {1}.',
-  'Checking for a newer forecast': 'Tjekker efter en nyere prognose',
+  'Showing saved forecast from {0}.': 'Viser gemt prognose fra {0}.',
+  'Showing saved forecast.': 'Viser gemt prognose.',
+  'Showing forecast from {0}.': 'Viser prognose fra {0}.',
+  'Offline · {0}': 'Offline · {0}',
+  'Update in progress · {0}': 'Opdatering i gang · {0}',
+  'Saved forecast from {0}.': 'Gemt prognose fra {0}.',
+  'Saved forecast.': 'Gemt prognose.',
+  'Couldn’t refresh · {0}': 'Kunne ikke opdatere · {0}',
+  'Forecast from {0}.': 'Prognose fra {0}.',
   'Forecast from {0}': 'Prognose fra {0}',
   ' Last issue: {0}': ' Seneste fejl: {0}',
   'Advisory only — FRANK does not replace official warnings, club rules, or your own look at the water. You are responsible for the decision to launch.':

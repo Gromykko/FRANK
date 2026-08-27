@@ -9,28 +9,30 @@ const view = (cacheHealth: Partial<Health> | undefined, refreshing = false) =>
   getCacheStatusView({ refreshing, cacheHealth: cacheHealth as Health, forecastAtLabel: '20:07' });
 
 describe('getCacheStatusView', () => {
-  it('offline reads a neutral "Offline" with the saved forecast time', () => {
+  it('offline reads a neutral "Offline" with the saved forecast age', () => {
     const v = getCacheStatusView({
       refreshing: false,
       cacheHealth: { status: 'current', lastAttemptAt: '' } as Health,
       forecastAtLabel: '18:40',
+      forecastAgeLabel: '10 min',
       offline: true,
     });
     expect(v.label).toBe('Offline');
-    expect(v.detail).toBe('Showing your saved forecast from 18:40');
+    expect(v.detail).toBe('Saved forecast · 10 min old');
     expect(v.tone).toBe('neutral');
   });
 
-  it('offline stays amber when the saved cache is already stale', () => {
+  it('offline stays amber and names the age when the saved cache is already stale', () => {
     const v = getCacheStatusView({
       refreshing: false,
       cacheHealth: { status: 'stale', lastAttemptAt: '' } as Health,
       forecastAtLabel: '12:10',
+      forecastAgeLabel: '8 h',
       offline: true,
     });
     expect(v).toMatchObject({
       label: 'Offline',
-      detail: 'Showing your older saved forecast from 12:10',
+      detail: 'Saved forecast · 8 h old',
       tone: 'watch',
     });
   });
@@ -42,16 +44,17 @@ describe('getCacheStatusView', () => {
       refreshing: false,
       cacheHealth: { status: 'fallback', lastAttemptAt: '' } as Health,
       forecastAtLabel: '12:10',
+      forecastAgeLabel: '8 t',
       offline: true,
     }, translateDa);
-    expect(v.detail).toBe('Viser din ældre gemte prognose fra 12:10');
+    expect(v.detail).toBe('Gemt prognose · 8 t gammel');
     expect(v.tone).toBe('watch');
   });
 
   it('a stale forecast stays cause-neutral even when operator state records a busy marine provider', () => {
     const v = view({ status: 'stale', providerBusy: true, busyProvider: 'marine', lastAttemptAt: '' });
     expect(v.label).toBe('Couldn’t refresh');
-    expect(v.detail).toBe('Retrying automatically');
+    expect(v.detail).toBe('Saved forecast');
     expect(v.tone).toBe('watch');
     expect(`${v.label} ${v.detail}`).not.toMatch(/service|provider|busy|429|DMI|MET/i);
   });
@@ -65,28 +68,43 @@ describe('getCacheStatusView', () => {
   it('a genuine (non-busy) failure with data present is amber "Couldn’t refresh", never red', () => {
     const v = view({ status: 'stale', providerBusy: false, lastAttemptAt: '' });
     expect(v.label).toBe('Couldn’t refresh');
-    expect(v.detail).toBe('Retrying automatically');
+    expect(v.detail).toBe('Saved forecast');
     expect(v.tone).toBe('watch');
   });
 
   it('a partial build names the delayed forecast source without exposing the provider cause', () => {
     const v = view({ status: 'current', degradedSources: ['water', 'waves'], providerBusy: false, lastAttemptAt: '' });
-    expect(v.detail).toBe('Marine forecast update delayed');
+    expect(v.detail).toBe('Delayed update: marine data');
 
     const wavesOnly = view({ status: 'current', degradedSources: ['waves'], providerBusy: true, lastAttemptAt: '' });
-    expect(wavesOnly.detail).toBe('Wave forecast update delayed');
+    expect(wavesOnly.detail).toBe('Delayed update: waves');
 
     const waterOnly = view({ status: 'current', degradedSources: ['water'], providerBusy: false, lastAttemptAt: '' });
-    expect(waterOnly.detail).toBe('Water-level forecast update delayed');
+    expect(waterOnly.detail).toBe('Delayed update: water level');
 
     for (const detail of [v.detail, wavesOnly.detail, waterOnly.detail]) {
       expect(detail).not.toMatch(/service|provider|busy|429|retry|DMI|MET/i);
     }
   });
 
-  it('a routine refresh is a neutral one-liner - "Refreshing…", no second line, no amber', () => {
+  it('a routine refresh is a neutral one-liner, with no second line or amber', () => {
     const v = view({ status: 'current', degradedSources: ['water', 'waves'], providerBusy: true, lastAttemptAt: '' }, true);
-    expect(v).toMatchObject({ label: 'Refreshing…', detail: '', tone: 'neutral' });
+    expect(v).toMatchObject({ label: 'Update in progress…', detail: '', tone: 'neutral' });
+  });
+
+  it('uses one label for an active refresh, Worker preparation, and a pending build', () => {
+    const health = { status: 'current', lastAttemptAt: '' } as Health;
+    const states = [
+      getCacheStatusView({ refreshing: true, cacheHealth: health, forecastAtLabel: '20:07' }),
+      getCacheStatusView({ refreshing: false, preparing: true, cacheHealth: health, forecastAtLabel: '20:07' }),
+      getCacheStatusView({ refreshing: false, cacheHealth: { status: 'pending', lastAttemptAt: '' } as Health, forecastAtLabel: '20:07' }),
+    ];
+    expect(states.map(({ label }) => label)).toEqual([
+      'Update in progress…',
+      'Update in progress…',
+      'Update in progress…',
+    ]);
+    expect(states.map(({ tone }) => tone)).toEqual(['neutral', 'neutral', 'watch']);
   });
 
   it('keeps an old saved forecast honestly amber while it is being checked', () => {
@@ -97,8 +115,8 @@ describe('getCacheStatusView', () => {
       forecastAgeLabel: '8 h',
     });
     expect(v).toMatchObject({
-      label: 'Refreshing…',
-      detail: 'Showing saved forecast · 8 h old',
+      label: 'Update in progress…',
+      detail: 'Saved forecast · 8 h old',
       tone: 'watch',
     });
     expect(v.label).not.toMatch(/Couldn’t/);
@@ -180,8 +198,11 @@ describe('deriveCacheStatus freshness', () => {
     // precisely so this cannot render as fresh.
     const v = derive(NOW - 60_000, { fetchedMsAgo: 8 * 60 * 60_000 });
     expect(v.view.tone).not.toBe('fresh');
+    expect(v.view.label).toBe('Saved forecast · 8 h old');
+    expect(v.view.label).not.toMatch(/Couldn’t/);
     expect(v.showRefreshWarning).toBe(true);
     expect(v.forecastAgeLabel).toBe('8 h');
+    expect(v.refreshFailureConfirmed).toBe(false);
   });
 
   it('old local data being checked stays compact and does not raise the settled-failure banner', () => {
@@ -198,12 +219,13 @@ describe('deriveCacheStatus freshness', () => {
     });
 
     expect(result.view).toMatchObject({
-      label: 'Refreshing…',
-      detail: 'Showing saved forecast · 8 h old',
+      label: 'Update in progress…',
+      detail: 'Saved forecast · 8 h old',
       tone: 'watch',
     });
     expect(result.showRefreshWarning).toBe(false);
-    expect(result.expandedDetail).toContain('updating now');
+    expect(result.expandedDetail).toMatch(/^Update in progress · Showing saved forecast from /);
+    expect(result.expandedDetail.match(/Update in progress/g)).toHaveLength(1);
     expect(result.expandedDetail).not.toContain('could not be refreshed');
   });
 
@@ -226,12 +248,12 @@ describe('deriveCacheStatus freshness', () => {
     });
 
     expect(result.view).toMatchObject({
-      label: 'Preparing update…',
-      detail: 'Showing saved forecast · 20 h old',
+      label: 'Update in progress…',
+      detail: 'Saved forecast · 20 h old',
       tone: 'watch',
     });
-    expect(result.expandedDetail).toContain('reached the forecast service');
-    expect(result.expandedDetail).toContain('retry automatically');
+    expect(result.expandedDetail).toMatch(/^Update in progress · Showing saved forecast from /);
+    expect(result.expandedDetail.match(/Update in progress/g)).toHaveLength(1);
     expect(result.expandedDetail).not.toMatch(/could not|fail/i);
     expect(result.showRefreshWarning).toBe(false);
     expect(result.workerOutdated).toBe(false);
@@ -252,6 +274,7 @@ describe('deriveCacheStatus freshness', () => {
 
     expect(result.view.label).toBe('Couldn’t refresh');
     expect(result.showRefreshWarning).toBe(true);
+    expect(result.refreshFailureConfirmed).toBe(true);
   });
 
   it('aged contact means needs verification, not a completed failure', () => {
@@ -268,12 +291,32 @@ describe('deriveCacheStatus freshness', () => {
     });
 
     expect(result.view).toMatchObject({
-      label: 'Saved forecast · 16:45',
-      detail: 'Needs a new check',
+      label: 'Saved forecast · 5 min old',
+      detail: '',
       tone: 'neutral',
     });
     expect(result.view.label).not.toMatch(/Couldn’t/);
     expect(result.showRefreshWarning).toBe(false);
+    expect(result.refreshFailureConfirmed).toBe(false);
+  });
+
+  it('keeps the live-region sentence stable while the visible saved age advances', () => {
+    const input = {
+      sources: {
+        fetchedAt: at(5 * 60_000),
+        cacheHealth: { status: 'current', lastAttemptAt: at(5 * 60_000) },
+      } as never,
+      refreshing: false,
+      online: true,
+      workerContactedAtMs: NOW - 3 * 60 * 60_000,
+      checkState: 'succeeded' as const,
+    };
+    const first = deriveCacheStatus({ ...input, nowMs: NOW });
+    const nextMinute = deriveCacheStatus({ ...input, nowMs: NOW + 60_000 });
+
+    expect(first.view.label).toBe('Saved forecast · 5 min old');
+    expect(nextMinute.view.label).toBe('Saved forecast · 6 min old');
+    expect(nextMinute.expandedDetail).toBe(first.expandedDetail);
   });
 
   it('keeps an old offline forecast warning immediate even if a check was starting', () => {
@@ -323,10 +366,32 @@ describe('honesty under adverse conditions', () => {
     expect(offline).not.toHaveProperty('providerBusy');
     expect(offline).not.toHaveProperty('busyServiceName');
     expect(offline.detail).toBe(
-      'Showing your saved forecast from 09:00 · Marine forecast update delayed',
+      'Saved forecast · Delayed update: marine data',
     );
-    expect(offline.degradedSourceDisclosure).toBe('Marine forecast update delayed');
+    expect(offline.degradedSourceDisclosure).toBe('Delayed update: marine data');
     expect(offline.detail).not.toContain('busy');
+  });
+
+  it('keeps the delayed source in the complete offline announcement', () => {
+    const result = deriveCacheStatus({
+      sources: {
+        fetchedAt: '2026-08-22T09:00:00.000Z',
+        cacheHealth: {
+          status: 'current',
+          lastAttemptAt: '2026-08-22T09:01:00.000Z',
+          degradedSources: ['waves'],
+        },
+      } as never,
+      refreshing: false,
+      online: false,
+      nowMs: Date.parse('2026-08-22T09:05:00.000Z'),
+      workerContactedAtMs: null,
+      checkState: 'failed',
+    });
+
+    expect(result.expandedDetail).toContain('Offline');
+    expect(result.expandedDetail).toContain('Showing saved forecast');
+    expect(result.expandedDetail).toContain('Delayed update: waves');
   });
 
   it('reads calm when offline with nothing degraded', () => {
@@ -376,7 +441,7 @@ describe('main-page forecast freshness presentation', () => {
       tone: 'watch',
       partiallyDegraded: true,
     });
-    expect(busy.detail).toBe('Marine forecast update delayed');
+    expect(busy.detail).toBe('Delayed update: marine data');
 
     const wavesOnlyBusy = view({
       status: 'current',
@@ -384,7 +449,7 @@ describe('main-page forecast freshness presentation', () => {
       providerBusy: true,
       lastAttemptAt: '',
     });
-    expect(wavesOnlyBusy.detail).toBe('Wave forecast update delayed');
+    expect(wavesOnlyBusy.detail).toBe('Delayed update: waves');
 
     const waterOnlyBusy = view({
       status: 'current',
@@ -392,7 +457,7 @@ describe('main-page forecast freshness presentation', () => {
       providerBusy: true,
       lastAttemptAt: '',
     });
-    expect(waterOnlyBusy.detail).toBe('Water-level forecast update delayed');
+    expect(waterOnlyBusy.detail).toBe('Delayed update: water level');
 
     const weatherBusy = view({
       status: 'current',
@@ -400,7 +465,7 @@ describe('main-page forecast freshness presentation', () => {
       providerBusy: true,
       lastAttemptAt: '',
     });
-    expect(weatherBusy.detail).toBe('Wind forecast update delayed');
+    expect(weatherBusy.detail).toBe('Delayed update: wind');
 
     const bothBusy = view({
       status: 'current',
@@ -408,7 +473,7 @@ describe('main-page forecast freshness presentation', () => {
       providerBusy: true,
       lastAttemptAt: '',
     });
-    expect(bothBusy.detail).toBe('Wind and marine forecast updates delayed');
+    expect(bothBusy.detail).toBe('Delayed update: wind + marine data');
 
     for (const detail of [
       busy.detail,
@@ -462,44 +527,44 @@ describe('per-source freshness disclosure', () => {
     {
       name: 'water only',
       degradedSources: ['water'],
-      english: 'Water-level forecast update delayed',
-      danish: 'Opdateringen af vandstandsprognosen er forsinket',
+      english: 'Delayed update: water level',
+      danish: 'Forsinket opdatering: vandstand',
     },
     {
       name: 'waves only',
       degradedSources: ['waves'],
-      english: 'Wave forecast update delayed',
-      danish: 'Opdateringen af bølgeprognosen er forsinket',
+      english: 'Delayed update: waves',
+      danish: 'Forsinket opdatering: bølger',
     },
     {
       name: 'water and waves',
       degradedSources: ['water', 'waves'],
-      english: 'Marine forecast update delayed',
-      danish: 'Opdateringen af havprognosen er forsinket',
+      english: 'Delayed update: marine data',
+      danish: 'Forsinket opdatering: havdata',
     },
     {
       name: 'weather only',
       degradedSources: ['weather'],
-      english: 'Wind forecast update delayed',
-      danish: 'Opdateringen af vindprognosen er forsinket',
+      english: 'Delayed update: wind',
+      danish: 'Forsinket opdatering: vind',
     },
     {
       name: 'weather and water',
       degradedSources: ['weather', 'water'],
-      english: 'Wind and water-level forecast updates delayed',
-      danish: 'Opdateringen af vind- og vandstandsprognoserne er forsinket',
+      english: 'Delayed update: wind + water level',
+      danish: 'Forsinket opdatering: vind + vandstand',
     },
     {
       name: 'weather and waves',
       degradedSources: ['weather', 'waves'],
-      english: 'Wind and wave forecast updates delayed',
-      danish: 'Opdateringen af vind- og bølgeprognoserne er forsinket',
+      english: 'Delayed update: wind + waves',
+      danish: 'Forsinket opdatering: vind + bølger',
     },
     {
       name: 'weather, water, and waves',
       degradedSources: ['weather', 'water', 'waves'],
-      english: 'Wind and marine forecast updates delayed',
-      danish: 'Opdateringen af vind- og havprognoserne er forsinket',
+      english: 'Delayed update: wind + marine data',
+      danish: 'Forsinket opdatering: vind + havdata',
     },
   ];
 
@@ -544,7 +609,7 @@ describe('per-source freshness disclosure', () => {
     });
 
     for (const result of [absent, invalid, future]) {
-      expect(result.view.detail).toBe('Water-level forecast update delayed');
+      expect(result.view.detail).toBe('Delayed update: water level');
       expect(result.view.degradedSourceDisclosure).toBe(result.view.detail);
       expect(result.view.detail).not.toMatch(/NaN|service|provider|busy|429|retry|DMI|MET/i);
     }
@@ -570,18 +635,18 @@ describe('per-source freshness disclosure', () => {
       waves: { collection: 'wam_nsb', id: '2026-08-24T100000Z' },
     });
 
-    expect(missingWeather.view.detail).toBe('Wind forecast update delayed');
+    expect(missingWeather.view.detail).toBe('Delayed update: wind');
     for (const result of [
       missingMarineForCurrentClaim,
       invalidMarineForCurrentClaim,
       futureMarineForCurrentClaim,
     ]) {
-      expect(result.view.detail).toBe('Wind forecast update delayed');
+      expect(result.view.detail).toBe('Delayed update: wind');
     }
     expect(invalidMarineInCombinedClaim.view.detail)
-      .toBe('Wind and water-level forecast updates delayed');
+      .toBe('Delayed update: wind + water level');
     expect(futureMarineInCombinedClaim.view.detail)
-      .toBe('Wind and wave forecast updates delayed');
+      .toBe('Delayed update: wind + waves');
   });
 
   it('does not add a source disclosure to healthy or held-stale payloads', () => {
@@ -604,7 +669,7 @@ describe('per-source freshness disclosure', () => {
     expect(healthy.view.degradedSourceDisclosure).toBe('');
     expect(healthy.view.detail).toBe('');
     expect(stale.view.degradedSourceDisclosure).toBe('');
-    expect(stale.view.detail).toBe('Showing saved forecast · 2 min old');
+    expect(stale.view.detail).toBe('Saved forecast · 2 min old');
   });
 });
 
@@ -629,8 +694,16 @@ describe('deriveCacheStatus clock skew', () => {
   });
 
   it('refuses a timestamp implausibly far ahead of this clock', () => {
-    expect(status(new Date(NOW + 9 * 60 * 60 * 1000).toISOString()).showRefreshWarning).toBe(true);
-    expect(status('3000-01-01T00:00:00.000Z').showRefreshWarning).toBe(true);
+    for (const result of [
+      status(new Date(NOW + 9 * 60 * 60 * 1000).toISOString()),
+      status('3000-01-01T00:00:00.000Z'),
+      status('not-a-date'),
+    ]) {
+      expect(result.showRefreshWarning).toBe(true);
+      expect(result.view).toMatchObject({ label: 'Saved forecast', detail: '', tone: 'watch' });
+      expect(result.expandedDetail).toBe('Saved forecast.');
+      expect(`${result.view.label} ${result.expandedDetail}`).not.toMatch(/3000|Invalid|NaN|00:00/);
+    }
   });
 
   it('tolerates ordinary skew without crying stale', () => {

@@ -41,6 +41,7 @@ interface StatusBarProps {
   cacheDetail: string;
   cacheClass: string;
   cacheAriaLabel: string;
+  cacheAnnouncement: string;
   refreshing: boolean;
   onRefresh: () => void;
   themeMode: 'light' | 'dark';
@@ -63,6 +64,7 @@ export default function StatusBar({
   cacheDetail,
   cacheClass,
   cacheAriaLabel,
+  cacheAnnouncement,
   refreshing,
   onRefresh,
   themeMode,
@@ -80,10 +82,9 @@ export default function StatusBar({
             className={`frank-cache ${cacheClass}`}
             aria-busy={refreshing}
             // role is required: aria-label is PROHIBITED on a generic element,
-            // so screen readers dropped it — and with it the whole long-form
-            // honesty sentence ("You're offline, so FRANK is showing your last
-            // saved forecast from …"), which is computed and rendered nowhere
-            // else. `group` rather than `status` so it doesn't compete with the
+            // so screen readers dropped it — and with it the complete cache
+            // status sentence, which is computed and rendered nowhere else.
+            // `group` rather than `status` so it doesn't compete with the
             // display's live region for announcements.
             role="group"
             aria-label={cacheAriaLabel}
@@ -93,7 +94,7 @@ export default function StatusBar({
                 refresh start and its settled result are both announced while
                 focus remains on the refresh button. */}
             <span className="sr-only" role="status" aria-atomic="true">
-              {cacheAriaLabel}
+              {cacheAnnouncement}
             </span>
             <span className="frank-cache-text">
               <span className="frank-cache-source">{sourceLabel}</span>

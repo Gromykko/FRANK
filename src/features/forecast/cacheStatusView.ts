@@ -31,6 +31,9 @@ export interface CacheStatusInput {
   // The Worker answered with the explicit FORECAST_INITIALIZING contract while
   // the browser still has a usable saved forecast to render.
   preparing?: boolean;
+  // A completed refresh actually failed. Age alone can make a forecast stale,
+  // but it is not evidence that a request failed.
+  refreshFailed?: boolean;
 }
 
 // Turns the worker's cacheHealth into the header's label/detail/tone. Pure and
@@ -50,21 +53,19 @@ function delayedForecastUpdate(
   const hasWater = degraded.includes('water');
   const hasWaves = degraded.includes('waves');
   const hasWeather = degraded.includes('weather');
+  const delayedSources = [
+    hasWeather ? translate('wind') : '',
+    hasWater && hasWaves
+      ? translate('marine data')
+      : hasWater
+        ? translate('water level')
+        : '',
+    hasWaves && !hasWater ? translate('waves') : '',
+  ].filter(Boolean);
 
-  if (hasWeather && hasWater && hasWaves) {
-    return translate('Wind and marine forecast updates delayed');
-  }
-  if (hasWeather && hasWater) {
-    return translate('Wind and water-level forecast updates delayed');
-  }
-  if (hasWeather && hasWaves) {
-    return translate('Wind and wave forecast updates delayed');
-  }
-  if (hasWeather) return translate('Wind forecast update delayed');
-  if (hasWater && hasWaves) return translate('Marine forecast update delayed');
-  if (hasWater) return translate('Water-level forecast update delayed');
-  if (hasWaves) return translate('Wave forecast update delayed');
-  return '';
+  return delayedSources.length > 0
+    ? translate('Delayed update: {0}', delayedSources.join(' + '))
+    : '';
 }
 
 export function getCacheStatusView({
@@ -75,9 +76,11 @@ export function getCacheStatusView({
   forecastAgeLabel,
   needsVerification,
   preparing,
+  refreshFailed,
 }: CacheStatusInput, translate: Translate = interpolate): CacheStatusView {
   const status = cacheHealth?.status;
   const isStale = status === 'stale' || status === 'fallback';
+  const failedRefresh = refreshFailed ?? isStale;
   const isPending = status === 'pending';
   const degraded = cacheHealth?.degradedSources ?? [];
 
@@ -87,6 +90,9 @@ export function getCacheStatusView({
   const degradedSourceDisclosure = (status === 'current' || status === 'fresh') && hasDegraded
     ? degradedUpdateDetail
     : '';
+  const savedForecastDetail = forecastAgeLabel
+    ? translate('Saved forecast · {0} old', forecastAgeLabel)
+    : translate('Saved forecast');
 
   // Offline takes precedence for the LABEL. But offline is not by itself a
   // data problem — the saved forecast may be perfectly recent — so that case
@@ -95,7 +101,7 @@ export function getCacheStatusView({
   // Degradation still has to survive the trip. This block used to hard-code
   // partial-degradation state to empty, so a forecast carrying recycled
   // wave and water data rendered amber with "waves & water from an earlier
-  // update" online, and neutral "Showing your saved forecast" the moment the
+  // update" online, and a neutral saved-forecast status the moment the
   // signal dropped. Losing connectivity visually IMPROVED the data, at the
   // fjord, for exactly the two readings that feed the safety verdict.
   //
@@ -106,10 +112,8 @@ export function getCacheStatusView({
     return {
       label: translate('Offline'),
       detail: hasDegraded
-        ? translate('Showing your saved forecast from {0} · {1}', forecastAtLabel, degradedUpdateDetail)
-        : isStale
-          ? translate('Showing your older saved forecast from {0}', forecastAtLabel)
-          : translate('Showing your saved forecast from {0}', forecastAtLabel),
+        ? translate('{0} · {1}', savedForecastDetail, degradedUpdateDetail)
+        : savedForecastDetail,
       tone: staleOrDegraded ? 'watch' : 'neutral',
       partiallyDegraded: hasDegraded,
       degradedSourceDisclosure,
@@ -130,41 +134,26 @@ export function getCacheStatusView({
 
   // The settled header names the forecast's own build time. Operational check
   // time belongs on /status; transient states keep forecast age in the detail.
-  const label = refreshing
-    ? translate('Refreshing…')
-    : preparing
-      ? translate('Preparing update…')
-      : needsVerification
-        ? translate('Saved forecast · {0}', forecastAtLabel)
-        : isPending
-          ? translate('Checking…')
-          : isStale
-            ? translate('Couldn’t refresh')
-            : translate('Forecast from {0}', forecastAtLabel);
+  const updateInProgress = refreshing || preparing || isPending;
+  const label = updateInProgress
+    ? translate('Update in progress…')
+    : needsVerification || (isStale && !failedRefresh)
+      ? savedForecastDetail
+      : isStale
+        ? translate('Couldn’t refresh')
+        : translate('Forecast from {0}', forecastAtLabel);
 
-  const detail = refreshing
-    ? (isStale && forecastAgeLabel
-      ? translate('Showing saved forecast · {0} old', forecastAgeLabel)
-      : '')
-    : preparing
-      ? (forecastAgeLabel
-        ? translate('Showing saved forecast · {0} old', forecastAgeLabel)
-        : translate('Retrying automatically'))
-      : needsVerification
-        ? (isStale && forecastAgeLabel
-          ? translate('Showing saved forecast · {0} old', forecastAgeLabel)
-          : translate('Needs a new check'))
-        : isPending
-          ? ''
-          : isStale
-            ? (forecastAgeLabel
-              ? translate('Showing saved forecast · {0} old', forecastAgeLabel)
-              : translate('Retrying automatically'))
-            : partiallyDegraded
-              // One calm, source-specific line. It deliberately names neither
-              // the provider nor an inferred operational cause.
-              ? degradedSourceDisclosure
-              : '';
+  const detail = updateInProgress
+    ? (isStale || preparing ? savedForecastDetail : '')
+    : needsVerification || (isStale && !failedRefresh)
+      ? ''
+      : isStale
+        ? savedForecastDetail
+        : partiallyDegraded
+          // One calm, source-specific line. It deliberately names neither
+          // the provider nor an inferred operational cause.
+          ? degradedSourceDisclosure
+          : '';
 
   return {
     label,
@@ -210,6 +199,9 @@ export interface DerivedCacheStatus {
   // Payload built by older worker logic than this client expects.
   workerOutdated: boolean;
   forecastAgeLabel: string;
+  // True only when a request or the Worker payload confirms a failed refresh.
+  // A forecast can be old without this being true.
+  refreshFailureConfirmed: boolean;
 }
 
 // Everything the header + warning banners need, derived in one pure place from
@@ -296,7 +288,10 @@ export function deriveCacheStatus(args: {
   //
   // Age alone still forces the amber and the banner - that part was right. It
   // just stops borrowing a cause it cannot support.
-  const staleFromAgeOnly = dataStale && !completedFailure;
+  const sourceStatus = sources.cacheHealth?.status;
+  const sourceRefreshFailed = sourceStatus === 'stale' || sourceStatus === 'fallback';
+  const refreshFailureConfirmed = completedFailure || sourceRefreshFailed;
+  const staleFromAgeOnly = dataStale && !refreshFailureConfirmed;
   const cacheHealth = completedFailure || dataStale
     ? {
         ...sources.cacheHealth,
@@ -332,32 +327,46 @@ export function deriveCacheStatus(args: {
   const view = getCacheStatusView({
     refreshing,
     cacheHealth,
-    forecastAtLabel: formatTime(sources.fetchedAt),
+    forecastAtLabel: Number.isFinite(fetchedAtMs) && clockLeadMs <= CLOCK_LEAD_TOLERANCE_MS
+      ? formatTime(sources.fetchedAt)
+      : '',
     offline: !online,
     forecastAgeLabel: formatRelativeAge(cacheAgeMs, translate),
     needsVerification,
     preparing: isInitializing,
+    refreshFailed: refreshFailureConfirmed,
   }, translate);
   const { partiallyDegraded } = view;
 
-  const fetchedAtFull = formatDateTime(sources.fetchedAt);
+  const fetchedAtFull = Number.isFinite(fetchedAtMs) && clockLeadMs <= CLOCK_LEAD_TOLERANCE_MS
+    ? formatDateTime(sources.fetchedAt)
+    : '';
+  const showingSavedForecast = fetchedAtFull
+    ? translate('Showing saved forecast from {0}.', fetchedAtFull)
+    : translate('Showing saved forecast.');
+  const showingForecast = fetchedAtFull
+    ? translate('Showing forecast from {0}.', fetchedAtFull)
+    : showingSavedForecast;
+  const savedForecast = fetchedAtFull
+    ? translate('Saved forecast from {0}.', fetchedAtFull)
+    : translate('Saved forecast.');
+  const delayedSourceDetail = delayedForecastUpdate(cacheHealth?.degradedSources ?? [], translate);
+  const appendDegradedSource = (sentence: string, disclosure = view.degradedSourceDisclosure) => disclosure
+    ? `${sentence} ${disclosure}.`
+    : sentence;
   const expandedDetail = !online
-    ? translate("You're offline, so FRANK is showing your last saved forecast from {0}. It will refresh on its own once you're back online.", fetchedAtFull)
-    : refreshing
-      ? (isStale
-        ? translate('FRANK is updating now; meanwhile it is showing the saved forecast from {0}, which is {1} old.', fetchedAtFull, formatRelativeAge(cacheAgeMs, translate))
-        : translate('Checking for a newer forecast'))
-    : isInitializing
-      ? translate('FRANK reached the forecast service, which is preparing a complete update. It will retry automatically; meanwhile you are seeing the saved forecast from {0}.', fetchedAtFull)
-    : needsVerification
-      ? translate('The saved forecast from {0} needs a new check.', fetchedAtFull)
-    : isStale
-      ? translate('The forecast could not be refreshed; FRANK is retrying automatically. You are seeing the last good forecast from {0}.', fetchedAtFull)
+    ? appendDegradedSource(translate('Offline · {0}', showingSavedForecast), delayedSourceDetail)
+    : refreshing || isInitializing || isPending
+      ? translate('Update in progress · {0}', isStale || isInitializing
+        ? showingSavedForecast
+        : showingForecast)
+    : needsVerification || (isStale && !refreshFailureConfirmed)
+      ? savedForecast
+    : isStale && refreshFailureConfirmed
+      ? translate('Couldn’t refresh · {0}', showingSavedForecast)
       : partiallyDegraded
-        ? translate('Forecast from {0}. {1}.', fetchedAtFull, view.degradedSourceDisclosure)
-        : isPending
-          ? translate('Checking for a newer forecast')
-          : translate('Forecast from {0}', fetchedAtFull);
+        ? appendDegradedSource(translate('Forecast from {0}.', fetchedAtFull))
+        : translate('Forecast from {0}.', fetchedAtFull);
 
   return {
     view,
@@ -365,5 +374,6 @@ export function deriveCacheStatus(args: {
     showRefreshWarning,
     workerOutdated,
     forecastAgeLabel: formatRelativeAge(cacheAgeMs, translate),
+    refreshFailureConfirmed,
   };
 }
