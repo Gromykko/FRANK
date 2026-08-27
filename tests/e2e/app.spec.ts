@@ -27,6 +27,18 @@ test('critical controls work in the production bundle', async ({ page }, testInf
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   await expect(page.getByRole('button', { name: 'Refresh forecast' })).toBeVisible();
 
+  // A first visit intentionally starts in Weather-only, where FRANK cannot
+  // recommend launch windows because there are no active limits to assess.
+  // Prove that default, then explicitly enter a safety profile before testing
+  // the planner controls below.
+  const weatherOnlyButton = page.getByRole('button', { name: 'Weather only — no limits applied' });
+  await expect(weatherOnlyButton).toHaveAttribute('aria-pressed', 'true');
+  const intermediateMode = page.getByRole('radio', { name: 'Intermediate' });
+  await intermediateMode.click();
+  await expect(intermediateMode).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByRole('button', { name: 'Weather only — turn off all your limits' }))
+    .toHaveAttribute('aria-pressed', 'false');
+
   const refreshButton = page.getByRole('button', { name: 'Refresh forecast' });
   await expect(refreshButton).toHaveAttribute('aria-disabled', 'false');
   const refreshesBeforeClick = mock.requests.length;
