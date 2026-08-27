@@ -12,12 +12,6 @@ import { clampNumber, roundToDecimals } from '../utils/number';
 import { compassPoint, sectorMidBearing } from '../utils/compass';
 import { useLang } from '../i18n';
 
-const EXPOSURE_LABEL: Record<WindSector['exposure'], string> = {
-  onshore: 'onshore',
-  offshore: 'offshore',
-  crossshore: 'cross-shore',
-};
-
 interface SafetyLimitsPanelProps {
   settings: SafetySettings;
   updateSettings: (settings: SafetySettings) => void;
@@ -537,7 +531,6 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
                             <div key={sector.id} className={`sector-block exposure-${sector.exposure}`}>
                               <span className="sector-heading">
                                 {t(sector.label)}
-                                <span className={`sector-chip exposure-${sector.exposure}`}>{t(EXPOSURE_LABEL[sector.exposure])}</span>
                                 <span className="sector-bearing">{t('from {0}', t(bearing))}</span>
                               </span>
                               <p className="limit-hint">{t(sector.description)}</p>

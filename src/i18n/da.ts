@@ -587,10 +587,6 @@ export const da: Record<string, string> = {
   '{0} danger threshold': '{0} faregrænse',
   'Directions are fixed to the local geography. Only the wind speeds are yours.':
     'Retningerne er fastlagt efter den lokale geografi. Kun vindstyrkerne er dine.',
-  'onshore': 'pålandsvind',
-  'offshore': 'fralandsvind',
-  'cross-shore': 'sidevind',
-
   // Curated wind-sector labels & descriptions (config/locations.json)
   'Easterly': 'Østlig',
   'Westerly': 'Vestlig',

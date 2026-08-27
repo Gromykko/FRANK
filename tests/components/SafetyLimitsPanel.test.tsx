@@ -53,6 +53,59 @@ describe('SafetyLimitsPanel terminology', () => {
         labels.some((label) => label?.toLowerCase().includes('danger threshold')),
         labels.join('\n'),
       ).toBe(true);
+
+      const sectors = [...host.querySelectorAll<HTMLElement>('.sector-block')];
+      expect(sectors).toHaveLength(2);
+      expect(host.querySelector('.sector-chip')).toBeNull();
+      expect(sectors[0].textContent).toContain('Easterly');
+      expect(sectors[0].textContent).toContain('from E');
+      expect(sectors[0].textContent?.match(/onshore/gi)).toHaveLength(1);
+      expect(sectors[1].textContent).toContain('Westerly');
+      expect(sectors[1].textContent).toContain('from W');
+      expect(sectors[1].textContent?.match(/offshore/gi)).toHaveLength(1);
+    } finally {
+      await act(async () => root.unmount());
+      host.remove();
+      localStorage.clear();
+      globalThis.IS_REACT_ACT_ENVIRONMENT = false;
+    }
+  });
+
+  it('keeps each Danish exposure word in the description instead of repeating a chip', async () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    localStorage.setItem('ffkajak_lang', 'da');
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+
+    try {
+      await act(async () => {
+        root.render(
+          <LanguageProvider>
+            <SafetyLimitsPanel
+              settings={getPresetSettings('default')}
+              updateSettings={vi.fn()}
+              saveFailed={false}
+            />
+          </LanguageProvider>,
+        );
+      });
+      await act(async () => {
+        host.querySelector<HTMLButtonElement>('.collapse-title-btn')!.click();
+      });
+      await act(async () => {
+        host.querySelector<HTMLButtonElement>('.advanced-toggle')!.click();
+      });
+
+      const sectors = [...host.querySelectorAll<HTMLElement>('.sector-block')];
+      expect(sectors).toHaveLength(2);
+      expect(host.querySelector('.sector-chip')).toBeNull();
+      expect(sectors[0].textContent).toContain('Østlig');
+      expect(sectors[0].textContent).toContain('fra Ø');
+      expect(sectors[0].textContent?.match(/pålandsvind/gi)).toHaveLength(1);
+      expect(sectors[1].textContent).toContain('Vestlig');
+      expect(sectors[1].textContent).toContain('fra V');
+      expect(sectors[1].textContent?.match(/fralandsvind/gi)).toHaveLength(1);
     } finally {
       await act(async () => root.unmount());
       host.remove();

@@ -1556,24 +1556,6 @@
   font-weight: 700;
 }
 
-.sector-chip {
-  display: inline-block;
-  margin-left: 6px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--color-caution) 18%, transparent);
-  color: var(--color-caution-text);
-  font-size: var(--text-instrument);
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  text-transform: none;
-}
-
-.sector-chip.exposure-offshore {
-  background: color-mix(in srgb, var(--primary) 16%, transparent);
-  color: var(--primary);
-}
-
 .sector-bearing {
   margin-left: 6px;
   font-size: var(--text-instrument);
