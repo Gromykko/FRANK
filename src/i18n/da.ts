@@ -326,6 +326,7 @@ export const da: Record<string, string> = {
   'Rain': 'Regn',
   'Icy rain': 'Isslag',
   'Heavy icy rain': 'Kraftigt isslag',
+  'Light rain': 'Let regn',
   'Light snow': 'Let sne',
   'Snow': 'Sne',
   'Heavy snow': 'Kraftig sne',
