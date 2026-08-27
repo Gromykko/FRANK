@@ -14,13 +14,15 @@ function pixels(host: HTMLElement, selector: string): string[] {
 }
 
 describe('GertyFace Weather mode expression', () => {
-  it('uses a small smile for no-verdict mode without changing the eyes', () => {
+  it('rests on a short level mouth, and never changes the eyes', () => {
     const weather = renderFace('none');
     const safe = renderFace('safe');
 
     expect(pixels(weather, '.gerty-eyes')).toEqual(pixels(safe, '.gerty-eyes'));
+    // No raised corners: a narrow smile on a grey face reads as held rather
+    // than friendly. Level, and half the width of caution's full-width line.
     expect(pixels(weather, '.gerty-mouth')).toEqual([
-      '5,9', '10,9', '6,10', '7,10', '8,10', '9,10',
+      '6,10', '7,10', '8,10', '9,10',
     ]);
     expect(pixels(weather, '.gerty-mouth')).not.toEqual(pixels(safe, '.gerty-mouth'));
   });

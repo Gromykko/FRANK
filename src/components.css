@@ -2603,36 +2603,12 @@ button.legend-toggle.is-on {
   --frank-phosphor: color-mix(in srgb, var(--crt-caution) 70%, var(--text-muted));
 }
 
-/* Off duty, FRANK looks around instead of at you. Stepped rather than eased, so
-   it moves like a pixel device rather than a cartoon, and slow enough that it
-   reads as idling rather than scanning. Nine seconds per cycle with long holds
-   is deliberately below the threshold where motion competes for attention. */
-@keyframes frank-eyes-wander {
-  0%, 18%   { transform: translate(0, 0) scaleY(1); }
-  19%, 20%  { transform: translate(0, 0) scaleY(0.12); }
-  21%, 42%  { transform: translate(1px, 0) scaleY(1); }
-  47%, 60%  { transform: translate(-1px, 0) scaleY(1); }
-  61%, 62%  { transform: translate(-1px, 0) scaleY(0.12); }
-  63%, 82%  { transform: translate(0, -1px) scaleY(1); }
-  87%, 100% { transform: translate(0, 0) scaleY(1); }
-}
-
-.frank-device-shell.rating-none .gerty-eyes {
-  /* Two blinks per nine-second cycle, each one frame long. steps(1) means the
-     lids snap shut and open rather than easing, which is how a pixel device
-     would do it - and scaleY needs a box to squash about, hence transform-box. */
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: frank-eyes-wander 9s steps(1, end) infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  /* Still looking away, just not moving. */
-  .frank-device-shell.rating-none .gerty-eyes {
-    animation: none;
-    transform: translate(1px, 0);
-  }
-}
+/* Off duty blinks like every other state and holds still otherwise. The eyes
+   used to jump between four positions on a steps(1) timer to read as 'not
+   watching this for you', but a one-pixel teleport on a 16-pixel face is a
+   large, hard-cut displacement: paired with a fixed mouth it read as a glitch
+   rather than a glance. Liveness is what an off-duty device has to show; a
+   blink says that on its own. */
 .frank-device-shell.rating-safe { --frank-phosphor: var(--crt-safe); }
 .frank-device-shell.rating-caution { --frank-phosphor: var(--crt-caution); }
 .frank-device-shell.rating-danger { --frank-phosphor: var(--crt-danger); }
@@ -2866,7 +2842,11 @@ button.legend-toggle.is-on {
 .frank-mode-bank {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* minmax(0, ...), not 1fr: a bare 1fr floors at the track's min-content, so
+     a long label does not wrap or clip - it widens the grid and takes the whole
+     page into horizontal scroll with it. At 360px the four labels wanted 386px
+     of a 286px row. The floor keeps the overflow inside the cell that caused it. */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   border-radius: 13px;
   background: var(--bg-app);
   border: 1px solid var(--panel-border);

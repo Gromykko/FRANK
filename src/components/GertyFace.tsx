@@ -24,9 +24,11 @@ const EYES = [
 ];
 
 const MOUTHS: Record<DisplayStatus, string[]> = {
-  // No verdict: a smaller smile than 'safe', and the shell paints it in muted
-  // grey rather than a safety colour. FRANK is friendly while off duty without
-  // borrowing the wide green expression that communicates a safety verdict.
+  // No verdict: at rest, not pleased. A narrow upturned mouth on a grey face
+  // reads as a held smile rather than a friendly one - the expression a machine
+  // wears when it wants something. A short level line says the device is on and
+  // has no opinion, which is what Weather mode means. The wide flat line is
+  // 'caution'; this one is half its width.
   none: [
     '................',
     '................',
@@ -37,7 +39,7 @@ const MOUTHS: Record<DisplayStatus, string[]> = {
     '................',
     '................',
     '................',
-    '.....x....x.....',
+    '................',
     '......xxxx......',
     '................',
     '................',
@@ -121,10 +123,10 @@ export default function GertyFace({ rating }: { rating: DisplayStatus }) {
       aria-hidden="true"
       focusable="false"
     >
-      {/* Off duty keeps its eyes OPEN and lets them wander (see .gerty-eyes in
-          components.css). Shut lids read as a blink caught mid-frame, or worse
-          as a fault; a face glancing away says "not watching this for you"
-          while still obviously switched on. */}
+      {/* One set of eyes for every state; only the mouth carries the verdict.
+          They blink and otherwise hold still - the off-duty wander was a
+          one-pixel teleport on a 16-pixel face, which read as a fault rather
+          than a glance. */}
       <g className="gerty-eyes">{gridRects(EYES)}</g>
       <g className="gerty-mouth">{gridRects(MOUTHS[rating])}</g>
     </svg>
