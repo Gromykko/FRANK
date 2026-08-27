@@ -6,7 +6,6 @@ import {
   it,
   vi,
 } from 'vitest';
-import type { ForecastLocation } from '../../src/config/locationTypes';
 import type { EventMemo, MarineInstances } from '../../worker/domain';
 import {
   CRON_CONCURRENT_EXTERNAL_SUBREQUEST_RESERVE,
@@ -23,6 +22,7 @@ import {
   dmiCollectionListKey,
   fetchLatestMarineInstances,
 } from '../../worker/providers';
+import { makeLocation, makeTestKvNamespace } from './fixtures';
 
 const NOW = Date.parse('2026-08-23T13:00:00.000Z');
 const OLD_RUN = '2026-08-23T060000Z';
@@ -45,7 +45,7 @@ function newRunCatalogueInstance() {
   };
 }
 
-const LOCATION: ForecastLocation = {
+const LOCATION = makeLocation({
   id: 'horsens',
   forecastConfigRevision: 1,
   name: 'Horsens',
@@ -54,7 +54,7 @@ const LOCATION: ForecastLocation = {
   dmiCollections: { water: WATER, waves: WAVES },
   emmaId: 'DK004',
   kommuneAliases: ['Horsens'],
-};
+});
 
 const OLD_INSTANCES: MarineInstances = {
   water: { collection: WATER[0], id: OLD_RUN },
@@ -78,12 +78,12 @@ const MAX_CATALOGUE_SUBREQUESTS =
   * CATALOGUE_ATTEMPTS;
 
 function runManifest(entries: Record<string, unknown> | null) {
-  return {
+  return makeTestKvNamespace({
     get: vi.fn(async () => entries === null
       ? null
       : { schemaVersion: DMI_RUN_MANIFEST_SCHEMA_VERSION, entries }),
     put: vi.fn(async () => {}),
-  } as Pick<KVNamespace, 'get' | 'put'>;
+  });
 }
 
 function currentManifestEntries(): Record<string, unknown> {

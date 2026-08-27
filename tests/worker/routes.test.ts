@@ -7,7 +7,12 @@ import {
   CURRENT_RELEASE,
 } from '../../src/features/forecast/releaseContract';
 import { buildSunSchedule } from '../../src/features/forecast/sun';
-import type { ForecastData, HealthLocationEntry, HealthPayload } from '../../worker/domain';
+import type {
+  ForecastData,
+  ForecastInitializingPayload,
+  HealthLocationEntry,
+  HealthPayload,
+} from '../../worker/domain';
 import { buildHealthPayload, statusResponse } from '../../worker/health';
 import {
   RELEASE_HEADER,
@@ -21,6 +26,13 @@ import {
   DMI_RUN_MANIFEST_SCHEMA_VERSION,
   dmiCollectionListKey,
 } from '../../worker/providers';
+import {
+  makeCacheHealth,
+  makeHeartbeat,
+  makeTestExecutionContext,
+  makeTestEnv,
+  makeTestKvNamespace,
+} from './fixtures';
 import { completeMarineEnvelope, completeMarineSeries } from './marineTestData';
 
 const LOCATIONS = locationData as ForecastLocation[];
@@ -31,9 +43,9 @@ const WARM_BUILD_NOW = Date.parse('2031-08-23T11:59:00.000Z');
 const WARM_FORECAST_HOUR = '2031-08-23T13:00:00.000Z';
 const WARM_CURRENT_RUN = '2031-08-23T060000Z';
 const WARM_RETAINED_RUN = '2031-08-23T000000Z';
-const subtleWithTimingSafeEqual = crypto.subtle as SubtleCrypto & {
+const subtleWithTimingSafeEqual: {
   timingSafeEqual?: (left: ArrayBuffer | ArrayBufferView, right: ArrayBuffer | ArrayBufferView) => boolean;
-};
+} = crypto.subtle;
 const nativeTimingSafeEqual = subtleWithTimingSafeEqual.timingSafeEqual;
 
 beforeAll(() => {
@@ -149,32 +161,32 @@ function makeRuntime(options: {
   const waits: Promise<unknown>[] = [];
   const gets: string[] = [];
   const puts: Array<{ key: string; value: string }> = [];
-  const env = {
-    CF_VERSION_METADATA: {
-      id: WORKER_VERSION_ID,
-      tag: 'unit-test',
-      timestamp: '2026-08-20T12:00:00.000Z',
-    },
-    FRANK_FORECAST_CACHE: {
-      get: async (key: string, type?: string) => {
+  const env = makeTestEnv(
+    makeTestKvNamespace({
+      get: async (key, type) => {
         gets.push(key);
         const raw = store.get(key);
         if (raw == null) return null;
         return type === 'json' ? JSON.parse(raw) : raw;
       },
-      put: async (key: string, value: string) => {
+      put: async (key, value) => {
         puts.push({ key, value });
         if (options.failPut?.(key)) throw new Error(`Test KV write failure for ${key}`);
         store.set(key, value);
       },
+    }),
+    {
+      CF_VERSION_METADATA: {
+        id: WORKER_VERSION_ID,
+        tag: 'unit-test',
+        timestamp: '2026-08-20T12:00:00.000Z',
+      },
+      FRANK_WARM_TOKEN: WARM_TOKEN,
     },
-    FRANK_WARM_TOKEN: WARM_TOKEN,
-  };
-  const ctx = {
-    waitUntil(value: Promise<unknown>) {
-      waits.push(Promise.resolve(value));
-    },
-  };
+  );
+  const ctx = makeTestExecutionContext((value) => {
+    waits.push(Promise.resolve(value));
+  });
   return { env, ctx, store, waits, gets, puts };
 }
 
@@ -391,7 +403,7 @@ describe('Worker route HTTP contract', () => {
       });
 
       const response = await worker.fetch(request('/health'), runtime.env, runtime.ctx);
-      const body = await response.json() as HealthPayload;
+      const body = await readHealthPayload(response);
       const kolding = body.locations.find(({ id }) => id === location.id);
 
       expect(response.status).toBe(200);
@@ -609,12 +621,12 @@ describe('Worker route HTTP contract', () => {
 
   it('shows degraded sources and the busy provider in the human status cards', async () => {
     const horsens = cachedForecast();
-    horsens.sources.cacheHealth = {
+    horsens.sources.cacheHealth = makeCacheHealth({
       ...horsens.sources.cacheHealth,
       providerBusy: true,
       busyProvider: 'marine',
       degradedSources: ['waves'],
-    };
+    });
     const runtime = makeRuntime({
       seed: { [assembledForecastKey(locationById('horsens'))]: horsens },
     });
@@ -739,6 +751,78 @@ describe('Worker route HTTP contract', () => {
     expect(waterCell).not.toContain('due 15:20 UTC');
     expect(card).not.toMatch(/tone-warn" data-source="water"/);
   });
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+type PublicHealthPayload = Omit<HealthPayload, 'ages' | 'storageUnavailable'>;
+
+function isHealthPayload(value: unknown): value is PublicHealthPayload {
+  if (!isRecord(value) || !isRecord(value.release)) return false;
+  const release = value.release;
+  if (!isRecord(release.target)) return false;
+  const target = release.target;
+  return typeof value.ok === 'boolean'
+    && value.service === 'frank-forecast'
+    && typeof value.checkedAt === 'string'
+    && (value.oldestCheckAgeMin === null || typeof value.oldestCheckAgeMin === 'number')
+    && typeof value.checkStaleAfterMin === 'number'
+    && (value.oldestAgeMin === null || typeof value.oldestAgeMin === 'number')
+    && typeof value.dataStaleAfterMin === 'number'
+    && (value.reason === null || typeof value.reason === 'string')
+    && isStringArray(value.stalled)
+    && isStringArray(value.missing)
+    && typeof value.storageAvailable === 'boolean'
+    && typeof release.allLocationsReady === 'boolean'
+    && typeof target.apiSchemaVersion === 'number'
+    && typeof target.modelRevision === 'number'
+    && typeof target.assembledCacheSchema === 'number'
+    && typeof target.marineCacheSchema === 'number'
+    && typeof target.dataGenerationId === 'string'
+    && typeof target.payloadVersion === 'number'
+    && isStringArray(release.ready)
+    && isStringArray(release.available)
+    && isStringArray(release.fallback)
+    && isStringArray(release.missing)
+    && Array.isArray(value.locations)
+    && value.locations.every((entry) => isRecord(entry) && typeof entry.id === 'string');
+}
+
+function isForecastInitializingPayload(
+  value: unknown,
+): value is ForecastInitializingPayload {
+  return isRecord(value)
+    && value.schemaVersion === 1
+    && value.status === 'initializing'
+    && value.code === 'FORECAST_INITIALIZING'
+    && typeof value.message === 'string'
+    && typeof value.retryAfterSeconds === 'number'
+    && isRecord(value.location)
+    && typeof value.location.id === 'string'
+    && typeof value.location.name === 'string'
+    && typeof value.location.areaName === 'string';
+}
+
+async function readHealthPayload(response: Response): Promise<PublicHealthPayload> {
+  const value: unknown = await response.json();
+  if (!isHealthPayload(value)) throw new Error('Expected a health payload.');
+  return value;
+}
+
+async function readInitializingPayload(
+  response: Response,
+): Promise<ForecastInitializingPayload> {
+  const value: unknown = await response.json();
+  if (!isForecastInitializingPayload(value)) {
+    throw new Error('Expected a forecast-initializing payload.');
+  }
+  return value;
+}
 
   it('shows a newer manifest run as neutral operator evidence until it is accepted', async () => {
     vi.useFakeTimers();
@@ -975,11 +1059,10 @@ describe('Worker route HTTP contract', () => {
         checkedBy: 'release-candidate',
       },
     }];
-    const heartbeat = {
-      schemaVersion: 1 as const,
+    const heartbeat = makeHeartbeat({
       lastTickAt: '2026-08-20T17:55:00.000Z',
       locations: {},
-    };
+    });
 
     const body = await statusResponse(
       buildHealthPayload(entries, false, now, heartbeat),
@@ -1134,7 +1217,7 @@ describe('Worker route HTTP contract', () => {
       runtime.ctx,
     );
     expect(response.status).toBe(503);
-    expect((await response.json()).code).toBe('FORECAST_INITIALIZING');
+    expect((await readInitializingPayload(response)).code).toBe('FORECAST_INITIALIZING');
     expect(runtime.puts).toHaveLength(0);
     expect(runtime.waits).toHaveLength(0);
     expect(providerFetch).not.toHaveBeenCalled();
@@ -1407,7 +1490,7 @@ describe('Worker route HTTP contract', () => {
     expect(runtime.puts.filter(({ key }) => key === CRON_HEARTBEAT_KEY)).toHaveLength(0);
 
     const health = await worker.fetch(request('/health'), runtime.env, runtime.ctx);
-    const healthBody = await health.json();
+    const healthBody = await readHealthPayload(health);
     expect(healthBody.locations.find(
       (entry: { id: string }) => entry.id === location.id,
     )).toMatchObject({
@@ -1583,7 +1666,7 @@ describe('Worker route HTTP contract', () => {
     const providerFetch = rejectProviderWork();
 
     const health = await worker.fetch(request('/health'), runtime.env, runtime.ctx);
-    const healthBody = await health.json();
+    const healthBody = await readHealthPayload(health);
     expect(healthBody.locations.find(
       (entry: { id: string }) => entry.id === location.id,
     )?.initialization).toEqual(marker);
@@ -1615,7 +1698,7 @@ describe('Worker route HTTP contract', () => {
     const providerFetch = rejectProviderWork();
 
     const health = await worker.fetch(request('/health'), runtime.env, runtime.ctx);
-    const healthBody = await health.json();
+    const healthBody = await readHealthPayload(health);
     expect(healthBody.locations.find(
       (entry: { id: string }) => entry.id === location.id,
     )).not.toHaveProperty('initialization');
@@ -1687,7 +1770,7 @@ describe('Worker route HTTP contract', () => {
       runtime.ctx,
     );
     expect(response.status).toBe(503);
-    expect((await response.json()).code).toBe('FORECAST_INITIALIZING');
+    expect((await readInitializingPayload(response)).code).toBe('FORECAST_INITIALIZING');
     expect(runtime.gets).not.toContain('forecast:horsens:weather-data:v7');
     expect(runtime.gets).not.toContain('forecast:horsens:weather-data:v1');
     expect(runtime.puts).toHaveLength(0);
@@ -1711,7 +1794,7 @@ describe('Worker route HTTP contract', () => {
       runtime.ctx,
     );
     expect(response.status).toBe(503);
-    expect((await response.json()).code).toBe('FORECAST_INITIALIZING');
+    expect((await readInitializingPayload(response)).code).toBe('FORECAST_INITIALIZING');
     expect(response.headers.get(RELEASE_HEADER.generationReady)).toBe('false');
     expect(runtime.puts).toHaveLength(0);
   });
@@ -1724,7 +1807,7 @@ describe('Worker route HTTP contract', () => {
       exactRuntime.env,
       exactRuntime.ctx,
     );
-    const exactBody = await exactResponse.json();
+    const exactBody = await readHealthPayload(exactResponse);
     expect(exactResponse.status).toBe(200);
     expect(exactBody.release).toEqual({
       target: CURRENT_RELEASE,
@@ -1745,7 +1828,7 @@ describe('Worker route HTTP contract', () => {
       emptyRuntime.env,
       emptyRuntime.ctx,
     );
-    const emptyBody = await emptyResponse.json();
+    const emptyBody = await readHealthPayload(emptyResponse);
     expect(emptyResponse.status).toBe(503);
     expect(emptyBody.ok).toBe(false);
     expect(emptyBody.release).toMatchObject({

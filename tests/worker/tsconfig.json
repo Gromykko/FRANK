@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.worker.json",
+  "compilerOptions": {
+    "types": ["vite/client", "node"],
+    "lib": ["ES2023", "DOM"]
+  },
+  "include": ["../../worker/**/*.ts", "../../worker-configuration.d.ts", "./**/*.ts"]
+}

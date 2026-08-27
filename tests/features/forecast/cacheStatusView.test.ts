@@ -625,7 +625,7 @@ describe('deriveCacheStatus clock skew', () => {
     refreshing: false,
     online: true,
     nowMs: NOW,
-    lastWorkerContactMs: NOW,
+    workerContactedAtMs: NOW,
   });
 
   it('refuses a timestamp implausibly far ahead of this clock', () => {

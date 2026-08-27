@@ -15,7 +15,7 @@ function readyResponse() {
   return new Response('{}', { status: 200 });
 }
 
-function initializingResponse(retryAfter = '2', code = 'FORECAST_INITIALIZING') {
+function initializingResponse(retryAfter: string | null = '2', code = 'FORECAST_INITIALIZING') {
   return new Response(JSON.stringify({ code }), {
     status: 503,
     headers: retryAfter === null ? undefined : { 'Retry-After': retryAfter },
@@ -36,7 +36,7 @@ describe('deployment Worker warm-up', () => {
     let inFlight = 0;
     let maximumInFlight = 0;
     const requestStarts: number[] = [];
-    const fetchImpl = vi.fn(async () => {
+    const fetchImpl = vi.fn(async (_input: string | URL, _init?: RequestInit) => {
       requestStarts.push(nowMs);
       inFlight += 1;
       maximumInFlight = Math.max(maximumInFlight, inFlight);
@@ -71,7 +71,8 @@ describe('deployment Worker warm-up', () => {
       [WARM_LOCATION_STAGGER_MS],
     ]);
     for (const [, init] of fetchImpl.mock.calls) {
-      const request = init as RequestInit;
+      expect(init).toBeDefined();
+      const request = init!;
       expect(new Headers(request.headers).get('Authorization')).toBe(`Bearer ${TOKEN}`);
       expect(request.redirect).toBe('error');
     }

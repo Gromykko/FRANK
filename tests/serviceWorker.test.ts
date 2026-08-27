@@ -61,8 +61,11 @@ function requestUrl(request: RequestLike) {
 
 class MemoryCache {
   readonly entries = new Map<string, Response>();
+  private readonly failPutUrls: Set<string>;
 
-  constructor(private readonly failPutUrls: Set<string>) {}
+  constructor(failPutUrls: Set<string>) {
+    this.failPutUrls = failPutUrls;
+  }
 
   async put(request: RequestLike, response: Response) {
     const url = requestUrl(request);

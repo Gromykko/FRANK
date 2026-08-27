@@ -11,6 +11,7 @@ import {
   fetchLatestMarineInstances,
   tickOrder,
 } from '../../worker/index';
+import { makeLocation } from './fixtures';
 
 // The event-local memo remains useful for duplicate same-list callers inside a
 // single invocation. Cross-city evidence now lives in the shared KV manifest,
@@ -223,7 +224,7 @@ describe('fetchLatestInstanceForCollections memo', () => {
 });
 
 describe('fetchLatestMarineInstances (split resolution)', () => {
-  const location = {
+  const location = makeLocation({
     id: 'horsens',
     forecastConfigRevision: 1,
     name: 'Horsens',
@@ -233,7 +234,7 @@ describe('fetchLatestMarineInstances (split resolution)', () => {
       water: ['dkss_idw'],
       waves: ['wam_nsb'],
     },
-  };
+  });
 
   const fallback = {
     water: { collection: 'dkss_idw', id: '2026-08-08T060000Z' },

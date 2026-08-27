@@ -19,6 +19,7 @@ import {
   dmiCollectionListKey,
   fetchLatestMarineInstances,
 } from '../../worker/providers';
+import { makeLocation } from './fixtures';
 
 const NOW = Date.parse('2026-08-20T16:00:00.000Z');
 const OLD_RUN = '2026-08-20T060000Z';
@@ -36,7 +37,7 @@ function runInstance(collection: string, id: string) {
   };
 }
 
-const LOCATION: ForecastLocation = {
+const LOCATION = makeLocation({
   id: 'horsens',
   forecastConfigRevision: 1,
   name: 'Horsens',
@@ -45,7 +46,7 @@ const LOCATION: ForecastLocation = {
   dmiCollections: { water: WATER, waves: WAVES },
   emmaId: 'DK004',
   kommuneAliases: ['Horsens'],
-};
+});
 
 const OLD_INSTANCES: MarineInstances = {
   water: runInstance('dkss_idw', OLD_RUN),

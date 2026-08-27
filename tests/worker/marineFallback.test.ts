@@ -14,23 +14,23 @@ import {
   marineSourcesDueForProbe,
 } from '../../worker/forecastModel';
 import { marineIngredientKey } from '../../worker/generation';
+import { makeTestEnv, makeTestKvNamespace } from './fixtures';
 import { completeMarineEnvelope, completeMarineSeries } from './marineTestData';
 
 // An in-memory stand-in for the KV binding (get(key,'json') / put(key,string)).
 function makeEnv(seed: Record<string, unknown> = {}) {
   const store = new Map<string, string>();
   for (const [k, v] of Object.entries(seed)) store.set(k, JSON.stringify(v));
-  return {
-    store,
-    FRANK_FORECAST_CACHE: {
-      get: async (key: string, type?: string) => {
-        const raw = store.get(key);
-        if (raw == null) return null;
-        return type === 'json' ? JSON.parse(raw) : raw;
-      },
-      put: async (key: string, value: string) => { store.set(key, value); },
+  const cache = makeTestKvNamespace({
+    get: async (key, type) => {
+      const raw = store.get(key);
+      if (raw == null) return null;
+      return type === 'json' ? JSON.parse(raw) : raw;
     },
-  };
+    put: async (key, value) => { store.set(key, value); },
+  });
+  // `store` rides along so a test can read back exactly what was written.
+  return Object.assign(makeTestEnv(cache), { store });
 }
 
 const LOCATION = {
@@ -51,6 +51,13 @@ const identityMap = (features: unknown) => features as SeriesPoint[];
 const CURRENT_INGREDIENT_KEY = marineIngredientKey(LOCATION, 'water');
 const retainedEnvelope = (id: string) => completeMarineEnvelope(LOCATION, 'water', id);
 
+function installFetchStub(
+  stub: (...args: Parameters<typeof fetch>) => Promise<unknown>,
+): void {
+  // Each test supplies only the Response fields read by the exercised path.
+  globalThis.fetch = stub as typeof fetch;
+}
+
 const originalFetch = globalThis.fetch;
 beforeEach(() => {
   vi.useFakeTimers();
@@ -64,13 +71,13 @@ afterEach(() => {
 
 // 429 is terminal (no retry), so a busy provider fails fast.
 function stubFetchBusy() {
-  globalThis.fetch = (async () => ({ ok: false, status: 429, text: async () => 'Server is busy' })) as typeof fetch;
+  installFetchStub(async () => ({ ok: false, status: 429, text: async () => 'Server is busy' }));
 }
 
 describe('fetchMarineSeriesWithFallback (split retention)', () => {
   it('stores the series and reports no fallback on a successful fetch', async () => {
     const series = completeMarineSeries('water', WATER_INSTANCE.id);
-    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ features: series }) })) as typeof fetch;
+    installFetchStub(async () => ({ ok: true, status: 200, json: async () => ({ features: series }) }));
     const env = makeEnv();
 
     const result = await fetchMarineSeriesWithFallback(env, LOCATION, 'water', WATER_INSTANCE, ['x'], identityMap);
@@ -96,7 +103,7 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     const retained = envelope.series;
     const env = makeEnv({ [CURRENT_INGREDIENT_KEY]: envelope });
     let fetched = false;
-    globalThis.fetch = (async () => { fetched = true; throw new Error('should not fetch'); }) as typeof fetch;
+    installFetchStub(async () => { fetched = true; throw new Error('should not fetch'); });
 
     // Requested instance id === retained id → no fetch, not a fallback.
     const result = await fetchMarineSeriesWithFallback(env, LOCATION, 'water', WATER_INSTANCE, ['x'], identityMap);
@@ -110,13 +117,13 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     const env = makeEnv();
     const eventMemo = new Map<string, Promise<unknown>>();
     const calls: string[] = [];
-    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    installFetchStub(vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       calls.push(url);
       return url.includes('/collections/dkss_')
         ? new Response('Server is busy', { status: 429 })
         : new Response('Temporary upstream failure', { status: 503 });
-    }) as typeof fetch;
+    }));
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -171,7 +178,7 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
       status: 200,
       json: async () => ({ features: fresh }),
     });
-    globalThis.fetch = fetchMock as typeof fetch;
+    installFetchStub(fetchMock);
 
     const result = await fetchMarineSeriesWithFallback(
       env,
@@ -202,10 +209,10 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
       },
     });
     let fetches = 0;
-    globalThis.fetch = (async () => {
+    installFetchStub(async () => {
       fetches += 1;
       return { ok: true, status: 200, json: async () => ({ features: fresh }) };
-    }) as typeof fetch;
+    });
 
     const result = await fetchMarineSeriesWithFallback(env, LOCATION, 'water', WATER_INSTANCE, ['x'], identityMap);
 
@@ -268,10 +275,10 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
 
   it('samples busy-response grace when the provider outcome arrives', async () => {
     vi.setSystemTime('2026-07-11T16:19:59.999Z');
-    globalThis.fetch = (async () => {
+    installFetchStub(async () => {
       vi.setSystemTime('2026-07-11T16:20:00.000Z');
       return new Response('Server is busy', { status: 429 });
-    }) as typeof fetch;
+    });
     const envelope = retainedEnvelope('2026-07-11T060000Z');
     const env = makeEnv({ [CURRENT_INGREDIENT_KEY]: envelope });
 
@@ -312,7 +319,7 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
 
   it('keeps an empty newly-listed run neutral only inside its publication grace', async () => {
     // 200 OK but no features for the requested (new) run = not published yet.
-    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ features: [] }) })) as typeof fetch;
+    installFetchStub(async () => ({ ok: true, status: 200, json: async () => ({ features: [] }) }));
     const envelope = retainedEnvelope('2026-07-11T060000Z');
     const env = makeEnv({ [CURRENT_INGREDIENT_KEY]: envelope });
 
@@ -326,9 +333,9 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
   });
 
   it('keeps a typed transient provider failure neutral inside the publication grace', async () => {
-    globalThis.fetch = (async () => new Response('Temporary upstream failure', {
+    installFetchStub(async () => new Response('Temporary upstream failure', {
       status: 503,
-    })) as typeof fetch;
+    }));
     const envelope = retainedEnvelope('2026-07-11T060000Z');
     const env = makeEnv({ [CURRENT_INGREDIENT_KEY]: envelope });
 
@@ -350,7 +357,7 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
   });
 
   it('never hides an invalid success payload inside the publication grace', async () => {
-    globalThis.fetch = (async () => Response.json({ features: 'not-an-array' })) as typeof fetch;
+    installFetchStub(async () => Response.json({ features: 'not-an-array' }));
     const envelope = retainedEnvelope('2026-07-11T060000Z');
     const env = makeEnv({ [CURRENT_INGREDIENT_KEY]: envelope });
 
@@ -368,11 +375,11 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
   });
 
   it('records a validated empty response even when no held run can be served', async () => {
-    globalThis.fetch = (async () => ({
+    installFetchStub(async () => ({
       ok: true,
       status: 200,
       json: async () => ({ features: [] }),
-    })) as typeof fetch;
+    }));
     const contactEvidence = { providerContacted: false };
 
     await expect(fetchMarineSeriesWithFallback(
@@ -457,9 +464,9 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
   });
 
   it('records contact but never relabels a mapper TypeError as provider availability', async () => {
-    globalThis.fetch = (async () => new Response(JSON.stringify({
+    installFetchStub(async () => new Response(JSON.stringify({
       features: [{ time: '2026-07-11T13:00:00Z' }],
-    }), { status: 200 })) as typeof fetch;
+    }), { status: 200 }));
 
     const contactEvidence = { providerContacted: false };
     await expect(fetchMarineSeriesWithFallback(
@@ -507,10 +514,10 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
 
   it('refuses an old or unparseable requested run before cache or network work begins', async () => {
     let fetched = false;
-    globalThis.fetch = (async () => {
+    installFetchStub(async () => {
       fetched = true;
       throw new Error('must not fetch');
-    }) as typeof fetch;
+    });
 
     await expect(fetchMarineSeriesWithFallback(
       makeEnv(),
@@ -539,12 +546,12 @@ describe('fetchMarineSeriesWithFallback (split retention)', () => {
     const exactBoundary = Date.parse('2026-07-11T18:00:00Z');
     vi.setSystemTime(exactBoundary);
     const boundaryRun = { collection: 'dkss_idw', id: '2026-07-11T060000Z' };
-    globalThis.fetch = (async () => {
+    installFetchStub(async () => {
       // The run was exactly 12h old when the request began, but became unsafe
       // while the provider call was in flight. A 200 must not re-date it.
       vi.setSystemTime(exactBoundary + 1);
       return { ok: true, status: 200, json: async () => ({ features: [{ timeMs: exactBoundary }] }) };
-    }) as typeof fetch;
+    });
 
     await expect(fetchMarineSeriesWithFallback(
       makeEnv(),

@@ -201,6 +201,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
           heading (a focusable "?" nested in a role="button" div was an
           invalid control-in-control). The row's onClick is a pointer-only
           convenience - keyboard and AT go through the title button. */}
+      {/* oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- The nested title button provides the keyboard-equivalent toggle. */}
       <div
         className={`panel-collapse-header module-head ${isOpen ? 'is-open' : ''}`}
         onClick={() => setIsOpen(!isOpen)}

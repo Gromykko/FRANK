@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import locationData from '../../src/config/locations.json';
 import { CURRENT_RELEASE } from '../../src/features/forecast/releaseContract';
+import type { ReleaseMetadata } from '../../src/features/forecast/releaseContract';
 import {
   FORECAST_SEMANTIC_BOUNDARY_ID,
   FORECAST_SEMANTIC_INPUT_FILES,
@@ -43,6 +44,10 @@ function snapshot({
   release = RELEASE_V7,
   inputs = semanticInputs(),
   locations = [{ id: 'horsens', forecastConfigRevision: 1, inputHash: hash('b') }],
+}: {
+  release?: Readonly<ReleaseMetadata>;
+  inputs?: Record<string, string>;
+  locations?: Array<{ id: string; forecastConfigRevision: number; inputHash: string }>;
 } = {}) {
   return {
     schemaVersion: 2,

@@ -63,6 +63,7 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
   }, [onClose]);
 
   return (
+    // oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- Escape and the close button provide keyboard dismissal.
     <div
       className="info-modal-backdrop"
       onMouseDown={(e) => { mouseDownOnBackdrop.current = e.target === e.currentTarget; }}
@@ -70,6 +71,7 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
         if (mouseDownOnBackdrop.current && e.target === e.currentTarget) onClose();
       }}
     >
+      {/* oxlint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-noninteractive-element-interactions -- This click only prevents backdrop dismissal; the dialog's keyboard behavior is unchanged. */}
       <div
         ref={contentRef}
         className="info-modal-content is-flush"

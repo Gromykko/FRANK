@@ -41,7 +41,7 @@ function installServiceWorkerMock(registration: Partial<ServiceWorkerRegistratio
 }
 
 function mockReleaseFetch(value: unknown = descriptor()) {
-  const fetchMock = vi.fn(async () => new Response(JSON.stringify(value), {
+  const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify(value), {
     status: 200,
     headers: { 'content-type': 'application/json' },
   }))
@@ -68,7 +68,7 @@ describe('release update discovery', () => {
 
     expect(fetchMock).toHaveBeenCalled()
     const [requestUrl, options] = fetchMock.mock.calls.at(-1)!
-    const url = new URL(requestUrl as URL)
+    const url = new URL(requestUrl instanceof Request ? requestUrl.url : requestUrl)
     expect(url.pathname).toBe(`${BASE_URL}frank-release.json`)
     expect(url.searchParams.get('check')).toBeTruthy()
     expect(options).toMatchObject({ cache: 'no-store', credentials: 'same-origin' })

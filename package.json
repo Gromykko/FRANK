@@ -16,7 +16,7 @@
     "test:e2e": "npm run build && playwright test",
     "worker:types": "wrangler types worker-configuration.d.ts --config wrangler.jsonc",
     "worker:types:check": "wrangler types worker-configuration.d.ts --config wrangler.jsonc --check",
-    "worker:typecheck": "tsc --project tsconfig.worker.json && tsc --project tests/worker-runtime/tsconfig.json",
+    "worker:typecheck": "tsc --project tsconfig.worker.json && tsc --project tests/worker/tsconfig.json && tsc --project tests/worker-runtime/tsconfig.json",
     "worker:deploy": "wrangler deploy",
     "worker:dry-run": "wrangler deploy --dry-run",
     "worker:dev": "wrangler dev",

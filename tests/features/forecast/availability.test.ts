@@ -4,7 +4,7 @@ import { parseForecastAvailability } from '../../../src/features/forecast/availa
 
 const allIds = AVAILABLE_LOCATIONS.map(({ id }) => id);
 
-function health(available = allIds.slice(0, 1)) {
+function health(available: string[] = allIds.slice(0, 1)) {
   return {
     service: 'frank-forecast',
     checkedAt: '2026-08-20T12:00:00.000Z',
@@ -12,7 +12,7 @@ function health(available = allIds.slice(0, 1)) {
       allLocationsReady: available.length === allIds.length,
       ready: [...available],
       available: [...available],
-      fallback: [],
+      fallback: [] as string[],
       missing: allIds.filter((id) => !available.includes(id)),
     },
   };

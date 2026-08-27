@@ -372,7 +372,7 @@ describe('reviveReadings', () => {
   it('leaves real zeros alone — 0 m waves is a reading, not a gap', () => {
     const revived = reviveReadings(overWire({
       hourly: [{ time: 't', waveHeight: 0, windSpeed: 0, tideLevel: -0.4 }],
-    })) as { hourly: Record<string, number>[] };
+    }));
     expect(revived.hourly[0].waveHeight).toBe(0);
     expect(revived.hourly[0].windSpeed).toBe(0);
     expect(revived.hourly[0].tideLevel).toBe(-0.4);

@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
+import type { ReleaseMetadata } from '../../src/features/forecast/releaseContract';
 import {
   FORECAST_KV_BINDING,
   FRANK_GENERATION_KEY_ROOT,
@@ -33,7 +34,10 @@ const OLD = Object.freeze({
   dataGenerationId: 'api1-model6:legacy',
 });
 
-function key(release = CURRENT, suffix = 'forecast:assembled:location:horsens:config:v1') {
+function key(
+  release: Readonly<ReleaseMetadata> = CURRENT,
+  suffix = 'forecast:assembled:location:horsens:config:v1',
+) {
   return `${generationKeyPrefix(release)}:${suffix}`;
 }
 
@@ -207,7 +211,7 @@ describe('Worker KV generation garbage collection', () => {
       (_, index) => key(OLD, `forecast:assembled:location:test-${index}:config:v1`),
     );
     const batches: string[][] = [];
-    const execFileImpl = vi.fn(async (_file, args: string[]) => {
+    const execFileImpl = vi.fn(async (_file: string, args: string[]) => {
       const batchFile = args[4];
       batches.push(JSON.parse(await readFile(batchFile, 'utf8')));
       return { stdout: 'Success!', stderr: '' };

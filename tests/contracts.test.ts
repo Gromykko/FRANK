@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { FORECAST_PAYLOAD_VERSION } from '../src/features/forecast/types';
-import { PAYLOAD_VERSION } from '../worker/providers';
+import { PAYLOAD_VERSION } from '../worker/forecastModel';
 import { hourIndexForNow } from '../src/features/forecast/useForecast';
 import { nextHourTideFor } from '../src/features/forecast/displayData';
 import { findLaunchWindows } from '../src/features/planner/findLaunchWindows';
@@ -15,11 +15,11 @@ import type { HourlyData } from '../src/features/forecast/types';
 
 // ---------------------------------------------------------------------------
 // The Worker and browser import one dependency-free payload-version source.
-// Keep the public Worker alias pinned so a future refactor cannot quietly
-// replace it with another literal and recreate the old split-brain contract.
+// The compatibility alias exported by worker/providers is evaluated in the
+// Worker suite, where importing that module has the required platform types.
 // ---------------------------------------------------------------------------
 describe('payload version has one source of truth', () => {
-  it('exposes the shared contract through the Worker alias and browser API', () => {
+  it('exposes the shared contract through the browser API', () => {
     expect(PAYLOAD_VERSION).toBe(FORECAST_PAYLOAD_VERSION);
   });
 });

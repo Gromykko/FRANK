@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import locationData from '../../src/config/locations.json';
 import type { ForecastLocation } from '../../src/config/locationTypes';
+import type { MarineSeriesResult } from '../../worker/domain';
 import {
   FORECAST_SOURCE_POLICY,
   assembleForecastFromSources,
@@ -425,7 +426,7 @@ describe('a failed refresh call is not stale data', () => {
   // a newer run is genuinely overdue and this one IS behind.
   const BEHIND_RUN = '2026-08-20T000000Z';
 
-  const assembleWithWater = (water: Record<string, unknown>) =>
+  const assembleWithWater = (water: Omit<MarineSeriesResult, 'series'>) =>
     assembleForecastFromSources(LOCATION, {
       met: {
         weatherSeries: [{
@@ -443,7 +444,6 @@ describe('a failed refresh call is not stale data', () => {
         weatherExpires: '2026-08-20T13:00:00.000Z',
         weatherLastModified: 'Thu, 20 Aug 2026 12:00:00 GMT',
         fallback: false,
-        providerContacted: true,
       },
       water: {
         series: [{
@@ -469,7 +469,7 @@ describe('a failed refresh call is not stale data', () => {
         providerContacted: true,
       },
       warnings: [],
-    } as Parameters<typeof assembleForecastFromSources>[1], NOW);
+    }, NOW);
 
   it('does not degrade complete same-collection retention before its grace expires', () => {
     const result = assembleWithWater({

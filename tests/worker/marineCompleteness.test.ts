@@ -25,6 +25,7 @@ import {
   completeMarineEnvelope,
   completeMarineSeries,
 } from './marineTestData';
+import { makeCacheHealth } from './fixtures';
 
 const LOCATION = locationData[0] as ForecastLocation;
 const COLLECTION = LOCATION.dmiCollections.water[0];
@@ -102,7 +103,6 @@ function assembleWithWater(water: Awaited<ReturnType<typeof fetchCandidate>>, no
       blocks: [],
       weatherExpires: new Date(nowMs + 60 * 60 * 1000).toISOString(),
       fallback: false,
-      providerContacted: true,
     },
     water,
     wave: {
@@ -380,7 +380,10 @@ describe('atomic DMI handover', () => {
     expect(assembled.degradedSources).not.toContain('water');
     expect(getCacheStatusView({
       refreshing: false,
-      cacheHealth: { status: 'current', degradedSources: assembled.degradedSources },
+      cacheHealth: makeCacheHealth({
+        status: 'current',
+        degradedSources: assembled.degradedSources,
+      }),
       forecastAtLabel: '10:00',
     }).degradedSourceDisclosure).toBe('');
 

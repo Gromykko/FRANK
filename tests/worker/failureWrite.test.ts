@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import locationData from '../../src/config/locations.json';
 import { FORECAST_SOURCE_POLICY } from '../../worker/forecastModel';
+import type { WorkerCacheHealth } from '../../worker/domain';
 import {
   HEALTH_MAX_CHECK_AGE_MS,
   assertHealthCheckAgeExceedsMetTtl,
@@ -14,6 +15,7 @@ import {
   shouldPersistFailureState,
   withCronAttempt,
 } from '../../worker/index';
+import { makeCacheHealth, makeHeartbeat } from './fixtures';
 
 // The KV write budget is 1,000/day for the whole app. This predicate is what
 // stands between a provider outage and an emptied allowance: a stale cache
@@ -29,8 +31,7 @@ const THROTTLE_WINDOW_MS = 25 * 60 * 1000;
 const NOW = Date.parse('2026-08-08T12:00:00Z');
 const stampedAgo = (ms: number) => new Date(NOW - ms).toISOString();
 
-const failure = (over: Record<string, unknown> = {}) => ({
-  status: 'stale',
+const failure = (overrides: Partial<WorkerCacheHealth> = {}) => makeCacheHealth({
   message: 'Provider partly unavailable',
   needsRebuild: false,
   providerBusy: true,
@@ -42,13 +43,15 @@ const failure = (over: Record<string, unknown> = {}) => ({
     waves: { collection: 'wam_dw', id: '2026-08-08T06:00:00Z' },
   },
   lastAttemptAt: stampedAgo(20 * 1000),
-  ...over,
+  ...overrides,
 });
 
 describe('shouldPersistFailureState', () => {
   it('writes the first failure, when there is no stamp to compare', () => {
+    const unstamped: Partial<WorkerCacheHealth> = { ...failure() };
+    delete unstamped.lastAttemptAt;
     expect(shouldPersistFailureState(undefined, failure(), NOW)).toBe(true);
-    expect(shouldPersistFailureState(failure({ lastAttemptAt: undefined }), failure(), NOW)).toBe(true);
+    expect(shouldPersistFailureState(unstamped, failure(), NOW)).toBe(true);
   });
 
   it('skips an identical repeat inside the throttle window', () => {
@@ -205,8 +208,7 @@ describe('withCronAttempt', () => {
     locations: Record<string, string>,
     unreachable: Record<string, string> = {},
     lastTickAt = at(0),
-  ) => ({
-    schemaVersion: 2 as const,
+  ) => makeHeartbeat({
     lastTickAt,
     locations,
     unreachable,

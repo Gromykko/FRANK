@@ -1,5 +1,9 @@
 import { beforeEach } from 'vitest';
 
+declare global {
+  var IS_REACT_ACT_ENVIRONMENT: boolean;
+}
+
 // CURRENT_LOCATION is resolved at MODULE LOAD from localStorage
 // (config/locations.ts), and almost every safety test imports it for its wind
 // sectors. A stray `frank_location` key would silently point the whole suite

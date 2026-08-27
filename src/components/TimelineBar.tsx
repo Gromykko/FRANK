@@ -440,6 +440,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
   return (
     <div className="timeline-bar-container">
       {/* Day Tabs */}
+      {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Drag-scroll is pointer-only; the day buttons remain keyboard-operable. */}
       <div
         ref={tabsRef}
         className="timeline-day-tabs"

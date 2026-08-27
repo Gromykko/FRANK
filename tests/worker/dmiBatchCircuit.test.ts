@@ -7,6 +7,7 @@ import { FORECAST_PAYLOAD_VERSION } from '../../src/features/forecast/types';
 import { buildSunSchedule } from '../../src/features/forecast/sun';
 import type { ForecastData } from '../../worker/domain';
 import { assembledForecastKey, marineIngredientKey } from '../../worker/generation';
+import { makeCacheHealth } from './fixtures';
 import { completeMarineEnvelope } from './marineTestData';
 
 const LOCATIONS = locationData as ForecastLocation[];
@@ -328,7 +329,7 @@ describe('scheduled DMI retries and location isolation', () => {
     const kolding = LOCATIONS.find(({ id }) => id === 'kolding');
     if (!kolding) throw new Error('Missing Kolding test location');
     const deferred = forecast(store, kolding);
-    deferred.sources.cacheHealth = {
+    deferred.sources.cacheHealth = makeCacheHealth({
       ...deferred.sources.cacheHealth,
       status: 'stale',
       checkedBy: 'cron-deferred',
@@ -336,7 +337,7 @@ describe('scheduled DMI retries and location isolation', () => {
       busyProvider: 'marine',
       degradedSources: ['water', 'waves'],
       message: 'Marine check deferred after the provider became busy earlier in this refresh cycle; keeping the last completed forecast.',
-    };
+    });
     store.set(assembledForecastKey(kolding), JSON.stringify(deferred));
 
     const calls: string[] = [];
