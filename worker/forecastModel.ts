@@ -673,7 +673,7 @@ export function marineRunDegradedAtMs(
     + FORECAST_SOURCE_POLICY.dmiPublicationGraceMs;
 }
 
-export function marineCandidateGraceEndsAtMs(
+function marineCandidateGraceEndsAtMs(
   instance: MarineRunRef | null | undefined,
 ): number {
   const contract = marineRunContract(instance?.collection, instance?.id);

@@ -1,5 +1,5 @@
-export const ALLOW_READ_METHODS = 'GET, HEAD, OPTIONS';
-export const WORKER_VERSION_HEADER = 'X-FRANK-Worker-Version';
+const ALLOW_READ_METHODS = 'GET, HEAD, OPTIONS';
+const WORKER_VERSION_HEADER = 'X-FRANK-Worker-Version';
 
 const textEncoder = new TextEncoder();
 const UNCONFIGURED_WARM_TOKEN = 'frank-warm-token-is-not-configured';
@@ -37,7 +37,7 @@ export function matchRoute(pathname: string): WorkerRoute | null {
   return null;
 }
 
-export function corsHeaders(): Record<string, string> {
+function corsHeaders(): Record<string, string> {
   return {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': ALLOW_READ_METHODS,

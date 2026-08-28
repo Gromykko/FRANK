@@ -65,7 +65,7 @@ describe('forecast model release guard', () => {
     expect(parseReleasePolicy(source)).toMatchObject({
       supportedApiSchemaVersions: [2],
       retiredApiSchemaVersions: [1],
-      // The retained rollback generation is model 58 on the same API schema,
+      // The retained rollback generation is model 59 on the same API schema,
       // so it is not a prior-API compatibility promise.
       auditedPriorApiReleases: [],
     });
@@ -76,8 +76,8 @@ describe('forecast model release guard', () => {
         'RETIRED_FORECAST_API_SCHEMA_VERSIONS = []',
       )
       .replace(
-        'apiSchemaVersion: 2,\n    modelRevision: 58,',
-        'apiSchemaVersion: 1,\n    modelRevision: 58,',
+        'apiSchemaVersion: 2,\n    modelRevision: 59,',
+        'apiSchemaVersion: 1,\n    modelRevision: 59,',
       );
     expect(() => parseReleasePolicy(unretiredPriorApi))
       .toThrow('non-retired audited prior release descriptors');

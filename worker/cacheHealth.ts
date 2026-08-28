@@ -8,7 +8,7 @@ import type {
 // Cache-health is mutable operational state attached to an immutable forecast
 // generation. Keeping its copy/stamps here lets retry and status UX evolve
 // without pretending the normalized forecast model changed.
-export function buildCacheHealth(
+function buildCacheHealth(
   status: CacheHealthStatus,
   data: ForecastData | null | undefined,
   options: CacheHealthOptions = {},

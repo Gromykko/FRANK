@@ -3,30 +3,30 @@
   "semanticBoundary": "worker-generation-owned-v1",
   "release": {
     "apiSchemaVersion": 2,
-    "modelRevision": 59,
+    "modelRevision": 60,
     "assembledCacheSchema": 2,
     "marineCacheSchema": 3,
-    "dataGenerationId": "api2-model59",
+    "dataGenerationId": "api2-model60",
     "payloadVersion": 8
   },
   "semanticInputs": {
     "src/features/forecast/normalize.ts": "5021f20b8172075c4384f8d9cafa5df3abbb059472f2d721019fd1564efca947",
-    "src/features/forecast/parseWarnings.ts": "8bf112789a37c5167f749dd1978c5d647f85d285cb06d4bce5feaaef6cbf2f96",
+    "src/features/forecast/parseWarnings.ts": "c474daad735f11554f4a7fe7b847bad708348ec77dbf8da7f52efc595c38f522",
     "src/features/forecast/providerUrls.ts": "0c207f05a37fb239258970bbfcf1e49280d7bf74d3441bb84be224abde9a0367",
-    "src/features/forecast/releaseContract.ts": "f2021be7090006b817880a3000b957bfaebb4ff04b5d9c906addbe2698be7c12",
+    "src/features/forecast/releaseContract.ts": "79905b957032b1a79928524ebd3adec01b940487a8ca18f3c31782e57cd7e4ae",
     "src/features/forecast/sun.ts": "f69dacefb9f43709f63a11a01b66b2cda77b25d7e53bcda62cefae10fd0543e4",
-    "src/features/forecast/temporalPolicy.ts": "59940e152870a1b8a071f46deb378e0cbc2901ea30b00c725f16e836d395775d",
+    "src/features/forecast/temporalPolicy.ts": "110629496653a1956fcb33e64bcb42d70f7fb1f68879e59c954e7dd4271cc49c",
     "src/features/forecast/types.ts": "565e399cec43bf91bd279ae133ffb032696462d2f1d4db8ada35928261885e0f",
     "src/features/forecast/validatePayload.ts": "8f1ceafaf38414e00ef1bc055a995ab1d68b8921063f64790d3e2fec7b7a5ba2",
-    "worker/cacheHealth.ts": "f5f394784b764c5a42a7a996957c7d60fb280af83e30e4d752d90241e84c779e",
-    "worker/forecastModel.ts": "59c5c8b61ec2ae92a22bf3e0da738ad45f2c41b2405cc2ca3c32ec4e988067b7",
-    "worker/generation.ts": "471cae837f55a6b108ddf451ca3ccb8f2a2af006d2b552bc784b2ed99c6ef2a6",
-    "worker/http.ts": "1073cc7ffb5ef699eec8c2ceaf07d88569e3f5ac21bda531e3c07c5c21070f56",
+    "worker/cacheHealth.ts": "3c94ebfa562051224ddcac0b5687f5658b7d706643252edadcbbb452e4d935c5",
+    "worker/forecastModel.ts": "352e42278158841fc803a78da250f16c13ae975519a38c4bcc1df7b1fcb4322a",
+    "worker/generation.ts": "dec446ef85928787c413c81e3838e82d230bf0749ecd49f56fa2fda1b508a0d4",
+    "worker/http.ts": "2d238414fae83fcaa6a027a260504e11a37b08c6ac172a8b95fca4dcadad9eae",
     "worker/domain.ts": "439c91a3f4d673918b913e40d74ef3c9d5c7517b33377556129b104c7d7838d8",
     "worker/index.ts": "da60ba222c7e562958b64639a9f4798aa3478d2987b19dde7de60ba418cd0594",
     "worker/providerAvailability.ts": "52443e5c5b22fba55d05e10f708263e4fead3a0b7b9691f020611668582a3076",
     "worker/providers.ts": "e8737d2848e22e68dd84bab1e65f34c736da48a078e10c39e234edcfbb111bc0",
-    "worker/validation.ts": "b0a68f89a3347a641a231de7d3d3c36bcc0292a1c7ddd5ec7e7fb325f0e5207f"
+    "worker/validation.ts": "e871104c73e9df13cfeb8fbaf8e13d8861a5313bf9744f9a7de6db465a7e9dd4"
   },
   "locations": [
     {

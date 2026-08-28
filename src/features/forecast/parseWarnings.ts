@@ -10,7 +10,7 @@ export const METEOALARM_DENMARK_FEED =
 
 // There is no stable per-region DMI deep link — the region is a map interaction
 // on DMI's page — so the stripe links out to the general varsler page.
-export const DMI_VARSLER_URL = 'https://www.dmi.dk/varsler';
+const DMI_VARSLER_URL = 'https://www.dmi.dk/varsler';
 
 // DMI's feed names regions in Danish (areaDesc); the UI is English. One shared
 // map so every consumer (warning stripe, planner badges) uses the same English

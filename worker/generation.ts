@@ -12,7 +12,7 @@ import { isRecord } from './validation';
 // These storage schemas are Worker-internal and deliberately independent of
 // both the public API and the forecast model. Each is named in the key for the
 // object it governs so format changes cannot reinterpret older bytes.
-export const MET_RAW_CACHE_SCHEMA_VERSION = 1;
+const MET_RAW_CACHE_SCHEMA_VERSION = 1;
 export const INITIALIZATION_STATE_SCHEMA_VERSION = 2;
 
 type StorageReleaseIdentity = Pick<
@@ -89,7 +89,7 @@ export function assembledForecastKeyForRelease(
 // ingredient schema or a retired forecastConfigRevision strands its old keys.
 // That is 3 keys per location per bump against a 1 GB namespace; teach the GC
 // script a second prefix only if the schemas ever start moving regularly.
-export const RAW_INGREDIENT_KEY_ROOT = 'frank:raw';
+const RAW_INGREDIENT_KEY_ROOT = 'frank:raw';
 
 // MET's stored body is the provider response verbatim, so only the envelope
 // shape can ever go stale. Sharing it also keeps the conditional-request
@@ -135,7 +135,7 @@ export function versionedForecastRoute(pathname: string): VersionedForecastRoute
   return { locationId: match[2], release: CURRENT_FORECAST_RELEASE };
 }
 
-export function hasReleaseMetadata(
+function hasReleaseMetadata(
   value: unknown,
   expected: ForecastReleaseMetadata,
 ): value is ForecastReleaseMetadata {

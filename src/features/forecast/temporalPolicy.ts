@@ -16,7 +16,7 @@ export const FORECAST_SERVER_CLOCK_LEAD_TOLERANCE_MS = 5 * MINUTE_MS;
 // FRANK intentionally assembles roughly 5.5 days of forecast data. A seventh
 // day leaves room for a final 12-hour MET period while still rejecting corrupt
 // caches whose forecast itself starts years in the future.
-export const MAX_FORECAST_LEAD_MS = 7 * DAY_MS;
+const MAX_FORECAST_LEAD_MS = 7 * DAY_MS;
 
 export function isPlausibleSourceTimestamp(
   timestampMs: number,
