@@ -349,17 +349,45 @@ interface SourceStatusView {
   tone: SourceTone;
   state: string;
   value: string;
-  detail: string;
 }
 
-function marineGridDetail(grid: ReturnType<typeof marineGridProvenanceFromUnknown>): string | null {
+interface MarineGridDetail {
+  collection: string;
+  requested: string;
+  returned: string;
+  distance: string;
+  expected: string | null;
+  changed: boolean;
+}
+
+function formatMarineGridCoordinate(point: { latitude: number; longitude: number }): string {
+  return `${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`;
+}
+
+function marineGridDetail(grid: ReturnType<typeof marineGridProvenanceFromUnknown>): MarineGridDetail | null {
   if (!grid) return null;
-  const coordinate = (point: typeof grid.returned): string =>
-    `${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`;
-  const normal = `DMI ${grid.collection} · requested ${coordinate(grid.requested)} · returned ${coordinate(grid.returned)} · ${grid.distanceMeters.toLocaleString('en-US')} m away`;
-  return grid.changed
-    ? `${normal} · expected cell ${coordinate(grid.expected)}`
-    : normal;
+  return {
+    collection: grid.collection,
+    requested: formatMarineGridCoordinate(grid.requested),
+    returned: formatMarineGridCoordinate(grid.returned),
+    distance: `${grid.distanceMeters.toLocaleString('en-US')} m away`,
+    expected: grid.changed ? formatMarineGridCoordinate(grid.expected) : null,
+    changed: grid.changed,
+  };
+}
+
+function marineGridCell(detail: MarineGridDetail | null, label: string): string {
+  const tone = detail?.changed ? ' tone-warn' : '';
+  if (!detail) {
+    return `<td class="num${tone}" data-label="${escapeHtml(label)}"><span class="cell-value">not recorded</span></td>`;
+  }
+  return `<td class="num${tone}" data-label="${escapeHtml(label)}">`
+    + `<span class="cell-value">${escapeHtml(detail.collection)} ${escapeHtml(detail.returned)}</span>`
+    + `<span class="cell-note">${escapeHtml(detail.distance)}</span>`
+    + (detail.expected
+      ? `<span class="cell-note">expected cell ${escapeHtml(detail.expected)}</span>`
+      : '')
+    + '</td>';
 }
 
 export interface StatusMarineCandidate {
@@ -426,7 +454,7 @@ export function statusResponse(
   const checkedAtMs = Date.parse(health.checkedAt);
   const nowMs = Number.isFinite(checkedAtMs) ? checkedAtMs : Date.now();
 
-  const locationCards = health.locations.map((location) => {
+  const locationViews = health.locations.map((location) => {
     const age = byId.get(location.id) ?? {
       ageMs: Number.POSITIVE_INFINITY,
       checkAgeMs: Number.POSITIVE_INFINITY,
@@ -436,6 +464,26 @@ export function statusResponse(
     const degradedSources = new Set(cacheHealth.degradedSources ?? []);
     const missing = !location.hasCache;
     const initialization = missing ? location.initialization : undefined;
+    const configuredLocation = FORECAST_LOCATION_BY_ID.get(location.id);
+    const marineGridFor = (kind: 'water' | 'waves') => {
+      const marineInstance = cacheHealth.marineInstances?.[kind];
+      const marineGridCandidate = cacheHealth.marineGrid?.[kind];
+      return marineInstance && configuredLocation
+        ? marineGridProvenanceFromUnknown(
+            marineGridCandidate,
+            marineInstance.collection,
+            configuredLocation.coordinate,
+          )
+        : undefined;
+    };
+    const marineGridByKind = {
+      water: marineGridFor('water'),
+      waves: marineGridFor('waves'),
+    };
+    const marineGridDetails = {
+      water: marineGridDetail(marineGridByKind.water),
+      waves: marineGridDetail(marineGridByKind.waves),
+    };
     const generationState = location.exactGenerationReady
       ? 'EXACT GENERATION READY'
       : missing
@@ -487,13 +535,11 @@ export function statusResponse(
       label: string,
       provider: string,
       provenance: string | undefined,
-      provenanceLabel: string,
     ): SourceStatusView => {
       if (health.storageUnavailable) {
         return {
           key, label, provider, tone: 'bad', state: 'Unavailable',
           value: 'Storage unavailable',
-          detail: 'FRANK could not read the prepared cache.',
         };
       }
       if (missing) {
@@ -504,9 +550,6 @@ export function statusResponse(
           tone: busy ? 'warn' : blocked ? 'bad' : 'neutral',
           state: busy ? 'Provider busy' : blocked ? 'Unavailable' : 'Waiting',
           value: 'No source data yet',
-          detail: busy
-            ? 'The prepared cache will retry on an operational cycle.'
-            : 'Waiting for the first complete forecast snapshot.',
         };
       }
 
@@ -517,19 +560,11 @@ export function statusResponse(
         : key === 'waves'
           ? cacheHealth.marineInstances?.waves
           : undefined;
-      const marineGridCandidate = key === 'water'
-        ? cacheHealth.marineGrid?.water
+      const marineGrid = key === 'water'
+        ? marineGridByKind.water
         : key === 'waves'
-          ? cacheHealth.marineGrid?.waves
+          ? marineGridByKind.waves
           : undefined;
-      const configuredLocation = FORECAST_LOCATION_BY_ID.get(location.id);
-      const marineGrid = marineInstance && configuredLocation
-        ? marineGridProvenanceFromUnknown(
-            marineGridCandidate,
-            marineInstance.collection,
-            configuredLocation.coordinate,
-          )
-        : undefined;
       // The shared manifest proves only that the catalogue listed a newer run.
       // It does not prove that this coordinate returned a complete, acceptable
       // position series, so the operator note is deliberately neutral and the
@@ -562,10 +597,6 @@ export function statusResponse(
       // a different path. It would have been dead code pretending to be a guard.
       //
       const awaitingRun = key !== 'weather' && marineRunOverdue.has(key);
-      const provenanceDetail = provenance
-        ? `${provenanceLabel} ${formatProviderTimestamp(provenance)}`
-        : `${provenanceLabel} not recorded`;
-      const gridDetail = marineGridDetail(marineGrid);
       const operationalState = busy
         ? 'Provider busy'
         : degraded
@@ -592,10 +623,6 @@ export function statusResponse(
           ? 'Grid cell changed'
           : `${operationalSourceState} · Grid cell changed`
         : operationalSourceState;
-      const sourceDetail = [
-        provenanceFault?.detail ?? provenanceDetail,
-        gridDetail,
-      ].filter((part): part is string => Boolean(part)).join(' · ');
       return {
         key, label, provider,
         tone: degraded || busy || provenanceFault || marineGrid?.changed
@@ -610,10 +637,10 @@ export function statusResponse(
         state: sourceState,
         // Every numeric column on this board is age since release: observed MET
         // issue time or estimated DMI completion time. The exact model run stays
-        // available in both the provider legend and this cell's title.
+        // available in both the provider legend and the collapsed grid
+        // provenance section below the board.
         value: provenanceFault?.value
           ?? (sourceAgeMs === null ? 'not recorded' : formatAge(sourceAgeMs)),
-        detail: sourceDetail,
       };
     };
 
@@ -623,33 +650,28 @@ export function statusResponse(
         'Weather',
         'MET Norway',
         cacheHealth.weatherLastModified,
-        'Forecast issued',
       ),
       requiredSource(
         'water',
         'Water level',
         'DMI DKSS',
         cacheHealth.marineInstances?.water?.id,
-        'Model run',
       ),
       requiredSource(
         'waves',
         'Waves',
         'DMI WAM',
         cacheHealth.marineInstances?.waves?.id,
-        'Model run',
       ),
       health.storageUnavailable
         ? {
             key: 'warnings', label: 'Warnings', provider: 'MeteoAlarm', tone: 'bad',
             state: 'Unavailable', value: 'Storage unavailable',
-            detail: 'FRANK could not read the prepared cache.',
           }
         : missing
           ? {
               key: 'warnings', label: 'Warnings', provider: 'MeteoAlarm', tone: 'neutral',
               state: 'Waiting', value: 'No snapshot yet',
-              detail: 'Warnings arrive with the first forecast snapshot.',
             }
           : {
               key: 'warnings',
@@ -664,10 +686,6 @@ export function statusResponse(
               value: location.warningCount && location.warningCount > 0
                 ? `${location.warningCount} active ${location.warningCount === 1 ? 'warning' : 'warnings'}`
                 : '—',
-              // Not escaped here: the shared card template escapes every detail,
-              // so escaping twice rendered an ampersand in a MeteoAlarm headline
-              // as &amp;amp;.
-              detail: location.warningsSummary ?? 'Polled with the forecast',
             },
     ];
     const overallTone = health.storageUnavailable || missing
@@ -697,12 +715,9 @@ export function statusResponse(
       .join('');
 
     const cell = (source: typeof sources[number]): string =>
-      // The exact provenance stamp ("Model run 2026-08-20 12:00 UTC") is what
-      // an operator checks against DMI's run table, so it must not be lost -
-      // but printed on every row it became repeated visual noise.
-      // It rides the cell as a title instead: available on demand, silent when
-      // not wanted.
-      `<td class="num ${source.tone === 'warn' || source.tone === 'bad' ? `tone-${source.tone}` : ''}" data-source="${source.key}" data-label="${escapeHtml(source.label)}" title="${escapeHtml(source.detail)}">`
+      // DMI grid provenance is visible in the collapsed section below the
+      // board; native title tooltips are not reliable on touch screens.
+      `<td class="num ${source.tone === 'warn' || source.tone === 'bad' ? `tone-${source.tone}` : ''}" data-source="${source.key}" data-label="${escapeHtml(source.label)}">`
       + `<span class="cell-value">${escapeHtml(source.value)}</span>`
       + (source.state !== HEALTHY_SOURCE_STATE
         ? noteLines(source.state)
@@ -716,7 +731,22 @@ export function statusResponse(
       location.warningsSummary,
     ].filter(Boolean).join(' · ');
 
-    return `<tbody class="board-group ${overallTone}" data-location="${escapeHtml(location.id)}">
+    const gridChanged = Boolean(marineGridDetails.water?.changed || marineGridDetails.waves?.changed);
+    const requestedGridCoordinate = configuredLocation
+      ? formatMarineGridCoordinate(configuredLocation.coordinate)
+      : marineGridDetails.water?.requested
+        ?? marineGridDetails.waves?.requested
+        ?? 'not recorded';
+    const marineGridRow = `<tbody class="board-group provenance-group${gridChanged ? ' warn' : ''}" data-grid-location="${escapeHtml(location.id)}">
+      <tr class="board-row">
+        <th scope="row" class="cell-name${gridChanged ? ' warn' : ''}">${escapeHtml(location.areaName)}</th>
+        <td class="num" data-label="Requested"><span class="cell-value">${escapeHtml(requestedGridCoordinate)}</span></td>
+        ${marineGridCell(marineGridDetails.water, 'Water returned')}
+        ${marineGridCell(marineGridDetails.waves, 'Waves returned')}
+      </tr>
+    </tbody>`;
+
+    return { card: `<tbody class="board-group ${overallTone}" data-location="${escapeHtml(location.id)}">
       <tr class="board-row">
         <th scope="row" class="cell-name">
           ${escapeHtml(location.areaName)}
@@ -732,8 +762,10 @@ export function statusResponse(
         ${sources.map(cell).join('')}
       </tr>
       ${note ? `<tr class="board-note ${overallTone}"><td colspan="7">${escapeHtml(note)}</td></tr>` : ''}
-    </tbody>`;
-  }).join('');
+    </tbody>`, grid: marineGridRow };
+  });
+  const locationCards = locationViews.map((view) => view.card).join('');
+  const marineGridRows = locationViews.map((view) => view.grid).join('');
 
   const rating: FrankStatusRating = health.ok && health.release.allLocationsReady
     ? 'safe'
@@ -1335,7 +1367,7 @@ export function statusResponse(
     </div>
     <!-- Which provider stands behind each column. The old card layout repeated
          these four names once per location; stated once they are a legend, not
-         noise. Hover a cell for that source's exact provenance stamp. -->
+         noise. DMI grid provenance is in the collapsed section below. -->
     <p class="board-legend">
       <span><b>Weather</b> MET Norway</span>
       <span><b>Water</b> DMI DKSS ${escapeHtml(marineRuns('water'))}</span>
@@ -1343,6 +1375,25 @@ export function statusResponse(
       <span><b>Warnings</b> MeteoAlarm</span>
     </p>
   </section>
+
+  <details class="notes grid-provenance">
+    <summary>DMI grid provenance</summary>
+    <div class="notes-content">
+      <div class="board-scroll">
+        <table class="board provenance-board">
+          <thead>
+            <tr>
+              <th scope="col">Location</th>
+              <th scope="col" class="num">Requested</th>
+              <th scope="col" class="num">Water returned</th>
+              <th scope="col" class="num">Waves returned</th>
+            </tr>
+          </thead>
+          ${marineGridRows}
+        </table>
+      </div>
+    </div>
+  </details>
 
   <details class="notes">
     <summary>How to read this instrument</summary>
@@ -1387,7 +1438,8 @@ export function statusResponse(
       <p>MET shows age since its observed forecast issue. DKSS and WAM show estimated age
       since release, derived from each model run and DMI's published completion delay; DMI
       can publish a few minutes either side of that estimate. The exact model run remains in
-      the provider legend and each cell title. Amber means FRANK is serving last-good data or
+      the provider legend, and the requested/returned grid points are in DMI grid provenance.
+      Amber means FRANK is serving last-good data or
       the relevant provider was busy. MeteoAlarm is advisory and has no separately persisted
       provider clock, so its card shows no numeric age rather than inventing an upstream
       status.</p>

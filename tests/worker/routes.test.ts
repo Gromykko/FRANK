@@ -538,7 +538,9 @@ describe('Worker route HTTP contract', () => {
     expect(body).toMatch(/<span><b>Water<\/b> DMI DKSS \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC<\/span>/);
     expect(body).toMatch(/<span><b>Waves<\/b> DMI WAM \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC<\/span>/);
     expect(body).toContain('<span><b>Warnings</b> MeteoAlarm</span>');
-    expect(body).toContain('Polled with the forecast');
+    // Source details now live in the collapsed DMI grid provenance section;
+    // no native tooltip is emitted on the status board.
+    expect(body).not.toContain('title="');
     // A real data table now, with header cells and row scopes - not the layout
     // table this assertion originally guarded against.
     expect(body).toContain('<table class="board">');
@@ -939,12 +941,21 @@ async function readInitializingPayload(
     const wavesCell = card.match(
       /<td class="num tone-warn" data-source="waves"[\s\S]*?<\/td>/,
     )?.[0] ?? '';
+    const gridSection = body.match(
+      /<details class="notes grid-provenance">[\s\S]*?<\/details>/,
+    )?.[0] ?? '';
 
     expect(health.ok).toBe(true);
     expect(wavesCell).toContain('Grid cell changed');
-    expect(wavesCell).toContain('DMI wam_dw');
-    expect(wavesCell).toContain('returned 55.870000, 9.933333');
-    expect(wavesCell).toContain('expected cell 55.860000, 9.916667');
+    expect(wavesCell).not.toContain('DMI wam_dw');
+    expect(wavesCell).not.toContain('title=');
+    expect(gridSection).toContain('<summary>DMI grid provenance</summary>');
+    expect(gridSection).toContain('data-grid-location="horsens"');
+    expect(gridSection).toContain('55.858000, 9.905000');
+    expect(gridSection).toContain('wam_dw 55.870000, 9.933333');
+    expect(gridSection).toContain('expected cell 55.860000, 9.916667');
+    expect(gridSection).toMatch(/<td class="num tone-warn" data-label="Waves returned">[\s\S]*?expected cell 55\.860000, 9\.916667/);
+    expect(body).not.toMatch(/<td[^>]*title="/);
     expect(wavesCell).not.toContain('Last-good fallback');
     expect(wavesCell).not.toContain('Unavailable');
 
@@ -1127,7 +1138,8 @@ async function readInitializingPayload(
     expect(body).toContain('30 min');
     // A 12:00Z run at 18:00 is the newest one due. Its release-clock ages are
     // 2h40 for DKSS (published completion +3h20) and 3h15 for WAM NSB (+2h45).
-    // The run identity remains the legend's job and the cell title's.
+    // The run identity remains in the provider legend; grid coordinates and
+    // distances live in the collapsed provenance section below the board.
     const provenanceCard = body.match(/<tbody class="board-group[^"]*" data-location="horsens">[\s\S]*?<\/tbody>/)?.[0] ?? '';
     const waterCell = provenanceCard.match(/<td class="num " data-source="water"[\s\S]*?<\/td>/)?.[0] ?? '';
     const wavesCell = provenanceCard.match(/<td class="num " data-source="waves"[\s\S]*?<\/td>/)?.[0] ?? '';
@@ -1136,19 +1148,19 @@ async function readInitializingPayload(
     expect(provenanceCard).not.toMatch(/cell-value">\d{2}:\d{2}Z/);
     expect(provenanceCard).toMatch(/class="num " data-source="water"/);
     expect(provenanceCard).toMatch(/class="num " data-source="waves"/);
-    // The run is still named where it belongs.
-    expect(provenanceCard).toContain('Model run 2026-08-20 12:00 UTC');
-    expect(body).toContain('Forecast issued 2026-08-20 17:30 UTC');
-    expect(body).not.toContain('Forecast issued 2026-08-20 17:30:00 UTC');
-    expect(body).toContain('Model run 2026-08-20 12:00 UTC');
-    expect(body).not.toContain('Model run 2026-08-20 12:00:00 UTC');
+    // The run is still named in the provider legend, where it is stated once
+    // rather than repeated as a cell tooltip for every source.
+    expect(body).toContain('<span><b>Water</b> DMI DKSS 2026-08-20 12:00 UTC</span>');
+    expect(body).toContain('<span><b>Waves</b> DMI WAM 2026-08-20 12:00 UTC</span>');
+    expect(body).not.toContain('Forecast issued 2026-08-20 17:30 UTC');
+    expect(body).not.toContain('Model run 2026-08-20 12:00 UTC');
     expect(body).toContain('Page rendered 2026-08-20 18:00:00 UTC');
     // The Warnings card must not invent a clock. It previously showed
     // `${formatAge(age.ageMs)} snapshot`, which was the Forecast age vital
     // relabelled as a warnings fact - two identical numbers, one of them
     // mislabelled. Warnings ride the forecast poll and have no age of their own.
     expect(body).toContain('—');
-    expect(body).toContain('Polled with the forecast');
+    expect(body).toContain('data-source="warnings"');
     expect(body).not.toContain('MeteoAlarm current');
     expect(body).not.toMatch(/\d+\s*min snapshot/);
   });
@@ -1262,7 +1274,8 @@ async function readInitializingPayload(
     const statusText = await statusResponseResult.text();
     expect(statusResponseResult.status).toBe(200);
     expect(statusText).toContain('Grid cell changed');
-    expect(statusText).toContain('returned 55.870000, 9.933333');
+    expect(statusText).toContain('dkss_idw 55.870000, 9.933333');
+    expect(statusText).toContain('2,215 m away');
   });
 
   it('drops malformed cached grid diagnostics without affecting forecast availability', async () => {
