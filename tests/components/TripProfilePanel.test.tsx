@@ -15,7 +15,7 @@ describe('TripProfilePanel localisation', () => {
     );
 
     expect([...container.querySelectorAll('.frank-mode-label')].map((node) => node.textContent))
-      .toEqual(['Begynder', 'Øvet', 'Avanceret', 'Egen']);
+      .toEqual(['Rolig', 'Mellem', 'Pro', 'Egen']);
   });
 
   it('opens a sourced About panel with the live IPP-aligned preset values', async () => {
@@ -38,9 +38,9 @@ describe('TripProfilePanel localisation', () => {
       });
 
       const about = host.querySelector('#trip-profile-info-pop')!;
-      expect(about.textContent).toContain('Beginner · IPP 2: maximum mean wind 5.0 m/s; maximum significant waves 0.50 m.');
-      expect(about.textContent).toContain('Intermediate · IPP 3: maximum mean wind 8.0 m/s; maximum significant waves 1.00 m.');
-      expect(about.textContent).toContain('Advanced · IPP 4: maximum mean wind 10.0 m/s; maximum significant waves 2.00 m.');
+      expect(about.textContent).toContain('Chill · IPP 2: maximum mean wind 5.0 m/s; maximum significant waves 0.50 m.');
+      expect(about.textContent).toContain('Medium · IPP 3: maximum mean wind 8.0 m/s; maximum significant waves 1.00 m.');
+      expect(about.textContent).toContain('Pro · IPP 4: maximum mean wind 10.0 m/s; maximum significant waves 2.00 m.');
       expect(about.textContent).toContain('not DKF safety guarantees or proof of skill');
       expect(about.textContent).toContain('Optional local wind sectors');
       expect(about.textContent).toContain('training and assessment conditions, not guaranteed safe conditions');

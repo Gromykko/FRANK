@@ -6,7 +6,7 @@ import type { ForecastLocation } from './locationTypes';
 // Worker can consume the pure definitions without pulling browser-only code.
 export type { ForecastLocation, WindSector } from './locationTypes';
 
-const FORECAST_LOCATIONS = locations as ForecastLocation[];
+export const FORECAST_LOCATIONS = locations as ForecastLocation[];
 // Deterministic fallback when neither a saved choice nor a build-time default
 // names a configured location.
 export const DEFAULT_LOCATION_ID = 'horsens';

@@ -1,6 +1,6 @@
 import { Fragment, memo, useState, useMemo, useRef } from 'react';
 import { AlertTriangle, CalendarClock, Check, Share2, Sunset } from 'lucide-react';
-import type { DisplayStatus } from '../features/safety/analyzeSafetyConditions';
+import type { DisplayStatus, SafetyAnalysis } from '../features/safety/analyzeSafetyConditions';
 import { sunsetCutoffFor } from '../features/planner/findLaunchWindows';
 import type { LaunchWindow } from '../features/planner/findLaunchWindows';
 import { blockHourRange } from '../features/forecast/blockHours';
@@ -14,17 +14,22 @@ import { formatDateMedium, formatDateShort, formatTime, formatWeekday, isSameLoc
 
 interface PaddlePlannerProps {
   data: HourlyData[];
+  // Canonical translated analyses from App. Amber cards use the selected
+  // sample's structured reasons so exact headroom is visible in the card,
+  // rather than somewhere off-screen after the user opens it.
+  analyses?: SafetyAnalysis[];
   // DisplayStatus: with every check off there is no verdict, and those
   // hours render neutral rather than being painted amber.
   statuses: DisplayStatus[];
   // No personal limits are switched on, so the empty list below is a refusal to
   // recommend rather than a report about conditions.
   limitsOff: boolean;
-  // This filter can starve the list while within-limit hours still exist. Name it in
+  // This filter can starve the list while qualifying hours still exist. Name it in
   // the empty state so the message points at the knob that is actually binding
   // instead of "your criteria", which is every knob at once.
   minDuration: number;
   windows: LaunchWindow[];
+  nearLimitWindows?: LaunchWindow[];
   warnings?: WeatherWarning[];
   sunrises: string[];
   sunsets: string[];
@@ -34,8 +39,8 @@ interface PaddlePlannerProps {
 
 // One launch-window bar on a day row of the calendar Gantt (a window crossing
 // midnight becomes one bar per day). Fractions are hours 0–24 on the day axis.
-// Windows only ever contain within-limit hours (findLaunchWindows accepts
-// rating === 'safe' exclusively), so a bar needs no per-hour status detail.
+// Primary windows contain green hours. Amber alternatives carry nearLimit so
+// the calendar cannot present them as green recommendations.
 interface CalBar {
   id: string;
   firstIdx: number;
@@ -93,7 +98,7 @@ interface CalDay {
 
 // memo: App re-renders on a 60s heartbeat; the planner grid/list gets
 // identity-stable props, so skip the re-render entirely.
-export default memo(function PaddlePlanner({ data, statuses, windows, warnings, sunrises, sunsets, onSelectIndex, startIndex, limitsOff, minDuration }: PaddlePlannerProps) {
+export default memo(function PaddlePlanner({ data, analyses = [], statuses, windows, nearLimitWindows = [], warnings, sunrises, sunsets, onSelectIndex, startIndex, limitsOff, minDuration }: PaddlePlannerProps) {
   // Context consumption inside the memo'd body — a language change re-renders
   // this component even though its props are identity-stable.
   const { lang, t } = useLang();
@@ -362,6 +367,9 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
   // while still being counted, so the header could read "(4)" above three
   // cards. Filter once and drive both the count and the list from it.
   const renderableWindows = windows.filter((slot) => data[slot.startIndex] && data[slot.endIndex]);
+  const renderableNearLimitWindows = nearLimitWindows.filter(
+    (slot) => data[slot.startIndex] && data[slot.endIndex],
+  );
 
   const windowsPanel = (
     <div className="panel launch-panel">
@@ -395,8 +403,10 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                   // contradiction of the header directly above it, and it
                   // credits a comparison that never happened.
                   ? t('Your personal limits are switched off, so there is nothing to measure the forecast against and no window can be recommended. Turn a limit back on to see suggested windows.')
+                  : renderableNearLimitWindows.length > 0
+                    ? t('No green launch windows fit every check. Near-limit alternatives are listed below for you to review.')
                   : statuses.some((s, i) => i >= startIndex && s === 'safe')
-                    ? t('Some hours are within your limits, but never {0} in a row. Lower the minimum duration in Advanced settings, or try another trip mode.', formatDuration(t, minDuration))
+                    ? t('Some hours are within your limits, but never {0} in a row. Lower the minimum duration in Your Limits, or try another trip mode.', formatDuration(t, minDuration))
                     : t('No launch windows fit all your selected checks yet. Open an hour to see what needs attention, or check again after the forecast updates.')}
               </div>
             ) : viewMode === 'list' ? (
@@ -668,6 +678,66 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                   </div>
                 )}
               </div>
+            )}
+
+            {renderableNearLimitWindows.length > 0 && (
+              <section className="near-limit-windows" aria-labelledby="near-limit-windows-title">
+                <div className="near-limit-windows-head">
+                  <h3 id="near-limit-windows-title">
+                    <AlertTriangle size={15} /> {t('Check before launch')} ({renderableNearLimitWindows.length})
+                  </h3>
+                  <p>{t('These periods are not green launch windows. At least one forecast value has reached its automatic check point. Each card shows the exact headroom; open it to see the full forecast.')}</p>
+                </div>
+                <div className="near-limit-window-list">
+                  {renderableNearLimitWindows.map((slot) => {
+                    const startHour = data[slot.startIndex];
+                    const endHour = data[slot.endIndex];
+                    if (!startHour || !endHour) return null;
+                    const fromMs = slot.daylightStartMs
+                      ?? slot.effectiveStartMs
+                      ?? Date.parse(startHour.time);
+                    const toMs = slot.daylightEndMs
+                      ?? (slot.lowConfidence
+                        ? Date.parse(endHour.time) + (endHour.blockSpanHours ?? 1) * 3_600_000
+                        : Date.parse(endHour.time));
+                    if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) return null;
+                    const endLabel = isSameLocationDay(fromMs, toMs)
+                      ? formatTime(toMs)
+                      : `${formatDateShort(toMs)} ${formatTime(toMs)}`;
+                    const focusIndex = slot.reviewIndex ?? slot.startIndex;
+                    const nearLimitReasons = (analyses[focusIndex]?.reasons ?? [])
+                      .filter((reason) => reason.kind === 'near-limit');
+
+                    return (
+                      <button
+                        key={`near-${slot.startIndex}-${slot.endIndex}`}
+                        type="button"
+                        className="near-limit-window"
+                        onClick={() => selectAndReveal(focusIndex)}
+                      >
+                        <span className="near-limit-window-date">{formatDateMedium(fromMs)}</span>
+                        <strong>{formatTime(fromMs)}–{endLabel}</strong>
+                        <span className="near-limit-window-duration">{formatDuration(t, slot.duration)}</span>
+                        {slot.lowConfidence && (
+                          <span className="tide-tag">
+                            {t(outlookWindowMissingGust(data, slot)
+                              ? 'outlook · no gust forecast'
+                              : 'outlook · more uncertain forecast')}
+                          </span>
+                        )}
+                        {nearLimitReasons.length > 0 && (
+                          <span className="near-limit-window-details">
+                            {nearLimitReasons.map((reason, index) => (
+                              <span key={`${focusIndex}-${index}`}>{reason.text}</span>
+                            ))}
+                          </span>
+                        )}
+                        <span className="sr-only"> {t('Open this period in the full forecast.')}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
             )}
           </div>
         </div>

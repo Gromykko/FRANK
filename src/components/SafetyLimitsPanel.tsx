@@ -5,7 +5,7 @@ import SafetyManualModal from './SafetyManualModal';
 import CustomSelect from './CustomSelect';
 import CompassRose from './CompassRose';
 import type { SafetySettings } from '../hooks/useSettings';
-import { GUST_FACTOR } from '../features/safety/presets';
+import { GUST_FACTOR, getNearLimitThreshold } from '../features/safety/presets';
 import { CURRENT_LOCATION } from '../config/locations';
 import type { WindSector } from '../config/locations';
 import { clampNumber, roundToDecimals } from '../utils/number';
@@ -50,12 +50,13 @@ interface StepperProps {
   decimals: number;
   unit: string;
   label: string;
+  announcement?: string;
   onChange: (value: number) => void;
   disabled?: boolean;
   compact?: boolean;
 }
 
-function Stepper({ value, min, max, step, decimals, unit, label, onChange, disabled, compact = false }: StepperProps) {
+function Stepper({ value, min, max, step, decimals, unit, label, announcement, onChange, disabled, compact = false }: StepperProps) {
   const { t } = useLang();
   const nudge = (dir: 1 | -1) => {
     // Snap onto the step grid so repeated 0.05 steps never drift into
@@ -80,6 +81,7 @@ function Stepper({ value, min, max, step, decimals, unit, label, onChange, disab
       <div className="limit-value" aria-live="polite" aria-atomic="true">
         <span className="limit-value-num">{value.toFixed(decimals)}</span>
         <small>{unit}</small>
+        {announcement && <span className="sr-only">. {announcement}</span>}
       </div>
       <button
         type="button"
@@ -103,7 +105,7 @@ interface ZoneBarProps {
   leftLabel: string;
   midLabel?: string;
   rightLabel: string;
-  maximumOnly?: boolean;
+  showMaximumMarker?: boolean;
 }
 
 // A read-only gauge. The steppers above are the input, so this stays a thin
@@ -118,13 +120,13 @@ function ZoneBar({
   leftLabel,
   midLabel,
   rightLabel,
-  maximumOnly = false,
+  showMaximumMarker = false,
 }: ZoneBarProps) {
   const pct = (v: number) => clampNumber(((v - min) / (max - min)) * 100, 0, 100, 0);
   return (
     <div className="limit-zone">
       <div
-        className={`zone-bar ${invert ? 'is-inverted' : ''}${maximumOnly ? ' is-maximum' : ''}`}
+        className={`zone-bar ${invert ? 'is-inverted' : ''}${showMaximumMarker ? ' has-maximum' : ''}`}
         aria-hidden="true"
         style={{ '--zone-a': `${pct(cautionStart)}%`, '--zone-b': `${pct(cautionEnd)}%` } as React.CSSProperties}
       />
@@ -141,24 +143,33 @@ interface MaximumBarProps {
   min: number;
   max: number;
   maximum: number;
+  decimals: number;
+  unit: string;
   leftLabel: string;
   rightLabel: string;
 }
 
-// Wind and waves have one inclusive maximum. The neutral marker covers the
-// exact boundary: green ends there and red begins beyond it, matching the
-// verdict's strict-greater-than comparison.
-function MaximumBar({ min, max, maximum, leftLabel, rightLabel }: MaximumBarProps) {
+// Wind and waves keep one editable maximum. The caution point is derived, so
+// the read-only gauge and sentence explain all three states without exposing a
+// second control.
+function MaximumBar({ min, max, maximum, decimals, unit, leftLabel, rightLabel }: MaximumBarProps) {
+  const { t } = useLang();
+  const cautionAt = getNearLimitThreshold(maximum, decimals);
   return (
-    <ZoneBar
-      min={min}
-      max={max}
-      cautionStart={maximum}
-      cautionEnd={maximum}
-      leftLabel={leftLabel}
-      rightLabel={rightLabel}
-      maximumOnly
-    />
+    <div className="maximum-zone">
+      <ZoneBar
+        min={min}
+        max={max}
+        cautionStart={cautionAt}
+        cautionEnd={maximum}
+        leftLabel={leftLabel}
+        rightLabel={rightLabel}
+        showMaximumMarker
+      />
+      <p className="limit-boundary-summary">
+        {t('Check from {0} {1} · Not recommended above {2} {1}', cautionAt.toFixed(decimals), unit, maximum.toFixed(decimals))}
+      </p>
+    </div>
   );
 }
 
@@ -197,6 +208,9 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
   };
 
   const derivedGustLimit = roundToDecimals(settings.windLimit * GUST_FACTOR, 1);
+  const derivedGustCautionAt = getNearLimitThreshold(derivedGustLimit, 1);
+  const windCautionAt = getNearLimitThreshold(settings.windLimit, 1);
+  const waveCautionAt = getNearLimitThreshold(settings.waveLimit, 2);
   const tempHint = t(
     'Check below {0}°C · Not recommended at or below {1}°C',
     settings.waterTempTakeCareBelow,
@@ -269,7 +283,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
         <div className="settings-body">
 
           <p className="settings-autosave-note">
-            {t('Changes apply immediately and switch you to Custom mode. Pick a preset in the Trip Profile at the top (Beginner, Intermediate, Advanced) to go back.')}
+            {t('Changes apply immediately and switch you to Custom mode. Pick Chill, Medium, or Pro in the Trip Profile at the top to go back.')}
           </p>
 
           <div className="limit-cards">
@@ -297,19 +311,25 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
                 min={0.5} max={25} step={0.5} decimals={1}
                 unit={t('m/s wind')}
                 label={t('Maximum wind')}
+                announcement={t(
+                  'Wind check from {0} m/s. If gust checking is on, gusts are checked from {1} m/s with a derived maximum of {2} m/s.',
+                  windCautionAt.toFixed(1), derivedGustCautionAt.toFixed(1), derivedGustLimit.toFixed(1),
+                )}
                 onChange={windLimit => updateCriteria({ windLimit })}
                 disabled={!settings.enableWindSpeed}
               />
               <MaximumBar
                 min={0} max={25}
                 maximum={settings.windLimit}
+                decimals={1}
+                unit={t('m/s')}
                 leftLabel={t('0 calm')}
                 rightLabel={t('25 storm')}
               />
               <div className={`limit-caution-row has-toggle ${settings.enableWindSpeed ? '' : 'is-off'}`}>
                 <div className="limit-caution-copy">
                   <span className="limit-caution-name">{t('Include forecast gusts')}</span>
-                  <span className="limit-caution-hint">{t('Derived maximum {0} m/s ({1}× the wind maximum).', derivedGustLimit.toFixed(1), GUST_FACTOR)}</span>
+                  <span className="limit-caution-hint">{t('Check from {0} m/s · derived maximum {1} m/s ({2}× the wind maximum).', derivedGustCautionAt.toFixed(1), derivedGustLimit.toFixed(1), GUST_FACTOR)}</span>
                 </div>
                 <ToggleSwitch
                   small
@@ -344,12 +364,15 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
                 min={0.1} max={3.0} step={0.05} decimals={2}
                 unit={t('m waves')}
                 label={t('Maximum waves')}
+                announcement={t('Wave check from {0} m.', waveCautionAt.toFixed(2))}
                 onChange={waveLimit => updateCriteria({ waveLimit })}
                 disabled={!settings.enableWaveHeight}
               />
               <MaximumBar
                 min={0} max={3}
                 maximum={settings.waveLimit}
+                decimals={2}
+                unit={t('m')}
                 leftLabel={t('0 flat')}
                 rightLabel={t('3 rough')}
               />
@@ -375,6 +398,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
                 value={settings.waterTempTakeCareBelow}
                 min={6} max={25} step={1} decimals={0}
                 unit={t('°C water')} label={t('water temperature check boundary')}
+                announcement={tempHint}
                 onChange={waterTempTakeCareBelow => updateCriteria({
                   waterTempTakeCareBelow,
                   // Keep one whole control step between the boundaries so the
@@ -402,6 +426,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
                   value={settings.waterTempDangerBelow}
                   min={5} max={settings.waterTempTakeCareBelow - 1} step={1} decimals={0}
                   unit={t('°C water')} label={t('water temperature Not recommended boundary')}
+                  announcement={tempHint}
                   onChange={waterTempDangerBelow => updateCriteria({ waterTempDangerBelow })}
                   disabled={!settings.enableWaterTemp}
                 />
@@ -410,56 +435,22 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
 
           </div>
 
+          <p className="settings-headroom-note">
+            {t("FRANK calculates each Check before launch point at 80% of the wind, gust, wave, or active local-direction maximum, then rounds it to match the forecast. This is FRANK's own headroom rule, not an official DKF or IPP threshold.")}
+          </p>
+
           <button
             type="button"
             className="advanced-toggle"
             aria-expanded={advancedOpen}
             onClick={() => setAdvancedOpen(!advancedOpen)}
           >
-            <span>{t('Advanced — duration, daylight & wind sectors')}</span>
+            <span>{t('Optional local wind sectors')}</span>
             {advancedOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
           </button>
 
           {advancedOpen && (
             <div className="advanced-body">
-
-              <div className="advanced-row">
-                <div className="advanced-row-label">
-                  <Clock size={18} className="setting-icon" />
-                  <div className="limit-titles">
-                    <span className="limit-name">{t('Min Duration')}</span>
-                    <span className="limit-hint">{t('Shortest usable launch window')}</span>
-                  </div>
-                </div>
-                <CustomSelect
-                  ariaLabel={t('Min Duration')}
-                  value={settings.minDuration}
-                  onChange={val => updateCriteria({ minDuration: val })}
-                  options={[
-                    { value: 1, label: t('1 hour') },
-                    { value: 2, label: t('{0} hours', 2) },
-                    { value: 3, label: t('{0} hours', 3) },
-                    { value: 4, label: t('{0} hours', 4) },
-                    { value: 6, label: t('{0} hours', 6) }
-                  ]}
-                />
-              </div>
-
-              <div className="advanced-row">
-                <div className="advanced-row-label">
-                  <Sun size={18} className="setting-icon is-sun" />
-                  <div className="limit-titles">
-                    <span className="limit-name">{t('Daylight Only')}</span>
-                    <span className="limit-hint">{t('Night hours need a check before launch')}</span>
-                  </div>
-                </div>
-                <ToggleSwitch
-                  checked={settings.daylightOnly}
-                  onChange={checked => updateCriteria({ daylightOnly: checked })}
-                  label={t('Daylight Only')}
-                />
-              </div>
-
               <div className={`advanced-group ${settings.enableWindSpeed && settings.enableCustomWindDirs ? '' : 'is-off'}`}>
                 <div className="advanced-row">
                   <div className="advanced-row-label">
@@ -489,6 +480,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
                       <div className="sector-list">
                         {windSectors.map((sector) => {
                           const cap = sectorCap(sector);
+                          const cautionAt = getNearLimitThreshold(cap.maximumAt, 1);
                           const bearing = compassPoint(sectorMidBearing(sector.min, sector.max));
                           return (
                             <div key={sector.id} className={`sector-block exposure-${sector.exposure}`}>
@@ -501,6 +493,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
                               <div className="limit-caution-row">
                                 <div className="limit-caution-copy">
                                   <span className="limit-caution-name">{t('Maximum wind')}</span>
+                                  <span className="limit-caution-hint">{t('Check from {0} m/s · maximum {1} m/s', cautionAt.toFixed(1), cap.maximumAt.toFixed(1))}</span>
                                 </div>
                                 <Stepper
                                   compact
@@ -526,6 +519,47 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
 
             </div>
           )}
+
+          <section className="planning-options" aria-labelledby="planning-options-title">
+            <h3 className="planning-options-title" id="planning-options-title">{t('Launch-window settings')}</h3>
+
+            <div className="advanced-row">
+              <div className="advanced-row-label">
+                <Clock size={18} className="setting-icon" />
+                <div className="limit-titles">
+                  <span className="limit-name">{t('Min Duration')}</span>
+                  <span className="limit-hint">{t('Shortest usable launch window')}</span>
+                </div>
+              </div>
+              <CustomSelect
+                ariaLabel={t('Min Duration')}
+                value={settings.minDuration}
+                onChange={val => updateCriteria({ minDuration: val })}
+                options={[
+                  { value: 1, label: t('1 hour') },
+                  { value: 2, label: t('{0} hours', 2) },
+                  { value: 3, label: t('{0} hours', 3) },
+                  { value: 4, label: t('{0} hours', 4) },
+                  { value: 6, label: t('{0} hours', 6) }
+                ]}
+              />
+            </div>
+
+            <div className="advanced-row">
+              <div className="advanced-row-label">
+                <Sun size={18} className="setting-icon is-sun" />
+                <div className="limit-titles">
+                  <span className="limit-name">{t('Daylight Only')}</span>
+                  <span className="limit-hint">{t('Night hours need a check before launch')}</span>
+                </div>
+              </div>
+              <ToggleSwitch
+                checked={settings.daylightOnly}
+                onChange={checked => updateCriteria({ daylightOnly: checked })}
+                label={t('Daylight Only')}
+              />
+            </div>
+          </section>
 
         </div>
       )}

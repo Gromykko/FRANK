@@ -38,6 +38,9 @@ export interface SafetyReason {
   // 'none' is a statement of fact carrying no verdict - used only where the
   // app has stopped judging.
   severity: DisplayStatus;
+  // Structured marker used by the planner to keep a pure proximity warning
+  // separate from other caution states such as fog, night, or missing data.
+  kind?: 'near-limit';
 }
 
 type VerdictReason = SafetyReason & { severity: SafetyRating };
@@ -61,7 +64,7 @@ export interface SafetyAnalysisContext {
 }
 
 import type { SafetySettings } from './presets';
-import { GUST_FACTOR } from './presets';
+import { GUST_FACTOR, getNearLimitThreshold } from './presets';
 import { READING_DECIMALS, roundToDecimals } from '../../utils/number';
 import { interpolate } from '../../i18n/interpolate';
 import type { Translate } from '../../i18n/interpolate';
@@ -150,8 +153,12 @@ export function analyzeSafetyConditions(
   // returned early, so a rule that CAN run (a gale) still gets to speak.
   const missing: string[] = [];
 
-  const addReason = (severity: SafetyRating, text: string): VerdictReason => {
-    const reason: VerdictReason = { severity, text };
+  const addReason = (
+    severity: SafetyRating,
+    text: string,
+    kind?: SafetyReason['kind'],
+  ): VerdictReason => {
+    const reason: VerdictReason = { severity, text, ...(kind ? { kind } : {}) };
     reasons.push(reason);
     if (severity === 'danger') rating = 'danger';
     else if (severity === 'caution' && rating !== 'danger') rating = 'caution';
@@ -185,23 +192,46 @@ export function analyzeSafetyConditions(
     sectorSpecific: boolean;
   };
   let generalWindCandidate: SustainedWindCandidate | null = null;
-  // The profile figures are documented as conditions "up to" the maximum, so
-  // equality remains within the limit. Compare the rounded reading users see.
-  if (enableWindSpeed && hasWindSpeed && windSpeedForSafety > settings.windLimit) {
-    generalWindCandidate = {
-      reason: addReason('danger', translate(
-        'Wind speed: {0} m/s ({1}). Above your maximum of {2} m/s.',
-        windSpeedForSafety.toFixed(1), windLabelForSafety, settings.windLimit.toFixed(1),
-      )),
-      threshold: settings.windLimit,
-      sectorSpecific: false,
-    };
+  // The selected value is the maximum. The automatic caution point is 80%,
+  // rounded to displayed precision, and exposes shrinking headroom without
+  // inventing another user setting. Equality is caution; only a displayed
+  // rounded excess is danger.
+  if (enableWindSpeed && hasWindSpeed) {
+    const windMaximum = roundToDecimals(settings.windLimit, READING_DECIMALS.windSpeed);
+    const windCautionAt = getNearLimitThreshold(windMaximum, READING_DECIMALS.windSpeed);
+    if (windSpeedForSafety > windMaximum) {
+      generalWindCandidate = {
+        reason: addReason('danger', translate(
+          'Wind speed: {0} m/s ({1}). Above your maximum of {2} m/s.',
+          windSpeedForSafety.toFixed(1), windLabelForSafety, windMaximum.toFixed(1),
+        )),
+        threshold: windMaximum,
+        sectorSpecific: false,
+      };
+    } else if (windSpeedForSafety >= windCautionAt) {
+      const headroom = roundToDecimals(windMaximum - windSpeedForSafety, READING_DECIMALS.windSpeed);
+      const text = headroom === 0
+        ? translate(
+          'Wind speed: {0} m/s ({1}). At your maximum of {2} m/s.',
+          windSpeedForSafety.toFixed(1), windLabelForSafety, windMaximum.toFixed(1),
+        )
+        : translate(
+          'Wind speed: {0} m/s ({1}). {2} m/s below your maximum of {3} m/s.',
+          windSpeedForSafety.toFixed(1), windLabelForSafety, headroom.toFixed(1), windMaximum.toFixed(1),
+        );
+      generalWindCandidate = {
+        reason: addReason('caution', text, 'near-limit'),
+        threshold: windMaximum,
+        sectorSpecific: false,
+      };
+    }
   }
 
   // Gusts are a sub-limit of the wind rule, so turning wind off also silences
   // them. Dividing the forecast gust by GUST_FACTOR and comparing that effective
   // wind with the mean-wind maximum is equivalent to the single derived maximum
-  // below. It needs no second user setting and never creates an amber band.
+  // below. It needs no second user setting; the same automatic caution point
+  // applies so gust proximity cannot stay hidden while mean wind is green.
   const enableWindGust = enableWindSpeed && (settings.enableWindGust ?? true);
   // MET issues no gust forecast for the longer-range blocks, so an absent gust
   // there is a known limit of the source, not a hole in this hour's data.
@@ -217,12 +247,25 @@ export function analyzeSafetyConditions(
   if (enableWindGust && hasWindGust) {
     // Beaufort describes sustained/mean wind, not a short gust. Keep the gust
     // numeric instead of assigning it a misleading Beaufort force name.
-    const gustMaximum = roundToDecimals(settings.windLimit * GUST_FACTOR, 1);
+    const gustMaximum = roundToDecimals(settings.windLimit * GUST_FACTOR, READING_DECIMALS.windGust);
+    const gustCautionAt = getNearLimitThreshold(gustMaximum, READING_DECIMALS.windGust);
     if (gustForSafety > gustMaximum) {
       gustWindReason = addReason('danger', translate(
         'Wind gusts: {0} m/s. Above the {1} m/s maximum derived from your wind limit.',
         gustForSafety.toFixed(1), gustMaximum.toFixed(1),
       ));
+    } else if (gustForSafety >= gustCautionAt) {
+      const headroom = roundToDecimals(gustMaximum - gustForSafety, READING_DECIMALS.windGust);
+      const text = headroom === 0
+        ? translate(
+          'Wind gusts: {0} m/s. At the {1} m/s maximum derived from your wind limit.',
+          gustForSafety.toFixed(1), gustMaximum.toFixed(1),
+        )
+        : translate(
+          'Wind gusts: {0} m/s. {1} m/s below the {2} m/s maximum derived from your wind limit.',
+          gustForSafety.toFixed(1), headroom.toFixed(1), gustMaximum.toFixed(1),
+        );
+      gustWindReason = addReason('caution', text, 'near-limit');
     }
   }
 
@@ -245,13 +288,33 @@ export function analyzeSafetyConditions(
   const windDir = ((Math.round(data.windDirection) % 360) + 360) % 360;
   for (const sector of sectors) {
     if (!inSector(windDir, sector.min, sector.max)) continue;
-    if (windSpeedForSafety > sector.maximumAt) {
+    const sectorMaximum = roundToDecimals(sector.maximumAt, READING_DECIMALS.windSpeed);
+    const sectorCautionAt = getNearLimitThreshold(sectorMaximum, READING_DECIMALS.windSpeed);
+    if (windSpeedForSafety > sectorMaximum) {
       sectorWindCandidates.push({
         reason: addReason('danger', translate(
           'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is above your {4} m/s maximum for this direction.',
           windSpeedForSafety.toFixed(1), windLabelForSafety, translate(sector.label), windDir,
-          sector.maximumAt.toFixed(1))),
-        threshold: sector.maximumAt,
+          sectorMaximum.toFixed(1))),
+        threshold: sectorMaximum,
+        sectorSpecific: true,
+      });
+    } else if (windSpeedForSafety >= sectorCautionAt) {
+      const headroom = roundToDecimals(sectorMaximum - windSpeedForSafety, READING_DECIMALS.windSpeed);
+      const text = headroom === 0
+        ? translate(
+          'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is at your {4} m/s maximum for this direction.',
+          windSpeedForSafety.toFixed(1), windLabelForSafety, translate(sector.label), windDir,
+          sectorMaximum.toFixed(1),
+        )
+        : translate(
+          'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is {4} m/s below your {5} m/s maximum for this direction.',
+          windSpeedForSafety.toFixed(1), windLabelForSafety, translate(sector.label), windDir,
+          headroom.toFixed(1), sectorMaximum.toFixed(1),
+        );
+      sectorWindCandidates.push({
+        reason: addReason('caution', text, 'near-limit'),
+        threshold: sectorMaximum,
         sectorSpecific: true,
       });
     }
@@ -270,6 +333,12 @@ export function analyzeSafetyConditions(
   ];
   const preferredSustainedWindCandidate = sustainedWindCandidates.length > 0
     ? sustainedWindCandidates.reduce((best, candidate) => {
+      const severityRank: Record<SafetyRating, number> = { safe: 0, caution: 1, danger: 2 };
+      if (candidate.reason.severity !== best.reason.severity) {
+        return severityRank[candidate.reason.severity] > severityRank[best.reason.severity]
+          ? candidate
+          : best;
+      }
       if (candidate.threshold !== best.threshold) {
         return candidate.threshold < best.threshold ? candidate : best;
       }
@@ -315,14 +384,28 @@ export function analyzeSafetyConditions(
   const enableWaveHeight = settings.enableWaveHeight ?? true;
   const hasWaveHeight = isNonnegativeReading(waveForSafety);
   if (enableWaveHeight && !hasWaveHeight) missing.push('wave height');
-  if (enableWaveHeight && hasWaveHeight && waveForSafety > settings.waveLimit) {
+  if (enableWaveHeight && hasWaveHeight) {
     const waveLabel = translate(getWaveHeightLabel(waveForSafety));
-    // Like wind, the published profile wording is "up to": equality remains
-    // within the selected limit, and only a displayed rounded excess fails it.
-    addReason('danger', translate(
-      'Wave height: {0} m ({1}). Above your maximum of {2} m.',
-      waveForSafety.toFixed(2), waveLabel, settings.waveLimit.toFixed(2),
-    ));
+    const waveMaximum = roundToDecimals(settings.waveLimit, READING_DECIMALS.waveHeight);
+    const waveCautionAt = getNearLimitThreshold(waveMaximum, READING_DECIMALS.waveHeight);
+    if (waveForSafety > waveMaximum) {
+      addReason('danger', translate(
+        'Wave height: {0} m ({1}). Above your maximum of {2} m.',
+        waveForSafety.toFixed(2), waveLabel, waveMaximum.toFixed(2),
+      ));
+    } else if (waveForSafety >= waveCautionAt) {
+      const headroom = roundToDecimals(waveMaximum - waveForSafety, READING_DECIMALS.waveHeight);
+      const text = headroom === 0
+        ? translate(
+          'Wave height: {0} m ({1}). At your maximum of {2} m.',
+          waveForSafety.toFixed(2), waveLabel, waveMaximum.toFixed(2),
+        )
+        : translate(
+          'Wave height: {0} m ({1}). {2} m below your maximum of {3} m.',
+          waveForSafety.toFixed(2), waveLabel, headroom.toFixed(2), waveMaximum.toFixed(2),
+        );
+      addReason('caution', text, 'near-limit');
+    }
   }
 
   // MET's native symbol_code decides the condition and its official English
@@ -406,10 +489,10 @@ export function analyzeSafetyConditions(
     if (unchecked.length > 0) {
       addReason('safe', translate(
         gustUnavailableForOutlook
-          ? 'Nothing in the available outlook readings crossed your selected limits: {0}, {1}, {2}. Gusts are not forecast for this longer-range period. Not checked: {3}.'
+          ? 'No available outlook reading triggered a check: {0}, {1}, {2}. Gusts are not forecast for this longer-range period. Not checked: {3}.'
           : data.blockSpanHours
-            ? 'Nothing you are still checking flagged the outlook: {0}, {1}, {2}. Not checked: {3}.'
-            : 'Nothing you are still checking flagged this: {0}, {1}, {2}. Not checked: {3}.',
+            ? 'No enabled outlook check was triggered: {0}, {1}, {2}. Not checked: {3}.'
+            : 'No enabled check was triggered: {0}, {1}, {2}. Not checked: {3}.',
         windDescription,
         seaState,
         weatherDescription,
@@ -418,10 +501,10 @@ export function analyzeSafetyConditions(
     } else {
       addReason('safe', translate(
         gustUnavailableForOutlook
-          ? 'The available outlook readings are within your limits: {0}, {1}, {2}. Gusts are not forecast for this longer-range period.'
+          ? 'No available outlook reading triggered a check: {0}, {1}, {2}. Gusts are not forecast for this longer-range period.'
           : data.blockSpanHours
-            ? 'The outlook is within your limits: {0}, {1}, {2}.'
-            : 'Everything is within your limits: {0}, {1}, {2}.',
+            ? 'No outlook check was triggered: {0}, {1}, {2}.'
+            : 'No check was triggered: {0}, {1}, {2}.',
         windDescription,
         seaState,
         weatherDescription,
@@ -430,4 +513,10 @@ export function analyzeSafetyConditions(
   }
 
   return { rating, reasons };
+}
+
+export function isNearLimitOnlyAnalysis(analysis: SafetyAnalysis): boolean {
+  return analysis.rating === 'caution'
+    && analysis.reasons.length > 0
+    && analysis.reasons.every((reason) => reason.severity === 'caution' && reason.kind === 'near-limit');
 }

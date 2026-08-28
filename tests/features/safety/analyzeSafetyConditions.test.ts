@@ -4,6 +4,7 @@ import {
   analyzeSafetyConditions,
   getWaveHeightLabel,
   getWindSpeedLabel,
+  isNearLimitOnlyAnalysis,
   resolveSectors,
 } from '../../../src/features/safety/analyzeSafetyConditions';
 import { CURRENT_LOCATION } from '../../../src/config/locations';
@@ -49,10 +50,17 @@ describe('analyzeSafetyConditions', () => {
     expect(result.rating).toBe('safe');
   });
 
-  it('keeps wind at the documented maximum within limits', () => {
+  it('marks wind at the selected maximum as near-limit caution', () => {
     const data = { ...baseData, windSpeed: 8 };
     const result = analyzeSafetyConditions(data, baseSettings);
-    expect(result.rating).toBe('safe');
+    expect(result).toEqual({
+      rating: 'caution',
+      reasons: [{
+        severity: 'caution',
+        kind: 'near-limit',
+        text: 'Wind speed: 8.0 m/s (Fresh Breeze). At your maximum of 8.0 m/s.',
+      }],
+    });
   });
 
   it('flags danger when wind speed exceeds the maximum', () => {
@@ -247,7 +255,7 @@ describe('safety rule enable toggles', () => {
   it('keeps the plain all-clear when every rule is actually doing its job', () => {
     const result = analyzeSafetyConditions(baseData, baseSettings);
     const text = result.reasons.map((r) => r.text).join(' ');
-    expect(text).toContain('within your limits');
+    expect(text).toContain('No check was triggered');
     expect(text).not.toContain('Not checked');
   });
 
@@ -335,10 +343,11 @@ describe('gust maximum math', () => {
   // counts the same gustiness twice. Measured against the old thresholds, gusts
   // alone made 51% of Intermediate's hours red while sustained wind sat at 59% of its
   // own cap; the supplement was outvoting the rule it supplements.
-  it('derives one gust maximum from the wind maximum, scaled by the gust factor', () => {
+  it('derives the gust maximum and its automatic 80% caution point from the wind maximum', () => {
     expect(analyzeSafetyConditions({ ...baseData, windGust: 7.2 }, baseSettings).rating).toBe('safe');
-    expect(analyzeSafetyConditions({ ...baseData, windGust: 8.4 }, baseSettings).rating).toBe('safe');
-    expect(analyzeSafetyConditions({ ...baseData, windGust: 12.8 }, baseSettings).rating).toBe('safe');
+    expect(analyzeSafetyConditions({ ...baseData, windGust: 10.1 }, baseSettings).rating).toBe('safe');
+    expect(analyzeSafetyConditions({ ...baseData, windGust: 10.2 }, baseSettings).rating).toBe('caution');
+    expect(analyzeSafetyConditions({ ...baseData, windGust: 12.8 }, baseSettings).rating).toBe('caution');
     expect(analyzeSafetyConditions({ ...baseData, windGust: 12.9 }, baseSettings).rating).toBe('danger');
   });
 
@@ -350,41 +359,87 @@ describe('gust maximum math', () => {
     expect(gustReason?.text).not.toMatch(/\([^)]*(?:Breeze|Gale|Storm|Hurricane)[^)]*\)/);
   });
 
-  it('treats the derived gust maximum as inclusive', () => {
-    expect(analyzeSafetyConditions({ ...baseData, windGust: 12.7 }, baseSettings).rating).toBe('safe');
-    expect(analyzeSafetyConditions({ ...baseData, windGust: 12.8 }, baseSettings).rating).toBe('safe');
+  it('reports exact gust headroom and distinguishes equality from an excess', () => {
+    const below = analyzeSafetyConditions({ ...baseData, windGust: 11.7 }, baseSettings);
+    expect(below).toEqual({
+      rating: 'caution',
+      reasons: [{
+        severity: 'caution',
+        kind: 'near-limit',
+        text: 'Wind gusts: 11.7 m/s. 1.1 m/s below the 12.8 m/s maximum derived from your wind limit.',
+      }],
+    });
+
+    const exact = analyzeSafetyConditions({ ...baseData, windGust: 12.8 }, baseSettings);
+    expect(exact).toEqual({
+      rating: 'caution',
+      reasons: [{
+        severity: 'caution',
+        kind: 'near-limit',
+        text: 'Wind gusts: 12.8 m/s. At the 12.8 m/s maximum derived from your wind limit.',
+      }],
+    });
     expect(analyzeSafetyConditions({ ...baseData, windGust: 12.9 }, baseSettings).rating).toBe('danger');
   });
 
   it('tracks a custom wind maximum without another gust setting', () => {
     const settings = { ...baseSettings, windLimit: 6.5 } as SafetySettings;
-    expect(analyzeSafetyConditions({ ...baseData, windGust: 10.4 }, settings).rating).toBe('safe');
+    expect(analyzeSafetyConditions({ ...baseData, windGust: 8.2 }, settings).rating).toBe('safe');
+    expect(analyzeSafetyConditions({ ...baseData, windGust: 8.3 }, settings).rating).toBe('caution');
+    expect(analyzeSafetyConditions({ ...baseData, windGust: 10.4 }, settings).rating).toBe('caution');
     expect(analyzeSafetyConditions({ ...baseData, windGust: 10.5 }, settings).rating).toBe('danger');
   });
 
-  it('never creates an amber gust-only verdict', () => {
-    for (const windGust of [8, 10, 12, 12.8, 12.9, 20]) {
-      expect(analyzeSafetyConditions({ ...baseData, windGust }, baseSettings).rating)
-        .not.toBe('caution');
+  it('marks every gust-only caution as a structured near-limit reason', () => {
+    for (const windGust of [10.2, 11, 12.8]) {
+      const result = analyzeSafetyConditions({ ...baseData, windGust }, baseSettings);
+      expect(result.rating).toBe('caution');
+      expect(result.reasons).toHaveLength(1);
+      expect(result.reasons[0]).toMatchObject({ severity: 'caution', kind: 'near-limit' });
     }
   });
 });
 
 // ---------------------------------------------------------------------------
-// Threshold boundary semantics: wind and wave maximums are inclusive ("up to");
-// the lower water-temperature boundary belongs to the stronger result.
+// Wind and waves warn from 80% through equality with the selected maximum.
+// Only a displayed reading above the maximum is danger. The lower
+// water-temperature boundary still belongs to the stronger result.
 // ---------------------------------------------------------------------------
 describe('threshold boundaries', () => {
-  it('wind speed: the maximum is inclusive and the next displayed step exceeds it', () => {
-    expect(analyzeSafetyConditions({ ...baseData, windSpeed: 7.9 }, baseSettings).rating).toBe('safe');
-    expect(analyzeSafetyConditions({ ...baseData, windSpeed: 8.0 }, baseSettings).rating).toBe('safe');
+  it('wind speed: below 80% is safe, 80% through the maximum is caution, and an excess is danger', () => {
+    expect(analyzeSafetyConditions({ ...baseData, windSpeed: 6.3 }, baseSettings).rating).toBe('safe');
+    expect(analyzeSafetyConditions({ ...baseData, windSpeed: 6.4 }, baseSettings).rating).toBe('caution');
+    expect(analyzeSafetyConditions({ ...baseData, windSpeed: 8.0 }, baseSettings).rating).toBe('caution');
     expect(analyzeSafetyConditions({ ...baseData, windSpeed: 8.1 }, baseSettings).rating).toBe('danger');
   });
 
-  it('wave height: the maximum is inclusive and the next displayed step exceeds it', () => {
-    expect(analyzeSafetyConditions({ ...baseData, waveHeight: 0.99 }, baseSettings).rating).toBe('safe');
-    expect(analyzeSafetyConditions({ ...baseData, waveHeight: 1.0 }, baseSettings).rating).toBe('safe');
+  it('wave height: below 80% is safe, 80% through the maximum is caution, and an excess is danger', () => {
+    expect(analyzeSafetyConditions({ ...baseData, waveHeight: 0.79 }, baseSettings).rating).toBe('safe');
+    expect(analyzeSafetyConditions({ ...baseData, waveHeight: 0.80 }, baseSettings).rating).toBe('caution');
+    expect(analyzeSafetyConditions({ ...baseData, waveHeight: 1.0 }, baseSettings).rating).toBe('caution');
     expect(analyzeSafetyConditions({ ...baseData, waveHeight: 1.01 }, baseSettings).rating).toBe('danger');
+  });
+
+  it('reports exact wind and wave headroom as structured near-limit reasons', () => {
+    const wind = analyzeSafetyConditions({ ...baseData, windSpeed: 7.4 }, baseSettings);
+    expect(wind).toEqual({
+      rating: 'caution',
+      reasons: [{
+        severity: 'caution',
+        kind: 'near-limit',
+        text: 'Wind speed: 7.4 m/s (Moderate Breeze). 0.6 m/s below your maximum of 8.0 m/s.',
+      }],
+    });
+
+    const waves = analyzeSafetyConditions({ ...baseData, waveHeight: 0.88 }, baseSettings);
+    expect(waves).toEqual({
+      rating: 'caution',
+      reasons: [{
+        severity: 'caution',
+        kind: 'near-limit',
+        text: 'Wave height: 0.88 m (Slight sea). 0.12 m below your maximum of 1.00 m.',
+      }],
+    });
   });
 
   it('water temperature: within limits at the check boundary, not recommended at or below the lower limit', () => {
@@ -523,7 +578,11 @@ describe('custom wind direction sectors', () => {
       { ...settings, enableCustomWindDirs: false },
     );
 
-    expect(flatCapOnly.rating).toBe('safe');
+    expect(flatCapOnly.rating).toBe('caution');
+    expect(flatCapOnly.reasons[0]).toMatchObject({
+      severity: 'caution',
+      kind: 'near-limit',
+    });
     expect(crossShore).toEqual(flatCapOnly);
     expect(crossShore.reasons.some((reason) => /cross-shore|direction-specific cap/i.test(reason.text)))
       .toBe(false);
@@ -551,21 +610,25 @@ describe('custom wind direction sectors', () => {
     });
   });
 
-  it('shows the general reason when it is stricter than a looser active sector', () => {
+  it('keeps a general danger reason over a looser sector caution reason', () => {
     const settings = {
       ...getPresetSettings('beginner'),
       enableWindGust: false,
       enableCustomWindDirs: true,
+      sectorLimits: {
+        ...getPresetSettings('beginner').sectorLimits,
+        onshore: { maximumAt: 7 },
+      },
     } as SafetySettings;
     const result = analyzeSafetyConditions(
-      { ...baseData, windDirection: 90, windSpeed: 5.1, tideLevel: 0 },
+      { ...baseData, windDirection: 90, windSpeed: 5.7, tideLevel: 0 },
       settings,
     );
 
     expect(result.rating).toBe('danger');
     expect(result.reasons[0]).toEqual({
       severity: 'danger',
-      text: 'Wind speed: 5.1 m/s (Gentle Breeze). Above your maximum of 5.0 m/s.',
+      text: 'Wind speed: 5.7 m/s (Moderate Breeze). Above your maximum of 5.0 m/s.',
     });
     expect(result.reasons.some((reason) => reason.text.includes('Easterly wind'))).toBe(false);
   });
@@ -587,7 +650,7 @@ describe('custom wind direction sectors', () => {
     expect(result.reasons[0].text).toContain('8.0 m/s maximum for this direction');
   });
 
-  it('keeps the lower controlling threshold when general and sector severity match', () => {
+  it('keeps a sector danger reason over a general near-limit reason', () => {
     const settings = {
       ...getPresetSettings('default'),
       enableWindGust: false,
@@ -608,6 +671,31 @@ describe('custom wind direction sectors', () => {
     expect(result.reasons[0].text).toContain('7.0 m/s maximum for this direction');
   });
 
+  it('keeps the lower controlling threshold when both general and sector rules are near-limit', () => {
+    const settings = {
+      ...getPresetSettings('default'),
+      enableWindGust: false,
+      enableCustomWindDirs: true,
+      sectorLimits: {
+        ...getPresetSettings('default').sectorLimits,
+        onshore: { maximumAt: 7 },
+      },
+    } as SafetySettings;
+    const result = analyzeSafetyConditions(
+      { ...baseData, windDirection: 90, windSpeed: 6.5 },
+      settings,
+    );
+
+    expect(result).toEqual({
+      rating: 'caution',
+      reasons: [{
+        severity: 'caution',
+        kind: 'near-limit',
+        text: 'Wind speed: 6.5 m/s (Moderate Breeze). Easterly wind (90°) is 0.5 m/s below your 7.0 m/s maximum for this direction.',
+      }],
+    });
+  });
+
   it('keeps sustained wind and gusts as distinct hazards in that order', () => {
     const settings = {
       ...baseSettings,
@@ -625,20 +713,38 @@ describe('custom wind direction sectors', () => {
     ]);
   });
 
-  it('easterly maximum: exact is allowed, the next displayed step exceeds it', () => {
+  it('easterly maximum: 80% begins caution, equality stays caution, and the next step is danger', () => {
     const at = (speed: number) => analyzeSafetyConditions({ ...baseData, windDirection: 90, windSpeed: speed }, sectorSettings);
-    expect(at(6.9).rating).toBe('safe');
-    expect(at(7.0).rating).toBe('safe');
+    expect(at(5.5).rating).toBe('safe');
+    expect(at(5.6).rating).toBe('caution');
+    expect(at(7.0).rating).toBe('caution');
     expect(at(7.1).rating).toBe('danger');
     expect(at(7.1).reasons.some(r => r.severity === 'danger' && r.text.includes('Easterly'))).toBe(true);
   });
 
-  it('westerly maximum: exact is allowed, the next displayed step exceeds it', () => {
+  it('westerly maximum: 80% begins caution, equality stays caution, and the next step is danger', () => {
     const at = (speed: number) => analyzeSafetyConditions({ ...baseData, windDirection: 270, windSpeed: speed }, sectorSettings);
-    expect(at(8.4).rating).toBe('safe');
-    expect(at(8.5).rating).toBe('safe');
+    expect(at(6.7).rating).toBe('safe');
+    expect(at(6.8).rating).toBe('caution');
+    expect(at(8.5).rating).toBe('caution');
     expect(at(8.6).rating).toBe('danger');
     expect(at(8.6).reasons.some(r => r.severity === 'danger' && r.text.includes('Westerly') && r.text.includes('maximum'))).toBe(true);
+  });
+
+  it('reports a sector near-limit reason with exact headroom', () => {
+    const result = analyzeSafetyConditions(
+      { ...baseData, windDirection: 90, windSpeed: 6.4 },
+      sectorSettings,
+    );
+
+    expect(result).toEqual({
+      rating: 'caution',
+      reasons: [{
+        severity: 'caution',
+        kind: 'near-limit',
+        text: 'Wind speed: 6.4 m/s (Moderate Breeze). Easterly wind (90°) is 0.6 m/s below your 7.0 m/s maximum for this direction.',
+      }],
+    });
   });
 
   it('sector caps use AVERAGE wind, not gusts', () => {
@@ -704,7 +810,7 @@ describe('rating combination rules', () => {
     const clear = analyzeSafetyConditions(baseData, baseSettings);
     expect(clear.reasons).toHaveLength(1);
     expect(clear.reasons[0].severity).toBe('safe');
-    expect(clear.reasons[0].text.startsWith('Everything is within your limits')).toBe(true);
+    expect(clear.reasons[0].text.startsWith('No check was triggered')).toBe(true);
 
     const triggered = analyzeSafetyConditions({ ...baseData, windSpeed: 8.1 }, baseSettings);
     expect(triggered.reasons.some(r => r.severity === 'safe')).toBe(false);
@@ -723,8 +829,48 @@ describe('rating combination rules', () => {
       },
     );
     expect(result.rating).toBe('safe');
-    expect(result.reasons[0].text).toContain('The available outlook readings are within your limits');
+    expect(result.reasons[0].text).toContain('No available outlook reading triggered a check');
     expect(result.reasons[0].text).toContain('Gusts are not forecast for this longer-range period.');
+  });
+
+  it('keeps a longer-range proximity warning structured as near-limit only', () => {
+    const result = analyzeSafetyConditions(
+      {
+        ...baseData,
+        blockSpanHours: 6,
+        windSpeed: 6.4,
+        windGust: Number.NaN,
+      },
+      baseSettings,
+      undefined,
+      {
+        blockDaylight: {
+          sun: { sunrise: ['2026-07-08T06:00:00Z'], sunset: ['2026-07-08T20:00:00Z'] },
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      rating: 'caution',
+      reasons: [{
+        severity: 'caution',
+        kind: 'near-limit',
+        text: 'Wind speed: 6.4 m/s (Moderate Breeze). 1.6 m/s below your maximum of 8.0 m/s.',
+      }],
+    });
+    expect(isNearLimitOnlyAnalysis(result)).toBe(true);
+
+    const withFog = analyzeSafetyConditions(
+      {
+        ...baseData,
+        blockSpanHours: 6,
+        windSpeed: 6.4,
+        windGust: Number.NaN,
+        symbolCode: 'fog',
+      },
+      { ...baseSettings, daylightOnly: false },
+    );
+    expect(isNearLimitOnlyAnalysis(withFog)).toBe(false);
   });
 
   it('does not add the outlook gust caveat when a gust is actually present', () => {
@@ -740,7 +886,7 @@ describe('rating combination rules', () => {
     );
 
     expect(result.rating).toBe('safe');
-    expect(result.reasons[0].text.startsWith('The outlook is within your limits')).toBe(true);
+    expect(result.reasons[0].text.startsWith('No outlook check was triggered')).toBe(true);
     expect(result.reasons[0].text).not.toContain('Gusts are not forecast');
   });
 });
@@ -800,24 +946,44 @@ describe('weather severity (additional symbol_code cases)', () => {
 describe('what is shown is what is judged', () => {
   const shown = (v: number, decimals: number) => formatReading(v, decimals);
 
-  it('allows a wind speed that prints as the inclusive maximum', () => {
+  it('judges wind from the same rounded value shown at the caution and danger boundaries', () => {
     const settings = { ...baseSettings, windLimit: 5.5 } as SafetySettings;
-    expect(shown(5.46, 1)).toBe('5.5');
-    expect(analyzeSafetyConditions({ ...baseData, windSpeed: 5.46 }, settings).rating)
+
+    expect(shown(4.34, 1)).toBe('4.3');
+    expect(analyzeSafetyConditions({ ...baseData, windSpeed: 4.34 }, settings).rating)
       .toBe('safe');
+    expect(shown(4.36, 1)).toBe('4.4');
+    const roundedToCaution = analyzeSafetyConditions({ ...baseData, windSpeed: 4.36 }, settings);
+    expect(roundedToCaution.rating).toBe('caution');
+    expect(roundedToCaution.reasons[0]).toMatchObject({ kind: 'near-limit' });
+
+    expect(shown(5.46, 1)).toBe('5.5');
+    const roundedToMaximum = analyzeSafetyConditions({ ...baseData, windSpeed: 5.46 }, settings);
+    expect(roundedToMaximum.rating).toBe('caution');
+    expect(roundedToMaximum.reasons[0].text).toContain('At your maximum of 5.5 m/s');
     expect(shown(5.44, 1)).toBe('5.4');
     expect(analyzeSafetyConditions({ ...baseData, windSpeed: 5.44 }, settings).rating)
-      .toBe('safe');
+      .toBe('caution');
     expect(shown(5.55, 1)).toBe('5.6');
     expect(analyzeSafetyConditions({ ...baseData, windSpeed: 5.55 }, settings).rating)
       .toBe('danger');
   });
 
-  it('allows a wave height that prints as the inclusive maximum', () => {
+  it('judges waves from the same rounded value shown at the caution and danger boundaries', () => {
     const settings = { ...baseSettings, waveLimit: 0.3 } as SafetySettings;
-    expect(shown(0.2996, 2)).toBe('0.30');
-    expect(analyzeSafetyConditions({ ...baseData, waveHeight: 0.2996 }, settings).rating)
+
+    expect(shown(0.234, 2)).toBe('0.23');
+    expect(analyzeSafetyConditions({ ...baseData, waveHeight: 0.234 }, settings).rating)
       .toBe('safe');
+    expect(shown(0.236, 2)).toBe('0.24');
+    const roundedToCaution = analyzeSafetyConditions({ ...baseData, waveHeight: 0.236 }, settings);
+    expect(roundedToCaution.rating).toBe('caution');
+    expect(roundedToCaution.reasons[0]).toMatchObject({ kind: 'near-limit' });
+
+    expect(shown(0.2996, 2)).toBe('0.30');
+    const roundedToMaximum = analyzeSafetyConditions({ ...baseData, waveHeight: 0.2996 }, settings);
+    expect(roundedToMaximum.rating).toBe('caution');
+    expect(roundedToMaximum.reasons[0].text).toContain('At your maximum of 0.30 m');
     expect(shown(0.306, 2)).toBe('0.31');
     expect(analyzeSafetyConditions({ ...baseData, waveHeight: 0.306 }, settings).rating)
       .toBe('danger');

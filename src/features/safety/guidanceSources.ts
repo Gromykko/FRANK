@@ -13,7 +13,9 @@ export const SAFETY_GUIDANCE_SOURCES = {
   dmiBeaufort: 'https://www.dmi.dk/vejr-og-atmosfare/temaforside-vind/beaufortskalaen/',
   dmiForecastVocabulary: 'https://www.dmi.dk/nyheder/2019/faa-det-store-koerekort-til-vejrudsigten/',
   dmiSignificantWaveHeight: 'https://www.dmi.dk/hav-og-is/temaforside-monsterbolger/bolger-pa-havet',
+  dmiForecastEdr: 'https://www.dmi.dk/friedata/dokumentation/forecast-data-edr-api',
   metForecastDataModel: 'https://docs.api.met.no/doc/locationforecast/datamodel.html',
+  metLocationForecastFaq: 'https://docs.api.met.no/doc/locationforecast/FAQ.html',
   nwsKayakWindHazards: 'https://www.weather.gov/mqt/Local_Marine',
   rnliColdWater: 'https://rnli.org/water-safety/know-the-risks/cold-water-shock',
   danishColdWaterSafety: 'https://www.soesport.dk/redning-og-sikkerhed/kulde-og-beklaedning',
@@ -21,8 +23,15 @@ export const SAFETY_GUIDANCE_SOURCES = {
   wmoSeaStateTerminology: 'https://community.wmo.int/site/knowledge-hub/programmes-and-initiatives/marine-services/frequently-asked-questions',
 } as const;
 
+export const TRIP_PROFILE_LABELS = {
+  beginner: 'Chill',
+  default: 'Medium',
+  pro: 'Pro',
+  custom: 'Custom',
+} as const;
+
 export const GUIDED_PROFILE_MODES = [
-  { mode: 'beginner', label: 'Beginner', level: 'IPP 2' },
-  { mode: 'default', label: 'Intermediate', level: 'IPP 3' },
-  { mode: 'pro', label: 'Advanced', level: 'IPP 4' },
+  { mode: 'beginner', label: TRIP_PROFILE_LABELS.beginner, level: 'IPP 2' },
+  { mode: 'default', label: TRIP_PROFILE_LABELS.default, level: 'IPP 3' },
+  { mode: 'pro', label: TRIP_PROFILE_LABELS.pro, level: 'IPP 4' },
 ] as const;

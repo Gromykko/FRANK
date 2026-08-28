@@ -1,4 +1,7 @@
-import { analyzeSafetyConditions } from '../safety/analyzeSafetyConditions';
+import {
+  analyzeSafetyConditions,
+  isNearLimitOnlyAnalysis,
+} from '../safety/analyzeSafetyConditions';
 import { isSameLocationDay } from '../../utils/date';
 import type { SafetySettings } from '../safety/presets';
 import type { HourlyData } from '../forecast/types';
@@ -24,6 +27,12 @@ export interface LaunchWindow {
   // displayed times can never disagree.
   daylightStartMs?: number;
   daylightEndMs?: number;
+  // Near-limit windows are never mixed into the primary green list. They are
+  // shown separately as periods that need a closer check before launch.
+  kind?: 'near-limit';
+  // First amber sample inside a near-limit window. Selecting the alternative
+  // opens the exact headroom reason instead of an adjacent green endpoint.
+  reviewIndex?: number;
 }
 
 export type { SunTimes } from '../safety/blockDaylight';
@@ -46,27 +55,30 @@ function isContiguous(previous: HourlyData, current: HourlyData): boolean {
   const expectedSpan = (previous.blockSpanHours ?? 1) * HOUR_MS;
   // Both providers are normalized onto exact ISO grid starts. A tolerance here
   // fabricates unassessed coverage: e.g. a 06:00 block followed at 12:20 has no
-  // within-limit reading at its real 12:00 endpoint, even though the two rows are near.
+  // assessed reading at its real 12:00 endpoint, even though the two rows are near.
   return gap === expectedSpan;
 }
 
-// A window is a run of consecutive within-limit forecast samples in absolute time.
+// A window is a run of consecutive qualifying forecast samples in absolute time.
 // Midnight does not break water-time continuity; the UI alone segments the
-// resulting bar by calendar day. An N-hour window needs N+1 within-limit
-// samples: both endpoints of every hour interval must be within limits.
+// resulting bar by calendar day. An N-hour window needs N+1 qualifying
+// samples: both endpoints of every hour interval must qualify.
 //
 // Two ranges are searched: exact hourly windows within MET's hourly range, and
 // block-level hints across the longer-range MET period blocks. MET does not
 // publish gusts there, so those blocks are judged from their available readings
 // and say so in the verdict explanation. An outlook interval still needs a
-// within-limit closing sample as well as a matching start, and is flagged
+// qualifying closing sample as well as a matching start, and is flagged
 // `lowConfidence` because the period data is coarser and one selected input is absent.
-export function findLaunchWindows(
+type WindowSearch = 'safe' | 'near-limit';
+
+function findWindows(
   data: HourlyData[],
   settings: SafetySettings,
   startIndex: number,
   sun?: SunTimes,
   nowMs?: number,
+  search: WindowSearch = 'safe',
 ): LaunchWindow[] {
   if (!data || data.length === 0) return [];
 
@@ -77,14 +89,26 @@ export function findLaunchWindows(
   // stricter gate, not a looser one.
   const activeSafetyChecks = hasActiveSafetyChecks(settings);
 
-  const isSafe = (idx: number): boolean => {
-    if (idx < startIndex || !activeSafetyChecks) return false;
-    return analyzeSafetyConditions(
-      data[idx],
+  const assessments = data.map((hour, idx) => {
+    if (idx < startIndex || !activeSafetyChecks) return 'other' as const;
+    const analysis = analyzeSafetyConditions(
+      hour,
       settings,
       undefined,
       { blockDaylight: { mode: 'defer-to-window' } },
-    ).rating === 'safe';
+    );
+    if (analysis.rating === 'safe') return 'safe' as const;
+    if (isNearLimitOnlyAnalysis(analysis)) return 'near-limit' as const;
+    return 'other' as const;
+  });
+
+  const qualifies = (idx: number): boolean => assessments[idx] === 'safe'
+    || (search === 'near-limit' && assessments[idx] === 'near-limit');
+  const rangeHasNearLimit = (start: number, endInclusive: number): boolean =>
+    assessments.slice(start, endInclusive + 1).includes('near-limit');
+  const firstNearLimitIndex = (start: number, endInclusive: number): number | undefined => {
+    const offset = assessments.slice(start, endInclusive + 1).indexOf('near-limit');
+    return offset === -1 ? undefined : start + offset;
   };
 
   // First longer-range block index (blocks are appended after the hourly range).
@@ -93,9 +117,10 @@ export function findLaunchWindows(
 
   const slots: LaunchWindow[] = [];
 
-  // --- Exact hourly windows (endpoints must be within limits) ------------
+  // --- Exact hourly windows (both endpoints must qualify) ----------------
   let currentStart: number | null = null;
   const addHourlySlot = (start: number, end: number) => {
+    if (search === 'near-limit' && !rangeHasNearLimit(start, end)) return;
     const nominalStartMs = Date.parse(data[start]?.time ?? '');
     const endMs = Date.parse(data[end]?.time ?? '');
     if (!Number.isFinite(nominalStartMs) || !Number.isFinite(endMs)) return;
@@ -109,6 +134,8 @@ export function findLaunchWindows(
         startIndex: start,
         endIndex: end,
         duration,
+        ...(search === 'near-limit' ? { kind: 'near-limit' as const } : {}),
+        ...(search === 'near-limit' ? { reviewIndex: firstNearLimitIndex(start, end) } : {}),
         ...(shouldClipStart ? { effectiveStartMs } : {}),
       });
     }
@@ -121,7 +148,7 @@ export function findLaunchWindows(
     // PaddlePlanner segments the one window into calendar-day bars; only a
     // real timestamp gap ends the recommendation.
     const breaksContinuity = i > 0 && !isContiguous(data[i - 1], data[i]);
-    if (isSafe(i)) {
+    if (qualifies(i)) {
       if (currentStart === null) currentStart = i;
       else if (breaksContinuity) {
         addHourlySlot(currentStart, i - 1);
@@ -134,10 +161,12 @@ export function findLaunchWindows(
   }
   if (currentStart !== null) addHourlySlot(currentStart, hourlyEnd - 1);
 
-  // --- Longer-range block windows (each within-limit block qualifies) -----
+  // --- Longer-range block windows (each block interval must qualify) ------
   const blockSlots: LaunchWindow[] = [];
   let blockStart: number | null = null;
   const addBlockSlot = (start: number, end: number) => {
+    // `end` is the final qualifying interval; its closing endpoint is end + 1.
+    if (search === 'near-limit' && !rangeHasNearLimit(start, end + 1)) return;
     const spanHours = data
       .slice(start, end + 1)
       .reduce((sum, hour) => sum + (hour.blockSpanHours ?? 0), 0);
@@ -172,6 +201,8 @@ export function findLaunchWindows(
       // The paddleable number, not the nominal span.
       duration: daylight ? daylight.sliceHours : spanHours,
       lowConfidence: true,
+      ...(search === 'near-limit' ? { kind: 'near-limit' as const } : {}),
+      ...(search === 'near-limit' ? { reviewIndex: firstNearLimitIndex(start, end + 1) } : {}),
       ...(partialDaylight
         ? {
             daylightPartial: true,
@@ -186,7 +217,7 @@ export function findLaunchWindows(
   // are both instant estimates at the block start. Neither can clear the
   // following six hours by itself. A block is therefore a recommendable
   // interval only when its exact closing sample is present, contiguous, and
-  // independently within limits, using the same two-endpoint invariant the exact-hour
+  // independently qualifying, using the same two-endpoint invariant the exact-hour
   // path uses.
   const isSafeBlockInterval = (index: number): boolean => {
     const next = data[index + 1];
@@ -194,8 +225,8 @@ export function findLaunchWindows(
       data[index]?.blockSpanHours
       && next
       && isContiguous(data[index], next)
-      && isSafe(index)
-      && isSafe(index + 1),
+      && qualifies(index)
+      && qualifies(index + 1),
     );
   };
 
@@ -215,6 +246,29 @@ export function findLaunchWindows(
   if (blockStart !== null) addBlockSlot(blockStart, data.length - 2);
 
   return [...slots.slice(0, MAX_WINDOWS), ...blockSlots.slice(0, MAX_BLOCK_WINDOWS)];
+}
+
+export function findLaunchWindows(
+  data: HourlyData[],
+  settings: SafetySettings,
+  startIndex: number,
+  sun?: SunTimes,
+  nowMs?: number,
+): LaunchWindow[] {
+  return findWindows(data, settings, startIndex, sun, nowMs, 'safe');
+}
+
+// These periods contain at least one pure proximity warning and no other
+// caution or danger. Keeping them separate preserves the meaning of the green
+// list while still showing useful alternatives instead of hiding them.
+export function findNearLimitWindows(
+  data: HourlyData[],
+  settings: SafetySettings,
+  startIndex: number,
+  sun?: SunTimes,
+  nowMs?: number,
+): LaunchWindow[] {
+  return findWindows(data, settings, startIndex, sun, nowMs, 'near-limit');
 }
 
 const SUNSET_MARGIN_MS = 45 * 60 * 1000;

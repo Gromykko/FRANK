@@ -40,7 +40,6 @@ function renderReasons(danish = false) {
       sunset="21.04"
       reasons={reasons}
       rating="safe"
-      gustCheckEnabled
     />
   );
   const container = document.createElement('div');

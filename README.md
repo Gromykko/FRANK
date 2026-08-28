@@ -10,7 +10,7 @@ FRANK is a small, installable web app that helps sea-kayakers judge when conditi
 
 - Rates every forecast period as **Within limits**, **Check before launch**, or **Not recommended** against the selected profile.
 - Shows the exact reasons behind a rating; colour is never the only explanation.
-- Finds exact hourly launch windows that satisfy every selected check, plus clearly marked lower-confidence outlook hints.
+- Finds green hourly launch windows, lists near-limit alternatives separately, and keeps clearly marked lower-confidence outlook hints in both groups.
 - Keeps missing readings unknown. A missing hourly value is never converted to zero or treated as safe; longer-range blocks state when MET does not provide gusts.
 - Names stale or degraded sources instead of pretending every value is equally fresh.
 - Stores personal limits, selected location, language, and theme only in the browser.
@@ -60,29 +60,35 @@ Browser / Installed PWA
 
 ### Safety profiles and condition language
 
-The public wording is deliberately limited. **Within limits** means that no
-available selected check was exceeded. It does not mean that a trip is safe.
-**Check before launch** is used when a condition or missing hourly reading needs
-judgement. **Not recommended** means that a selected upper maximum was exceeded,
-a selected lower boundary was reached, or a hard weather rule fired.
+The public wording is deliberately limited. **Within limits** means the
+available readings stayed below every automatic check point and passed the
+other enabled rules. It does not mean that a trip is safe. **Check before
+launch** includes a reading that has reached the rounded 80% point of a selected upper maximum,
+as well as conditions or missing hourly data that need judgement. **Not
+recommended** means that an upper maximum was exceeded, a selected lower
+boundary was reached, or a hard weather rule fired.
 Weather-only mode gives no verdict.
 
-Wind and waves each have one maximum. A displayed reading at or below that
-maximum stays within that check; a higher reading is Not recommended.
+Wind and waves each have one editable maximum. Below the rounded 80% point is Within limits. From
+that point through the maximum is Check before launch. Above the maximum is Not
+recommended. The point is calculated at 80% and rounded to the same precision as the displayed forecast. It is FRANK's own headroom rule, not a threshold
+published by DKF or IPP, and the remaining 20% is not a guaranteed safety
+margin. The same derived warning point applies to the gust maximum and any
+active local wind-sector maximum.
 
 | Profile | Maximum mean wind | Maximum significant waves |
 |---|---:|---:|
-| Beginner, informed by IPP 2 | 5.0 m/s | 0.50 m |
-| Intermediate, informed by IPP 3 | 8.0 m/s | 1.00 m |
-| Advanced, informed by IPP 4 | 10.0 m/s | 2.00 m |
+| Chill, informed by IPP 2 | 5.0 m/s | 0.50 m |
+| Medium, informed by IPP 3 | 8.0 m/s | 1.00 m |
+| Pro, informed by IPP 4 | 10.0 m/s | 2.00 m |
 
 These are FRANK presets, not limits issued by DKF, proof of competence, or a
-guarantee that a trip is safe. The Intermediate and Advanced wind maxima use
+guarantee that a trip is safe. The Medium and Pro wind maxima use
 the numeric conditions in [DKF Touring](https://www.kano-kajak.dk/uddannelse-og-kurser/ipp-roeruddannelse/touring-tur/).
 The [IPP 3 Touring norm](https://drive.google.com/file/d/14lUb_7t5ZV1vp49sOBmCmlXuOnSWmQMX/view?usp=sharing)
 documents assessment up to 8 m/s, while the
 [IPP 4 Touring norm](https://drive.google.com/file/d/1iagdhW-B3ZXvHUmEBSfxVESyne5qevb2/view?usp=sharing)
-uses 8 to 10 m/s. Touring IPP 2 has no numeric wind limit. The Beginner wind
+uses 8 to 10 m/s. Touring IPP 2 has no numeric wind limit. The Chill wind
 maximum and all three wave maxima use the current
 [DKF sea-kayak norm, 7 May 2026](https://drive.google.com/file/d/1YoO6StJ_nfwx2kb9X7lyH5y4gFQqp1O5/view?usp=drive_link).
 Those documents describe training and assessment conditions rather than a
@@ -111,6 +117,13 @@ MET does not publish gusts in its longer-range 6- or 12-hour outlook blocks.
 FRANK says so in the period explanation and judges those blocks only from the
 readings they contain. Outlook launch windows are therefore marked as more
 uncertain hints, not exact hourly recommendations.
+
+The planner keeps its green list strict: every endpoint must remain below the
+automatic check points and pass the other enabled rules. A period whose only
+issue is proximity to a wind, gust, wave, or active sector maximum appears in a
+separate **Check before launch** list. Opening it selects the amber forecast
+period and shows the exact remaining headroom. This applies to hourly data and
+the longer-range outlook.
 Wave words reuse [WMO's recommended sea-wave terminology](https://community.wmo.int/site/knowledge-hub/programmes-and-initiatives/marine-services/frequently-asked-questions)
 only as supplemental context; the numeric height remains the decision input.
 DMI defines [significant wave height](https://www.dmi.dk/hav-og-is/temaforside-monsterbolger/bolger-pa-havet)

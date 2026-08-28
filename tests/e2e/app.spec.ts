@@ -29,12 +29,14 @@ test('critical controls work in the production bundle', async ({ page }, testInf
 
   // A first visit starts on the most cautious judged profile: FRANK has to
   // guess, and the guess that is wrong sends somebody home rather than onto the
-  // water. Prove that, then move to Intermediate for the planner checks below.
-  const beginnerMode = page.getByRole('radio', { name: 'Beginner' });
+  // water. Prove that, then move to Medium for the planner checks below.
+  const beginnerMode = page.getByRole('radio', { name: 'Chill' });
   await expect(beginnerMode).toHaveAttribute('aria-checked', 'true');
-  await expect(page.getByRole('button', { name: 'Weather only — turn off all your limits' }))
-    .toHaveAttribute('aria-pressed', 'false');
-  const intermediateMode = page.getByRole('radio', { name: 'Intermediate' });
+  const weatherOnly = page.getByRole('button', { name: 'Weather only — turn off all your limits' });
+  await expect(weatherOnly).toHaveAttribute('aria-pressed', 'false');
+  await weatherOnly.click();
+  await expect(page.locator('.snapshot')).not.toContainText('Gusts not included in verdict');
+  const intermediateMode = page.getByRole('radio', { name: 'Medium' });
   await intermediateMode.click();
   await expect(intermediateMode).toHaveAttribute('aria-checked', 'true');
 

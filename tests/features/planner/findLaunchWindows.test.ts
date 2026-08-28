@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { findLaunchWindows } from '../../../src/features/planner/findLaunchWindows';
+import {
+  findLaunchWindows,
+  findNearLimitWindows,
+} from '../../../src/features/planner/findLaunchWindows';
 import type { HourlyData } from '../../../src/features/forecast/types';
 import type { SafetySettings } from '../../../src/features/safety/presets';
 import { analyzeSafetyConditions } from '../../../src/features/safety/analyzeSafetyConditions';
@@ -139,6 +142,81 @@ describe('findLaunchWindows', () => {
     };
     const windows = findLaunchWindows([...hourly, block], baseSettings, 0);
     expect(windows.some((w) => w.lowConfidence)).toBe(false);
+  });
+});
+
+describe('near-limit launch alternatives', () => {
+  const oneHourSettings = {
+    ...baseSettings,
+    minDuration: 1,
+    daylightOnly: false,
+  } as SafetySettings;
+
+  it('keeps amber out of green hourly windows and lists it separately', () => {
+    const data = generateData(5);
+    // 80% of the selected 8.0 m/s maximum. This sample is amber, not green.
+    data[2].windSpeed = 6.4;
+
+    expect(analyzeSafetyConditions(data[2], oneHourSettings)).toMatchObject({
+      rating: 'caution',
+      reasons: [expect.objectContaining({ kind: 'near-limit' })],
+    });
+    expect(findLaunchWindows(data, oneHourSettings, 0)).toMatchObject([
+      { startIndex: 0, endIndex: 1, duration: 1 },
+      { startIndex: 3, endIndex: 4, duration: 1 },
+    ]);
+    expect(findNearLimitWindows(data, oneHourSettings, 0)).toMatchObject([
+      {
+        startIndex: 0,
+        endIndex: 4,
+        duration: 4,
+        kind: 'near-limit',
+        reviewIndex: 2,
+      },
+    ]);
+  });
+
+  it('does not turn another caution or a danger result into a near-limit alternative', () => {
+    const coldWater = generateData(3);
+    coldWater[0].windSpeed = 6.4;
+    coldWater[1].tempWater = 14;
+    expect(analyzeSafetyConditions(coldWater[1], oneHourSettings).rating).toBe('caution');
+    expect(findNearLimitWindows(coldWater, oneHourSettings, 0)).toEqual([]);
+
+    const excessiveWind = generateData(3);
+    excessiveWind[0].waveHeight = 0.8;
+    excessiveWind[1].windSpeed = 8.1;
+    expect(analyzeSafetyConditions(excessiveWind[1], oneHourSettings).rating).toBe('danger');
+    expect(findNearLimitWindows(excessiveWind, oneHourSettings, 0)).toEqual([]);
+  });
+
+  it('offers a near-limit outlook block separately and selects its amber closing sample', () => {
+    const makeBlock = (time: string, overrides: Partial<HourlyData> = {}): HourlyData => ({
+      ...baseData,
+      time,
+      isLowConfidence: true,
+      blockSpanHours: 6,
+      // Gusts are not forecast in this range and are deliberately not treated
+      // as missing evidence by the outlook analyser.
+      windGust: Number.NaN,
+      ...overrides,
+    });
+    const data = [
+      makeBlock('2026-07-11T06:00:00Z'),
+      makeBlock('2026-07-11T12:00:00Z', { waveHeight: 0.8 }),
+    ];
+
+    expect(findLaunchWindows(data, oneHourSettings, 0)).toEqual([]);
+    expect(findNearLimitWindows(data, oneHourSettings, 0)).toMatchObject([
+      {
+        startIndex: 0,
+        endIndex: 0,
+        duration: 6,
+        lowConfidence: true,
+        kind: 'near-limit',
+        reviewIndex: 1,
+      },
+    ]);
   });
 });
 

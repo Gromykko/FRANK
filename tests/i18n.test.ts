@@ -3,6 +3,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join, sep } from 'node:path';
 import { da } from '../src/i18n/da';
 import { MET_WEATHER_SYMBOLS } from '../src/features/forecast/weatherSymbols';
+import { WEATHER_POLICY_GROUPS } from '../src/features/forecast/weatherPolicyPresentation';
 import { RATING_WORD } from '../src/features/safety/analyzeSafetyConditions';
 import { getFrankPhrase } from '../src/features/safety/frankPhrases';
 
@@ -84,6 +85,18 @@ describe('Danish dictionary covers every translated literal', () => {
     expect(missing, `weather descriptions missing Danish translations: ${missing.join(', ')}`)
       .toEqual([]);
     expect(da['Unknown weather']).toBe('Ukendt vejr');
+    expect(da.weather).toBe('vejr');
+  });
+
+  it('covers every dynamically rendered weather-policy group', () => {
+    const keys = WEATHER_POLICY_GROUPS.flatMap(({ conditionLabel, policyNote }) => [
+      conditionLabel,
+      policyNote,
+    ]);
+    const missing = keys.filter((key) => !(key in da));
+
+    expect(missing, `weather-policy manual copy missing Danish translations: ${missing.join(', ')}`)
+      .toEqual([]);
   });
 
   it('covers verdict copy selected dynamically at runtime', () => {
@@ -93,7 +106,6 @@ describe('Danish dictionary covers every translated literal', () => {
     const keys = new Set([
       ...Object.values(RATING_WORD),
       'Limits are off: raw forecast only',
-      'No available reading exceeded your selected limits',
       'Read the checks below',
       'Choose another time',
     ]);
@@ -119,5 +131,15 @@ describe('Danish dictionary covers every translated literal', () => {
     const missing = [...keys].filter(key => !(key in da));
     expect(missing, `dynamic verdict copy missing Danish translations: ${missing.join(', ')}`)
       .toEqual([]);
+  });
+
+  it('uses plain Danish for the automatic near-limit band', () => {
+    expect(da['Check from {0} {1} · Not recommended above {2} {1}'])
+      .toBe('Tjek fra {0} {1} · frarådes over {2} {1}');
+    expect(da['Wave height is from its automatic check point through your selected maximum.'])
+      .toBe('Bølgehøjden ligger fra sit automatiske kontrolpunkt til og med dit valgte maksimum.');
+    expect(da['Near a maximum:']).toBe('Tæt på maksimum:');
+    expect(da['These periods are not green launch windows. At least one forecast value has reached its automatic check point. Each card shows the exact headroom; open it to see the full forecast.'])
+      .toContain('ikke grønne rovinduer');
   });
 });

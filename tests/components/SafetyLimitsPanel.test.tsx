@@ -29,15 +29,33 @@ describe('SafetyLimitsPanel terminology', () => {
       await act(async () => {
         host.querySelector<HTMLButtonElement>('.collapse-title-btn')!.click();
       });
+
+      // Launch-window criteria are everyday controls, so they stay visible.
+      // Only the optional, locally estimated wind sectors remain collapsed.
+      expect(host.textContent).toContain('Launch-window settings');
+      expect(host.textContent).toContain('Min Duration');
+      expect(host.textContent).toContain('Daylight Only');
+      expect(host.querySelector('.advanced-toggle')?.textContent).toContain('Optional local wind sectors');
+      expect(host.querySelector('.sector-panel')).toBeNull();
+
       await act(async () => {
         host.querySelector<HTMLButtonElement>('.advanced-toggle')!.click();
       });
 
       expect(host.textContent).toContain('Maximum wind');
-      expect(host.textContent).toContain('Beginner, Intermediate, Advanced');
+      expect(host.textContent).toContain('Pick Chill, Medium, or Pro');
       expect(host.textContent).toContain('Maximum waves');
       expect(host.textContent).toContain('Include forecast gusts');
-      expect(host.textContent).toContain('Derived maximum 12.8 m/s (1.6× the wind maximum).');
+      expect(host.textContent).toContain('Check from 6.4 m/s · Not recommended above 8.0 m/s');
+      expect(host.textContent).toContain('Check from 0.80 m · Not recommended above 1.00 m');
+      expect(host.textContent).toContain('Check from 10.2 m/s · derived maximum 12.8 m/s (1.6× the wind maximum).');
+      expect(host.textContent).toContain('FRANK calculates each Check before launch point at 80%');
+      expect(host.textContent).toContain('not an official DKF or IPP threshold');
+      const liveAnnouncements = [...host.querySelectorAll('[aria-live="polite"]')]
+        .map((element) => element.textContent ?? '');
+      expect(liveAnnouncements.some((text) => text.includes('Wind check from 6.4 m/s'))).toBe(true);
+      expect(liveAnnouncements.some((text) => text.includes('gusts are checked from 10.2 m/s'))).toBe(true);
+      expect(liveAnnouncements.some((text) => text.includes('Wave check from 0.80 m'))).toBe(true);
       expect(host.textContent).toContain('Check below 15°C · Not recommended at or below 10°C');
       expect(host.textContent).not.toContain('Cold-water margin');
       expect(host.textContent).not.toContain('Gap to Danger');
@@ -49,7 +67,7 @@ describe('SafetyLimitsPanel terminology', () => {
       expect(host.textContent).not.toContain('High Water');
       expect(host.textContent).not.toContain('Low Water');
       expect(host.textContent).not.toContain('Rising');
-      expect(host.querySelectorAll('.zone-bar.is-maximum')).toHaveLength(2);
+      expect(host.querySelectorAll('.zone-bar.has-maximum')).toHaveLength(2);
 
       const labels = [...host.querySelectorAll('[aria-label]')]
         .map((element) => element.getAttribute('aria-label'));
@@ -65,6 +83,7 @@ describe('SafetyLimitsPanel terminology', () => {
       expect(labels).toContain('Increase Easterly maximum wind');
       expect(labels).toContain('Increase Westerly maximum wind');
       expect(labels).not.toContain('Use Take care wave band in verdict');
+      expect(labels.some((label) => /near-limit|80%|caution point/i.test(label ?? ''))).toBe(false);
 
       const sectors = [...host.querySelectorAll<HTMLElement>('.sector-block')];
       expect(sectors).toHaveLength(2);

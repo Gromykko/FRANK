@@ -13,7 +13,10 @@ import { getWorkerContactMs } from './features/forecast/cache';
 import { formatTime, formatDateTime, locationDateKey } from './utils/date';
 import { compassPoint } from './utils/compass';
 import { NO_READING_TEXT } from './utils/number';
-import { findLaunchWindows } from './features/planner/findLaunchWindows';
+import {
+  findLaunchWindows,
+  findNearLimitWindows,
+} from './features/planner/findLaunchWindows';
 import { useForecast } from './features/forecast/useForecast';
 import TimelineBar from './components/TimelineBar';
 import PaddlePlanner from './components/PaddlePlanner';
@@ -146,6 +149,18 @@ export default function App() {
     [displayHourlyData, settings, nowIndex, sunTimes, nowMs]
   );
 
+  const nearLimitWindows = useMemo(
+    () =>
+      findNearLimitWindows(
+        displayHourlyData,
+        settings,
+        nowIndex,
+        sunTimes,
+        nowMs,
+      ),
+    [displayHourlyData, settings, nowIndex, sunTimes, nowMs]
+  );
+
   const handleTripModeChange = (mode: SafetySettings['tripMode']) => {
     setTripMode(mode);
   };
@@ -223,7 +238,7 @@ export default function App() {
   const safetyBadgeSubtitle = t(noVerdict
       ? 'Limits are off: raw forecast only'
       : safetyDisplayRating === 'safe'
-      ? 'No available reading exceeded your selected limits'
+      ? 'No enabled check was triggered'
       : safetyDisplayRating === 'caution'
         ? 'Read the checks below'
         : 'Choose another time');
@@ -375,7 +390,6 @@ export default function App() {
             sunset={formatSunTime(currentSunset)}
             reasons={safetyReasons}
             rating={safetyDisplayRating}
-            gustCheckEnabled={settings.enableWindSpeed && (settings.enableWindGust ?? true)}
           />
 
           {/* ③ Meteogram — the core data instrument (promoted) */}
@@ -392,8 +406,10 @@ export default function App() {
           {/* ④ Launch windows — "when can I go?" */}
           <PaddlePlanner
             data={displayHourlyData}
+            analyses={allAnalyses}
             statuses={allStatuses}
             windows={launchWindows}
+            nearLimitWindows={nearLimitWindows}
             warnings={weatherData.warnings}
             sunrises={weatherData.sunrise}
             sunsets={weatherData.sunset}

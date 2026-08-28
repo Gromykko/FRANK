@@ -22,9 +22,6 @@ interface ConditionsSnapshotProps {
   sunset: string;
   reasons: SafetyReason[];
   rating: DisplayStatus;
-  // This is the effective state, including the parent wind switch. Passing the
-  // raw gust toggle would hide the disclosure when all wind checks are off.
-  gustCheckEnabled: boolean;
 }
 
 // The 5-second scan: what does it look like right now? Compact two-column
@@ -39,7 +36,6 @@ export default function ConditionsSnapshot({
   sunset,
   reasons,
   rating,
-  gustCheckEnabled,
 }: ConditionsSnapshotProps) {
   const { t } = useLang();
   const weekday = formatWeekday(data.time);
@@ -74,16 +70,11 @@ export default function ConditionsSnapshot({
   // dash rather than repeating the sustained wind under a "gusts" label.
   // Neither central nor p90 sustained wind is a gust or a within-period max.
   const blockGust = data.windGustMax ?? data.windGust;
-  const displayedGust = isBlock ? blockGust : data.windGust;
   const gustValue = isBlock
     ? (Number.isFinite(blockGust) ? formatReading(blockGust, 1) : NO_READING_TEXT)
     : formatReading(data.windGust, 1);
   const gustText = t('gusts {0}', gustValue);
   const compactGustText = t('gust {0}', gustValue);
-  // Keep the forecast reading visible when its optional safety check is off,
-  // but do not let that look like the value still influenced the verdict.
-  const showGustDisclosure = !gustCheckEnabled && Number.isFinite(displayedGust);
-  const gustDisclosure = t('Gusts not included in verdict');
   const daylightRange = [sunrise, sunset].filter(Boolean).join('–');
 
   return (
@@ -113,18 +104,15 @@ export default function ConditionsSnapshot({
             {/* The full wording remains available to assistive technology;
                 the visible phone label is intentionally shorter so a gust
                 never creates an accidental second row in the ledger. */}
-            <span className={`snapshot-value snapshot-wind${showGustDisclosure ? ' has-gust-disclosure' : ''}`}>
+            <span className="snapshot-value snapshot-wind">
               <span className="snapshot-wind-visual" aria-hidden="true">
                 <span>{windText}</span>
                 <span className="snapshot-wind-separator">&middot;</span>
                 <span className="snapshot-sub snapshot-gust-full">{gustText}</span>
                 <span className="snapshot-sub snapshot-gust-compact">{compactGustText}</span>
               </span>
-              {showGustDisclosure && (
-                <span className="snapshot-gust-disclosure" aria-hidden="true">{gustDisclosure}</span>
-              )}
               <span className="sr-only">
-                {windText}, {gustText}{showGustDisclosure ? `. ${gustDisclosure}.` : ''}
+                {windText}, {gustText}
               </span>
             </span>
           </span>

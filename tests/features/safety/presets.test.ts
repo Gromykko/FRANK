@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
+  GUST_FACTOR,
+  NEAR_LIMIT_RATIO,
   getPresetSettings,
+  getNearLimitThreshold,
   DEFAULT_SETTINGS,
 } from '../../../src/features/safety/presets';
 import { hasActiveSafetyChecks } from '../../../src/features/safety/safetyDisplay';
@@ -11,6 +14,15 @@ const onshore = CURRENT_LOCATION.windSectors.find((s) => s.id === 'onshore')!;
 const offshore = CURRENT_LOCATION.windSectors.find((s) => s.id === 'offshore')!;
 
 describe('safety presets', () => {
+  it('derives the automatic caution boundary at 80% and rounds to displayed precision', () => {
+    expect(NEAR_LIMIT_RATIO).toBe(0.8);
+    expect(getNearLimitThreshold(8, 1)).toBe(6.4);
+    // The Intermediate gust maximum is 12.8; 80% is 10.24 and the verdict
+    // compares it at the same one-decimal precision shown to the user.
+    expect(getNearLimitThreshold(12.8, 1)).toBe(10.2);
+    expect(getNearLimitThreshold(0.333, 2)).toBe(0.27);
+  });
+
   it('beginner has the exact documented maximums', () => {
     const s = getPresetSettings('beginner');
     expect(s.tripMode).toBe('beginner');
@@ -69,6 +81,24 @@ describe('safety presets', () => {
       expect(cap.maximumAt).toBeGreaterThan(0);
     }
   });
+
+  it.each([
+    ['beginner', 4.0, 8.0, 6.4, 0.40],
+    ['default', 6.4, 12.8, 10.2, 0.80],
+    ['pro', 8.0, 16.0, 12.8, 1.60],
+  ] as const)(
+    '%s derives its caution boundaries without storing second thresholds',
+    (mode, windCautionAt, gustMaximum, gustCautionAt, waveCautionAt) => {
+      const settings = getPresetSettings(mode);
+
+      expect(getNearLimitThreshold(settings.windLimit, 1)).toBe(windCautionAt);
+      expect(settings.windLimit * GUST_FACTOR).toBe(gustMaximum);
+      expect(getNearLimitThreshold(gustMaximum, 1)).toBe(gustCautionAt);
+      expect(getNearLimitThreshold(settings.waveLimit, 2)).toBe(waveCautionAt);
+      expect(settings).not.toHaveProperty('windTakeCareAt');
+      expect(settings).not.toHaveProperty('waveTakeCareAt');
+    },
+  );
 
   it('presets order beginner <= default <= pro on every escalating maximum', () => {
     const b = getPresetSettings('beginner');

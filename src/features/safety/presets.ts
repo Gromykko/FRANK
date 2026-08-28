@@ -1,5 +1,6 @@
 import { CURRENT_LOCATION } from '../../config/locations';
 import type { SectorExposure } from '../../config/locationTypes';
+import { roundToDecimals } from '../../utils/number';
 
 // Per-sector wind-speed maximums, keyed by sector id. Angles/labels live in the
 // (curated) location config; only these maximums are user-tunable.
@@ -11,6 +12,17 @@ export type SectorCap = { maximumAt: number };
 // calibration context, not observed wind, a safety validation, or a published
 // club limit. The 1.6 factor is a FRANK product rule and is labelled that way.
 export const GUST_FACTOR = 1.6;
+
+// FRANK starts warning at 80% of a selected maximum, rounded to the same
+// precision as the displayed forecast so the visible number and verdict agree.
+// This makes shrinking headroom visible without asking people to maintain a
+// second threshold. It is a FRANK heuristic, not a percentage published by
+// DKF, IPP, DMI, WMO, or a kayak club.
+export const NEAR_LIMIT_RATIO = 0.8;
+
+export function getNearLimitThreshold(maximum: number, decimals: number): number {
+  return roundToDecimals(maximum * NEAR_LIMIT_RATIO, decimals);
+}
 
 export interface SafetySettings {
   windLimit: number;

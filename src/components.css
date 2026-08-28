@@ -763,6 +763,13 @@
   width: 100%;
 }
 
+.chart-limits-summary {
+  margin: 0 0 6px;
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  line-height: 1.4;
+}
+
 .chart-inline-header {
   width: 100%;
   padding: 10px 0 2px;
@@ -1080,8 +1087,9 @@
 
 /* ---------- Your Limits: instrument panel ----------
    Per-limit instrument cards with push-button steppers and read-only zone
-   bars. Wind and waves have one maximum; cold water retains a sourced middle
-   check zone. Trip mode lives in the panel above this section. */
+   bars. Wind and waves derive an amber point from one editable maximum; cold
+   water retains its independently configured check and lower boundaries.
+   Trip mode lives in the panel above this section. */
 
 .limit-cards {
   display: flex;
@@ -1107,6 +1115,7 @@
 .limit-card.is-off .limit-id,
 .limit-card.is-off > .limit-value-row,
 .limit-card.is-off > .limit-zone,
+.limit-card.is-off > .maximum-zone,
 .limit-card.is-off .limit-caution-copy,
 .limit-card.is-off .limit-caution-row > .limit-value-row {
   opacity: 0.6;
@@ -1303,8 +1312,8 @@
   margin-top: 2px;
 }
 
-/* Zone bar: cold water passes two different boundaries and keeps a visible
-   middle zone. Wind and waves add the single-maximum treatment below. */
+/* Read-only three-state gauges. Wind and waves derive their amber boundary;
+   cold water keeps its two separately selected boundaries. */
 .limit-zone {
   display: flex;
   flex-direction: column;
@@ -1335,23 +1344,42 @@
     var(--color-safe) var(--zone-b) 100%);
 }
 
-/* One inclusive upper maximum: green reaches the boundary, a neutral marker
-   occupies the boundary itself, and red begins visually beyond it. */
-.zone-bar.is-maximum {
-  background: linear-gradient(90deg,
-    var(--color-safe) 0 var(--zone-a),
-    var(--color-danger) var(--zone-a) 100%);
-}
-
-.zone-bar.is-maximum::after {
+/* Neutral rule at the one editable maximum. The amber band reaches the rule;
+   red starts on its far side, matching the strict-greater-than verdict. */
+.zone-bar.has-maximum::after {
   content: '';
   position: absolute;
   inset-block: -1px;
-  left: var(--zone-a);
+  left: var(--zone-b);
   width: 2px;
   transform: translateX(-1px);
   background: var(--text-muted);
   border-radius: 1px;
+}
+
+.maximum-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.limit-boundary-summary,
+.settings-headroom-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  line-height: 1.45;
+}
+
+.limit-boundary-summary {
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-headroom-note {
+  padding: 10px 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-caution) 6%, transparent);
 }
 
 .zone-labels {
@@ -1384,21 +1412,15 @@
 }
 
 /* Secondary on/off rows follow the same reading order as every card header:
-   description first, adjustment second, switch anchored at the far right. */
+   description first, switch anchored at the far right. */
 .limit-caution-row.has-toggle {
   display: grid;
-  grid-template-columns: minmax(14ch, 1fr) auto auto;
+  grid-template-columns: minmax(14ch, 1fr) auto;
 }
 
 @media (max-width: 600px) {
   .limit-caution-row.has-toggle {
     grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .limit-caution-row.has-toggle > .limit-value-row {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    justify-self: center;
   }
 
   .limit-caution-row.has-toggle > .toggle-switch {
@@ -1415,7 +1437,7 @@
 .limit-caution-copy {
   display: flex;
   flex-direction: column;
-  /* 14ch fits "Vindstødsmargen" at 12px; below that the row wraps instead. */
+  /* Keep enough room for the Danish labels; below this the row wraps. */
   min-width: 14ch;
   flex: 1 1 auto;
 }
@@ -1423,10 +1445,6 @@
 .limit-caution-name {
   font-size: var(--text-caption);
   font-weight: 600;
-}
-
-.limit-caution-name.is-caution {
-  color: var(--color-caution-text);
 }
 
 .limit-caution-hint {
@@ -1471,6 +1489,27 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.planning-options {
+  display: flex;
+  flex-direction: column;
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.planning-options-title {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.planning-options > .advanced-row:last-child {
+  border-bottom: 0;
 }
 
 .advanced-row {
@@ -1558,7 +1597,8 @@
 
 .compass-arc {
   fill: none;
-  stroke: var(--color-caution);
+  /* Sector geometry is not itself a caution result. */
+  stroke: var(--primary);
   stroke-width: 9;
   stroke-linecap: round;
   opacity: 0.9;
@@ -1980,7 +2020,8 @@ button.legend-toggle {
   background: var(--panel-bg);
   border: 1px solid color-mix(in srgb, var(--text-muted) 45%, transparent);
   border-radius: var(--radius-sm);
-  padding: 3px 10px;
+  min-height: 44px;
+  padding: 8px 12px;
   cursor: pointer;
   box-shadow: var(--shadow-lg);
   transition: var(--transition-smooth);
@@ -2427,6 +2468,122 @@ button.legend-toggle.is-on {
   color: var(--text-muted);
   font-size: var(--text-ui);
   line-height: 1.5;
+}
+
+.manual-details {
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-app) 55%, transparent);
+}
+
+.manual-details.is-nested {
+  margin-top: 10px;
+}
+
+.manual-details > summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 9px 12px;
+  color: var(--text-main);
+  font-size: var(--text-ui);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.manual-details > summary:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.manual-details[open] > summary {
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.manual-details-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.manual-table-wrap {
+  max-width: 100%;
+}
+
+.manual-rule-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: var(--text-caption);
+  line-height: 1.4;
+}
+
+.manual-rule-table th,
+.manual-rule-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--panel-border);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.manual-rule-table th {
+  color: var(--text-muted);
+  font-size: var(--text-instrument);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.manual-rule-table th:first-child,
+.manual-rule-table td:first-child {
+  width: 44%;
+}
+
+.manual-rule-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.manual-coordinate {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.manual-coordinate-table th:first-child,
+.manual-coordinate-table td:first-child {
+  width: 42%;
+}
+
+.manual-coordinate-part {
+  white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+  .manual-coordinate-part {
+    display: block;
+  }
+}
+
+.manual-result,
+.manual-rule-note {
+  display: block;
+}
+
+.manual-result.result-safe {
+  color: var(--color-safe-text);
+}
+
+.manual-result.result-caution {
+  color: var(--color-caution-text);
+}
+
+.manual-result.result-danger {
+  color: var(--color-danger-text);
+}
+
+.manual-rule-note {
+  margin-top: 2px;
+  color: var(--text-muted);
 }
 
 .manual-close-btn {
@@ -2901,7 +3058,7 @@ button.legend-toggle.is-on {
 }
 
 /* Nothing in the bank is selected while weather-only is active - leaving the
-   pill parked on Beginner would claim a caution level that is not being applied. */
+   pill parked on Chill would claim a caution level that is not being applied. */
 .frank-mode-bank.is-unset .frank-mode-indicator {
   opacity: 0;
 }
@@ -3537,21 +3694,91 @@ button.legend-toggle.is-on {
   white-space: nowrap;
 }
 
-/* A disabled gust check does not hide the forecast gust. Put the honest state
-   directly under that reading, where it remains legible on a 320px phone. */
-.snapshot-value.snapshot-wind.has-gust-disclosure {
+.near-limit-windows {
+  display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
-  white-space: normal;
+  gap: 9px;
+  padding-top: 12px;
+  border-top: 1px solid var(--panel-border);
 }
 
-.snapshot-gust-disclosure {
+.near-limit-windows-head h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--text-ui);
+  color: var(--color-caution-text);
+}
+
+.near-limit-windows-head p {
+  margin: 4px 0 0;
+  max-width: 72ch;
   color: var(--text-muted);
   font-size: var(--text-caption);
+  line-height: 1.45;
+}
+
+.near-limit-window-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  gap: 8px;
+}
+
+.near-limit-window {
+  appearance: none;
+  min-width: 0;
+  min-height: 48px;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 3px 8px;
+  padding: 9px 11px;
+  text-align: left;
+  font: inherit;
+  color: var(--text-main);
+  background: color-mix(in srgb, var(--color-caution) 8%, var(--bg-app));
+  border: 1px solid color-mix(in srgb, var(--color-caution) 48%, var(--panel-border));
+  border-left: 4px solid var(--color-caution);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.near-limit-window:hover {
+  background: color-mix(in srgb, var(--color-caution) 13%, var(--bg-app));
+}
+
+.near-limit-window:focus-visible {
+  outline: 2px solid var(--color-caution);
+  outline-offset: 1px;
+}
+
+.near-limit-window-date {
+  flex-basis: 100%;
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  font-weight: 700;
+}
+
+.near-limit-window > strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.near-limit-window-duration {
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+}
+
+.near-limit-window-details {
+  flex: 1 0 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-top: 4px;
+  color: var(--color-caution-text);
+  font-size: var(--text-caption);
   font-weight: 600;
-  line-height: 1.25;
-  white-space: normal;
+  line-height: 1.4;
 }
 
 .snapshot-wind-visual {

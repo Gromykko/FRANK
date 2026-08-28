@@ -1,6 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
-import { CURRENT_LOCATION } from '../config/locations';
+import { CURRENT_LOCATION, FORECAST_LOCATIONS } from '../config/locations';
+import { MET_WEATHER_SYMBOLS } from '../features/forecast/weatherSymbols';
+import type { MetWeatherSeverity } from '../features/forecast/weatherSymbols';
+import { WEATHER_POLICY_GROUPS } from '../features/forecast/weatherPolicyPresentation';
 import { resolveSectors } from '../features/safety/analyzeSafetyConditions';
 import { GUIDED_PROFILE_MODES, SAFETY_GUIDANCE_SOURCES } from '../features/safety/guidanceSources';
 import { GUST_FACTOR, getPresetSettings } from '../features/safety/presets';
@@ -11,6 +14,12 @@ interface SafetyManualModalProps {
   settings: SafetySettings;
   onClose: () => void;
 }
+
+const WEATHER_RESULT_LABEL: Record<MetWeatherSeverity, string> = {
+  safe: 'Within limits',
+  caution: 'Check before launch',
+  danger: 'Not recommended',
+};
 
 export default function SafetyManualModal({ settings, onClose }: SafetyManualModalProps) {
   const { t } = useLang();
@@ -113,23 +122,66 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
               })}
             </ul>
             <p className="manual-note">
-              {t('The Intermediate and Advanced wind limits draw on')}{' '}
+              {t('The Medium and Pro wind limits draw on')}{' '}
               <a href={SAFETY_GUIDANCE_SOURCES.dkfTouring} target="_blank" rel="noreferrer">DKF Touring</a>
               {', '}{t('including the')}{' '}
               <a href={SAFETY_GUIDANCE_SOURCES.dkfIpp3Touring} target="_blank" rel="noreferrer">{t('IPP 3 Touring norm')}</a>,
               {' '}{t('and')}{' '}
               <a href={SAFETY_GUIDANCE_SOURCES.dkfIpp4Touring} target="_blank" rel="noreferrer">{t('IPP 4 Touring norm')}</a>.
-              {' '}{t("Touring IPP 2 gives no numeric wind limit. The Beginner wind maximum and all three wave maxima use")}{' '}
+              {' '}{t("Touring IPP 2 gives no numeric wind limit. The Chill wind maximum and all three wave maxima use")}{' '}
               <a href={SAFETY_GUIDANCE_SOURCES.dkfSeaKayakNorm} target="_blank" rel="noreferrer">{t("DKF's 7 May 2026 sea-kayak norm")}</a>.
               {' '}{t('These documents describe training and assessment conditions, not guaranteed safe conditions. Local wind sectors, gusts, temperature, weather, daylight, route, equipment, and club rules may all require a stricter decision.')}
             </p>
           </div>
 
+          <details className="manual-details">
+            <summary>{t('Forecast points and model grids')}</summary>
+            <div className="manual-details-body">
+              <p className="manual-p">
+                {t('FRANK asks for one fixed reference point in each area. It does not average the whole fjord or follow your route.')}
+              </p>
+              <div className="manual-table-wrap">
+                <table className="manual-rule-table manual-coordinate-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">{t('Area')}</th>
+                      <th scope="col">{t('Requested point')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {FORECAST_LOCATIONS.map((location) => (
+                      <tr key={location.id}>
+                        <td>{location.areaName}</td>
+                        <td className="manual-coordinate">
+                          <span className="manual-coordinate-part">
+                            {location.coordinate.latitude.toFixed(3)}&deg; N,
+                          </span>{' '}
+                          <span className="manual-coordinate-part">
+                            {location.coordinate.longitude.toFixed(3)}&deg; E
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="manual-note">
+                <a href={SAFETY_GUIDANCE_SOURCES.metLocationForecastFaq} target="_blank" rel="noreferrer">MET Norway</a>{' '}
+                {t('interpolates its weather model to the requested point and adjusts air temperature for height. The result is still a forecast for an area around that point, not a measurement at the kayak.')}
+              </p>
+              <p className="manual-note">
+                <a href={SAFETY_GUIDANCE_SOURCES.dmiForecastEdr} target="_blank" rel="noreferrer">DMI EDR</a>{' '}
+                {t('returns the closest model grid point for water and waves. That point can differ from the coordinate FRANK requested, and the water and wave models use different grids. FRANK chose sea points that returned usable marine data, but it does not average several grid points.')}
+              </p>
+            </div>
+          </details>
+
           <div>
             <h3 className="manual-h">{t('1. Wave height')}</h3>
             <p className="manual-p">{t('FRANK compares significant wave height with the maximum in your profile:')}</p>
             <ul className="manual-list">
-              <li><strong>{t('Within limits:')}</strong> {t('Wave height is at or below your selected maximum.')}</li>
+              <li><strong>{t('Within limits:')}</strong> {t('Wave height is below its automatic check point.')}</li>
+              <li><strong>{t('Check before launch:')}</strong> {t('Wave height is from its automatic check point through your selected maximum.')}</li>
               <li><strong>{t('Not recommended:')}</strong> {t('Wave height is above your selected maximum.')}</li>
             </ul>
             <p className="manual-note">
@@ -139,13 +191,15 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
               <a href={SAFETY_GUIDANCE_SOURCES.dmiSignificantWaveHeight} target="_blank" rel="noreferrer">DMI</a>{' '}
               {t('defines significant wave height as the mean height of the highest third of waves and notes that individual waves can be higher. FRANK separately cautions that the number does not describe local surf or short steep chop by itself.')}
             </p>
+            <p className="manual-note">{t('FRANK calculates the point at 80% and rounds it to the same precision as the forecast. DKF and IPP do not publish this percentage, and the remaining room is not a guaranteed safety margin. It simply makes shrinking room to your maximum visible.')}</p>
           </div>
 
           <div>
             <h3 className="manual-h">{t('2. Wind speed and gusts')}</h3>
             <p className="manual-p">{t("MET forecasts a 10-minute mean wind at 10 m and a peak gust averaged over three seconds. FRANK compares mean wind with your selected maximum. If gust checking is on, it also checks a derived gust maximum of {0} times the mean-wind maximum.", GUST_FACTOR)}</p>
             <ul className="manual-list">
-              <li><strong>{t('Within limits:')}</strong> {t('In the hourly forecast, mean wind is at or below your maximum, and any enabled gust check is also within its derived maximum.')}</li>
+              <li><strong>{t('Within limits:')}</strong> {t('Mean wind and any enabled gust check are below their automatic check points.')}</li>
+              <li><strong>{t('Check before launch:')}</strong> {t('Mean wind or an enabled gust check is from its automatic check point through its maximum.')}</li>
               <li><strong>{t('Not recommended:')}</strong> {t('Mean wind or an enabled gust check is above its maximum.')}</li>
             </ul>
             <p className="manual-note">
@@ -174,6 +228,7 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
                 <li key={s.id}><strong>{t(s.label)} ({s.min}&deg;-{s.max}&deg;):</strong> {t(s.description)}. {t('Maximum {0} m/s for this direction.', s.maximumAt)}</li>
               ))}
               <li>{t('FRANK estimated these broad area bearings and starting limits. They are not club-published rules or a survey of every shoreline.')}</li>
+              <li>{t('An active sector uses the same automatic check-point rule as the general wind limit.')}</li>
               <li>{t('Sector limits use mean wind, not gusts.')}</li>
               <li>{t('You can adjust the wind limits. The bearings stay fixed.')}</li>
             </ul>
@@ -202,6 +257,46 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
               <li><strong>{t('Not recommended:')}</strong> {t('heavy precipitation, snow or sleet showers, and every condition with thunder.')}</li>
             </ul>
             <p className="manual-note">{t('There is no rain limit or lightning setting. Each forecast description keeps its specific meaning, for example "Heavy rain" or "Heavy rain and thunder".')}</p>
+            <details className="manual-details is-nested">
+              <summary>{t('See all weather ratings ({0} conditions)', Object.keys(MET_WEATHER_SYMBOLS).length)}</summary>
+              <div className="manual-details-body">
+                <p className="manual-note">
+                  {t('MET supplies the condition name. FRANK chooses the paddling result shown here. Day, night, and polar-twilight versions of a symbol have the same result.')}
+                </p>
+                <div className="manual-table-wrap">
+                  <table className="manual-rule-table manual-weather-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">{t('Published condition')}</th>
+                        <th scope="col">{t('FRANK result')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {WEATHER_POLICY_GROUPS.map((group) => (
+                        <tr key={group.codes.join('-')} data-weather-severity={group.severity}>
+                          <td>{t(group.conditionLabel)}</td>
+                          <td>
+                            <strong className={`manual-result result-${group.severity}`}>
+                              {t(WEATHER_RESULT_LABEL[group.severity])}
+                            </strong>
+                            <span className="manual-rule-note">{t(group.policyNote)}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="manual-note">
+                  {t('The numeric precipitation amount does not set the result. The published condition code does. An unknown or missing code becomes Check before launch because FRANK cannot assess it.')}
+                </p>
+                <p className="manual-note">
+                  {t('Official DMI and MeteoAlarm warnings are shown separately. They do not silently change this table or the verdict, so always open the warning for its area and timing.')}
+                </p>
+                <p className="manual-note">
+                  {t('Weather only mode shows these conditions without applying any FRANK verdict rules.')}
+                </p>
+              </div>
+            </details>
           </div>
 
           <div>
@@ -241,10 +336,11 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
 
           <div>
             <h3 className="manual-h">{t('9. Launch windows')}</h3>
-            <p className="manual-p">{t('An hourly launch window is an unbroken run of hours that stay within every selected check. Check before launch or Not recommended breaks the run:')}</p>
+            <p className="manual-p">{t('A green launch window is an unbroken run that stays below every automatic check point and passes every other active check. FRANK lists near-limit periods separately as Check before launch alternatives instead of calling them green windows:')}</p>
             <ul className="manual-list">
               <li><strong>{t('Minimum duration:')}</strong> {t('runs shorter than your Min Duration setting are not shown.')}</li>
-              <li><strong>{t('Day boundaries:')}</strong> {t('hourly windows split at local midnight, so each belongs to one calendar day; longer-range outlook windows can run past it (the end time then shows its day).')}</li>
+              <li><strong>{t('Near a maximum:')}</strong> {t('an amber alternative contains at least one wind, gust, wave, or active sector reading from its automatic check point through its maximum, with no other caution or Not recommended result. The card shows the exact headroom.')}</li>
+              <li><strong>{t('Day boundaries:')}</strong> {t('a continuous hourly window can cross local midnight. The calendar draws its pieces on the matching days, and the list names the end day when needed.')}</li>
               <li><strong>{t('Longer range:')}</strong> {t('beyond the hourly forecast, coarser outlook blocks (6 hours, occasionally 12) form windows from the readings available in each block. Gusts are not published there. These windows are marked "more uncertain forecast"; treat them as hints, not commitments.')}</li>
             </ul>
           </div>

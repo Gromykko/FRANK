@@ -130,11 +130,18 @@ describe('a corrupt stored profile cannot disable a safety check', () => {
     expect(analyzeSafetyConditions({ ...goodHour, windSpeed: 25, windGust: 30 }, parsed).rating).toBe('danger');
   });
 
-  it('uses the stored wave maximum directly with inclusive up-to semantics', () => {
+  it('uses the stored wave maximum directly for the derived caution and danger boundaries', () => {
     const parsed = parseStoredSettings(currentRecord({
       waveLimit: 0.3,
     }));
-    expect(analyzeSafetyConditions({ ...goodHour, waveHeight: 0.3 }, parsed).rating).toBe('safe');
+
+    expect(analyzeSafetyConditions({ ...goodHour, waveHeight: 0.23 }, parsed).rating).toBe('safe');
+
+    const cautionStart = analyzeSafetyConditions({ ...goodHour, waveHeight: 0.24 }, parsed);
+    expect(cautionStart.rating).toBe('caution');
+    expect(cautionStart.reasons.some((reason) => reason.kind === 'near-limit')).toBe(true);
+
+    expect(analyzeSafetyConditions({ ...goodHour, waveHeight: 0.3 }, parsed).rating).toBe('caution');
     expect(analyzeSafetyConditions({ ...goodHour, waveHeight: 0.31 }, parsed).rating).toBe('danger');
   });
 });
