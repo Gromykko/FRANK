@@ -32,7 +32,7 @@ describe('SafetyLimitsPanel terminology', () => {
 
       // Launch-window criteria are everyday controls, so they stay visible.
       // Only the optional, locally estimated wind sectors remain collapsed.
-      expect(host.textContent).toContain('Launch-window settings');
+      expect(host.textContent).toContain('Planning rules');
       expect(host.textContent).toContain('Min Duration');
       expect(host.textContent).toContain('Daylight Only');
       expect(host.querySelector('.advanced-toggle')?.textContent).toContain('Optional local wind sectors');

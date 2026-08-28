@@ -521,7 +521,7 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
           )}
 
           <section className="planning-options" aria-labelledby="planning-options-title">
-            <h3 className="planning-options-title" id="planning-options-title">{t('Launch-window settings')}</h3>
+            <h3 className="planning-options-title" id="planning-options-title">{t('Planning rules')}</h3>
 
             <div className="advanced-row">
               <div className="advanced-row-label">

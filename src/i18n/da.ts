@@ -525,7 +525,7 @@ export const da: Record<string, string> = {
   'water temperature Not recommended boundary':
     'grænse for vandtemperatur, hvor turen frarådes',
   'Optional local wind sectors': 'Valgfrie lokale vindsektorer',
-  'Launch-window settings': 'Indstillinger for rovinduer',
+  'Planning rules': 'Planlægningsregler',
   'Min Duration': 'Min varighed',
   'Shortest usable launch window': 'Korteste brugbare rovindue',
   '1 hour': '1 time',
