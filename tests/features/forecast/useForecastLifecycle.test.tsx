@@ -498,7 +498,7 @@ describe('useForecast startup lifecycle', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const requestedUrl = String(fetchMock.mock.calls[0][0]);
-    expect(requestedUrl).toBe(`https://frank-forecast.alswatchs.workers.dev/api/v2/forecast/${CURRENT_LOCATION.id}`);
+    expect(requestedUrl).toBe(`https://frank-forecast.gromykko.workers.dev/api/v2/forecast/${CURRENT_LOCATION.id}`);
     expect(requestedUrl).not.toContain('refresh=1');
     expect(latest?.loading).toBe(false);
     expect(latest?.checkState).toBe('succeeded');

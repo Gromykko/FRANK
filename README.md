@@ -2,7 +2,7 @@
 
 FRANK is a small, installable web app that helps sea-kayakers judge when conditions on selected Danish fjords fit their own limits. It combines weather, waves, water level, water temperature, daylight, and official warnings into an hourly overview, then identifies possible launch windows.
 
-[Open FRANK](https://gromykko.github.io/FRANK/) · [Service status](https://frank-forecast.alswatchs.workers.dev/status) · [Machine health](https://frank-forecast.alswatchs.workers.dev/health)
+[Open FRANK](https://gromykko.github.io/FRANK/) · [Service status](https://frank-forecast.gromykko.workers.dev/status) · [Machine health](https://frank-forecast.gromykko.workers.dev/health)
 
 > FRANK is a planning aid, not a professional safety service. Forecast models can be wrong or incomplete. Club rules, official warnings, local knowledge, and what you see at the water always take priority.
 

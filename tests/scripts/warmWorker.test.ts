@@ -319,7 +319,7 @@ describe('deployment Worker warm-up', () => {
     );
     expect(uploadJobBody).toContain('parsedPreviewUrl.origin !== expectedPreviewOrigin');
     expect(uploadJobBody).toContain("parsedPreviewUrl.pathname !== '/'");
-    expect(workflow).not.toContain('alswatchs.workers.dev');
+    expect(workflow).not.toContain('gromykko.workers.dev');
     expect(uploadJobBody).toContain('appendFileSync(process.env.GITHUB_OUTPUT');
     expect(uploadJobBody).toContain("'version_id=' + candidateVersionId");
     expect(uploadJobBody).toContain("'preview_url=' + candidatePreviewUrl");

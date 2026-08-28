@@ -1,4 +1,4 @@
-const DEFAULT_FORECAST_WORKER_BASE = 'https://frank-forecast.alswatchs.workers.dev';
+const DEFAULT_FORECAST_WORKER_BASE = 'https://frank-forecast.gromykko.workers.dev';
 
 // One canonical origin for both forecast reads and the read-only availability
 // summary. Keeping this separate from cache.ts lets recovery UI inspect

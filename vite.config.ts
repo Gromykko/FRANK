@@ -26,7 +26,7 @@ const APP_BASE = '/FRANK/'
 // assembled from two different deployments.
 const APP_BUILD_ID = `${APP_VERSION}-${APP_COMMIT}-${APP_BUILD_TIME}`
 
-const WORKER_ORIGIN = process.env.VITE_FORECAST_WORKER_BASE ?? 'https://frank-forecast.alswatchs.workers.dev'
+const WORKER_ORIGIN = process.env.VITE_FORECAST_WORKER_BASE ?? 'https://frank-forecast.gromykko.workers.dev'
 
 // GitHub Pages serves static files and cannot set response headers, so a <meta>
 // CSP is the only one available. Injected at BUILD time only: the dev server
