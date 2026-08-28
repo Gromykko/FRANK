@@ -18,11 +18,11 @@ import { getFrankPhrase } from '../src/features/safety/frankPhrases';
 // variables or template strings are skipped, which is why interpolation uses
 // {0} placeholders inside an otherwise literal key.
 
-function sourceFiles(dir: string, out: string[] = []): string[] {
+function sourceFiles(dir: string, out: string[] = [], pattern = /\.tsx?$/): string[] {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
-    if (statSync(full).isDirectory()) sourceFiles(full, out);
-    else if (/\.tsx?$/.test(entry)) out.push(full);
+    if (statSync(full).isDirectory()) sourceFiles(full, out, pattern);
+    else if (pattern.test(entry)) out.push(full);
   }
   return out;
 }
@@ -59,6 +59,55 @@ describe('Danish dictionary covers every translated literal', () => {
     }
 
     expect(missing, `these strings would render in English for Danish users:\n${missing.join('\n')}`).toEqual([]);
+  });
+
+  // The check above only runs one way: it proves every English string has a
+  // Danish entry. It says nothing about entries whose English string no longer
+  // exists, so a renamed string leaves its old translation behind and nothing
+  // fails. Those are invisible — they cost nothing at runtime and quietly rot,
+  // which is exactly the kind of thing that survives for years.
+  it('has no da.ts entry whose English string no longer exists in src', () => {
+    // A few keys are assembled at the call site from a constant, e.g.
+    // t(`${LEVEL_WORD[colour]} warnings`) in WarningStripe. The composed string
+    // never appears literally in src, so it cannot be found by scanning and has
+    // to be named here. Anything else in this list is dead weight.
+    const composedAtCallSite = new Set([
+      'Yellow warnings',
+      'Orange warnings',
+      'Red warnings',
+      'Yellow weather warnings',
+      'Orange weather warnings',
+      'Red weather warnings',
+    ]);
+
+    // Scan whole file text rather than only t() calls: plenty of keys reach the
+    // translator through a constant (TRIP_PROFILE_LABELS, weather descriptions),
+    // so they are literals in src without being call arguments. JSON is included
+    // because every wind-sector label and description lives in locations.json —
+    // scanning only .ts/.tsx reports all of them as orphans.
+    const haystack = sourceFiles(resolve(process.cwd(), 'src'), [], /\.(tsx?|json)$/)
+      .filter((file) => !file.endsWith(`i18n${sep}da.ts`))
+      .map((file) => readFileSync(file, 'utf8'))
+      .join('\n');
+
+    const orphans = Object.keys(da)
+      .filter((key) => !composedAtCallSite.has(key))
+      .filter((key) => !haystack.includes(key));
+
+    expect(
+      orphans,
+      `these da.ts entries translate a string that no longer exists:\n${orphans.join('\n')}`,
+    ).toEqual([]);
+  });
+
+  it('has no stale entry in the composed-key allow-list', () => {
+    // The allow-list above is a permanent exemption, so it needs its own guard:
+    // once a composed key is deleted or made literal, its exemption must go too
+    // or it silently protects nothing forever.
+    const unused = ['Yellow warnings', 'Orange warnings', 'Red warnings',
+      'Yellow weather warnings', 'Orange weather warnings', 'Red weather warnings']
+      .filter((key) => !(key in da));
+    expect(unused, `allow-listed keys that are no longer in da.ts: ${unused.join(', ')}`).toEqual([]);
   });
 
   it('has no unit label still claiming metres for water level', () => {
