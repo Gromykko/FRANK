@@ -45,7 +45,7 @@ describe('SafetyLimitsPanel terminology', () => {
       expect(host.textContent).toContain('Maximum wind');
       expect(host.textContent).toContain('Pick Chill, Medium, or Pro');
       expect(host.textContent).toContain('Maximum waves');
-      expect(host.textContent).toContain('Include forecast gusts');
+      expect(host.textContent).toContain('Use forecast gusts in the verdict');
       expect(host.textContent).toContain('Check from 6.4 m/s · Not recommended above 8.0 m/s');
       expect(host.textContent).toContain('Check from 0.80 m · Not recommended above 1.00 m');
       expect(host.textContent).toContain('Check from 10.2 m/s · derived maximum 12.8 m/s (1.6× the wind maximum).');
@@ -73,7 +73,7 @@ describe('SafetyLimitsPanel terminology', () => {
         .map((element) => element.getAttribute('aria-label'));
       expect(labels).not.toContain('Water level');
       expect(labels).toContain('Wind limit enabled');
-      expect(labels).toContain('Include forecast gusts');
+      expect(labels).toContain('Use forecast gusts in the verdict');
       expect(labels).toContain('Apply optional wind-sector limits');
       expect(labels).toContain('Wave-height limit enabled');
       expect(labels).toContain('Increase Maximum wind');

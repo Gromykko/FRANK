@@ -328,14 +328,14 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
               />
               <div className={`limit-caution-row has-toggle ${settings.enableWindSpeed ? '' : 'is-off'}`}>
                 <div className="limit-caution-copy">
-                  <span className="limit-caution-name">{t('Include forecast gusts')}</span>
+                  <span className="limit-caution-name">{t('Use forecast gusts in the verdict')}</span>
                   <span className="limit-caution-hint">{t('Check from {0} m/s · derived maximum {1} m/s ({2}× the wind maximum).', derivedGustCautionAt.toFixed(1), derivedGustLimit.toFixed(1), GUST_FACTOR)}</span>
                 </div>
                 <ToggleSwitch
                   small
                   checked={settings.enableWindSpeed && settings.enableWindGust}
                   onChange={checked => updateCriteria({ enableWindGust: checked })}
-                  label={t('Include forecast gusts')}
+                  label={t('Use forecast gusts in the verdict')}
                   disabled={!settings.enableWindSpeed}
                 />
               </div>

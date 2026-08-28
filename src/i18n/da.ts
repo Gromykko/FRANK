@@ -492,7 +492,7 @@ export const da: Record<string, string> = {
   'm/s wind': 'm/s vind',
   '0 calm': '0 stille',
   '25 storm': '25 storm',
-  'Include forecast gusts': 'Medtag varslede vindstød',
+  'Use forecast gusts in the verdict': 'Brug varslede vindstød i vurderingen',
   'Check from {0} m/s · derived maximum {1} m/s ({2}× the wind maximum).':
     'Tjek fra {0} m/s · beregnet maksimum {1} m/s ({2} × vindmaksimum).',
   'Check from {0} {1} · Not recommended above {2} {1}':
