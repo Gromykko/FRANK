@@ -1167,6 +1167,18 @@
   transition: background 0.15s ease;
 }
 
+/* Visual size stays 42x24; the hit area is padded out to 44x44 without changing
+   layout or the switch's painted bounds. */
+.toggle-switch::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: max(100%, 44px);
+  height: 44px;
+}
+
 .toggle-switch::after {
   content: '';
   position: absolute;
