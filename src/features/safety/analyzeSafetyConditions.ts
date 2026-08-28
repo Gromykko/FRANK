@@ -7,6 +7,12 @@ import type { SunTimes } from './blockDaylight';
 
 export type SafetyRating = 'safe' | 'caution' | 'danger';
 
+const SAFETY_RATING_RANK: Record<SafetyRating, number> = {
+  safe: 0,
+  caution: 1,
+  danger: 2,
+};
+
 // A verdict is always one of the three above. A DISPLAY can additionally show
 // no verdict at all: with every check switched off FRANK reports the weather
 // and judges nothing, and painting that state amber would be a judgement.
@@ -333,9 +339,9 @@ export function analyzeSafetyConditions(
   ];
   const preferredSustainedWindCandidate = sustainedWindCandidates.length > 0
     ? sustainedWindCandidates.reduce((best, candidate) => {
-      const severityRank: Record<SafetyRating, number> = { safe: 0, caution: 1, danger: 2 };
       if (candidate.reason.severity !== best.reason.severity) {
-        return severityRank[candidate.reason.severity] > severityRank[best.reason.severity]
+        return SAFETY_RATING_RANK[candidate.reason.severity]
+          > SAFETY_RATING_RANK[best.reason.severity]
           ? candidate
           : best;
       }
@@ -362,6 +368,21 @@ export function analyzeSafetyConditions(
         reasons.splice(sustainedIndex, 1);
         reasons.splice(gustIndex, 0, preferredSustainedWindCandidate.reason);
       }
+    }
+  }
+
+  // The gust check earns its own line only when it says something the
+  // sustained-wind line does not. A gust-only warning still identifies a
+  // squally hour, and gust danger still stays beside a weaker wind caution.
+  // At equal or lower severity, the gust line merely repeats the surviving
+  // general/sector wind explanation.
+  if (gustWindReason && preferredSustainedWindCandidate) {
+    const windSeverity = preferredSustainedWindCandidate.reason.severity;
+    const gustSeverity = gustWindReason.severity;
+    if (SAFETY_RATING_RANK[gustSeverity] <= SAFETY_RATING_RANK[windSeverity]) {
+      const index = reasons.indexOf(gustWindReason);
+      if (index !== -1) reasons.splice(index, 1);
+      gustWindReason = null;
     }
   }
 

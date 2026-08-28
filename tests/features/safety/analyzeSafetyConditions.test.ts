@@ -400,6 +400,107 @@ describe('gust maximum math', () => {
   });
 });
 
+describe('wind and gust explanation de-duplication', () => {
+  it('keeps a gust-only caution when mean wind is within limits', () => {
+    const result = analyzeSafetyConditions(
+      { ...baseData, windSpeed: 6.0, windGust: 12.7 },
+      baseSettings,
+    );
+
+    expect(result).toEqual({
+      rating: 'caution',
+      reasons: [{
+        severity: 'caution',
+        kind: 'near-limit',
+        text: 'Wind gusts: 12.7 m/s. 0.1 m/s below the 12.8 m/s maximum derived from your wind limit.',
+      }],
+    });
+  });
+
+  it('keeps gust danger when mean wind is within limits', () => {
+    const result = analyzeSafetyConditions(
+      { ...baseData, windSpeed: 6.0, windGust: 13.5 },
+      baseSettings,
+    );
+
+    expect(result).toEqual({
+      rating: 'danger',
+      reasons: [{
+        severity: 'danger',
+        text: 'Wind gusts: 13.5 m/s. Above the 12.8 m/s maximum derived from your wind limit.',
+      }],
+    });
+  });
+
+  it('shows only mean wind when mean wind and gusts are both caution', () => {
+    const result = analyzeSafetyConditions(
+      { ...baseData, windSpeed: 7.0, windGust: 11.0 },
+      baseSettings,
+    );
+
+    expect(result).toEqual({
+      rating: 'caution',
+      reasons: [{
+        severity: 'caution',
+        kind: 'near-limit',
+        text: 'Wind speed: 7.0 m/s (Moderate Breeze). 1.0 m/s below your maximum of 8.0 m/s.',
+      }],
+    });
+  });
+
+  it('keeps gust danger beside a weaker mean-wind caution', () => {
+    const result = analyzeSafetyConditions(
+      { ...baseData, windSpeed: 7.0, windGust: 13.5 },
+      baseSettings,
+    );
+
+    expect(result).toEqual({
+      rating: 'danger',
+      reasons: [
+        {
+          severity: 'caution',
+          kind: 'near-limit',
+          text: 'Wind speed: 7.0 m/s (Moderate Breeze). 1.0 m/s below your maximum of 8.0 m/s.',
+        },
+        {
+          severity: 'danger',
+          text: 'Wind gusts: 13.5 m/s. Above the 12.8 m/s maximum derived from your wind limit.',
+        },
+      ],
+    });
+  });
+
+  it('shows only mean-wind danger when gusts are caution', () => {
+    const result = analyzeSafetyConditions(
+      { ...baseData, windSpeed: 9.0, windGust: 11.0 },
+      baseSettings,
+    );
+
+    expect(result).toEqual({
+      rating: 'danger',
+      reasons: [{
+        severity: 'danger',
+        text: 'Wind speed: 9.0 m/s (Fresh Breeze). Above your maximum of 8.0 m/s.',
+      }],
+    });
+  });
+
+  it('shows only mean-wind danger when both mean wind and gusts are danger', () => {
+    const result = analyzeSafetyConditions(
+      { ...baseData, windSpeed: 9.0, windGust: 13.5 },
+      baseSettings,
+    );
+
+    expect(result).toEqual({
+      rating: 'danger',
+      reasons: [{
+        severity: 'danger',
+        text: 'Wind speed: 9.0 m/s (Fresh Breeze). Above your maximum of 8.0 m/s.',
+      }],
+    });
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Wind and waves warn from 80% through equality with the selected maximum.
 // Only a displayed reading above the maximum is danger. The lower
@@ -696,7 +797,7 @@ describe('custom wind direction sectors', () => {
     });
   });
 
-  it('keeps sustained wind and gusts as distinct hazards in that order', () => {
+  it('keeps only the controlling sector danger when gust danger does not outrank it', () => {
     const settings = {
       ...baseSettings,
       enableCustomWindDirs: true,
@@ -709,7 +810,6 @@ describe('custom wind direction sectors', () => {
     expect(result.rating).toBe('danger');
     expect(result.reasons.map((reason) => reason.text)).toEqual([
       'Wind speed: 7.8 m/s (Moderate Breeze). Westerly wind (270°) is above your 7.0 m/s maximum for this direction.',
-      'Wind gusts: 13.0 m/s. Above the 12.8 m/s maximum derived from your wind limit.',
     ]);
   });
 
