@@ -136,8 +136,8 @@ describe('Danish dictionary covers every translated literal', () => {
   it('uses plain Danish for the automatic near-limit band', () => {
     expect(da['Check from {0} {1} · Not recommended above {2} {1}'])
       .toBe('Tjek fra {0} {1} · frarådes over {2} {1}');
-    expect(da['Wave height is from its automatic check point through your selected maximum.'])
-      .toBe('Bølgehøjden ligger fra sit automatiske kontrolpunkt til og med dit valgte maksimum.');
+    expect(da['Wave height is from {0} through {1} m.'])
+      .toBe('Bølgehøjden ligger fra {0} til og med {1} m.');
     expect(da['Check before launch periods:']).toBe('Perioder, der skal tjekkes:');
     expect(da['these stay amber in the full forecast so you can inspect the reason, but they are not promoted into the green launch-window list.'])
       .toContain('de bliver ikke gjort til grønne rovinduer');

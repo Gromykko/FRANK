@@ -585,35 +585,38 @@ export const da: Record<string, string> = {
     'FRANK bruger en komplet havprognose, selv om DMI returnerer et andet modelpunkt end tidligere. Den tekniske statusside viser både det ønskede og det returnerede punkt, så ændringen kan undersøges. Det giver ingen advarsel i den offentlige prognose og ændrer ikke vurderingen.',
   'These documents describe training and assessment conditions, not guaranteed safe conditions. Local wind sectors, gusts, temperature, weather, daylight, route, equipment, and club rules may all require a stricter decision.':
     'Dokumenterne beskriver forhold ved træning og prøver, ikke garanteret sikre forhold. Lokale vindsektorer, vindstød, temperatur, vejr, dagslys, rute, udstyr og klubregler kan alle tale for en strengere vurdering.',
-  '1. Wave height': '1. Bølgehøjde',
+  "The automatic 80% check point is FRANK's own headroom rule, not a threshold published by DKF or IPP.":
+    'Det automatiske tjekpunkt ved 80% er FRANKs egen margenregel, ikke en grænse offentliggjort af DKF eller IPP.',
+  '1. How rules combine': '1. Sådan kombineres reglerne',
+  '3. Wave height': '3. Bølgehøjde',
   'FRANK compares significant wave height with the maximum in your profile:':
     'FRANK sammenligner den signifikante bølgehøjde med maksimum i din profil:',
   'Within limits:': 'Inden for grænserne:',
-  'Wave height is below its automatic check point.':
-    'Bølgehøjden er under sit automatiske kontrolpunkt.',
-  'Wave height is from its automatic check point through your selected maximum.':
-    'Bølgehøjden ligger fra sit automatiske kontrolpunkt til og med dit valgte maksimum.',
+  'Wave height is below {0} m.': 'Bølgehøjden er under {0} m.',
+  'Wave height is from {0} through {1} m.': 'Bølgehøjden ligger fra {0} til og med {1} m.',
   'Not recommended:': 'Frarådes:',
-  'Wave height is above your selected maximum.': 'Bølgehøjden er over dit valgte maksimum.',
+  'Wave height is above {0} m.': 'Bølgehøjden er over {0} m.',
   'Wave labels use': 'Bølgebetegnelserne bruger',
   "WMO's sea-wave terms": 'WMOs betegnelser for søgang',
   'only as context; FRANK assesses the numeric height.':
     'kun som kontekst; FRANK vurderer den talfastsatte bølgehøjde.',
   'defines significant wave height as the mean height of the highest third of waves and notes that individual waves can be higher. FRANK separately cautions that the number does not describe local surf or short steep chop by itself.':
     'definerer signifikant bølgehøjde som middelhøjden af den højeste tredjedel af bølgerne og bemærker, at enkeltbølger kan være højere. FRANK advarer særskilt om, at tallet ikke i sig selv beskriver lokal brænding eller kort, krap sø.',
-  'FRANK calculates the point at 80% and rounds it to the same precision as the forecast. DKF and IPP do not publish this percentage, and the remaining room is not a guaranteed safety margin. It simply makes shrinking room to your maximum visible.':
-    'FRANK beregner punktet ved 80 % og afrunder det til samme præcision som prognosen. DKF og IPP offentliggør ikke denne procent, og den resterende afstand er ikke en garanteret sikkerhedsmargin. Reglen gør blot den faldende afstand til dit maksimum synlig.',
+  'FRANK calculates the point at 80% and rounds it to the same precision as the forecast. The remaining room is not a guaranteed safety margin; it simply makes shrinking room to your maximum visible.':
+    'FRANK beregner punktet ved 80% og afrunder det til samme præcision som prognosen. Den resterende afstand er ikke en garanteret sikkerhedsmargin; reglen gør blot den faldende afstand til dit maksimum synlig.',
   '2. Wind speed and gusts': '2. Vindstyrke og vindstød',
   'MET forecasts a 10-minute mean wind at 10 m and a peak gust averaged over three seconds. FRANK compares mean wind with your selected maximum. If gust checking is on, it also checks a derived gust maximum of {0} times the mean-wind maximum.':
     'MET varsler middelvind over 10 minutter i 10 meters højde og det kraftigste vindstød som et gennemsnit over tre sekunder. FRANK sammenligner middelvinden med dit valgte maksimum. Er kontrol af vindstød slået til, tjekkes de også mod et beregnet maksimum på {0} gange maksimum for middelvind.',
-  'Mean wind and any enabled gust check are below their automatic check points.':
-    'Middelvinden og en eventuel kontrol af vindstød ligger under deres automatiske kontrolpunkter.',
-  'Mean wind or an enabled gust check is from its automatic check point through its maximum.':
-    'Middelvinden eller et vindstød, der kontrolleres, ligger fra sit automatiske kontrolpunkt til og med sit maksimum.',
-  'Mean wind or an enabled gust check is above its maximum.':
-    'Middelvinden eller et vindstød, der kontrolleres, er over sit maksimum.',
-  "For example, a mean-wind maximum of {0} m/s gives a derived gust maximum of {1} m/s. The factor is FRANK's rule of thumb, not a limit published by DKF, IPP, WMO, or a kayak club.":
-    'Et maksimum for middelvind på {0} m/s giver for eksempel et beregnet maksimum for vindstød på {1} m/s. Faktoren er en tommelfingerregel i FRANK, ikke en grænse offentliggjort af DKF, IPP, WMO eller en kajakklub.',
+  'Mean wind is below {0} m/s, and any enabled gust check is below its own check point.':
+    'Middelvinden er under {0} m/s, og en eventuel kontrol af vindstød ligger under sit eget tjekpunkt.',
+  'Mean wind is from {0} through {1} m/s, or an enabled gust check is from its own check point through its maximum.':
+    'Middelvinden ligger fra {0} til og med {1} m/s, eller et vindstød, der kontrolleres, ligger fra sit eget tjekpunkt til og med sit maksimum.',
+  'Mean wind is above {0} m/s, or an enabled gust check is above its maximum.':
+    'Middelvinden er over {0} m/s, eller et vindstød, der kontrolleres, er over sit maksimum.',
+  'When mean wind and gusts both reach their check point, FRANK shows only the mean-wind explanation — the two say the same thing. A gust explanation on its own means the gusts are high relative to the mean wind, which is exactly what this check is for.':
+    'Når middelvind og vindstød begge når deres tjekpunkt, viser FRANK kun forklaringen om middelvind — de to siger det samme. En forklaring om vindstød alene betyder, at vindstødene er høje i forhold til middelvinden, og det er netop det, dette tjek er til for.',
+  "For example, a mean-wind maximum of {0} m/s gives a derived gust maximum of {1} m/s. The factor is FRANK's rule of thumb.":
+    'Et maksimum for middelvind på {0} m/s giver for eksempel et beregnet maksimum for vindstød på {1} m/s. Faktoren er FRANKs egen tommelfingerregel.',
   'It stays fixed instead of learning from recent forecasts, so the limit does not move with the weather it is meant to judge.':
     'Den ligger fast og tilpasser sig ikke de seneste prognoser. Grænsen flytter sig derfor ikke med det vejr, den skal vurdere.',
   'Mean-wind names follow': 'Navnene på middelvind følger',
@@ -626,7 +629,7 @@ export const da: Record<string, string> = {
     'regner også vindstød som relevante i en officiel kajakprognose. FRANK kopierer ikke prognosens lokale grænser for De Store Søer. Slår du kontrollen af vindstød fra, vises vindstødene stadig i prognosen, men de påvirker ikke vurderingen.',
   'MET does not publish gusts for the longer-range 6- or 12-hour outlook blocks. When that happens, FRANK says the gust is unavailable and judges the outlook only from the readings the block contains.':
     'MET varsler ikke vindstød i langtidsudsigtens blokke på 6 eller 12 timer. Når det sker, oplyser FRANK, at vindstød mangler, og vurderer kun udsigten ud fra blokkens øvrige målinger.',
-  '3. Local wind sectors': '3. Lokale vindsektorer',
+  '5. Local wind sectors': '5. Lokale vindsektorer',
   'These limits are optional and off by default. If you turn them on, FRANK applies separate wind limits to the fixed sectors below for {0}. A sector limit can make your profile stricter.':
     'Disse grænser er valgfrie og slået fra som standard. Slår du dem til, bruger FRANK særskilte vindgrænser for de faste sektorer nedenfor ved {0}. En sektorgrænse kan gøre din profil strengere.',
   'Maximum {0} m/s for this direction.': 'Maksimum {0} m/s for denne retning.',
@@ -636,12 +639,11 @@ export const da: Record<string, string> = {
     'En aktiv sektor bruger samme regel for automatiske kontrolpunkter som den generelle vindgrænse.',
   'Sector limits use mean wind, not gusts.': 'Sektorgrænserne bruger middelvind, ikke vindstød.',
   'You can adjust the wind limits. The bearings stay fixed.': 'Du kan justere vindgrænserne. Retningerne ligger fast.',
-  '4. Water level': '4. Vandstand',
   'Water level comes from a storm-surge forecast model, not an astronomical tide table. The value shown is the forecast water level relative to mean sea level at the nearest model grid point, including wind setup and pressure effects.':
     'Vandstanden kommer fra en stormflodsmodel, ikke en astronomisk tidevandstabel. Den viste værdi er den forudsagte vandstand i forhold til middelvandstand ved nærmeste modelpunkt, inklusive vindstuvning og trykeffekter.',
   'Water level is shown for planning context only. It does not change the safety verdict or filter launch windows.':
     'Vandstanden vises kun som hjælp til planlægningen. Den ændrer ikke sikkerhedsvurderingen og filtrerer ikke rovinduer.',
-  '5. Weather conditions (rain, snow, sleet, fog and thunder)': '5. Vejrforhold (regn, sne, slud, tåge og torden)',
+  '6. Weather conditions (rain, snow, sleet, fog and thunder)': '6. Vejrforhold (regn, sne, slud, tåge og torden)',
   "The weather description follows MET Norway's official":
     'Vejrbeskrivelsen følger MET Norways officielle',
   'Weathericons legend': 'Weathericons-symbolforklaring',
@@ -689,7 +691,6 @@ export const da: Record<string, string> = {
   'Weather only mode shows these conditions without applying any FRANK verdict rules.':
     'Kun vejr viser disse forhold uden at anvende FRANKs vurderingsregler.',
   'weather': 'vejr',
-  '6. How rules combine': '6. Sådan kombineres reglerne',
   'FRANK checks every enabled rule for each hour. The':
     'FRANK kontrollerer hver aktiveret regel for hver time. Det',
   'most restrictive result': 'strengeste resultat',
@@ -701,7 +702,7 @@ export const da: Record<string, string> = {
     'En regel, der kun beder dig tjekke forholdene, som dagslysreglen, kan ikke alene føre til, at timen frarådes.',
   'FRANK lists each separate problem it finds. If the general and local-sector limits flag the same mean wind, only the controlling wind explanation is shown.':
     'FRANK viser hvert særskilt problem, den finder. Hvis den generelle grænse og en lokal sektorgrænse markerer den samme middelvind, vises kun den afgørende vindbegrundelse.',
-  '7. Water temperature': '7. Vandtemperatur',
+  '4. Water temperature': '4. Vandtemperatur',
   'Cold water can affect breathing and movement after an unexpected capsize. FRANK uses two temperature boundaries because clothing, rescue time, and paddling plans matter:':
     'Koldt vand kan påvirke vejrtrækning og bevægelighed efter en uventet kæntring. FRANK bruger to temperaturgrænser, fordi beklædning, redningstid og turplan betyder noget:',
   'Within the selected temperature limits. This is not a clothing recommendation.':
@@ -714,10 +715,10 @@ export const da: Record<string, string> = {
   'cold-water-shock guidance. The default 10°C boundary follows advice from':
     'vejledning om kuldechok. Standardgrænsen på 10 °C følger rådet fra',
   'to wait until the water is above 10°C.': 'om at vente, til vandet er over 10 °C.',
-  '8. Daylight rule': '8. Dagslysregel',
+  '7. Daylight rule': '7. Dagslysregel',
   'Many clubs require navigation lights and permission between sunset and sunrise. When the daylight rule is on, FRANK marks those hours Check before launch. You can turn it off if your own rules allow night paddling. A longer-range outlook block gets the same result unless its whole period is in daylight. Launch windows work differently: FRANK removes periods with no complete daylight hour and shows only the longest continuous daylight part of a partial period.':
     'Mange klubber kræver lanterner og tilladelse mellem solnedgang og solopgang. Når dagslysreglen er slået til, markeres de timer med Tjek før du tager på vandet. Du kan slå reglen fra, hvis dine egne regler tillader natroning. En blok i langtidsudsigten får samme vurdering, medmindre hele perioden ligger i dagslys. Rovinduer fungerer anderledes: FRANK fjerner perioder uden en hel time i dagslys og viser kun den længste sammenhængende del af en delvis periode, der ligger i dagslys.',
-  '9. Launch windows': '9. Rovinduer',
+  '8. Launch windows': '8. Rovinduer',
   'A launch window is an unbroken green run that stays below every automatic check point and passes every other active check. Periods rated Check before launch remain visible in the forecast, but are not listed as launch windows:':
     'Et rovindue er et ubrudt grønt forløb, som ligger under alle automatiske kontrolpunkter og består alle andre aktive tjek. Perioder med Tjek før du tager på vandet kan stadig ses i prognosen, men vises ikke som rovinduer:',
   'Minimum duration:': 'Minimumsvarighed:',
@@ -731,5 +732,7 @@ export const da: Record<string, string> = {
   'Longer range:': 'Længere sigt:',
   'beyond the hourly forecast, coarser outlook blocks (6 hours, occasionally 12) form windows from the readings available in each block. Gusts are not published there. These windows are marked "Outlook"; treat them as planning hints, not commitments.':
     'ud over timeprognosen danner grovere udsigtsblokke (6 timer, af og til 12) vinduer ud fra de målinger, der findes i hver blok. Vindstød varsles ikke her. Vinduerne markeres som "Udsigt"; brug dem som fingerpeg til planlægningen, ikke som løfter.',
+  'When no window qualifies, FRANK says how many continuous stretches came close so you can find them on the timeline. It does not list them as windows.':
+    'Når intet rovindue opfylder kravene, fortæller FRANK, hvor mange sammenhængende perioder der var tæt på, så du kan finde dem i tidslinjen. De vises ikke som rovinduer.',
   'Close': 'Luk',
 };

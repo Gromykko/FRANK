@@ -6,7 +6,7 @@ import type { MetWeatherSeverity } from '../features/forecast/weatherSymbols';
 import { WEATHER_POLICY_GROUPS } from '../features/forecast/weatherPolicyPresentation';
 import { resolveSectors } from '../features/safety/analyzeSafetyConditions';
 import { GUIDED_PROFILE_MODES, SAFETY_GUIDANCE_SOURCES } from '../features/safety/guidanceSources';
-import { GUST_FACTOR, getPresetSettings } from '../features/safety/presets';
+import { GUST_FACTOR, getNearLimitThreshold, getPresetSettings } from '../features/safety/presets';
 import { useLang } from '../i18n';
 import type { SafetySettings } from '../hooks/useSettings';
 
@@ -25,6 +25,8 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
   const { t } = useLang();
   // Live sectors with the user's caps applied, so the manual shows real numbers.
   const sectors = resolveSectors(CURRENT_LOCATION, settings);
+  const windCheckPoint = getNearLimitThreshold(settings.windLimit, 1);
+  const waveCheckPoint = getNearLimitThreshold(settings.waveLimit, 2);
   const contentRef = useRef<HTMLDivElement>(null);
   // A click's target is the element under mouseUP: releasing a text selection
   // over the backdrop must not close, so closing requires mousedown there too
@@ -132,6 +134,9 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
               <a href={SAFETY_GUIDANCE_SOURCES.dkfSeaKayakNorm} target="_blank" rel="noreferrer">{t("DKF's 7 May 2026 sea-kayak norm")}</a>.
               {' '}{t('These documents describe training and assessment conditions, not guaranteed safe conditions. Local wind sectors, gusts, temperature, weather, daylight, route, equipment, and club rules may all require a stricter decision.')}
             </p>
+            <p className="manual-note">
+              {t("The automatic 80% check point is FRANK's own headroom rule, not a threshold published by DKF or IPP.")}
+            </p>
           </div>
 
           <details className="manual-details">
@@ -176,37 +181,38 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
               <p className="manual-note">
                 {t('FRANK accepts a complete marine forecast even if DMI returns a different grid point than before. The technical status page records the requested and returned points so the change can be investigated. It does not add a warning to the public forecast or change the verdict.')}
               </p>
+              <p className="manual-p">
+                {t('Water level comes from a storm-surge forecast model, not an astronomical tide table. The value shown is the forecast water level relative to mean sea level at the nearest model grid point, including wind setup and pressure effects.')}
+              </p>
+              <p className="manual-note">
+                {t('Water level is shown for planning context only. It does not change the safety verdict or filter launch windows.')}
+              </p>
             </div>
           </details>
 
           <div>
-            <h3 className="manual-h">{t('1. Wave height')}</h3>
-            <p className="manual-p">{t('FRANK compares significant wave height with the maximum in your profile:')}</p>
-            <ul className="manual-list">
-              <li><strong>{t('Within limits:')}</strong> {t('Wave height is below its automatic check point.')}</li>
-              <li><strong>{t('Check before launch:')}</strong> {t('Wave height is from its automatic check point through your selected maximum.')}</li>
-              <li><strong>{t('Not recommended:')}</strong> {t('Wave height is above your selected maximum.')}</li>
+            <h3 className="manual-h">{t('1. How rules combine')}</h3>
+            <p className="manual-p">{t('FRANK checks every enabled rule for each hour. The')} <strong>{t('most restrictive result')}</strong> {t('becomes the overall rating. A rule can raise the result (Within limits → Check before launch → Not recommended), but it cannot lower a result set by another rule:')}</p>
+            <ul className="manual-list spaced">
+              <li>{t('If any rule says Not recommended, the whole hour is Not recommended, even if every other reading is within its limit.')}</li>
+              <li>{t('A rule that only asks for a check, such as the daylight rule, cannot make an hour Not recommended by itself.')}</li>
+              <li>{t('FRANK lists each separate problem it finds. If the general and local-sector limits flag the same mean wind, only the controlling wind explanation is shown.')}</li>
             </ul>
-            <p className="manual-note">
-              {t('Wave labels use')}{' '}
-              <a href={SAFETY_GUIDANCE_SOURCES.wmoSeaStateTerminology} target="_blank" rel="noreferrer">{t("WMO's sea-wave terms")}</a>
-              {' '}{t('only as context; FRANK assesses the numeric height.')}{' '}
-              <a href={SAFETY_GUIDANCE_SOURCES.dmiSignificantWaveHeight} target="_blank" rel="noreferrer">DMI</a>{' '}
-              {t('defines significant wave height as the mean height of the highest third of waves and notes that individual waves can be higher. FRANK separately cautions that the number does not describe local surf or short steep chop by itself.')}
-            </p>
-            <p className="manual-note">{t('FRANK calculates the point at 80% and rounds it to the same precision as the forecast. DKF and IPP do not publish this percentage, and the remaining room is not a guaranteed safety margin. It simply makes shrinking room to your maximum visible.')}</p>
           </div>
 
           <div>
             <h3 className="manual-h">{t('2. Wind speed and gusts')}</h3>
             <p className="manual-p">{t("MET forecasts a 10-minute mean wind at 10 m and a peak gust averaged over three seconds. FRANK compares mean wind with your selected maximum. If gust checking is on, it also checks a derived gust maximum of {0} times the mean-wind maximum.", GUST_FACTOR)}</p>
             <ul className="manual-list">
-              <li><strong>{t('Within limits:')}</strong> {t('Mean wind and any enabled gust check are below their automatic check points.')}</li>
-              <li><strong>{t('Check before launch:')}</strong> {t('Mean wind or an enabled gust check is from its automatic check point through its maximum.')}</li>
-              <li><strong>{t('Not recommended:')}</strong> {t('Mean wind or an enabled gust check is above its maximum.')}</li>
+              <li><strong>{t('Within limits:')}</strong> {t('Mean wind is below {0} m/s, and any enabled gust check is below its own check point.', windCheckPoint.toFixed(1))}</li>
+              <li><strong>{t('Check before launch:')}</strong> {t('Mean wind is from {0} through {1} m/s, or an enabled gust check is from its own check point through its maximum.', windCheckPoint.toFixed(1), settings.windLimit.toFixed(1))}</li>
+              <li><strong>{t('Not recommended:')}</strong> {t('Mean wind is above {0} m/s, or an enabled gust check is above its maximum.', settings.windLimit.toFixed(1))}</li>
             </ul>
             <p className="manual-note">
-              {t("For example, a mean-wind maximum of {0} m/s gives a derived gust maximum of {1} m/s. The factor is FRANK's rule of thumb, not a limit published by DKF, IPP, WMO, or a kayak club.", settings.windLimit.toFixed(1), (settings.windLimit * GUST_FACTOR).toFixed(1))}
+              {t('When mean wind and gusts both reach their check point, FRANK shows only the mean-wind explanation — the two say the same thing. A gust explanation on its own means the gusts are high relative to the mean wind, which is exactly what this check is for.')}
+            </p>
+            <p className="manual-note">
+              {t("For example, a mean-wind maximum of {0} m/s gives a derived gust maximum of {1} m/s. The factor is FRANK's rule of thumb.", settings.windLimit.toFixed(1), (settings.windLimit * GUST_FACTOR).toFixed(1))}
               {' '}{t('It stays fixed instead of learning from recent forecasts, so the limit does not move with the weather it is meant to judge.')}
             </p>
             <p className="manual-note">
@@ -224,7 +230,45 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
           </div>
 
           <div>
-            <h3 className="manual-h">{t('3. Local wind sectors')}</h3>
+            <h3 className="manual-h">{t('3. Wave height')}</h3>
+            <p className="manual-p">{t('FRANK compares significant wave height with the maximum in your profile:')}</p>
+            <ul className="manual-list">
+              <li><strong>{t('Within limits:')}</strong> {t('Wave height is below {0} m.', waveCheckPoint.toFixed(2))}</li>
+              <li><strong>{t('Check before launch:')}</strong> {t('Wave height is from {0} through {1} m.', waveCheckPoint.toFixed(2), settings.waveLimit.toFixed(2))}</li>
+              <li><strong>{t('Not recommended:')}</strong> {t('Wave height is above {0} m.', settings.waveLimit.toFixed(2))}</li>
+            </ul>
+            <p className="manual-note">
+              {t('Wave labels use')}{' '}
+              <a href={SAFETY_GUIDANCE_SOURCES.wmoSeaStateTerminology} target="_blank" rel="noreferrer">{t("WMO's sea-wave terms")}</a>
+              {' '}{t('only as context; FRANK assesses the numeric height.')}{' '}
+              <a href={SAFETY_GUIDANCE_SOURCES.dmiSignificantWaveHeight} target="_blank" rel="noreferrer">DMI</a>{' '}
+              {t('defines significant wave height as the mean height of the highest third of waves and notes that individual waves can be higher. FRANK separately cautions that the number does not describe local surf or short steep chop by itself.')}
+            </p>
+            <p className="manual-note">{t('FRANK calculates the point at 80% and rounds it to the same precision as the forecast. The remaining room is not a guaranteed safety margin; it simply makes shrinking room to your maximum visible.')}</p>
+          </div>
+
+          <div>
+            <h3 className="manual-h">{t('4. Water temperature')}</h3>
+            <p className="manual-p">{t("Cold water can affect breathing and movement after an unexpected capsize. FRANK uses two temperature boundaries because clothing, rescue time, and paddling plans matter:")}</p>
+            <ul className="manual-list">
+              <li>
+                <strong>&ge; {settings.waterTempTakeCareBelow}&deg;C:</strong>{' '}
+                {t('Within the selected temperature limits. This is not a clothing recommendation.')}
+              </li>
+              <li><strong>&gt; {settings.waterTempDangerBelow}&deg;C {t('and')} &lt; {settings.waterTempTakeCareBelow}&deg;C:</strong> {t('Check before launch. Plan clothing and rescue for cold-water immersion.')}</li>
+              <li><strong>&le; {settings.waterTempDangerBelow}&deg;C:</strong> {t('Not recommended under the selected temperature limits.')}</li>
+            </ul>
+            <p className="manual-note">
+              {t('The default 15°C check follows')}{' '}
+              <a href={SAFETY_GUIDANCE_SOURCES.rnliColdWater} target="_blank" rel="noreferrer">RNLI</a>{' '}
+              {t('cold-water-shock guidance. The default 10°C boundary follows advice from')}{' '}
+              <a href={SAFETY_GUIDANCE_SOURCES.danishColdWaterSafety} target="_blank" rel="noreferrer">Søsportens Sikkerhedsråd</a>{' '}
+              {t('to wait until the water is above 10°C.')}
+            </p>
+          </div>
+
+          <div>
+            <h3 className="manual-h">{t('5. Local wind sectors')}</h3>
             <p className="manual-p">{t("These limits are optional and off by default. If you turn them on, FRANK applies separate wind limits to the fixed sectors below for {0}. A sector limit can make your profile stricter.", CURRENT_LOCATION.areaName)}</p>
             <ul className="manual-list spaced">
               {sectors.map((s) => (
@@ -238,15 +282,7 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
           </div>
 
           <div>
-            <h3 className="manual-h">{t('4. Water level')}</h3>
-            <p className="manual-p">
-              {t('Water level comes from a storm-surge forecast model, not an astronomical tide table. The value shown is the forecast water level relative to mean sea level at the nearest model grid point, including wind setup and pressure effects.')}
-            </p>
-            <p className="manual-note">{t('Water level is shown for planning context only. It does not change the safety verdict or filter launch windows.')}</p>
-          </div>
-
-          <div>
-            <h3 className="manual-h">{t('5. Weather conditions (rain, snow, sleet, fog and thunder)')}</h3>
+            <h3 className="manual-h">{t('6. Weather conditions (rain, snow, sleet, fog and thunder)')}</h3>
             <p className="manual-p">
               {t("The weather description follows MET Norway's official")}{' '}
               <a href={SAFETY_GUIDANCE_SOURCES.metWeatherSymbolLegend} target="_blank" rel="noreferrer">{t('Weathericons legend')}</a>.
@@ -303,42 +339,12 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
           </div>
 
           <div>
-            <h3 className="manual-h">{t('6. How rules combine')}</h3>
-            <p className="manual-p">{t('FRANK checks every enabled rule for each hour. The')} <strong>{t('most restrictive result')}</strong> {t('becomes the overall rating. A rule can raise the result (Within limits → Check before launch → Not recommended), but it cannot lower a result set by another rule:')}</p>
-            <ul className="manual-list spaced">
-              <li>{t('If any rule says Not recommended, the whole hour is Not recommended, even if every other reading is within its limit.')}</li>
-              <li>{t('A rule that only asks for a check, such as the daylight rule, cannot make an hour Not recommended by itself.')}</li>
-              <li>{t('FRANK lists each separate problem it finds. If the general and local-sector limits flag the same mean wind, only the controlling wind explanation is shown.')}</li>
-            </ul>
-          </div>
-
-          <div>
-            <h3 className="manual-h">{t('7. Water temperature')}</h3>
-            <p className="manual-p">{t("Cold water can affect breathing and movement after an unexpected capsize. FRANK uses two temperature boundaries because clothing, rescue time, and paddling plans matter:")}</p>
-            <ul className="manual-list">
-              <li>
-                <strong>&ge; {settings.waterTempTakeCareBelow}&deg;C:</strong>{' '}
-                {t('Within the selected temperature limits. This is not a clothing recommendation.')}
-              </li>
-              <li><strong>&gt; {settings.waterTempDangerBelow}&deg;C {t('and')} &lt; {settings.waterTempTakeCareBelow}&deg;C:</strong> {t('Check before launch. Plan clothing and rescue for cold-water immersion.')}</li>
-              <li><strong>&le; {settings.waterTempDangerBelow}&deg;C:</strong> {t('Not recommended under the selected temperature limits.')}</li>
-            </ul>
-            <p className="manual-note">
-              {t('The default 15°C check follows')}{' '}
-              <a href={SAFETY_GUIDANCE_SOURCES.rnliColdWater} target="_blank" rel="noreferrer">RNLI</a>{' '}
-              {t('cold-water-shock guidance. The default 10°C boundary follows advice from')}{' '}
-              <a href={SAFETY_GUIDANCE_SOURCES.danishColdWaterSafety} target="_blank" rel="noreferrer">Søsportens Sikkerhedsråd</a>{' '}
-              {t('to wait until the water is above 10°C.')}
-            </p>
-          </div>
-
-          <div>
-            <h3 className="manual-h">{t('8. Daylight rule')}</h3>
+            <h3 className="manual-h">{t('7. Daylight rule')}</h3>
             <p className="manual-p">{t('Many clubs require navigation lights and permission between sunset and sunrise. When the daylight rule is on, FRANK marks those hours Check before launch. You can turn it off if your own rules allow night paddling. A longer-range outlook block gets the same result unless its whole period is in daylight. Launch windows work differently: FRANK removes periods with no complete daylight hour and shows only the longest continuous daylight part of a partial period.')}</p>
           </div>
 
           <div>
-            <h3 className="manual-h">{t('9. Launch windows')}</h3>
+            <h3 className="manual-h">{t('8. Launch windows')}</h3>
             <p className="manual-p">{t('A launch window is an unbroken green run that stays below every automatic check point and passes every other active check. Periods rated Check before launch remain visible in the forecast, but are not listed as launch windows:')}</p>
             <ul className="manual-list">
               <li><strong>{t('Minimum duration:')}</strong> {t('runs shorter than your Min Duration setting are not shown.')}</li>
@@ -346,6 +352,7 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
               <li><strong>{t('Day boundaries:')}</strong> {t('a continuous hourly window can cross local midnight. The calendar draws its pieces on the matching days, and the list names the end day when needed.')}</li>
               <li><strong>{t('Longer range:')}</strong> {t('beyond the hourly forecast, coarser outlook blocks (6 hours, occasionally 12) form windows from the readings available in each block. Gusts are not published there. These windows are marked "Outlook"; treat them as planning hints, not commitments.')}</li>
             </ul>
+            <p className="manual-note">{t('When no window qualifies, FRANK says how many continuous stretches came close so you can find them on the timeline. It does not list them as windows.')}</p>
           </div>
 
           <button
