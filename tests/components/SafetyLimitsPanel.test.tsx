@@ -43,14 +43,17 @@ describe('SafetyLimitsPanel terminology', () => {
       });
 
       expect(host.textContent).toContain('Maximum wind');
-      expect(host.textContent).toContain('Pick Chill, Medium, or Pro');
       expect(host.textContent).toContain('Maximum waves');
       expect(host.textContent).toContain('Use forecast gusts in the verdict');
+      expect(host.querySelector('.settings-subtitle')?.textContent).toBe('Your personal limits · Medium');
+      expect(host.querySelector('.settings-autosave-note')?.textContent).toBe('Any change applies immediately and switches you to Custom.');
       expect(host.textContent).toContain('Check from 6.4 m/s · Not recommended above 8.0 m/s');
       expect(host.textContent).toContain('Check from 0.80 m · Not recommended above 1.00 m');
       expect(host.textContent).toContain('Check from 10.2 m/s · derived maximum 12.8 m/s (1.6× the wind maximum).');
-      expect(host.textContent).toContain('FRANK calculates each Check before launch point at 80%');
-      expect(host.textContent).toContain('not an official DKF or IPP threshold');
+      expect(host.querySelector('.settings-headroom-note')?.textContent)
+        .toBe("Each check point sits at 80% of the maximum you set. It is FRANK's own headroom rule — open the manual above for the detail.");
+      expect(host.querySelector('.settings-headroom-note')?.nextElementSibling?.classList.contains('limit-cards'))
+        .toBe(true);
       const liveAnnouncements = [...host.querySelectorAll('[aria-live="polite"]')]
         .map((element) => element.textContent ?? '');
       expect(liveAnnouncements.some((text) => text.includes('Wind check from 6.4 m/s'))).toBe(true);
@@ -111,6 +114,36 @@ describe('SafetyLimitsPanel terminology', () => {
         tripMode: 'custom',
         enableCustomWindDirs: true,
       }));
+    } finally {
+      await act(async () => root.unmount());
+      host.remove();
+      localStorage.clear();
+      globalThis.IS_REACT_ACT_ENVIRONMENT = false;
+    }
+  });
+
+  it('keeps the plain subtitle when Weather only has no profile label', async () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    localStorage.setItem('frank_lang', 'en');
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+
+    try {
+      await act(async () => {
+        root.render(
+          <LanguageProvider>
+            <SafetyLimitsPanel
+              settings={getPresetSettings('weather')}
+              updateSettings={vi.fn()}
+              saveFailed={false}
+            />
+          </LanguageProvider>,
+        );
+      });
+
+      expect(host.querySelector('.settings-subtitle')?.textContent).toBe('Your personal limits');
+      expect(host.textContent).not.toContain('undefined');
     } finally {
       await act(async () => root.unmount());
       host.remove();

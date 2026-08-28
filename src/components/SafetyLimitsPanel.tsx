@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { BookOpen, ChevronDown, ChevronUp, Clock, Navigation, Settings, Sun, Thermometer, Waves, Wind } from 'lucide-react';
 import { getWindSpeedLabel, getWaveHeightLabel } from '../features/safety/analyzeSafetyConditions';
+import { TRIP_PROFILE_LABELS } from '../features/safety/guidanceSources';
 import SafetyManualModal from './SafetyManualModal';
 import CustomSelect from './CustomSelect';
 import CompassRose from './CompassRose';
@@ -211,6 +212,9 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
   const derivedGustCautionAt = getNearLimitThreshold(derivedGustLimit, 1);
   const windCautionAt = getNearLimitThreshold(settings.windLimit, 1);
   const waveCautionAt = getNearLimitThreshold(settings.waveLimit, 2);
+  const activeTripProfileLabel = settings.tripMode === 'weather'
+    ? null
+    : TRIP_PROFILE_LABELS[settings.tripMode];
   const tempHint = t(
     'Check below {0}°C · Not recommended at or below {1}°C',
     settings.waterTempTakeCareBelow,
@@ -272,7 +276,11 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
               <BookOpen size={15} aria-hidden="true" />
             </button>
           </h2>
-          <span className="settings-subtitle">{t('Your personal limits')}</span>
+          <span className="settings-subtitle">
+            {activeTripProfileLabel
+              ? t('Your personal limits · {0}', t(activeTripProfileLabel))
+              : t('Your personal limits')}
+          </span>
         </div>
         <div className="settings-collapse-chevron" aria-hidden="true">
           {isOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
@@ -283,7 +291,11 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
         <div className="settings-body">
 
           <p className="settings-autosave-note">
-            {t('Changes apply immediately and switch you to Custom mode. Pick Chill, Medium, or Pro in the Trip Profile at the top to go back.')}
+            {t('Any change applies immediately and switches you to Custom.')}
+          </p>
+
+          <p className="settings-headroom-note">
+            {t("Each check point sits at 80% of the maximum you set. It is FRANK's own headroom rule — open the manual above for the detail.")}
           </p>
 
           <div className="limit-cards">
@@ -434,10 +446,6 @@ export default function SafetyLimitsPanel({ settings, updateSettings, saveFailed
             </section>
 
           </div>
-
-          <p className="settings-headroom-note">
-            {t("FRANK calculates each Check before launch point at 80% of the wind, gust, wave, or active local-direction maximum, then rounds it to match the forecast. This is FRANK's own headroom rule, not an official DKF or IPP threshold.")}
-          </p>
 
           <button
             type="button"

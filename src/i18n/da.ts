@@ -483,8 +483,9 @@ export const da: Record<string, string> = {
   'Your Limits': 'Dine grænser',
   'How FRANK Decides': 'Sådan vurderer FRANK',
   'Your personal limits': 'Dine personlige grænser',
-  'Changes apply immediately and switch you to Custom mode. Pick Chill, Medium, or Pro in the Trip Profile at the top to go back.':
-    'Ændringer træder i kraft med det samme og skifter dig til Egen. Vælg Rolig, Mellem eller Pro i turprofilen øverst for at gå tilbage.',
+  'Your personal limits · {0}': 'Dine personlige grænser · {0}',
+  'Any change applies immediately and switches you to Custom.':
+    'Enhver ændring træder i kraft med det samme og skifter dig til Egen.',
   'Decrease {0}': 'Sænk {0}',
   'Increase {0}': 'Hæv {0}',
   'Maximum wind': 'Maksimal vindstyrke',
@@ -501,8 +502,8 @@ export const da: Record<string, string> = {
     'Tjek fra {0} m/s · maksimum {1} m/s',
   'm/s': 'm/s',
   'm': 'm',
-  "FRANK calculates each Check before launch point at 80% of the wind, gust, wave, or active local-direction maximum, then rounds it to match the forecast. This is FRANK's own headroom rule, not an official DKF or IPP threshold.":
-    'FRANK beregner hvert kontrolpunkt ved 80 % af maksimum for vind, vindstød, bølger eller en aktiv lokal vindretning og afrunder det til prognosens præcision. Det er FRANKs egen forsigtighedsregel, ikke en officiel grænse fra DKF eller IPP.',
+  "Each check point sits at 80% of the maximum you set. It is FRANK's own headroom rule — open the manual above for the detail.":
+    'Hvert tjekpunkt ligger på 80% af det maksimum, du sætter. Det er FRANKs egen margenregel — åbn manualen ovenfor for detaljerne.',
   'Wind check from {0} m/s. If gust checking is on, gusts are checked from {1} m/s with a derived maximum of {2} m/s.':
     'Vind tjekkes fra {0} m/s. Hvis kontrol af vindstød er slået til, tjekkes de fra {1} m/s med et beregnet maksimum på {2} m/s.',
   'Wave check from {0} m.': 'Bølger tjekkes fra {0} m.',
