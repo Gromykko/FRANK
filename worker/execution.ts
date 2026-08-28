@@ -44,7 +44,6 @@ export const CRON_TICK_BUDGET_MS = 50_000;
 export const CRON_PROVIDER_MAX_ATTEMPTS = 3;
 export const CRON_MARINE_CATALOGUE_MAX_ATTEMPTS = 8;
 export const CRON_MARINE_POSITION_MAX_ATTEMPTS = 18;
-export const DMI_BUSY_RETRY_DELAY_MS = 1_200;
 // Workers Free permits 50 external subrequests per invocation. Keep five in
 // reserve for platform/provider behavior outside the explicit retry loops.
 export const EVENT_EXTERNAL_SUBREQUEST_BUDGET = 45;
