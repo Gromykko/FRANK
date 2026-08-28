@@ -27,11 +27,11 @@ export interface LaunchWindow {
   // displayed times can never disagree.
   daylightStartMs?: number;
   daylightEndMs?: number;
-  // Near-limit windows are never mixed into the primary green list. They are
-  // shown separately as periods that need a closer check before launch.
+  // Near-limit stretches are counted for the planner's empty-state pointer.
+  // They are never rendered as launch-window cards or calendar bars.
   kind?: 'near-limit';
-  // First amber sample inside a near-limit window. Selecting the alternative
-  // opens the exact headroom reason instead of an adjacent green endpoint.
+  // First amber sample inside a near-limit stretch, retained so helper tests
+  // prove the count points to a genuinely near-limit run.
   reviewIndex?: number;
 }
 
@@ -72,6 +72,11 @@ function isContiguous(previous: HourlyData, current: HourlyData): boolean {
 // `lowConfidence` because the period data is coarser and one selected input is absent.
 type WindowSearch = 'safe' | 'near-limit';
 
+interface WindowGroups {
+  hourly: LaunchWindow[];
+  blocks: LaunchWindow[];
+}
+
 function findWindows(
   data: HourlyData[],
   settings: SafetySettings,
@@ -79,8 +84,8 @@ function findWindows(
   sun?: SunTimes,
   nowMs?: number,
   search: WindowSearch = 'safe',
-): LaunchWindow[] {
-  if (!data || data.length === 0) return [];
+): WindowGroups {
+  if (!data || data.length === 0) return { hourly: [], blocks: [] };
 
   // With every personal limit switched off there is nothing left to check, so
   // there is nothing to recommend. Without this the planner offered a gale as a
@@ -245,7 +250,7 @@ function findWindows(
   }
   if (blockStart !== null) addBlockSlot(blockStart, data.length - 2);
 
-  return [...slots.slice(0, MAX_WINDOWS), ...blockSlots.slice(0, MAX_BLOCK_WINDOWS)];
+  return { hourly: slots, blocks: blockSlots };
 }
 
 export function findLaunchWindows(
@@ -255,12 +260,17 @@ export function findLaunchWindows(
   sun?: SunTimes,
   nowMs?: number,
 ): LaunchWindow[] {
-  return findWindows(data, settings, startIndex, sun, nowMs, 'safe');
+  const windows = findWindows(data, settings, startIndex, sun, nowMs, 'safe');
+  return [
+    ...windows.hourly.slice(0, MAX_WINDOWS),
+    ...windows.blocks.slice(0, MAX_BLOCK_WINDOWS),
+  ];
 }
 
-// These periods contain at least one pure proximity warning and no other
-// caution or danger. Keeping them separate preserves the meaning of the green
-// list while still showing useful alternatives instead of hiding them.
+// Count-only helper for the planner's empty state. Its uncapped result must
+// never be rendered as a second list: launch-window cards remain green-only.
+// Each stretch contains at least one pure proximity warning and no other
+// caution or danger.
 export function findNearLimitWindows(
   data: HourlyData[],
   settings: SafetySettings,
@@ -268,7 +278,8 @@ export function findNearLimitWindows(
   sun?: SunTimes,
   nowMs?: number,
 ): LaunchWindow[] {
-  return findWindows(data, settings, startIndex, sun, nowMs, 'near-limit');
+  const windows = findWindows(data, settings, startIndex, sun, nowMs, 'near-limit');
+  return [...windows.hourly, ...windows.blocks];
 }
 
 const SUNSET_MARGIN_MS = 45 * 60 * 1000;

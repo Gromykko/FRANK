@@ -90,6 +90,7 @@ describe('PaddlePlanner outlook ranges', () => {
             onSelectIndex={vi.fn()}
             startIndex={0}
             minDuration={2}
+            nearLimitCount={0}
           />
         </LanguageProvider>,
       );
@@ -119,21 +120,32 @@ describe('PaddlePlanner outlook ranges', () => {
 
 // The empty state used to say "your minimum duration" without ever naming it.
 describe('PaddlePlanner empty state', () => {
-  const renderEmpty = async () => {
+  const renderEmpty = async ({
+    statuses = ['safe'],
+    limitsOff = false,
+    minDuration = 3,
+    nearLimitCount = 0,
+  }: {
+    statuses?: Array<'safe' | 'caution' | 'danger' | 'none'>;
+    limitsOff?: boolean;
+    minDuration?: number;
+    nearLimitCount?: number;
+  } = {}) => {
     await act(async () => {
       root.render(
         <LanguageProvider>
           <PaddlePlanner
             data={[block('2026-08-25T06:00:00Z', 3, 0.2)]}
-            statuses={['safe']}
-            limitsOff={false}
+            statuses={statuses}
+            limitsOff={limitsOff}
             windows={[]}
             warnings={[]}
             sunrises={[]}
             sunsets={[]}
             onSelectIndex={vi.fn()}
             startIndex={0}
-            minDuration={3}
+            minDuration={minDuration}
+            nearLimitCount={nearLimitCount}
           />
         </LanguageProvider>,
       );
@@ -142,9 +154,10 @@ describe('PaddlePlanner empty state', () => {
   };
 
   it('names the actual minimum duration', async () => {
-    const text = await renderEmpty();
+    const text = await renderEmpty({ nearLimitCount: 3 });
     expect(text).toContain('never 3 hrs in a row');
     expect(text).not.toContain('water level');
+    expect(text).not.toContain('continuous stretches');
   });
 
   it('keeps the outlook label concise when the block has no gust forecast', async () => {
@@ -173,6 +186,7 @@ describe('PaddlePlanner empty state', () => {
             onSelectIndex={vi.fn()}
             startIndex={0}
             minDuration={2}
+            nearLimitCount={0}
           />
         </LanguageProvider>,
       );
@@ -198,28 +212,51 @@ describe('PaddlePlanner empty state', () => {
   });
 
   it('does not turn amber forecast periods into a second launch-window section', async () => {
-    await act(async () => {
-      root.render(
-        <LanguageProvider>
-          <PaddlePlanner
-            data={[block('2026-08-25T06:00:00Z', 6.4, 0.2)]}
-            statuses={['caution']}
-            limitsOff={false}
-            windows={[]}
-            warnings={[]}
-            sunrises={[]}
-            sunsets={[]}
-            onSelectIndex={vi.fn()}
-            startIndex={0}
-            minDuration={1}
-          />
-        </LanguageProvider>,
-      );
+    const text = await renderEmpty({
+      statuses: ['caution'],
+      minDuration: 1,
+      nearLimitCount: 3,
     });
 
     expect(host.querySelector('.launch-panel-title')?.textContent)
       .toContain('Available Launch Windows (0)');
+    expect(text).toContain('3 continuous stretches');
+    expect(text).toContain('Review them in the timeline above');
     expect(host.querySelector('.near-limit-windows')).toBeNull();
     expect(host.textContent).not.toContain('Near-limit alternatives');
+  });
+
+  it('uses singular copy for one near-limit stretch', async () => {
+    const text = await renderEmpty({
+      statuses: ['caution'],
+      minDuration: 1,
+      nearLimitCount: 1,
+    });
+
+    expect(text).toContain('One continuous stretch is long enough');
+    expect(text).toContain('Review it in the timeline above');
+  });
+
+  it('keeps the original generic message when no stretch comes close', async () => {
+    const text = await renderEmpty({
+      statuses: ['caution'],
+      minDuration: 1,
+      nearLimitCount: 0,
+    });
+
+    expect(text).toContain('No launch windows fit all your selected checks yet');
+    expect(text).not.toContain('continuous stretch');
+  });
+
+  it('keeps the limits-off explanation ahead of a near-limit count', async () => {
+    const text = await renderEmpty({
+      statuses: ['caution'],
+      limitsOff: true,
+      minDuration: 1,
+      nearLimitCount: 3,
+    });
+
+    expect(text).toContain('Your personal limits are switched off');
+    expect(text).not.toContain('continuous stretches');
   });
 });

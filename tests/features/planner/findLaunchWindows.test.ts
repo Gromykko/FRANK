@@ -145,14 +145,14 @@ describe('findLaunchWindows', () => {
   });
 });
 
-describe('near-limit launch alternatives', () => {
+describe('near-limit window detection', () => {
   const oneHourSettings = {
     ...baseSettings,
     minDuration: 1,
     daylightOnly: false,
   } as SafetySettings;
 
-  it('keeps amber out of green hourly windows and lists it separately', () => {
+  it('keeps amber out of green hourly windows and detects its continuous stretch', () => {
     const data = generateData(5);
     // 80% of the selected 8.0 m/s maximum. This sample is amber, not green.
     data[2].windSpeed = 6.4;
@@ -190,7 +190,7 @@ describe('near-limit launch alternatives', () => {
     expect(findNearLimitWindows(excessiveWind, oneHourSettings, 0)).toEqual([]);
   });
 
-  it('offers a near-limit outlook block separately and selects its amber closing sample', () => {
+  it('detects a near-limit outlook block and identifies its amber closing sample', () => {
     const makeBlock = (time: string, overrides: Partial<HourlyData> = {}): HourlyData => ({
       ...baseData,
       time,
@@ -217,6 +217,23 @@ describe('near-limit launch alternatives', () => {
         reviewIndex: 1,
       },
     ]);
+  });
+
+  it('returns every near-limit stretch while keeping the rendered green list capped', () => {
+    const startMs = Date.parse('2026-07-01T00:00:00Z');
+    const data = Array.from({ length: 13 * 4 }, (_, index): HourlyData => {
+      const phase = index % 4;
+      return {
+        ...baseData,
+        time: new Date(startMs + index * 3_600_000).toISOString(),
+        // Two green endpoints make a one-hour launch window; an amber endpoint
+        // extends the count-only near-limit stretch; danger breaks both runs.
+        windSpeed: phase === 2 ? 6.4 : phase === 3 ? 8.1 : 3,
+      };
+    });
+
+    expect(findNearLimitWindows(data, oneHourSettings, 0)).toHaveLength(13);
+    expect(findLaunchWindows(data, oneHourSettings, 0)).toHaveLength(12);
   });
 });
 

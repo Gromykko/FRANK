@@ -347,6 +347,10 @@ export const da: Record<string, string> = {
     'Nogle timer ligger inden for dine grænser, men aldrig {0} i træk. Sænk minimumsvarigheden under Dine grænser, eller prøv en anden turprofil.',
   'No launch windows fit all your selected checks yet. Open an hour to see what needs attention, or check again after the forecast updates.':
     'Der er endnu ingen rovinduer, som opfylder alle dine valgte tjek. Åbn en time for at se, hvad du skal være opmærksom på, eller tjek igen, når prognosen er opdateret.',
+  'No launch windows pass all your checks. One continuous stretch is long enough, but it contains at least one hour rated Check before launch. Review it in the timeline above.':
+    'Ingen rovinduer opfylder alle dine tjek. Én sammenhængende periode er lang nok, men den indeholder mindst én time, der er vurderet Tjek før du tager på vandet. Gennemgå den i tidslinjen ovenfor.',
+  'No launch windows pass all your checks. {0} continuous stretches are long enough, but each contains at least one hour rated Check before launch. Review them in the timeline above.':
+    'Ingen rovinduer opfylder alle dine tjek. {0} sammenhængende perioder er lange nok, men hver af dem indeholder mindst én time, der er vurderet Tjek før du tager på vandet. Gennemgå dem i tidslinjen ovenfor.',
   'Your personal limits are switched off, so there is nothing to measure the forecast against and no window can be recommended. Turn a limit back on to see suggested windows.':
     'Dine personlige grænser er slået fra, så der er intet at måle prognosen op imod, og intet vindue kan anbefales. Slå en grænse til igen for at se foreslåede vinduer.',
   'No enabled check was triggered: {0}, {1}, {2}. Not checked: {3}.':

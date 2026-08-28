@@ -24,6 +24,9 @@ interface PaddlePlannerProps {
   // the empty state so the message points at the knob that is actually binding
   // instead of "your criteria", which is every knob at once.
   minDuration: number;
+  // Empty-state count only. Near-limit stretches must never become rendered
+  // launch-window cards or calendar bars.
+  nearLimitCount: number;
   windows: LaunchWindow[];
   warnings?: WeatherWarning[];
   sunrises: string[];
@@ -34,8 +37,8 @@ interface PaddlePlannerProps {
 
 // One launch-window bar on a day row of the calendar Gantt (a window crossing
 // midnight becomes one bar per day). Fractions are hours 0–24 on the day axis.
-// Primary windows contain green hours. Amber alternatives carry nearLimit so
-// the calendar cannot present them as green recommendations.
+// Every bar comes from the primary green launch-window list. Amber periods stay
+// in the forecast timeline and can never become calendar recommendations.
 interface CalBar {
   id: string;
   firstIdx: number;
@@ -83,7 +86,7 @@ interface CalDay {
 
 // memo: App re-renders on a 60s heartbeat; the planner grid/list gets
 // identity-stable props, so skip the re-render entirely.
-export default memo(function PaddlePlanner({ data, statuses, windows, warnings, sunrises, sunsets, onSelectIndex, startIndex, limitsOff, minDuration }: PaddlePlannerProps) {
+export default memo(function PaddlePlanner({ data, statuses, windows, warnings, sunrises, sunsets, onSelectIndex, startIndex, limitsOff, minDuration, nearLimitCount }: PaddlePlannerProps) {
   // Context consumption inside the memo'd body — a language change re-renders
   // this component even though its props are identity-stable.
   const { lang, t } = useLang();
@@ -378,7 +381,11 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                   ? t('Your personal limits are switched off, so there is nothing to measure the forecast against and no window can be recommended. Turn a limit back on to see suggested windows.')
                   : statuses.some((s, i) => i >= startIndex && s === 'safe')
                     ? t('Some hours are within your limits, but never {0} in a row. Lower the minimum duration in Your Limits, or try another trip mode.', formatDuration(t, minDuration))
-                    : t('No launch windows fit all your selected checks yet. Open an hour to see what needs attention, or check again after the forecast updates.')}
+                    : nearLimitCount === 1
+                      ? t('No launch windows pass all your checks. One continuous stretch is long enough, but it contains at least one hour rated Check before launch. Review it in the timeline above.')
+                      : nearLimitCount > 1
+                        ? t('No launch windows pass all your checks. {0} continuous stretches are long enough, but each contains at least one hour rated Check before launch. Review them in the timeline above.', nearLimitCount)
+                        : t('No launch windows fit all your selected checks yet. Open an hour to see what needs attention, or check again after the forecast updates.')}
               </div>
             ) : viewMode === 'list' ? (
               /* Tide-table list: day-grouped — the Gantt sibling shows the

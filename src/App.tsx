@@ -13,7 +13,7 @@ import { getWorkerContactMs } from './features/forecast/cache';
 import { formatTime, formatDateTime, locationDateKey } from './utils/date';
 import { compassPoint } from './utils/compass';
 import { NO_READING_TEXT } from './utils/number';
-import { findLaunchWindows } from './features/planner/findLaunchWindows';
+import { findLaunchWindows, findNearLimitWindows } from './features/planner/findLaunchWindows';
 import { useForecast } from './features/forecast/useForecast';
 import TimelineBar from './components/TimelineBar';
 import PaddlePlanner from './components/PaddlePlanner';
@@ -144,6 +144,19 @@ export default function App() {
         nowMs,
       ),
     [displayHourlyData, settings, nowIndex, sunTimes, nowMs]
+  );
+
+  // Count only: amber stretches remain in the timeline and never become a
+  // second list of launch-window cards or calendar bars.
+  const nearLimitWindowCount = useMemo(
+    () => findNearLimitWindows(
+      displayHourlyData,
+      settings,
+      nowIndex,
+      sunTimes,
+      nowMs,
+    ).length,
+    [displayHourlyData, settings, nowIndex, sunTimes, nowMs],
   );
 
   const handleTripModeChange = (mode: SafetySettings['tripMode']) => {
@@ -400,6 +413,7 @@ export default function App() {
             startIndex={nowIndex}
             limitsOff={!activeSafetyChecks}
             minDuration={settings.minDuration}
+            nearLimitCount={nearLimitWindowCount}
           />
 
           {/* ⑤ Safety limits — customize thresholds (collapsed) */}
