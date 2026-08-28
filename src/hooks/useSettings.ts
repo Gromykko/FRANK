@@ -260,7 +260,7 @@ function coerceNumericLimits(s: SafetySettings): SafetySettings {
 // Water temperature retains two thresholds and runs in the opposite direction.
 // Preserving one full control step stops a malformed stored record from
 // silently deleting the middle check range.
-export function healSettings(s: SafetySettings): SafetySettings {
+function healSettings(s: SafetySettings): SafetySettings {
   const healed = coerceNumericLimits(s);
   return {
     ...healed,

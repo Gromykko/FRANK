@@ -48,7 +48,7 @@ assertHealthCheckAgeExceedsMetTtl(
   FORECAST_SOURCE_POLICY.metMaxTtlMs,
 );
 
-export const HEALTH_MAX_DATA_AGE_MS = 3 * 60 * 60 * 1000;
+const HEALTH_MAX_DATA_AGE_MS = 3 * 60 * 60 * 1000;
 // Beyond this the scheduler is not beating. It was previously an inline 10 in
 // two places and named nowhere, while the page asserted "Active" purely because
 // an age existed - so a cron dead for 47 minutes rendered "Active · 47m ago".

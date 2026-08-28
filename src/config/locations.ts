@@ -9,7 +9,7 @@ export type { ForecastLocation, WindSector } from './locationTypes';
 export const FORECAST_LOCATIONS = locations as ForecastLocation[];
 // Deterministic fallback when neither a saved choice nor a build-time default
 // names a configured location.
-export const DEFAULT_LOCATION_ID = 'horsens';
+const DEFAULT_LOCATION_ID = 'horsens';
 const LOCATION_STORAGE_KEY = 'frank_location';
 
 function getForecastLocation(id = DEFAULT_LOCATION_ID): ForecastLocation {

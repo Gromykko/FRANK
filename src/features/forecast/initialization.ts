@@ -1,6 +1,6 @@
 import type { ForecastLocation } from '../../config/locations';
 
-export const FORECAST_INITIALIZING_CODE = 'FORECAST_INITIALIZING' as const;
+const FORECAST_INITIALIZING_CODE = 'FORECAST_INITIALIZING' as const;
 
 export interface ForecastInitialization {
   schemaVersion: 1;
