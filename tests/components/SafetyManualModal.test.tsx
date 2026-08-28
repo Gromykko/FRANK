@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
+import locationData from '../../src/config/locations.json';
+import type { ForecastLocation } from '../../src/config/locationTypes';
 import SafetyManualModal from '../../src/components/SafetyManualModal';
 import { getPresetSettings } from '../../src/features/safety/presets';
 import { LanguageProvider } from '../../src/i18n';
+
+const LOCATIONS = locationData as ForecastLocation[];
 
 describe('SafetyManualModal profile evidence', () => {
   it('explains the thresholds, measurement clocks, local override, and primary sources', () => {
@@ -56,13 +60,16 @@ describe('SafetyManualModal profile evidence', () => {
     expect(host.textContent).not.toContain('danger margin');
     expect(host.textContent).not.toMatch(/\bNormal\b/);
     expect(host.textContent).toContain('Forecast points and model grids');
-    expect(host.querySelectorAll('.manual-coordinate-table tbody tr')).toHaveLength(4);
-    expect(host.textContent).toContain('Horsens Fjord55.858° N, 9.905° E');
-    expect(host.textContent).toContain('Vejle Fjord55.705° N, 9.680° E');
-    expect(host.textContent).toContain('Kolding Fjord55.512° N, 9.659° E');
-    expect(host.textContent).toContain('Aarhus Bugt56.129° N, 10.257° E');
+    expect(host.querySelectorAll('.manual-coordinate-table tbody tr')).toHaveLength(LOCATIONS.length);
+    for (const location of LOCATIONS) {
+      expect(host.textContent).toContain(
+        `${location.areaName}${location.coordinate.latitude.toFixed(6)}° N, ${location.coordinate.longitude.toFixed(6)}° E`,
+      );
+    }
     expect(host.textContent).toContain('interpolates its weather model to the requested point');
     expect(host.textContent).toContain('returns the closest model grid point for water and waves');
+    expect(host.textContent).toContain('checks that a complete marine series is usable before it replaces the previous data');
+    expect(host.textContent).toContain('The technical status page records the requested and returned points so the change can be investigated. It does not add a warning to the public forecast or change the verdict.');
     expect(host.querySelector('a[href*="forecast-data-edr-api"]')).not.toBeNull();
     expect(host.querySelector('a[href*="locationforecast/FAQ.html"]')).not.toBeNull();
     expect(host.textContent).toContain('See all weather ratings (41 conditions)');

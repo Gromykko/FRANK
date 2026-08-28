@@ -6,6 +6,7 @@ import {
   it,
   vi,
 } from 'vitest';
+import locationData from '../../src/config/locations.json';
 import type { ForecastLocation } from '../../src/config/locationTypes';
 import type { MarineInstances } from '../../worker/domain';
 import {
@@ -47,6 +48,7 @@ const LOCATION = makeLocation({
   emmaId: 'DK004',
   kommuneAliases: ['Horsens'],
 });
+const PRODUCTION_LOCATION_IDS = locationData.map(({ id }) => id);
 
 const OLD_INSTANCES: MarineInstances = {
   water: runInstance('dkss_idw', OLD_RUN),
@@ -510,7 +512,7 @@ describe('shared DMI run manifest', () => {
     // Each selection is evaluated against the captured pre-fix shared state.
     // In production the first successful city advances the manifest, allowing
     // later ticks to adopt 06Z without repeating these catalogue calls.
-    for (const id of ['aarhus', 'vejle', 'kolding']) {
+    for (const id of PRODUCTION_LOCATION_IDS.filter((id) => id !== LOCATION.id)) {
       const store = trackedManifestStore(observedManifest);
       const result = await resolveMarine(store, lagging, { ...LOCATION, id });
       expect(result.catalogueContacted, id).toBe(true);
@@ -532,7 +534,8 @@ describe('shared DMI run manifest', () => {
       schemaVersion: DMI_RUN_MANIFEST_SCHEMA_VERSION,
       entries: bothEntries(run06, new Date(observedAt).toISOString()),
     });
-    expect(calls.filter((url) => url.endsWith('/instances'))).toHaveLength(8);
+    expect(calls.filter((url) => url.endsWith('/instances')))
+      .toHaveLength(PRODUCTION_LOCATION_IDS.length * 2);
   });
 
   it('replaces a comparable expired entry when DMI recovers with a newer run', async () => {

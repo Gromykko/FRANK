@@ -126,7 +126,7 @@ export interface WeatherData {
       // forecast freshness must use fetchedAt.
       //
       // The assembled forecast is not rewritten for timestamp-only changes.
-      // Responses instead overlay the shared, five-tick heartbeat when this city
+      // Responses instead overlay the shared, six-tick heartbeat when this city
       // has a recorded success and no newer unsuccessful outcome. A skip or
       // failure deliberately keeps the city's older successful stamp visible.
       //

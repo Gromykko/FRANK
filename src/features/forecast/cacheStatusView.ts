@@ -274,7 +274,7 @@ export function deriveCacheStatus(args: {
   const dataStale = cacheAgeMs > CACHE_REFRESH_WARNING_AGE_MS;
 
   // Data being old and a refresh having FAILED are different facts, and the
-  // heartbeat can now disprove the second one. Cron firing every five minutes
+  // heartbeat can now disprove the second one. The cron reaches each city every five minutes
   // while the build pipeline stopped advancing fetchedAt eight hours ago used
   // to render "Couldn't refresh · last try 03:35" - naming a check that
   // happened minutes ago, and succeeded, as the one that failed. Worse, the

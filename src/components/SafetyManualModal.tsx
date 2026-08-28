@@ -154,10 +154,10 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
                         <td>{location.areaName}</td>
                         <td className="manual-coordinate">
                           <span className="manual-coordinate-part">
-                            {location.coordinate.latitude.toFixed(3)}&deg; N,
+                            {location.coordinate.latitude.toFixed(6)}&deg; N,
                           </span>{' '}
                           <span className="manual-coordinate-part">
-                            {location.coordinate.longitude.toFixed(3)}&deg; E
+                            {location.coordinate.longitude.toFixed(6)}&deg; E
                           </span>
                         </td>
                       </tr>
@@ -171,7 +171,10 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
               </p>
               <p className="manual-note">
                 <a href={SAFETY_GUIDANCE_SOURCES.dmiForecastEdr} target="_blank" rel="noreferrer">DMI EDR</a>{' '}
-                {t('returns the closest model grid point for water and waves. That point can differ from the coordinate FRANK requested, and the water and wave models use different grids. FRANK chose sea points that returned usable marine data, but it does not average several grid points.')}
+                {t('returns the closest model grid point for water and waves. That point can differ from the coordinate FRANK requested, and the water and wave models use different grids. FRANK checks that a complete marine series is usable before it replaces the previous data, but it does not average several grid points.')}
+              </p>
+              <p className="manual-note">
+                {t('FRANK accepts a complete marine forecast even if DMI returns a different grid point than before. The technical status page records the requested and returned points so the change can be investigated. It does not add a warning to the public forecast or change the verdict.')}
               </p>
             </div>
           </details>

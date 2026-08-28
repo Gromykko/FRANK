@@ -15,11 +15,17 @@ import {
   FORECAST_PROVIDER_PARAMETERS,
   assessMarineRunCoverage,
   assembleForecastFromSources,
+  currentMarineIngredient,
   dmiForecastUrl,
+  marineIngredientEnvelopeFromUnknown,
   marineIngredientHasCompleteCoverage,
   marineRunContract,
+  retainMarineGridDiagnostic,
 } from '../../worker/forecastModel';
-import { fetchMarineSeriesWithFallback } from '../../worker/providers';
+import {
+  deriveMarineGridProvenance,
+  fetchMarineSeriesWithFallback,
+} from '../../worker/providers';
 import { ProviderUnavailableError } from '../../worker/providerAvailability';
 import {
   completeMarineEnvelope,
@@ -180,6 +186,258 @@ describe('independent DMI run contract', () => {
     expect(new URL(first).searchParams.get('datetime')).toBe(
       '2026-08-25T06:00:00.000Z/2026-08-30T06:00:00.000Z',
     );
+  });
+});
+
+describe('DMI grid provenance', () => {
+  const featuresAt = (longitude: number, latitude: number, count = 2) =>
+    Array.from({ length: count }, () => ({
+      geometry: {
+        type: 'Point' as const,
+        coordinates: [longitude, latitude] as [number, number],
+      },
+    }));
+
+  it('keeps the first accepted cell as a diagnostic baseline without rejecting a changed cell', () => {
+    const first = deriveMarineGridProvenance(
+      LOCATION,
+      'wam_dw',
+      featuresAt(9.916667, 55.86),
+    );
+    expect(first).toMatchObject({
+      collection: 'wam_dw',
+      returned: { latitude: 55.86, longitude: 9.916667 },
+      expected: { latitude: 55.86, longitude: 9.916667 },
+      changed: false,
+    });
+    expect(first?.distanceMeters).toBeGreaterThan(0);
+
+    const changed = deriveMarineGridProvenance(
+      LOCATION,
+      'wam_dw',
+      featuresAt(9.933333, 55.87),
+      first?.expected,
+    );
+    expect(changed).toMatchObject({
+      returned: { latitude: 55.87, longitude: 9.933333 },
+      expected: { latitude: 55.86, longitude: 9.916667 },
+      changed: true,
+    });
+  });
+
+  it('does not manufacture provenance from missing or inconsistent response geometry', () => {
+    expect(deriveMarineGridProvenance(LOCATION, 'wam_dw', [{}])).toBeUndefined();
+    expect(deriveMarineGridProvenance(LOCATION, 'wam_dw', [
+      ...featuresAt(9.916667, 55.86, 1),
+      ...featuresAt(9.933333, 55.87, 1),
+    ])).toBeUndefined();
+    expect(deriveMarineGridProvenance(
+      LOCATION,
+      'wam_dw',
+      featuresAt(9.916667, 95),
+    )).toBeUndefined();
+  });
+
+  it('ignores malformed diagnostic metadata without invalidating complete retained data', () => {
+    const retained = completeMarineEnvelope(LOCATION, 'water', OLD_RUN_ID) as unknown as Record<string, unknown>;
+    retained.grid = {
+      collection: COLLECTION,
+      requested: { latitude: 'not-a-number', longitude: 9.909273 },
+      returned: { latitude: 55.86, longitude: 9.916667 },
+      expected: { latitude: 55.86, longitude: 9.916667 },
+      distanceMeters: 461,
+      changed: false,
+    };
+
+    const parsed = marineIngredientEnvelopeFromUnknown(retained, LOCATION);
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.grid).toBeUndefined();
+    expect(currentMarineIngredient(parsed, GRACE_END_MS)).not.toBeNull();
+  });
+
+  it('ignores a malformed per-collection baseline map without invalidating complete data', () => {
+    const retained = completeMarineEnvelope(
+      LOCATION,
+      'water',
+      OLD_RUN_ID,
+    ) as unknown as Record<string, unknown>;
+    retained.grid = deriveMarineGridProvenance(
+      LOCATION,
+      COLLECTION,
+      featuresAt(9.916667, 55.86),
+    );
+    retained.gridExpectedByCollection = {
+      [COLLECTION]: { latitude: 'invalid', longitude: 9.916667 },
+      __proto__: { latitude: 0, longitude: 0 },
+    };
+
+    const parsed = marineIngredientEnvelopeFromUnknown(retained, LOCATION);
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.grid).toMatchObject({
+      expected: { latitude: 55.86, longitude: 9.916667 },
+      changed: false,
+    });
+    expect(currentMarineIngredient(parsed, GRACE_END_MS)).not.toBeNull();
+  });
+
+  it('persists and serves complete data even when the returned cell changed', async () => {
+    const key = marineIngredientKey(LOCATION, 'water');
+    const retained = completeMarineEnvelope(LOCATION, 'water', OLD_RUN_ID);
+    retained.grid = deriveMarineGridProvenance(
+      LOCATION,
+      COLLECTION,
+      featuresAt(9.916667, 55.86),
+    );
+    const store = makeEnv({ [key]: retained });
+    const complete = completeMarineSeries('water', CANDIDATE_RUN_ID);
+    const changedFeatures = featuresAt(9.933333, 55.87, complete.length);
+
+    const result = await fetchCandidate(store, complete, changedFeatures);
+
+    expect(result).toMatchObject({
+      fallback: false,
+      providerContacted: true,
+      grid: {
+        changed: true,
+        expected: { latitude: 55.86, longitude: 9.916667 },
+        returned: { latitude: 55.87, longitude: 9.933333 },
+      },
+    });
+    expect(result).not.toHaveProperty('degraded');
+    expect(result).not.toHaveProperty('busy');
+    expect(result).not.toHaveProperty('notReady');
+
+    const assembled = assembleWithWater(result, GRACE_END_MS);
+    const withoutDiagnostic = assembleWithWater(
+      { ...result, grid: undefined },
+      GRACE_END_MS,
+    );
+    expect(assembled.degradedSources).toEqual([]);
+    expect(assembled.forecast).toEqual(withoutDiagnostic.forecast);
+    expect(assembled.marineGrid?.water?.changed).toBe(true);
+
+    const persisted = JSON.parse(store.values.get(key)!);
+    expect(store.puts).toHaveLength(1);
+    expect(persisted).toMatchObject({
+      id: CANDIDATE_RUN_ID,
+      grid: {
+        changed: true,
+        expected: { latitude: 55.86, longitude: 9.916667 },
+        returned: { latitude: 55.87, longitude: 9.933333 },
+      },
+      gridExpectedByCollection: {
+        [COLLECTION]: { latitude: 55.86, longitude: 9.916667 },
+      },
+    });
+  });
+
+  it('keeps independent baselines when a marine kind switches collections and back', async () => {
+    const siblingCollection = LOCATION.dmiCollections.water[1];
+    expect(siblingCollection).toBeTruthy();
+    const key = marineIngredientKey(LOCATION, 'water');
+    const retained = completeMarineEnvelope(LOCATION, 'water', OLD_RUN_ID);
+    retained.grid = deriveMarineGridProvenance(
+      LOCATION,
+      COLLECTION,
+      featuresAt(9.916667, 55.86),
+    );
+    const store = makeEnv({ [key]: retained });
+    const complete = completeMarineSeries('water', CANDIDATE_RUN_ID);
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(Response.json({
+        features: featuresAt(9.95, 55.88, complete.length),
+      }))
+      .mockResolvedValueOnce(Response.json({
+        features: featuresAt(9.933333, 55.87, complete.length),
+      }));
+
+    const siblingResult = await fetchMarineSeriesWithFallback(
+      store.env,
+      LOCATION,
+      'water',
+      { collection: siblingCollection, id: CANDIDATE_RUN_ID },
+      [...FORECAST_PROVIDER_PARAMETERS.water],
+      () => complete,
+    );
+    expect(siblingResult.grid).toMatchObject({
+      collection: siblingCollection,
+      expected: { latitude: 55.88, longitude: 9.95 },
+      changed: false,
+    });
+
+    const returnedResult = await fetchMarineSeriesWithFallback(
+      store.env,
+      LOCATION,
+      'water',
+      { collection: COLLECTION, id: CANDIDATE_RUN_ID },
+      [...FORECAST_PROVIDER_PARAMETERS.water],
+      () => complete,
+    );
+    expect(returnedResult.grid).toMatchObject({
+      collection: COLLECTION,
+      expected: { latitude: 55.86, longitude: 9.916667 },
+      returned: { latitude: 55.87, longitude: 9.933333 },
+      changed: true,
+    });
+    expect(JSON.parse(store.values.get(key)!)).toMatchObject({
+      gridExpectedByCollection: {
+        [COLLECTION]: { latitude: 55.86, longitude: 9.916667 },
+        [siblingCollection]: { latitude: 55.88, longitude: 9.95 },
+      },
+    });
+  });
+
+  it('retains seed provenance only alongside the matching retained ingredient', () => {
+    const seedGrid = deriveMarineGridProvenance(
+      LOCATION,
+      COLLECTION,
+      featuresAt(9.916667, 55.86),
+    );
+    expect(seedGrid).toBeDefined();
+    const retained = {
+      series: completeMarineSeries('water', OLD_RUN_ID),
+      instance: { collection: COLLECTION, id: OLD_RUN_ID },
+      fallback: true,
+      providerContacted: false,
+      degraded: true,
+    };
+
+    expect(retainMarineGridDiagnostic(retained, seedGrid).grid).toEqual(seedGrid);
+    expect(retainMarineGridDiagnostic({
+      ...retained,
+      fallback: false,
+      providerContacted: true,
+    }, seedGrid).grid).toBeUndefined();
+    expect(retainMarineGridDiagnostic(retained, {
+      ...seedGrid!,
+      collection: 'different-collection',
+    }).grid).toBeUndefined();
+  });
+
+  it('keeps the diagnostic cell baseline after retained forecast data ages out', async () => {
+    const key = marineIngredientKey(LOCATION, 'water');
+    const retained = completeMarineEnvelope(LOCATION, 'water', '2026-08-24T180000Z');
+    retained.grid = deriveMarineGridProvenance(
+      LOCATION,
+      COLLECTION,
+      featuresAt(9.916667, 55.86),
+    );
+    const store = makeEnv({ [key]: retained });
+    const complete = completeMarineSeries('water', CANDIDATE_RUN_ID);
+
+    const result = await fetchCandidate(
+      store,
+      complete,
+      featuresAt(9.933333, 55.87, complete.length),
+    );
+
+    expect(result.grid).toMatchObject({
+      changed: true,
+      expected: { latitude: 55.86, longitude: 9.916667 },
+      returned: { latitude: 55.87, longitude: 9.933333 },
+    });
   });
 });
 

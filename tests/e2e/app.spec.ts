@@ -1,5 +1,17 @@
 import { expect, test } from 'playwright/test';
+import { readFileSync } from 'node:fs';
+import type { ForecastLocation } from '../../src/config/locationTypes';
 import { FIXTURE_NOW_ISO, mockForecastWorker, mockInitializingForecastWorker } from './forecastFixture';
+
+const LOCATIONS = JSON.parse(
+  readFileSync(new URL('../../src/config/locations.json', import.meta.url), 'utf8'),
+) as ForecastLocation[];
+const DEFAULT_LOCATION = LOCATIONS[0];
+const READY_LOCATION = LOCATIONS.find(({ id }) => id === 'vejle');
+if (!DEFAULT_LOCATION || !READY_LOCATION) {
+  throw new Error('E2E location fixtures require a default location and Vejle');
+}
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 test.beforeEach(async ({ page }) => {
   // Each Playwright test already receives a fresh isolated context. Freezing
@@ -251,24 +263,34 @@ test('zero ready locations produce one calm app-wide preparation screen', async 
 
 test('partial runtime recovery offers only locations with usable forecasts', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === 'service-worker-chromium');
-  const mock = await mockInitializingForecastWorker(page, { availableLocationIds: ['vejle'] });
+  const mock = await mockInitializingForecastWorker(page, {
+    availableLocationIds: [READY_LOCATION.id],
+  });
 
   await page.goto('./');
 
-  await expect(page.getByRole('heading', { name: 'Prognosen for Horsens Fjord gøres klar' })).toBeVisible();
-  await expect(page.getByRole('status')).toContainText('1 af 4 områder');
+  await expect(page.getByRole('heading', { name: `Prognosen for ${DEFAULT_LOCATION.areaName} gøres klar` })).toBeVisible();
+  await expect(page.getByRole('status')).toContainText(`1 af ${LOCATIONS.length} områder`);
   await expect(page.locator('.initialization-ready-option')).toHaveCount(1);
-  await expect(page.getByRole('button', { name: /Vejle Fjord.*klar/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Aarhus Bugt.*klar/ })).toHaveCount(0);
+  const readyButton = page.getByRole('button', {
+    name: new RegExp(`${escapeRegExp(READY_LOCATION.areaName)}.*klar`),
+  });
+  await expect(readyButton).toBeVisible();
+  for (const unavailable of LOCATIONS.filter(({ id }) => id !== READY_LOCATION.id)) {
+    await expect(page.getByRole('button', {
+      name: new RegExp(`${escapeRegExp(unavailable.areaName)}.*klar`),
+    })).toHaveCount(0);
+  }
   await expect(page.locator('.location-switcher')).toHaveCount(0);
 
   await Promise.all([
     page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
-    page.getByRole('button', { name: /Vejle Fjord.*klar/ }).click(),
+    readyButton.click(),
   ]);
   await expect(page.locator('.app-footer')).toBeVisible();
-  await expect(page.locator('.location-switcher-btn')).toContainText('Vejle');
-  await expect.poll(() => mock.requests.some((url) => url.pathname.endsWith('/forecast/vejle'))).toBe(true);
+  await expect(page.locator('.location-switcher-btn')).toContainText(READY_LOCATION.name);
+  await expect.poll(() => mock.requests.some((url) =>
+    url.pathname.endsWith(`/forecast/${READY_LOCATION.id}`))).toBe(true);
 });
 
 test('an installed production shell reloads with the saved forecast offline', async ({ page, context }, testInfo) => {

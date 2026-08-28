@@ -21,13 +21,23 @@ import {
   initializationStateKey,
 } from '../../worker/generation';
 
+const LOCATIONS = locationData as ForecastLocation[];
+
 function requireLocation(id: string): ForecastLocation {
-  const location = (locationData as ForecastLocation[]).find((candidate) => candidate.id === id);
+  const location = LOCATIONS.find((candidate) => candidate.id === id);
   if (!location) throw new Error(`Canonical ${id} location is missing from the manifest`);
   return location;
 }
 
 const HORSENS = requireLocation('horsens');
+const HORSENS_WATER_COLLECTION = HORSENS.dmiCollections.water[0];
+const HORSENS_WAVE_COLLECTION = HORSENS.dmiCollections.waves[0];
+if (!HORSENS_WATER_COLLECTION || !HORSENS_WAVE_COLLECTION) {
+  throw new Error('Canonical Horsens marine collections are missing from the manifest');
+}
+const MISSING_LOCATION_IDS = LOCATIONS
+  .map(({ id }) => id)
+  .filter((id) => id !== HORSENS.id);
 const FORECAST_KEY = assembledForecastKey(HORSENS);
 const WARM_TOKEN = 'test-only-frank-warm-token-with-256-bits-of-entropy';
 type PublicHealthPayload = Omit<HealthPayload, 'ages' | 'storageUnavailable'>;
@@ -64,8 +74,8 @@ function currentHorsensForecast(nowMs = Date.now()): ForecastData {
       payloadVersion: FORECAST_PAYLOAD_VERSION,
       release: { ...CURRENT_RELEASE },
       weather: 'MET Norway Locationforecast',
-      waves: 'DMI wam_nsb',
-      water: 'DMI dkss_idw',
+      waves: `DMI ${HORSENS_WAVE_COLLECTION}`,
+      water: `DMI ${HORSENS_WATER_COLLECTION}`,
       coordinate: HORSENS.coordinate,
       location: {
         id: HORSENS.id,
@@ -79,8 +89,8 @@ function currentHorsensForecast(nowMs = Date.now()): ForecastData {
         lastAttemptAt: checkedAt,
         weatherExpires: new Date(nowMs + 30 * 60_000).toISOString(),
         marineInstances: {
-          water: { collection: 'dkss_idw', id: runId },
-          waves: { collection: 'wam_nsb', id: runId },
+          water: { collection: HORSENS_WATER_COLLECTION, id: runId },
+          waves: { collection: HORSENS_WAVE_COLLECTION, id: runId },
         },
       },
     },
@@ -302,14 +312,14 @@ describe('Worker runtime integration contract', () => {
       cacheHealth: { status: 'current' },
     });
     expect(body.locations.some((location) => !location.hasCache)).toBe(true);
-    expect(body.missing).toEqual(expect.arrayContaining(['vejle', 'kolding', 'aarhus']));
+    expect(body.missing).toEqual(MISSING_LOCATION_IDS);
     expect(body.release).toMatchObject({
       target: CURRENT_RELEASE,
       allLocationsReady: false,
       ready: [HORSENS.id],
       available: [HORSENS.id],
       fallback: [],
-      missing: expect.arrayContaining(['vejle', 'kolding', 'aarhus']),
+      missing: MISSING_LOCATION_IDS,
     });
     expect(providerFetch).not.toHaveBeenCalled();
   });

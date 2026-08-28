@@ -1,16 +1,13 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import locationData from '../src/config/locations.json' with { type: 'json' };
 
-export const WARM_LOCATION_IDS = Object.freeze([
-  'horsens',
-  'vejle',
-  'kolding',
-  'aarhus',
-]);
+export const WARM_LOCATION_IDS = Object.freeze(locationData.map(({ id }) => id));
 
 // The authenticated Worker route applies a 90-second provider cooldown. This
-// window still fits six worst-case serial passes across all four locations.
-export const DEFAULT_WARM_TOTAL_TIMEOUT_MS = 13 * 60_000;
+// window fits six full 30-second serial attempts for five locations (15
+// minutes), with one minute left for staggering and runner overhead.
+export const DEFAULT_WARM_TOTAL_TIMEOUT_MS = 16 * 60_000;
 export const DEFAULT_WARM_REQUEST_TIMEOUT_MS = 30_000;
 export const WARM_LOCATION_STAGGER_MS = 1_000;
 
@@ -198,7 +195,7 @@ export async function warmWorkerLocations({
     }
   }
 
-  logger.info('[worker-warm] All four forecast locations are ready.');
+  logger.info(`[worker-warm] All ${WARM_LOCATION_IDS.length} forecast locations are ready.`);
 }
 
 async function runCli() {

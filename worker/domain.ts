@@ -30,6 +30,35 @@ export interface MarineInstances {
   waves: MarineInstance;
 }
 
+export interface MarineGridCoordinate {
+  latitude: number;
+  longitude: number;
+}
+
+// Diagnostic provenance for DMI /position responses. DMI resolves the
+// requested coordinate to its closest model cell; that effective cell is the
+// geography the marine values actually describe. A changed cell is deliberately
+// informational only: complete, valid data still assembles and serves, while
+// /status gives the operator enough evidence to investigate a model re-grid.
+export interface MarineGridProvenance {
+  collection: string;
+  requested: MarineGridCoordinate;
+  returned: MarineGridCoordinate;
+  // The first accepted cell for this location-config revision and collection.
+  // It remains stable across later raw-marine writes until an intentional
+  // config revision accepts a new geography.
+  expected: MarineGridCoordinate;
+  distanceMeters: number;
+  changed: boolean;
+}
+
+export interface MarineGridProvenanceByKind {
+  water?: MarineGridProvenance;
+  waves?: MarineGridProvenance;
+}
+
+export type MarineGridExpectedByCollection = Record<string, MarineGridCoordinate>;
+
 export type CacheHealthStatus = NonNullable<WeatherData['sources']['cacheHealth']>['status'];
 export type BusyProvider = NonNullable<
   NonNullable<WeatherData['sources']['cacheHealth']>['busyProvider']
@@ -39,6 +68,7 @@ export interface WorkerCacheHealth
   extends Omit<NonNullable<WeatherData['sources']['cacheHealth']>, 'busyProvider'> {
   busyProvider?: BusyProvider;
   marineInstances?: MarineInstances;
+  marineGrid?: MarineGridProvenanceByKind;
 }
 
 export interface WorkerSources extends Omit<WeatherData['sources'], 'cacheHealth'> {
@@ -53,6 +83,9 @@ export interface ForecastData extends Omit<WeatherData, 'sources'> {
 
 export interface CacheHealthOptions {
   marineInstances?: MarineInstances;
+  // null explicitly clears a previous diagnostic after a successful build
+  // whose DMI response did not expose one consistent grid cell.
+  marineGrid?: MarineGridProvenanceByKind | null;
   weatherExpires?: string;
   weatherLastModified?: string;
   message?: string;
@@ -128,11 +161,20 @@ export interface MarineIngredientEnvelope
   expectedEndMs: number;
   seriesEndMs: number;
   series: SeriesPoint[];
+  // Optional because schema-v3 records written before grid diagnostics remain
+  // safe forecast ingredients. A location config revision forces new raw keys
+  // for every coordinate changed by this release.
+  grid?: MarineGridProvenance;
+  // One raw key serves a marine kind, while that kind may try more than one
+  // collection. Retain each collection's first accepted cell so switching to a
+  // sibling collection and back cannot silently establish a new baseline.
+  gridExpectedByCollection?: MarineGridExpectedByCollection;
 }
 
 export interface MarineSeriesResult {
   series: SeriesPoint[];
   instance: MarineInstance;
+  grid?: MarineGridProvenance;
   fallback: boolean;
   // Event-local evidence that this invocation received and validated a DMI
   // position response. Reusing the retained series is deliberately false.
@@ -165,6 +207,7 @@ export interface MarineSeeds {
   water: SeriesPoint[];
   waves: SeriesPoint[];
   instances?: MarineInstances;
+  marineGrid?: MarineGridProvenanceByKind;
 }
 
 export interface MetResult {
@@ -185,6 +228,7 @@ export interface ForecastBuildResult {
   // advisory country-wide warning feed.
   providerContacted: boolean;
   marineInstances: MarineInstances;
+  marineGrid?: MarineGridProvenanceByKind;
   forecast: ForecastData;
   weatherExpires: string;
   weatherLastModified?: string;
@@ -202,6 +246,7 @@ export interface MarineSeedPayload {
   sources?: {
     cacheHealth?: {
       marineInstances?: MarineInstances;
+      marineGrid?: MarineGridProvenanceByKind;
     };
   };
 }
@@ -263,7 +308,7 @@ export interface HealthAge {
 
 // One KV object recording that the cron ran and the latest persisted successful
 // and unsuccessful outcome for each city. Healthy writes are sampled about
-// every five scheduled ticks; anomalies and their recoveries bypass that
+// every six scheduled ticks; anomalies and their recoveries bypass that
 // throttle so an app-wide lastTickAt can never hide a city-specific failure.
 export interface CronHeartbeat {
   schemaVersion: 2;

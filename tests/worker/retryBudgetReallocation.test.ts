@@ -29,7 +29,7 @@ const OLD_RUN = '2026-08-23T060000Z';
 const NEW_RUN = '2026-08-23T120000Z';
 const NEW_RUN_DECLARED_END_MS = Date.parse('2026-08-28T12:00:00.000Z');
 const WATER = ['dkss_idw', 'dkss_nsbs'];
-const WAVES = ['wam_nsb', 'wam_dw'];
+const WAVES = ['wam_dw'];
 
 function newRunCatalogueInstance() {
   return {
@@ -73,8 +73,8 @@ function fullCronPolicy() {
 // that cannot happen. Derive from the policy instead.
 const CATALOGUE_ATTEMPTS = fullCronPolicy().marineCatalogueMaxAttempts;
 const MAX_CATALOGUE_SUBREQUESTS =
-  CRON_SUBREQUEST_CALL_GRAPH.marineKinds
-  * CRON_SUBREQUEST_CALL_GRAPH.instanceCollectionsPerKind
+  (CRON_SUBREQUEST_CALL_GRAPH.waterInstanceCollections
+    + CRON_SUBREQUEST_CALL_GRAPH.waveInstanceCollections)
   * CATALOGUE_ATTEMPTS;
 
 function runManifest(entries: Record<string, unknown> | null) {
@@ -166,7 +166,7 @@ describe('live retry-budget reallocation', () => {
     const adjusted = reallocateMarinePositionAttempts(fullCronPolicy(), eventMemo);
 
     expect(result.catalogueContacted).toBe(true);
-    expect(consumed).toBe(CRON_SUBREQUEST_CALL_GRAPH.marineKinds);
+    expect(consumed).toBe(CRON_SUBREQUEST_CALL_GRAPH.concurrentPositionLegs);
     expect(adjusted.marinePositionMaxAttempts).toBe(
       fullCronPolicy().marinePositionMaxAttempts,
     );
@@ -185,9 +185,10 @@ describe('live retry-budget reallocation', () => {
       if (attempt < CATALOGUE_ATTEMPTS) {
         return new Response('temporary provider failure', { status: 503 });
       }
-      const isFallbackCollection = collection === WATER[1] || collection === WAVES[1];
+      const isLastConfiguredCollection = collection === WATER.at(-1)
+        || collection === WAVES.at(-1);
       return Response.json({
-        instances: isFallbackCollection ? [newRunCatalogueInstance()] : [],
+        instances: isLastConfiguredCollection ? [newRunCatalogueInstance()] : [],
       });
     });
     const eventMemo: EventMemo = new Map();

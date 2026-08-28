@@ -61,7 +61,7 @@ function catalogueInstance(run: string) {
 const CRON_EFFECTIVE_CATALOGUE_ATTEMPTS =
   cronExecutionPolicy(0, CRON_TICK_BUDGET_MS, 1)!.marineCatalogueMaxAttempts;
 const EXHAUSTED_FIRST_COLLECTION_REQUESTS =
-  CRON_SUBREQUEST_CALL_GRAPH.marineKinds
+  CRON_SUBREQUEST_CALL_GRAPH.concurrentPositionLegs
   * CRON_EFFECTIVE_CATALOGUE_ATTEMPTS;
 
 interface KvWriteEvent {
@@ -126,6 +126,11 @@ function cachedForecast(
   location: ForecastLocation,
   marineRun: string | { water: string; waves: string },
 ): ForecastData {
+  const waterCollection = location.dmiCollections.water[0];
+  const wavesCollection = location.dmiCollections.waves[0];
+  if (!waterCollection || !wavesCollection) {
+    throw new Error(`Location ${location.id} must configure water and wave collections.`);
+  }
   const waterRun = typeof marineRun === 'string' ? marineRun : marineRun.water;
   const wavesRun = typeof marineRun === 'string' ? marineRun : marineRun.waves;
   const fetchedAt = new Date(FIRST_TICK_MS - 30 * 60_000).toISOString();
@@ -158,8 +163,8 @@ function cachedForecast(
       payloadVersion: FORECAST_PAYLOAD_VERSION,
       release: { ...CURRENT_RELEASE },
       weather: 'MET Norway Locationforecast',
-      waves: 'DMI wam_nsb',
-      water: 'DMI dkss_idw',
+      waves: `DMI ${wavesCollection}`,
+      water: `DMI ${waterCollection}`,
       coordinate: location.coordinate,
       location: {
         id: location.id,
@@ -176,12 +181,12 @@ function cachedForecast(
         weatherExpires: new Date(FIRST_TICK_MS + 60 * 60_000).toISOString(),
         marineInstances: {
           water: {
-            collection: 'dkss_idw',
+            collection: waterCollection,
             id: waterRun,
             declaredEndMs: declaredEndMsForRun(waterRun),
           },
           waves: {
-            collection: 'wam_nsb',
+            collection: wavesCollection,
             id: wavesRun,
             declaredEndMs: declaredEndMsForRun(wavesRun),
           },
@@ -215,6 +220,21 @@ function runtime(marineRun: string | { water: string; waves: string } = MARINE_R
   return { env, store, gets, puts };
 }
 
+function keepWeatherFreshThrough(
+  store: Map<string, string>,
+  location: ForecastLocation,
+  throughMs: number,
+): void {
+  const key = assembledForecastKey(location);
+  const cached = JSON.parse(store.get(key)!) as ForecastData;
+  cached.sources.fetchedAt = new Date(throughMs - 30 * 60_000).toISOString();
+  cached.sources.cacheHealth = {
+    ...cached.sources.cacheHealth!,
+    weatherExpires: new Date(throughMs + CRON_PERIOD_MS).toISOString(),
+  };
+  store.set(key, JSON.stringify(cached));
+}
+
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(FIRST_TICK_MS);
@@ -226,7 +246,7 @@ afterEach(() => {
 });
 
 describe('scheduled city rotation', () => {
-  it('refreshes exactly one city per tick and covers all cities in four ticks', async () => {
+  it('refreshes exactly one area per tick and covers every area in one rotation', async () => {
     const { env, gets } = runtime();
     const provider = vi.spyOn(globalThis, 'fetch').mockRejectedValue(
       new Error('A source fetch is not due in this fixture.'),
@@ -474,12 +494,12 @@ describe('scheduled city rotation', () => {
       .toBe(true);
     expect(checked.sources.cacheHealth?.marineInstances).toEqual({
       water: {
-        collection: 'dkss_idw',
+        collection: location.dmiCollections.water[0],
         id: DUE_MARINE_RUN,
         declaredEndMs: DUE_MARINE_DECLARED_END_MS,
       },
       waves: {
-        collection: 'wam_nsb',
+        collection: location.dmiCollections.waves[0],
         id: '2026-08-20T120000Z',
         declaredEndMs: declaredEndMsForRun('2026-08-20T120000Z'),
       },
@@ -804,7 +824,7 @@ describe('scheduled city rotation', () => {
         status: 'stale',
         needsRebuild: true,
         marineInstances: {
-          water: { collection: 'dkss_idw', id: expiredWaterRun },
+          water: { collection: location.dmiCollections.water[0], id: expiredWaterRun },
         },
       });
       expect(store.has(waterKey)).toBe(false);
@@ -1193,7 +1213,7 @@ describe('scheduled city rotation', () => {
     });
   });
 
-  it('writes the first unsuccessful transition immediately inside the five-tick throttle', async () => {
+  it('writes the first unsuccessful transition immediately inside the six-tick throttle', async () => {
     const { env, store, puts } = runtime(DUE_MARINE_RUN);
     const provider = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
       new Response('temporary provider failure', { status: 503 }));
@@ -1241,6 +1261,11 @@ describe('scheduled city rotation', () => {
 
     const repeatedTick = FIRST_TICK_MS + 11 * LOCATIONS.length * CRON_PERIOD_MS;
     const location = tickOrder(repeatedTick)[0];
+    keepWeatherFreshThrough(
+      store,
+      location,
+      repeatedTick + LOCATIONS.length * CRON_PERIOD_MS,
+    );
     // Sits far enough back that one further rotation crosses the throttle,
     // while the first run is still inside it (throttle - L, then + L = throttle).
     const previousTick = repeatedTick
@@ -1331,6 +1356,11 @@ describe('scheduled city rotation', () => {
     const { env, store, puts } = runtime(DUE_MARINE_RUN);
     const scheduledTime = FIRST_TICK_MS + 12 * LOCATIONS.length * CRON_PERIOD_MS;
     const location = tickOrder(scheduledTime)[0];
+    keepWeatherFreshThrough(
+      store,
+      location,
+      scheduledTime + LOCATIONS.length * CRON_PERIOD_MS,
+    );
     const previousTick = scheduledTime - CRON_PERIOD_MS;
     const previousFailure = scheduledTime - 2 * CRON_PERIOD_MS;
     const previousSuccess = scheduledTime - 5 * CRON_PERIOD_MS;
@@ -1411,6 +1441,7 @@ describe('scheduled city rotation', () => {
     // is meant to pin.
     const scheduledTime = FIRST_TICK_MS + 14 * LOCATIONS.length * CRON_PERIOD_MS;
     const location = tickOrder(scheduledTime)[0];
+    keepWeatherFreshThrough(store, location, scheduledTime);
     const forecastKey = assembledForecastKey(location);
     const cached = JSON.parse(store.get(forecastKey)!) as ForecastData;
     const previousSuccess = scheduledTime - 3 * CRON_PERIOD_MS;
@@ -1521,6 +1552,7 @@ describe('scheduled city rotation', () => {
     const { env, store, puts } = runtime(DUE_MARINE_RUN);
     const scheduledTime = FIRST_TICK_MS + 12 * LOCATIONS.length * CRON_PERIOD_MS;
     const location = tickOrder(scheduledTime)[0];
+    keepWeatherFreshThrough(store, location, scheduledTime);
     store.set(CRON_HEARTBEAT_KEY, JSON.stringify({
       schemaVersion: 2,
       lastTickAt: new Date(scheduledTime - CRON_PERIOD_MS).toISOString(),

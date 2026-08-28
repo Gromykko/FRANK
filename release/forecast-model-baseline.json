@@ -3,51 +3,56 @@
   "semanticBoundary": "worker-generation-owned-v1",
   "release": {
     "apiSchemaVersion": 2,
-    "modelRevision": 58,
+    "modelRevision": 59,
     "assembledCacheSchema": 2,
     "marineCacheSchema": 3,
-    "dataGenerationId": "api2-model58",
+    "dataGenerationId": "api2-model59",
     "payloadVersion": 8
   },
   "semanticInputs": {
     "src/features/forecast/normalize.ts": "5021f20b8172075c4384f8d9cafa5df3abbb059472f2d721019fd1564efca947",
     "src/features/forecast/parseWarnings.ts": "8bf112789a37c5167f749dd1978c5d647f85d285cb06d4bce5feaaef6cbf2f96",
     "src/features/forecast/providerUrls.ts": "0c207f05a37fb239258970bbfcf1e49280d7bf74d3441bb84be224abde9a0367",
-    "src/features/forecast/releaseContract.ts": "ccb9aadb89d57d30b5d991b0e3473e55d39347d8020df86c80d5674579d80f0e",
+    "src/features/forecast/releaseContract.ts": "f2021be7090006b817880a3000b957bfaebb4ff04b5d9c906addbe2698be7c12",
     "src/features/forecast/sun.ts": "f69dacefb9f43709f63a11a01b66b2cda77b25d7e53bcda62cefae10fd0543e4",
     "src/features/forecast/temporalPolicy.ts": "59940e152870a1b8a071f46deb378e0cbc2901ea30b00c725f16e836d395775d",
     "src/features/forecast/types.ts": "565e399cec43bf91bd279ae133ffb032696462d2f1d4db8ada35928261885e0f",
     "src/features/forecast/validatePayload.ts": "8f1ceafaf38414e00ef1bc055a995ab1d68b8921063f64790d3e2fec7b7a5ba2",
-    "worker/cacheHealth.ts": "3ab9733be3022d1f0a6c89cb7bcd8c0b0de17f11857d92882bd518acaceba583",
-    "worker/forecastModel.ts": "db2d189969064b61618833e54033f89a42d79b21e3e77c5165b89cf34445e9cf",
+    "worker/cacheHealth.ts": "f5f394784b764c5a42a7a996957c7d60fb280af83e30e4d752d90241e84c779e",
+    "worker/forecastModel.ts": "59c5c8b61ec2ae92a22bf3e0da738ad45f2c41b2405cc2ca3c32ec4e988067b7",
     "worker/generation.ts": "471cae837f55a6b108ddf451ca3ccb8f2a2af006d2b552bc784b2ed99c6ef2a6",
     "worker/http.ts": "1073cc7ffb5ef699eec8c2ceaf07d88569e3f5ac21bda531e3c07c5c21070f56",
-    "worker/domain.ts": "715eec5c9fd8780ec08be3eec1a149a54a292be647ed42cd2e312513fbd671ef",
-    "worker/index.ts": "bd2ef7b24f8163bb4efc3c8c8df0717b0250b2f0c8196064990b3d5f2b889dc0",
+    "worker/domain.ts": "439c91a3f4d673918b913e40d74ef3c9d5c7517b33377556129b104c7d7838d8",
+    "worker/index.ts": "da60ba222c7e562958b64639a9f4798aa3478d2987b19dde7de60ba418cd0594",
     "worker/providerAvailability.ts": "52443e5c5b22fba55d05e10f708263e4fead3a0b7b9691f020611668582a3076",
-    "worker/providers.ts": "bcc835127efcbc9eccf2dbb8ae238c2ff32b27648047ef3e2c7fcb682614e05f",
+    "worker/providers.ts": "e8737d2848e22e68dd84bab1e65f34c736da48a078e10c39e234edcfbb111bc0",
     "worker/validation.ts": "b0a68f89a3347a641a231de7d3d3c36bcc0292a1c7ddd5ec7e7fb325f0e5207f"
   },
   "locations": [
     {
       "id": "aarhus",
+      "forecastConfigRevision": 2,
+      "inputHash": "652717b88d8317f937453972474eb44736700f1f9a1c546ef8fbe13cae7218a2"
+    },
+    {
+      "id": "aarhus-north",
       "forecastConfigRevision": 1,
-      "inputHash": "edc78aae12a5cd591d7dc906c9440311ee3c361c0831259955317f33ab2f240b"
+      "inputHash": "d7e1516726858973d5c563f608cdc9027cd9ff8549b81c2cea775afb62090669"
     },
     {
       "id": "horsens",
-      "forecastConfigRevision": 1,
-      "inputHash": "65b7fb60159916f371f020c3727ac215d5365509b3853b5c2c0c7d0a2778d5b7"
+      "forecastConfigRevision": 2,
+      "inputHash": "2d605af76944067215950f67ef59e8f5798f2c40186711b79257ceb61e03f486"
     },
     {
       "id": "kolding",
-      "forecastConfigRevision": 1,
-      "inputHash": "38f86c90e6399a531860af0896e0aa927d9ffae5095757ed6b95101fed90a754"
+      "forecastConfigRevision": 2,
+      "inputHash": "6a4916c469f2d6c261cf73b1976c89f8822623b9780700488165fa091aa64331"
     },
     {
       "id": "vejle",
-      "forecastConfigRevision": 1,
-      "inputHash": "989cb21cb0965932bd0ace46a10df8f58c2311b1ee541c617779b6f5c48f7b56"
+      "forecastConfigRevision": 2,
+      "inputHash": "ac833954c4868dd671fe4c6277f0b017d4515546c19f4aa5d6ae8b4a47b07b1c"
     }
   ]
 }

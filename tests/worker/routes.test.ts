@@ -13,7 +13,7 @@ import type {
   HealthLocationEntry,
   HealthPayload,
 } from '../../worker/domain';
-import { buildHealthPayload, statusResponse } from '../../worker/health';
+import { buildHealthPayload, healthResponse, statusResponse } from '../../worker/health';
 import {
   RELEASE_HEADER,
   assembledForecastKey,
@@ -88,6 +88,11 @@ function currentDmiRunId(nowMs = Date.now()): string {
 
 function cachedForecast(locationId = 'horsens'): ForecastData {
   const location = locationById(locationId);
+  const waterCollection = location.dmiCollections.water[0];
+  const waveCollection = location.dmiCollections.waves[0];
+  if (!waterCollection || !waveCollection) {
+    throw new Error(`Canonical marine collections are missing for ${location.id}`);
+  }
   const forecastTime = new Date(Date.now() + 60 * 60_000).toISOString();
   const sun = buildSunSchedule([forecastTime], location);
   const currentRun = currentDmiRunId();
@@ -118,8 +123,8 @@ function cachedForecast(locationId = 'horsens'): ForecastData {
       payloadVersion: FORECAST_PAYLOAD_VERSION,
       release: { ...CURRENT_RELEASE },
       weather: 'MET Norway Locationforecast',
-      waves: 'DMI wam_nsb',
-      water: 'DMI dkss_idw',
+      waves: `DMI ${waveCollection}`,
+      water: `DMI ${waterCollection}`,
       coordinate: location.coordinate,
       location: {
         id: location.id,
@@ -133,8 +138,8 @@ function cachedForecast(locationId = 'horsens'): ForecastData {
         lastAttemptAt: LAST_COMPLETED_CHECK,
         weatherExpires: new Date(Date.now() + 30 * 60_000).toISOString(),
         marineInstances: {
-          water: { collection: 'dkss_idw', id: currentRun },
-          waves: { collection: 'wam_nsb', id: currentRun },
+          water: { collection: waterCollection, id: currentRun },
+          waves: { collection: waveCollection, id: currentRun },
         },
       },
     },
@@ -297,11 +302,13 @@ function installWarmProviderResponses(marineBusy = false) {
             headers: { 'Retry-After': '1200' },
           });
         }
-        const water = url.includes('/collections/dkss_');
+        const collection = /\/collections\/([^/]+)\//.exec(url)?.[1];
+        if (!collection) throw new Error(`DMI collection missing from ${url}`);
+        const water = collection.startsWith('dkss_');
         const series = completeMarineSeries(
           water ? 'water' : 'waves',
           WARM_CURRENT_RUN,
-          water ? 'dkss_idw' : 'wam_nsb',
+          collection,
         );
         return Response.json({
           features: series.map((point) => ({
@@ -893,6 +900,100 @@ async function readInitializingPayload(
     expect(body).not.toContain('run found');
   });
 
+  it('reports a changed DMI grid cell on status without degrading machine health', async () => {
+    const now = Date.parse('2026-08-20T18:00:00.000Z');
+    const requested = locationById('horsens').coordinate;
+    const entries: HealthLocationEntry[] = [{
+      id: 'horsens',
+      areaName: 'Horsens Fjord',
+      hasCache: true,
+      exactGenerationReady: true,
+      availabilitySource: 'generation',
+      fetchedAt: '2026-08-20T17:45:00.000Z',
+      cacheHealth: {
+        status: 'current',
+        lastAttemptAt: '2026-08-20T17:50:00.000Z',
+        weatherLastModified: '2026-08-20T17:30:00.000Z',
+        marineInstances: {
+          water: { collection: 'dkss_idw', id: '2026-08-20T120000Z' },
+          waves: { collection: 'wam_dw', id: '2026-08-20T120000Z' },
+        },
+        marineGrid: {
+          waves: {
+            collection: 'wam_dw',
+            requested,
+            expected: { latitude: 55.86, longitude: 9.916667 },
+            returned: { latitude: 55.87, longitude: 9.933333 },
+            distanceMeters: 1_667,
+            changed: true,
+          },
+        },
+      },
+    }];
+
+    const health = buildHealthPayload(entries, false, now);
+    const body = await statusResponse(health).text();
+    const card = body.match(
+      /<tbody class="board-group[^"]*" data-location="horsens">[\s\S]*?<\/tbody>/,
+    )?.[0] ?? '';
+    const wavesCell = card.match(
+      /<td class="num tone-warn" data-source="waves"[\s\S]*?<\/td>/,
+    )?.[0] ?? '';
+
+    expect(health.ok).toBe(true);
+    expect(wavesCell).toContain('Grid cell changed');
+    expect(wavesCell).toContain('DMI wam_dw');
+    expect(wavesCell).toContain('returned 55.870000, 9.933333');
+    expect(wavesCell).toContain('expected cell 55.860000, 9.916667');
+    expect(wavesCell).not.toContain('Last-good fallback');
+    expect(wavesCell).not.toContain('Unavailable');
+
+    const machineHealth = await healthResponse(health).json<HealthPayload>();
+    expect(machineHealth.ok).toBe(true);
+    expect(machineHealth.locations[0].cacheHealth).not.toHaveProperty('marineGrid');
+  });
+
+  it('ignores malformed grid diagnostics on status without changing source health', async () => {
+    const now = Date.parse('2026-08-20T18:00:00.000Z');
+    const entries: HealthLocationEntry[] = [{
+      id: 'horsens',
+      areaName: 'Horsens Fjord',
+      hasCache: true,
+      exactGenerationReady: true,
+      availabilitySource: 'generation',
+      fetchedAt: '2026-08-20T17:45:00.000Z',
+      cacheHealth: {
+        status: 'current',
+        lastAttemptAt: '2026-08-20T17:50:00.000Z',
+        marineInstances: {
+          water: { collection: 'dkss_idw', id: '2026-08-20T120000Z' },
+          waves: { collection: 'wam_dw', id: '2026-08-20T120000Z' },
+        },
+        marineGrid: {
+          waves: {
+            collection: 'wam_dw',
+            // Plausible metadata for the right collection is still rejected
+            // when it claims a different requested coordinate.
+            requested: { latitude: 55.9, longitude: 9.95 },
+            expected: { latitude: 55.86, longitude: 9.916667 },
+            returned: { latitude: 55.87, longitude: 9.933333 },
+            distanceMeters: 1_667,
+            changed: true,
+          },
+        },
+      },
+    }];
+
+    const health = buildHealthPayload(entries, false, now);
+    const response = statusResponse(health);
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(health.ok).toBe(true);
+    expect(body).not.toContain('Grid cell changed');
+    expect(body).not.toContain('55.900000');
+  });
+
   it('clamps a not-yet-released marine run to a nonnegative age', async () => {
     // The 12:00Z DKSS run is valid provenance at 15:15Z, while its published
     // completion estimate is still five minutes away at 15:20Z.
@@ -1108,6 +1209,94 @@ async function readInitializingPayload(
       .toBe(String(CURRENT_RELEASE.payloadVersion));
     expect(response.headers.get(RELEASE_HEADER.generationReady)).toBe('true');
     expect(response.headers.get('X-FRANK-Worker-Version')).toBe(WORKER_VERSION_ID);
+  });
+
+  it('serves a changed DMI cell normally while exposing it only on status', async () => {
+    const location = locationById('horsens');
+    const cached = cachedForecast(location.id);
+    const cacheHealth = cached.sources.cacheHealth!;
+    cacheHealth.marineGrid = {
+      water: {
+        collection: cacheHealth.marineInstances!.water.collection,
+        requested: { ...location.coordinate },
+        expected: { latitude: 55.86, longitude: 9.916667 },
+        returned: { latitude: 55.87, longitude: 9.933333 },
+        distanceMeters: 1_667,
+        changed: true,
+      },
+    };
+    const runtime = makeRuntime({
+      seed: { [assembledForecastKey(location)]: cached },
+    });
+
+    const forecastResponse = await worker.fetch(
+      request('/api/v2/forecast/horsens'),
+      runtime.env,
+      runtime.ctx,
+    );
+    const forecastText = await forecastResponse.text();
+    const forecast = JSON.parse(forecastText) as ForecastData;
+    expect(forecastResponse.status).toBe(200);
+    expect(forecast.sources.cacheHealth?.status).toBe('current');
+    expect(forecast.sources.cacheHealth?.degradedSources).toBeUndefined();
+    expect(forecast.sources.cacheHealth).not.toHaveProperty('marineGrid');
+    expect(forecastText).not.toContain('Grid cell changed');
+    expect(JSON.parse(runtime.store.get(assembledForecastKey(location))!))
+      .toHaveProperty('sources.cacheHealth.marineGrid.water.changed', true);
+
+    const healthResponseResult = await worker.fetch(
+      request('/health'),
+      runtime.env,
+      runtime.ctx,
+    );
+    const healthText = await healthResponseResult.text();
+    expect(healthResponseResult.status).toBe(200);
+    expect(healthText).not.toContain('marineGrid');
+    expect(healthText).not.toContain('Grid cell changed');
+
+    const statusResponseResult = await worker.fetch(
+      request('/status'),
+      runtime.env,
+      runtime.ctx,
+    );
+    const statusText = await statusResponseResult.text();
+    expect(statusResponseResult.status).toBe(200);
+    expect(statusText).toContain('Grid cell changed');
+    expect(statusText).toContain('returned 55.870000, 9.933333');
+  });
+
+  it('drops malformed cached grid diagnostics without affecting forecast availability', async () => {
+    const location = locationById('horsens');
+    const cached = cachedForecast(location.id);
+    const cacheHealth = cached.sources.cacheHealth!;
+    cacheHealth.marineGrid = {
+      water: {
+        collection: cacheHealth.marineInstances!.water.collection,
+        requested: { latitude: 55.9, longitude: 9.95 },
+        expected: { latitude: 55.86, longitude: 9.916667 },
+        returned: { latitude: 55.87, longitude: 9.933333 },
+        distanceMeters: 1_667,
+        changed: true,
+      },
+    };
+    const runtime = makeRuntime({
+      seed: { [assembledForecastKey(location)]: cached },
+    });
+
+    const forecastResponse = await worker.fetch(
+      request('/api/v2/forecast/horsens'),
+      runtime.env,
+      runtime.ctx,
+    );
+    const forecast = await forecastResponse.json<ForecastData>();
+    expect(forecastResponse.status).toBe(200);
+    expect(forecast.sources.cacheHealth?.status).toBe('current');
+    expect(forecast.sources.cacheHealth?.degradedSources).toBeUndefined();
+    expect(forecast.sources.cacheHealth).not.toHaveProperty('marineGrid');
+
+    const status = await worker.fetch(request('/status'), runtime.env, runtime.ctx);
+    expect(status.status).toBe(200);
+    expect(await status.text()).not.toContain('Grid cell changed');
   });
 
   it.each(['/api/v2/forecast/horsens', '/api/v2/forecast/horsens?refresh=1'])(
@@ -1396,11 +1585,13 @@ async function readInitializingPayload(
             return new Response('<feed></feed>', { status: 200 });
           }
           if (url.includes('/instances/')) {
-            const water = url.includes('/collections/dkss_');
+            const collection = /\/collections\/([^/]+)\//.exec(url)?.[1];
+            if (!collection) throw new Error(`DMI collection missing from ${url}`);
+            const water = collection.startsWith('dkss_');
             const series = completeMarineSeries(
               water ? 'water' : 'waves',
               WARM_CURRENT_RUN,
-              water ? 'dkss_idw' : 'wam_nsb',
+              collection,
             );
             return Response.json({
               features: series.map((point, index) => ({

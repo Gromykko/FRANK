@@ -1,26 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
+import locationData from '../../src/config/locations.json';
 import { memoizedText, warningResponseText } from '../../worker/providers';
 import type { EventMemo } from '../../worker/domain';
 
-// The MeteoAlarm feed is country-wide and its URL carries no location, but it
-// was fetched once per city, and DK004 covers three of the four. With the CAP
-// details behind it that reached ~28 of the ~45 usable subrequests in a tick,
-// spent re-fetching identical bytes - and spent hardest exactly when warnings
-// are active, which is when the app matters most. Past Cloudflare's ceiling the
-// error is not classified as transient, so it takes the whole tick down.
+// The MeteoAlarm feed is country-wide and its URL carries no location. When
+// several location builds share an invocation, fetching it once per location
+// spends the subrequest budget on identical bytes exactly when warnings are
+// active. The event memo must collapse all of those callers to one fetch.
 describe('memoizedText', () => {
-  it('fetches one body for every city in the tick', async () => {
+  it('fetches one body for every configured location caller', async () => {
     const memo: EventMemo = new Map();
     const fetchText = vi.fn(async () => 'feed');
 
     const bodies = await Promise.all(
-      ['aarhus', 'horsens', 'kolding', 'vejle'].map(
-        () => memoizedText('warning-feed', memo, fetchText),
-      ),
+      locationData.map(() => memoizedText('warning-feed', memo, fetchText)),
     );
 
     expect(fetchText).toHaveBeenCalledTimes(1);
-    expect(bodies).toEqual(['feed', 'feed', 'feed', 'feed']);
+    expect(bodies).toEqual(Array(locationData.length).fill('feed'));
   });
 
   // Deliberately unlike the instance-probe memo, which retains a refusal so a

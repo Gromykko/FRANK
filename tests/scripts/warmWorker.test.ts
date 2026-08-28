@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_WARM_TOTAL_TIMEOUT_MS,
+  DEFAULT_WARM_REQUEST_TIMEOUT_MS,
   WARM_LOCATION_IDS,
   WARM_LOCATION_STAGGER_MS,
   warmWorkerLocations,
@@ -31,7 +32,15 @@ function silentLogger() {
 }
 
 describe('deployment Worker warm-up', () => {
-  it('warms all four exact forecast URLs serially with staggered starts, bearer auth, and no secret logging', async () => {
+  it('derives the exact warm set from the location manifest', async () => {
+    const locations = JSON.parse(
+      await readFile('src/config/locations.json', 'utf8'),
+    ) as Array<{ id: string }>;
+
+    expect(WARM_LOCATION_IDS).toEqual(locations.map(({ id }) => id));
+  });
+
+  it('warms every exact forecast URL serially with staggered starts, bearer auth, and no secret logging', async () => {
     let nowMs = 1_000;
     let inFlight = 0;
     let maximumInFlight = 0;
@@ -65,11 +74,9 @@ describe('deployment Worker warm-up', () => {
     expect(maximumInFlight).toBe(1);
     expect(requestStarts).toEqual(WARM_LOCATION_IDS.map((_, index) =>
       1_000 + index * WARM_LOCATION_STAGGER_MS));
-    expect(sleepImpl.mock.calls).toEqual([
-      [WARM_LOCATION_STAGGER_MS],
-      [WARM_LOCATION_STAGGER_MS],
-      [WARM_LOCATION_STAGGER_MS],
-    ]);
+    expect(sleepImpl.mock.calls).toEqual(
+      Array.from({ length: WARM_LOCATION_IDS.length - 1 }, () => [WARM_LOCATION_STAGGER_MS]),
+    );
     for (const [, init] of fetchImpl.mock.calls) {
       expect(init).toBeDefined();
       const request = init!;
@@ -78,18 +85,19 @@ describe('deployment Worker warm-up', () => {
     }
     expect(JSON.stringify(logger.info.mock.calls)).not.toContain(TOKEN);
     expect(logger.info).toHaveBeenLastCalledWith(
-      '[worker-warm] All four forecast locations are ready.',
+      `[worker-warm] All ${WARM_LOCATION_IDS.length} forecast locations are ready.`,
     );
   });
 
   it('honours Retry-After while warming the other cities before the retry', async () => {
     let nowMs = 1_000;
-    let horsensAttempts = 0;
+    const strugglingLocationId = WARM_LOCATION_IDS[0];
+    let strugglingLocationAttempts = 0;
     const requestStarts: Array<{ locationId: string; at: number }> = [];
     const fetchImpl = vi.fn(async (url: string) => {
       const locationId = locationIdFrom(url);
       requestStarts.push({ locationId, at: nowMs });
-      if (locationId === 'horsens' && horsensAttempts++ === 0) {
+      if (locationId === strugglingLocationId && strugglingLocationAttempts++ === 0) {
         return initializingResponse('10');
       }
       return readyResponse();
@@ -109,28 +117,30 @@ describe('deployment Worker warm-up', () => {
     });
 
     expect(fetchImpl.mock.calls.map(([url]) => locationIdFrom(String(url)))).toEqual([
-      'horsens',
-      'vejle',
-      'kolding',
-      'aarhus',
-      'horsens',
+      ...WARM_LOCATION_IDS,
+      WARM_LOCATION_IDS[0],
     ]);
-    expect(requestStarts.map(({ at }) => at)).toEqual([1_000, 2_000, 3_000, 4_000, 11_000]);
+    expect(requestStarts.map(({ at }) => at)).toEqual([
+      ...WARM_LOCATION_IDS.map((_, index) => 1_000 + index * WARM_LOCATION_STAGGER_MS),
+      11_000,
+    ]);
     expect(requestStarts.at(-1)!.at - requestStarts[0].at).toBe(10_000);
     expect(sleepImpl.mock.calls).toEqual([
-      [WARM_LOCATION_STAGGER_MS],
-      [WARM_LOCATION_STAGGER_MS],
-      [WARM_LOCATION_STAGGER_MS],
-      [7_000],
+      ...Array.from(
+        { length: WARM_LOCATION_IDS.length - 1 },
+        () => [WARM_LOCATION_STAGGER_MS],
+      ),
+      [10_000 - (WARM_LOCATION_IDS.length - 1) * WARM_LOCATION_STAGGER_MS],
     ]);
   });
 
   it('allows repeated authenticated initialization cooldowns inside the candidate gate', async () => {
     let nowMs = 1_000;
-    let aarhusAttempts = 0;
+    const strugglingLocationId = WARM_LOCATION_IDS.at(-1)!;
+    let strugglingLocationAttempts = 0;
     const fetchImpl = vi.fn(async (url: string) => {
       const locationId = locationIdFrom(url);
-      if (locationId === 'aarhus' && aarhusAttempts++ < 2) {
+      if (locationId === strugglingLocationId && strugglingLocationAttempts++ < 2) {
         return initializingResponse('90');
       }
       return readyResponse();
@@ -148,19 +158,21 @@ describe('deployment Worker warm-up', () => {
       logger: silentLogger(),
     });
 
-    expect(DEFAULT_WARM_TOTAL_TIMEOUT_MS).toBe(13 * 60_000);
+    expect(DEFAULT_WARM_TOTAL_TIMEOUT_MS).toBe(16 * 60_000);
+    expect(DEFAULT_WARM_TOTAL_TIMEOUT_MS).toBeGreaterThan(
+      WARM_LOCATION_IDS.length * 6 * DEFAULT_WARM_REQUEST_TIMEOUT_MS
+        + (WARM_LOCATION_IDS.length - 1) * 6 * WARM_LOCATION_STAGGER_MS,
+    );
     expect(fetchImpl.mock.calls.map(([url]) => locationIdFrom(String(url)))).toEqual([
-      'horsens',
-      'vejle',
-      'kolding',
-      'aarhus',
-      'aarhus',
-      'aarhus',
+      ...WARM_LOCATION_IDS,
+      strugglingLocationId,
+      strugglingLocationId,
     ]);
     expect(sleepImpl.mock.calls).toEqual([
-      [WARM_LOCATION_STAGGER_MS],
-      [WARM_LOCATION_STAGGER_MS],
-      [WARM_LOCATION_STAGGER_MS],
+      ...Array.from(
+        { length: WARM_LOCATION_IDS.length - 1 },
+        () => [WARM_LOCATION_STAGGER_MS],
+      ),
       [90_000],
       [90_000],
     ]);
@@ -168,8 +180,9 @@ describe('deployment Worker warm-up', () => {
 
   it('fails the release when exactly one city cannot retry within the global deadline', async () => {
     let nowMs = 1_000;
+    const strugglingLocationId = WARM_LOCATION_IDS[0];
     const fetchImpl = vi.fn(async (url: string) =>
-      locationIdFrom(url) === 'horsens' ? initializingResponse('2') : readyResponse());
+      locationIdFrom(url) === strugglingLocationId ? initializingResponse('2') : readyResponse());
     const sleepImpl = vi.fn(async (delayMs: number) => {
       nowMs += delayMs;
     });
@@ -182,21 +195,15 @@ describe('deployment Worker warm-up', () => {
       sleepImpl,
       logger: silentLogger(),
       totalTimeoutMs: 5_500,
-    })).rejects.toThrow('locations not ready: horsens');
+    })).rejects.toThrow(`locations not ready: ${strugglingLocationId}`);
 
     expect(fetchImpl.mock.calls.map(([url]) => locationIdFrom(String(url)))).toEqual([
-      'horsens',
-      'vejle',
-      'kolding',
-      'aarhus',
-      'horsens',
+      ...WARM_LOCATION_IDS,
+      WARM_LOCATION_IDS[0],
     ]);
-    expect(sleepImpl.mock.calls).toEqual([
-      [WARM_LOCATION_STAGGER_MS],
-      [WARM_LOCATION_STAGGER_MS],
-      [WARM_LOCATION_STAGGER_MS],
-      [WARM_LOCATION_STAGGER_MS],
-    ]);
+    expect(sleepImpl.mock.calls).toEqual(
+      Array.from({ length: WARM_LOCATION_IDS.length }, () => [WARM_LOCATION_STAGGER_MS]),
+    );
   });
 
   it.each([
@@ -323,7 +330,7 @@ describe('deployment Worker warm-up', () => {
 
     expect(warmJobBody).toContain('needs: upload_candidate');
     const warmJobTimeout = warmJobBody.match(/timeout-minutes:\s*(\d+)/);
-    expect(Number(warmJobTimeout?.[1])).toBe(15);
+    expect(Number(warmJobTimeout?.[1])).toBe(20);
     expect(Number(warmJobTimeout?.[1]) * 60_000).toBeGreaterThan(
       DEFAULT_WARM_TOTAL_TIMEOUT_MS,
     );

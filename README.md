@@ -16,7 +16,7 @@ FRANK is a small, installable web app that helps sea-kayakers judge when conditi
 - Stores personal limits, selected location, language, and theme only in the browser.
 - Works as a PWA: the app shell opens offline and a previously validated forecast can remain available with clear age and connection warnings.
 
-FRANK currently covers **Horsens Fjord**, **Vejle Fjord**, **Kolding Fjord**, and **Aarhus Bugt**.
+FRANK currently covers **Horsens Fjord**, **Vejle Fjord**, **Kolding Fjord**, **Aarhus Bugt (S)**, and **Aarhus Bugt (N)**.
 
 ## Data sources
 
@@ -27,7 +27,14 @@ FRANK currently covers **Horsens Fjord**, **Vejle Fjord**, **Kolding Fjord**, an
 | Wave height, direction, period | [DMI Forecast EDR — WAM](https://www.dmi.dk/friedata/dokumentation/forecast-data-edr-api) | Marine conditions |
 | Official regional warnings | [MeteoAlarm / DMI](https://www.dmi.dk/varsler) | Advisory warning stripe; never silently changes the local rating |
 
-Provider attribution is also shown in the app. Forecast values are model-grid estimates at configured coordinates, not local measurements.
+Provider attribution is also shown in the app. Forecast values are model-grid estimates at configured coordinates, not local measurements. DMI's
+[`/position` documentation](https://www.dmi.dk/friedata/dokumentation/forecast-data-edr-api)
+says the API returns the closest model point and that it may differ from the
+requested coordinate. FRANK therefore records both points for operator review,
+but a changed point does not reject an otherwise complete forecast or alter the
+public verdict. Waves use the roughly 1 km WAM-DW grid rather than keeping the
+roughly 5 km WAM-NSB grid as a same-service fallback; DMI documents both as
+nested WAM model areas in its [wave-model guide](https://www.dmi.dk/friedata/dokumentation/data/forecast-data-wave-model-wam).
 
 Weather-condition wording comes directly from MET's native `symbol_code` and
 [official Weathericons legend](https://raw.githubusercontent.com/metno/weathericons/main/weather/legend.csv).
@@ -53,7 +60,7 @@ Browser / Installed PWA
 ```
 
 * **Zero-Upstream Public Traffic**: Visitors only read pre-built snapshots from the Worker and KV. Browser requests never trigger MET, DMI, or MeteoAlarm calls.
-* **Rotating Ingestion Cron**: A Cloudflare cron wakes every minute (`* * * * *`) and refreshes one rotating location. Every location is reached once per 4 minutes while each Free-plan invocation still processes only one city.
+* **Rotating Ingestion Cron**: A Cloudflare cron wakes every minute (`* * * * *`) and refreshes one rotating location. Every location is reached once per 5 minutes while each Free-plan invocation still processes only one city.
 * **Write-Aware Storage Optimization**: Timestamp-only forecast rewrites are suppressed, provider ingredients are reused where possible, and the shared heartbeat is throttled to protect the daily KV write allowance.
 * **Resilient Multi-Tier Fallbacks**: If DMI or MET experiences a temporary rate limit or outage, FRANK automatically falls back to held previous simulations and retained raw ingredients, keeping forecasts live with clear degradation indicators.
 * **Client-Side Safety Engine**: Risk assessment calculations (wind, gusts, waves, daylight, water temperature, and optional wind-sector caps) run 100% locally in the paddler's browser against their own chosen safety profile. Water level remains visible for planning context but does not change the safety verdict or filter launch windows.
@@ -145,8 +152,8 @@ planned route all matter.
 Production is continuously validated and deployed via [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml):
 
 - **Automated Validation**: Every commit runs full typechecking, linting (`oxlint`), 500+ Vitest unit/integration tests, Miniflare Cloudflare Worker runtime tests, model contract verification, and 28 Playwright cross-browser/PWA end-to-end tests.
-- **Ordered Candidate Deployment**: When merged to `main`, a zero-traffic Worker candidate is warmed through its version preview URL and promoted to 100% only after all four locations are ready. Pages is published only after promotion succeeds.
-- **1-Minute Cron Maintenance**: Scheduled edge crons rotate across the four cities while maintaining shared raw provider ingredients (`frank:raw:...`) and immutable generation forecasts (`frank:forecast-release:...`).
+- **Ordered Candidate Deployment**: When merged to `main`, a zero-traffic Worker candidate is warmed through its version preview URL and promoted to 100% only after every configured location is ready. Pages is published only after promotion succeeds.
+- **1-Minute Cron Maintenance**: Scheduled edge crons rotate across the five forecast areas while maintaining shared raw provider ingredients (`frank:raw:...`) and immutable generation forecasts (`frank:forecast-release:...`).
 
 ## Cloudflare Free Tier Quotas & Guardrails
 
@@ -159,27 +166,27 @@ guardrails are:
 | **Worker requests** | 100,000 / day | 1,440 cron ticks/day plus public API and health/status requests |
 | **CPU** | 10 ms / Free invocation | One rotating location per cron tick; verify real deployed CPU analytics before adding locations or heavier parsing |
 | **KV reads** | 100,000 / day | Variable with visitors and ingestion. Public JSON is `no-store`, so there is no claimed zero-cost CDN-read layer |
-| **KV writes** | 1,000 / day | Normal-day estimate: about 288 throttled heartbeat writes + 0 expected anomaly/recovery writes + about 432 forecast/raw writes = about 720/day, leaving about 280 writes of nominal headroom |
+| **KV writes** | 1,000 / day | Normal-day estimate: about 240 throttled heartbeat writes + 0 expected anomaly/recovery writes + about 540 forecast/raw writes + about 8 shared DMI run-manifest writes = about 788/day, leaving about 212 writes of nominal headroom |
 | **External subrequests** | 50 / invocation | One event-wide counter stops before 46; a DMI 429 opens a same-event circuit |
 
 The heartbeat is read every tick and normal successful writes are sampled once
-every five scheduled ticks. A city with a recorded success and no newer failure
+every six scheduled ticks. A city with a recorded success and no newer failure
 may use the app-wide `lastTickAt`, keeping its displayed check time within about
-five minutes without increasing the normal 288-write heartbeat budget. A budget
+six minutes without increasing the normal 240-write heartbeat budget. A budget
 skip, retry-backoff, or failed refresh writes the first transition to a distinct
-city anomaly immediately; an unchanged repeat follows the same five-tick
+city anomaly immediately; an unchanged repeat follows the same six-tick
 throttle. The first later success also writes immediately so the failure cannot
 remain visible for a full sparse sampling cycle. On a normal day both extra
 transition counts are expected to be zero. One anomalous tick followed by
-recovery would make the planning total about 722. A schema rollout can also spend
-up to four one-time writes to establish each city's first actual provider
+recovery would make the planning total about 790. A schema rollout can also spend
+up to five one-time writes to establish each area's first actual provider
 contact.
 
-For a stable outage affecting all four cities, the conservative heartbeat bound
-is 292 writes/day: up to four immediate first-failure signals plus 288
+For a stable outage affecting all five areas, the conservative heartbeat bound
+is 245 writes/day: up to five immediate first-failure signals plus 240
 normal-cadence writes, against the 1,000-write Free allowance. Adding the normal
-estimate of
-about 432 forecast/raw writes gives about 724/day and about 276 writes of nominal
+estimate of about 540 forecast/raw writes and about 8 shared run-manifest writes
+gives about 793/day and about 207 writes of nominal
 headroom. Changed failure states, recovery flapping, and forecast failure-state
 writes can consume more, so production must monitor actual usage rather than
 treat the estimate as a hard cap. Workers KV is eventually consistent, so the
@@ -236,7 +243,7 @@ Do not regenerate `package-lock.json` casually across operating systems. CI depe
 1. Make a focused change and run the relevant local checks.
 2. Push or merge it to `main`.
 3. The `validate` job runs the complete checks and uploads the exact tested Pages artifact.
-4. The workflow uploads a zero-traffic Worker candidate, authenticates and warms all four forecast locations through its version preview URL, promotes that exact version to 100%, runs best-effort KV generation cleanup, and only then publishes the tested artifact to Pages. Any failed gate leaves Pages on the previous release.
+4. The workflow uploads a zero-traffic Worker candidate, authenticates and warms every configured forecast location through its version preview URL, promotes that exact version to 100%, runs best-effort KV generation cleanup, and only then publishes the tested artifact to Pages. Any failed gate leaves Pages on the previous release.
 5. Watch the Actions summary for the candidate and previous version IDs plus the manual rollback command, then verify the live app, `/health`, and `/status`.
 
 ### Invocation telemetry

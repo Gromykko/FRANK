@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import worker, { CRON_HEARTBEAT_KEY } from '../../worker/index';
+import worker, { CRON_HEARTBEAT_KEY, tickOrder } from '../../worker/index';
 import locationData from '../../src/config/locations.json';
 import type { ForecastLocation } from '../../src/config/locationTypes';
 import { CURRENT_RELEASE } from '../../src/features/forecast/releaseContract';
@@ -7,6 +7,7 @@ import { FORECAST_PAYLOAD_VERSION } from '../../src/features/forecast/types';
 import { buildSunSchedule } from '../../src/features/forecast/sun';
 import type { ForecastData } from '../../worker/domain';
 import { assembledForecastKey, marineIngredientKey } from '../../worker/generation';
+import { CRON_PERIOD_MS } from '../../worker/execution';
 import { makeCacheHealth } from './fixtures';
 import { completeMarineEnvelope } from './marineTestData';
 
@@ -15,10 +16,33 @@ const NOW = Date.parse('2026-08-20T16:00:00.000Z');
 const NEW_RUN = '2026-08-20T120000Z';
 const OLD_RUN = '2026-08-20T060000Z';
 const HOUR = '2026-08-20T17:00:00.000Z';
+const LOCATION_IDS = LOCATIONS.map(({ id }) => id);
+
+function requireLocation(id: string): ForecastLocation {
+  const location = LOCATIONS.find((candidate) => candidate.id === id);
+  if (!location) throw new Error(`Missing ${id} test location`);
+  return location;
+}
+
+function primaryCollection(location: ForecastLocation, kind: 'water' | 'waves'): string {
+  const collection = location.dmiCollections[kind][0];
+  if (!collection) throw new Error(`Missing ${kind} collection for ${location.id}`);
+  return collection;
+}
+
+function selectedTickAtOrAfter(location: ForecastLocation, earliestMs: number): number {
+  for (let offset = 0; offset < LOCATIONS.length; offset += 1) {
+    const candidate = earliestMs + offset * CRON_PERIOD_MS;
+    if (tickOrder(candidate, LOCATION_IDS)[0] === location.id) return candidate;
+  }
+  throw new Error(`No rotated tick selected ${location.id}`);
+}
 
 function cachedForecast(location: ForecastLocation, marineRun: string): ForecastData {
   const checkedAt = new Date(NOW - 30 * 60_000).toISOString();
   const sun = buildSunSchedule([HOUR], location);
+  const waterCollection = primaryCollection(location, 'water');
+  const waveCollection = primaryCollection(location, 'waves');
   return {
     hourly: [{
       time: HOUR,
@@ -46,8 +70,8 @@ function cachedForecast(location: ForecastLocation, marineRun: string): Forecast
       payloadVersion: FORECAST_PAYLOAD_VERSION,
       release: { ...CURRENT_RELEASE },
       weather: 'MET Norway Locationforecast',
-      waves: 'DMI wam_nsb',
-      water: 'DMI dkss_idw',
+      waves: `DMI ${waveCollection}`,
+      water: `DMI ${waterCollection}`,
       coordinate: location.coordinate,
       location: {
         id: location.id,
@@ -61,21 +85,19 @@ function cachedForecast(location: ForecastLocation, marineRun: string): Forecast
         lastAttemptAt: checkedAt,
         weatherExpires: new Date(NOW + 60 * 60_000).toISOString(),
         marineInstances: {
-          water: { collection: 'dkss_idw', id: marineRun },
-          waves: { collection: 'wam_nsb', id: marineRun },
+          water: { collection: waterCollection, id: marineRun },
+          waves: { collection: waveCollection, id: marineRun },
         },
       },
     },
   };
 }
 
-function runtime(
-  currentLocationIds: ReadonlySet<string> = new Set(['horsens', 'aarhus']),
-) {
+function runtime(currentLocationIds: ReadonlySet<string>) {
   const store = new Map<string, string>();
   for (const location of LOCATIONS) {
-    // Horsens and Aarhus already hold the current publication. Vejle and
-    // Kolding retain an older run so tests can select either one's rotated tick.
+    // Callers choose which locations hold the current publication so each test
+    // can select a production location without depending on manifest size.
     store.set(
       assembledForecastKey(location),
       JSON.stringify(cachedForecast(
@@ -153,12 +175,14 @@ describe('scheduled DMI retries and location isolation', () => {
   it('opens the 429 circuit while recording the successful MET contact', async () => {
     const allCurrent = new Set(LOCATIONS.map(({ id }) => id));
     const { env, store } = runtime(allCurrent);
-    const [horsens, vejle, kolding, aarhus] = LOCATIONS;
+    const vejle = requireLocation('vejle');
+    const untouchedLocations = LOCATIONS.filter(({ id }) => id !== vejle.id);
     const vejleCached = forecast(store, vejle);
     vejleCached.sources.cacheHealth!.weatherExpires = new Date(NOW - 1).toISOString();
     store.set(assembledForecastKey(vejle), JSON.stringify(vejleCached));
     const calls: string[] = [];
     let vejleAttempts = 0;
+    const vejlePoint = `POINT(${vejle.coordinate.longitude} ${vejle.coordinate.latitude})`;
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       calls.push(url);
@@ -168,34 +192,28 @@ describe('scheduled DMI retries and location isolation', () => {
       }
       if (url.includes('/instances/')) {
         const coords = new URL(url).searchParams.get('coords');
-        if (coords === 'POINT(9.68 55.705)') {
+        if (coords === vejlePoint) {
           vejleAttempts += 1;
           return new Response('Server is busy', {
             status: 429,
             headers: { 'Retry-After': '1200' },
           });
         }
-        if (coords === 'POINT(9.659 55.512)') {
-          const properties = url.includes('/collections/dkss_')
-            ? {
-                step: HOUR,
-                'sea-mean-deviation': 0,
-                'water-temperature': 16,
-                'current-u': 0,
-                'current-v': 0,
-              }
-            : {
-                step: HOUR,
-                'significant-wave-height': 0.1,
-                'mean-wave-dir': 180,
-                'mean-wave-period': 3,
-              };
-          return Response.json({ features: [{ properties }] });
-        }
-        return new Response('Server is busy', {
-          status: 429,
-          headers: { 'Retry-After': '1200' },
-        });
+        const properties = url.includes('/collections/dkss_')
+          ? {
+              step: HOUR,
+              'sea-mean-deviation': 0,
+              'water-temperature': 16,
+              'current-u': 0,
+              'current-v': 0,
+            }
+          : {
+              step: HOUR,
+              'significant-wave-height': 0.1,
+              'mean-wave-dir': 180,
+              'mean-wave-period': 3,
+            };
+        return Response.json({ features: [{ properties }] });
       }
       if (url.endsWith('/instances')) {
         return Response.json({ instances: [{ id: NEW_RUN }] });
@@ -206,7 +224,7 @@ describe('scheduled DMI retries and location isolation', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const vejleTick = NOW + 5 * 60_000;
+    const vejleTick = selectedTickAtOrAfter(vejle, NOW + 5 * 60_000);
     vi.setSystemTime(vejleTick);
     await worker.scheduled(
       { scheduledTime: vejleTick } as ScheduledController,
@@ -219,15 +237,10 @@ describe('scheduled DMI retries and location isolation', () => {
     // together when the first refusal arrived; the event circuit stops retries.
     expect(vejleAttempts).toBe(2);
     expect(positionCalls).toHaveLength(2);
-    expect(positionCalls.some((url) =>
-      new URL(url).searchParams.get('coords') === 'POINT(9.659 55.512)')).toBe(false);
+    expect(positionCalls.every((url) =>
+      new URL(url).searchParams.get('coords') === vejlePoint)).toBe(true);
     expect(calls.filter((url) => url.endsWith('/instances'))).toHaveLength(0);
     expect(calls.filter((url) => url.includes('api.met.no/'))).toHaveLength(1);
-
-    expect(forecast(store, horsens).sources.cacheHealth).toMatchObject({
-      status: 'current',
-    });
-    expect(forecast(store, horsens).sources.cacheHealth).not.toHaveProperty('providerBusy');
 
     expect(forecast(store, vejle).sources.cacheHealth).toMatchObject({
       status: 'current',
@@ -238,43 +251,49 @@ describe('scheduled DMI retries and location isolation', () => {
     expect(JSON.parse(store.get(CRON_HEARTBEAT_KEY)!)).toEqual({
       schemaVersion: 2,
       lastTickAt: new Date(vejleTick).toISOString(),
-      locations: { vejle: new Date(vejleTick).toISOString() },
+      locations: { [vejle.id]: new Date(vejleTick).toISOString() },
       unreachable: {},
     });
 
-    // Kolding's turn is the next one-minute tick, so this invocation must not
-    // mutate its cached health in response to Vejle's provider failure.
-    expect(forecast(store, kolding).sources.cacheHealth).toMatchObject({
-      status: 'current',
-    });
-    expect(forecast(store, kolding).sources.cacheHealth).not.toHaveProperty('providerBusy');
-
-    // Aarhus held run is schedule-valid and remains green
-    expect(forecast(store, aarhus).sources.cacheHealth).toMatchObject({
-      status: 'current',
-    });
-    expect(forecast(store, aarhus).sources.cacheHealth).not.toHaveProperty('providerBusy');
+    // A selected city's failure must not mutate any other production location.
+    for (const untouched of untouchedLocations) {
+      expect(forecast(store, untouched).sources.cacheHealth).toMatchObject({
+        status: 'current',
+      });
+      expect(forecast(store, untouched).sources.cacheHealth)
+        .not.toHaveProperty('providerBusy');
+    }
   });
 
   it('keeps successful contact evidence when later forecast assembly fails', async () => {
     const { env, store } = runtime(new Set(LOCATIONS.map(({ id }) => id)));
-    const scheduledTime = NOW + 9 * 60_000;
-    const location = LOCATIONS.find(({ id }) => id === 'vejle')!;
+    const location = requireLocation('vejle');
+    const scheduledTime = selectedTickAtOrAfter(location, NOW + 9 * 60_000);
     const previousSuccess = scheduledTime - 8 * 60_000;
     const cached = forecast(store, location);
     cached.sources.cacheHealth!.weatherExpires = new Date(NOW - 1).toISOString();
     cached.sources.cacheHealth!.marineInstances = {
-      water: { collection: 'dkss_idw', id: NEW_RUN },
-      waves: { collection: 'wam_nsb', id: NEW_RUN },
+      water: { collection: primaryCollection(location, 'water'), id: NEW_RUN },
+      waves: { collection: primaryCollection(location, 'waves'), id: NEW_RUN },
     };
     store.set(assembledForecastKey(location), JSON.stringify(cached));
     store.set(
       marineIngredientKey(location, 'water'),
-      JSON.stringify(completeMarineEnvelope(location, 'water', NEW_RUN, 'dkss_idw')),
+      JSON.stringify(completeMarineEnvelope(
+        location,
+        'water',
+        NEW_RUN,
+        primaryCollection(location, 'water'),
+      )),
     );
     store.set(
       marineIngredientKey(location, 'waves'),
-      JSON.stringify(completeMarineEnvelope(location, 'waves', NEW_RUN, 'wam_nsb')),
+      JSON.stringify(completeMarineEnvelope(
+        location,
+        'waves',
+        NEW_RUN,
+        primaryCollection(location, 'waves'),
+      )),
     );
     store.set(CRON_HEARTBEAT_KEY, JSON.stringify({
       schemaVersion: 2,
@@ -325,8 +344,7 @@ describe('scheduled DMI retries and location isolation', () => {
   it('clears a deferred marker after a successful same-run catalogue check', async () => {
     const allCurrent = new Set(LOCATIONS.map(({ id }) => id));
     const { env, store } = runtime(allCurrent);
-    const kolding = LOCATIONS.find(({ id }) => id === 'kolding');
-    if (!kolding) throw new Error('Missing Kolding test location');
+    const kolding = requireLocation('kolding');
     const deferred = forecast(store, kolding);
     deferred.sources.cacheHealth = makeCacheHealth({
       ...deferred.sources.cacheHealth,
@@ -352,7 +370,7 @@ describe('scheduled DMI retries and location isolation', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const nextKoldingFirstTick = NOW + 10 * 60_000;
+    const nextKoldingFirstTick = selectedTickAtOrAfter(kolding, NOW + 10 * 60_000);
     vi.setSystemTime(nextKoldingFirstTick);
     await worker.scheduled(
       { scheduledTime: nextKoldingFirstTick } as ScheduledController,
@@ -373,10 +391,9 @@ describe('scheduled DMI retries and location isolation', () => {
   it('keeps a recent recovery write throttled on the checked-cache call site', async () => {
     const allCurrent = new Set(LOCATIONS.map(({ id }) => id));
     const { env, store, puts } = runtime(allCurrent);
-    const kolding = LOCATIONS.find(({ id }) => id === 'kolding');
-    if (!kolding) throw new Error('Missing Kolding test location');
+    const kolding = requireLocation('kolding');
 
-    const recoveryTick = NOW + 30 * 60_000;
+    const recoveryTick = selectedTickAtOrAfter(kolding, NOW + 30 * 60_000);
     const deferred = forecast(store, kolding);
     deferred.sources.cacheHealth = {
       ...deferred.sources.cacheHealth,
@@ -418,10 +435,9 @@ describe('scheduled DMI retries and location isolation', () => {
   it('clears a warm fallback label on the first publication-window check', async () => {
     const allCurrent = new Set(LOCATIONS.map(({ id }) => id));
     const { env, store, puts } = runtime(allCurrent);
-    const kolding = LOCATIONS.find(({ id }) => id === 'kolding');
-    if (!kolding) throw new Error('Missing Kolding test location');
+    const kolding = requireLocation('kolding');
 
-    const recoveryTick = NOW + 34 * 60_000;
+    const recoveryTick = selectedTickAtOrAfter(kolding, NOW + 34 * 60_000);
     const previousAttemptAt = new Date(recoveryTick - 5 * 60_000).toISOString();
     const warmFallback = forecast(store, kolding);
     const fetchedAt = warmFallback.sources.fetchedAt;

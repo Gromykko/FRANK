@@ -56,6 +56,7 @@ import type {
   WorkerCacheHealth,
 } from './domain';
 import {
+  withoutMarineGridDiagnostic,
   withCacheHealth,
 } from './cacheHealth';
 import {
@@ -76,6 +77,7 @@ import {
   marineSourcesDueForProbe,
   marineInstancesEqual,
   marineInstancesWithinFallbackAge,
+  marineGridProvenanceByKindFromUnknown,
   readRetainedMarineInstances,
   readDmiRunManifestCandidates,
 } from './providers';
@@ -125,10 +127,11 @@ const FORECAST_LOCATIONS = locationData as ForecastLocation[];
 //   A release-candidate warm request has a bounded deployment gate waiting for
 //   it -> stop early enough to return a structured result.
 //
-// Deliberately NOT paired with running the four locations in parallel: DMI is
-// the provider that rate-limits us (429 "Server is busy"), and eight concurrent
-// requests would turn a slowdown into a refusal. Sequential-and-patient beats
-// parallel-and-throttled against a struggling upstream.
+// Deliberately NOT paired with running all locations in parallel: DMI is
+// the provider that rate-limits us (429 "Server is busy"), and ten simultaneous
+// marine position requests would turn a slowdown into a refusal.
+// Sequential-and-patient beats parallel-and-throttled against a struggling
+// upstream.
 // Reads needed to answer an HTTP request must fail before the browser's own
 // 12-second Worker timeout. KV is normally an edge-local, millisecond operation;
 // waiting longer than this during a storage incident only turns a truthful 503
@@ -145,9 +148,9 @@ const CANDIDATE_COMPLETION_RESERVE_MS = 4_000;
 const INITIALIZATION_PAYLOAD_SCHEMA_VERSION = 1;
 const INITIALIZATION_RETRY_SECONDS = 10 * 60;
 // Candidate warming is one authenticated, serial deploy caller rather than an
-// unbounded browser crowd. Ninety seconds gives every city six complete tries
-// inside the 13-minute gate even when each request consumes its full 30-second
-// caller allowance, without removing the provider cooldown entirely.
+// unbounded browser crowd. Ninety seconds gives every location six complete
+// tries inside the 16-minute gate even when each request consumes its full
+// 30-second caller allowance, without removing the provider cooldown entirely.
 const DEPLOYMENT_WARM_INITIALIZATION_RETRY_SECONDS = 90;
 // KV requires expirationTtl >= 60 seconds. A little extra lifetime lets a
 // caller calculate the remaining retry delay even if it arrives near the
@@ -285,7 +288,7 @@ async function fetchCronHeartbeat(
 // The public forecast route reads this on every request, which would double the
 // app's KV read volume against a 100,000/day tier. One isolate-local copy, held
 // for a fraction of the normal heartbeat write interval removes nearly all of
-// it. Healthy state changes about every five minutes; anomaly and recovery
+// it. Healthy state changes about every six minutes; anomaly and recovery
 // writes can change it sooner. The memo holds a timestamp and a plain object,
 // never a request or an in-flight promise.
 const HEARTBEAT_MEMO_TTL_MS = 30_000;
@@ -614,12 +617,36 @@ async function readCachedForecast(
     policy,
     `current forecast cache read for ${location.id}`,
   );
-  return raw
+  const parsed = raw
     ? parseForecastCache(
         raw,
         (value): value is ForecastData => isUsableCurrentForecastCache(value, location),
       )
     : null;
+  if (!parsed?.sources.cacheHealth) return parsed;
+
+  const cacheHealth = parsed.sources.cacheHealth;
+  const hasGridDiagnostic = Object.prototype.hasOwnProperty.call(cacheHealth, 'marineGrid');
+  if (!hasGridDiagnostic) return parsed;
+
+  // Assembled-cache validation deliberately tolerates unknown operational
+  // fields. Sanitize the internal diagnostic at the KV boundary so corrupt or
+  // stale metadata cannot break /status, fallback seeding, or a public read.
+  const marineGrid = marineGridProvenanceByKindFromUnknown(
+    cacheHealth.marineGrid,
+    location,
+    cacheHealth.marineInstances,
+  );
+  const normalizedHealth = { ...cacheHealth };
+  delete normalizedHealth.marineGrid;
+  if (marineGrid) normalizedHealth.marineGrid = marineGrid;
+  return {
+    ...parsed,
+    sources: {
+      ...parsed.sources,
+      cacheHealth: normalizedHealth,
+    },
+  };
 }
 
 async function writeCachedForecast(
@@ -677,8 +704,8 @@ async function readInitializationMarker(
 
   // An unreadable marker means "no marker", not "storage is broken". Throwing
   // here escaped the Promise.all in loadHealthPayload and set storageUnavailable
-  // for the WHOLE payload, so one bad record reported all four cities as
-  // cacheless and ok:false - a paging-grade alarm for three perfectly cached
+  // for the WHOLE payload, so one bad record reported every location as
+  // cacheless and ok:false - a paging-grade alarm for otherwise cached
   // fjords. On the forecast route the same throw reached the generic 503, so
   // the client lost the FORECAST_INITIALIZING contract and its retry hint.
   //
@@ -881,7 +908,7 @@ export function shouldPersistFailureState(
   // for the throttle. Treating every transition as urgent looked right until
   // you price a provider that alternates 429/200 tick to tick, which DMI
   // documents doing under load: stale, current, stale writes on EVERY selected
-  // turn, 360 a day per city and 1,440 across four cities against a 1,000/day
+  // turn, 288 a day per city and 1,440 across five cities against a 1,000/day
   // allowance. The first casualty
   // is not the status flag - it is that KV put starts throwing, the rebuild
   // write is swallowed, and the app serves a frozen forecast still labelled
@@ -1296,6 +1323,7 @@ async function _refreshForecastCache(
     ];
     const fresh = withCacheHealth(built.forecast, 'current', {
       marineInstances: built.marineInstances ?? latestMarine,
+      marineGrid: built.marineGrid ?? null,
       weatherExpires: built.weatherExpires,
       weatherLastModified: built.weatherLastModified,
       checkedBy: options.reason ?? 'refresh',
@@ -1480,7 +1508,17 @@ function preparedForecastResponse(
   extraHeaders: Record<string, string> = {},
   release: Readonly<ReleaseMetadata> = CURRENT_RELEASE,
 ): Response {
-  return withReleaseHeaders(jsonResponse(data, 200, extraHeaders), {
+  const publicCacheHealth = withoutMarineGridDiagnostic(data.sources.cacheHealth);
+  const publicData = publicCacheHealth === data.sources.cacheHealth
+    ? data
+    : {
+        ...data,
+        sources: {
+          ...data.sources,
+          cacheHealth: publicCacheHealth,
+        },
+      };
+  return withReleaseHeaders(jsonResponse(publicData, 200, extraHeaders), {
     ready,
     payloadVersion: data.sources.payloadVersion,
     release,
@@ -1811,8 +1849,8 @@ const worker = {
       // Workers Free allows only 10 ms active CPU per scheduled invocation;
       // network/KV waits are wall time, but still must not overlap later ticks.
       // Refresh one rotated city per one-minute tick instead of parsing and
-      // assembling all four in one event. Every city is selected once per four
-      // minutes, inside MET's 30-minute minimum TTL and the 60-minute health
+      // assembling all five in one event. Every city is selected once per five
+      // minutes, inside MET's 30-minute minimum TTL and the 120-minute health
       // threshold.
       // Authenticated deployment warming remains a separate per-location path.
       const scheduledLocations = tickOrder(event?.scheduledTime).slice(0, 1);
@@ -1878,7 +1916,7 @@ const worker = {
       // Bounded outside the refresh budget so a due heartbeat still gets a
       // chance to land when provider work runs long. Healthy ticks and repeated
       // failures usually return after the read; failure transitions and
-      // recoveries deliberately bypass the five-tick throttle.
+      // recoveries deliberately bypass the six-tick throttle.
       await writeHeartbeat(env, {
         kind: 'scheduled',
         tickAtMs: heartbeatTickAt,

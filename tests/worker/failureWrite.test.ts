@@ -66,7 +66,7 @@ describe('shouldPersistFailureState', () => {
 
   // Direction, not mere difference. A provider that alternates 429/200 tick to
   // tick - DMI's documented behaviour under load - used to write on every
-  // single transition: 360/day/city and 1,440/day across four cities against a
+  // single transition: 288/day/city and 1,440/day across five cities against a
   // 1,000/day allowance. The first thing that breaks when the cap is reached is that the REBUILD write
   // is swallowed, so the app freezes on an old forecast still labelled current.
   it('writes immediately when conditions get worse', () => {
@@ -171,7 +171,7 @@ describe('heartbeat schema and cadence guard', () => {
     )).not.toThrow();
     expect(() => assertHeartbeatThrottleCoprime(
       CRON_HEARTBEAT_THROTTLE_TICKS,
-      5,
+      CRON_HEARTBEAT_THROTTLE_TICKS,
     )).toThrow(/must be coprime/);
   });
 
@@ -192,7 +192,7 @@ describe('heartbeat schema and cadence guard', () => {
 // deliberately throttled, the payload's "we checked" time can trail reality by
 // the whole throttle window, which is why the app used to have no honest way to
 // tell a user it checked recently. The cron heartbeat carries that fact in one
-// shared object, with its own roughly-five-minute write throttle instead of one
+// shared object, with its own roughly-six-minute write throttle instead of one
 // payload write per city per tick.
 //
 // The trap this guards: it is tempting to just stamp Date.now() onto the

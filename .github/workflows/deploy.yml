@@ -288,7 +288,7 @@ jobs:
     needs: upload_candidate
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -338,7 +338,8 @@ jobs:
       # this step wrangler.jsonc can disagree with the live schedule
       # indefinitely, and nothing catches it: production ran `*/5 * * * *` for
       # an unknown period while the repo said `* * * * *` (found 2026-08-24),
-      # so every city refreshed every 20 minutes instead of every 4. The
+      # so, with the then-four-location manifest, every city refreshed every 20
+      # minutes instead of every 4. The
       # CRON_PERIOD_MS guard test cannot detect this because it compares the
       # repo against itself, never against what is deployed.
       #

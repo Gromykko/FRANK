@@ -50,8 +50,11 @@ export const DMI_BUSY_RETRY_DELAY_MS = 1_200;
 export const EVENT_EXTERNAL_SUBREQUEST_BUDGET = 45;
 
 export const CRON_SUBREQUEST_CALL_GRAPH = Object.freeze({
-  marineKinds: 2,
-  instanceCollectionsPerKind: 2,
+  // Water keeps two catalogue-area candidates. Waves uses only the 1 km
+  // `wam_dw` collection; `wam_nsb` is a coarser nested model from the same DMI
+  // service, not an independent outage fallback.
+  waterInstanceCollections: 2,
+  waveInstanceCollections: 1,
   concurrentPositionLegs: 2,
   metForecasts: 1,
   warningFeeds: 1,
@@ -67,13 +70,15 @@ export const CRON_CONCURRENT_EXTERNAL_SUBREQUEST_RESERVE =
   + CRON_SUBREQUEST_CALL_GRAPH.warningDetails;
 
 // A catalogue collection can spend its full retry ceiling and finally return
-// a valid empty list, after which the fallback collection gets the same chance.
-// Therefore the real catalogue maximum is 2 kinds x 2 collections x 8 = 32.
-// A ninth attempt would be unsafe on a successful final probe:
-// 2 x 2 x 9 catalogue + 2 minimum position attempts + 8 reserve = 46 > 45.
+// a valid empty list, after which a configured fallback collection gets the
+// same chance. The real maximum is (2 water + 1 wave collections) x 8 = 24.
+// A ninth attempt would still fit the current arithmetic, but removing the
+// coarser wave collection is not a reason to send more catalogue traffic. The
+// eight-attempt ceiling remains the deliberate provider-load bound, while the
+// live counter and dynamic position allocation keep every path at or below 45.
 export const CRON_MAX_CATALOGUE_EXTERNAL_SUBREQUESTS =
-  CRON_SUBREQUEST_CALL_GRAPH.marineKinds
-    * CRON_SUBREQUEST_CALL_GRAPH.instanceCollectionsPerKind
+  (CRON_SUBREQUEST_CALL_GRAPH.waterInstanceCollections
+    + CRON_SUBREQUEST_CALL_GRAPH.waveInstanceCollections)
     * CRON_MARINE_CATALOGUE_MAX_ATTEMPTS;
 
 function normalizedExternalSubrequestsStarted(value: number | undefined): number {
@@ -236,17 +241,16 @@ export const CRON_PERIOD_MS = 60_000;
 // cadence instead of a hardcoded sentence that silently goes stale when this
 // number changes - which is exactly how it came to claim "every five minutes".
 //
-// Five, and measured rather than assumed. It went to fifteen when cadence writes
-// were 274 of 749 a day against a 1,000-write ACCOUNT ceiling; with the day's
-// other savings the rate is now ~472, so the ~192 extra writes five costs are
-// affordable and buy back a status page that reads live instead of showing a
-// twelve-minute-old heartbeat that looks like a stall.
+// Six is deliberately coprime with the five-location rotation, so routine
+// samples do not keep landing on the same city. It costs at most 240 cadence
+// writes/day, down from 288 at five ticks; that saving funds much of the fifth
+// location's forecast ingredients under the 1,000-write account allowance.
 //
 // This is the first knob to turn if the budget tightens again - adding a city,
 // or a sustained rise in failure-state writes, both push toward the ceiling.
 // The trade it buys is only detection latency for TOTAL scheduler death: a city
 // going unreachable or recovering forces an immediate write regardless.
-export const CRON_HEARTBEAT_THROTTLE_TICKS = 5;
+export const CRON_HEARTBEAT_THROTTLE_TICKS = 6;
 
 export function rotateTickOrder<T>(
   scheduledTime: number | undefined,

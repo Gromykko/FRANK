@@ -1,3 +1,5 @@
+import locationData from '../src/config/locations.json';
+import type { ForecastLocation } from '../src/config/locationTypes';
 import { CRON_HEARTBEAT_THROTTLE_TICKS, CRON_PERIOD_MS } from './execution';
 import type {
   CronHeartbeat,
@@ -6,14 +8,24 @@ import type {
   WorkerCacheHealth,
 } from './domain';
 import { CURRENT_RELEASE } from '../src/features/forecast/releaseContract';
-import { FORECAST_SOURCE_POLICY, marineRunDueAtMs, marineSourcesDueForProbe } from './forecastModel';
+import {
+  FORECAST_SOURCE_POLICY,
+  marineGridProvenanceFromUnknown,
+  marineRunDueAtMs,
+  marineSourcesDueForProbe,
+} from './forecastModel';
+import { withoutMarineGridDiagnostic } from './cacheHealth';
 import { htmlResponse, jsonResponse } from './http';
+
+const FORECAST_LOCATION_BY_ID = new Map(
+  (locationData as ForecastLocation[]).map((location) => [location.id, location]),
+);
 
 // /health judges two clocks because "the Worker is dead" and "the data is
 // old" are different failures. The persisted check stamp is deliberately
 // coarse. MET may legitimately defer the next provider contact for its full
 // 90-minute maximum TTL; two hours leaves another 30 minutes, comfortably
-// covering the current four-minute city rotation.
+// covering the current five-minute city rotation.
 export const HEALTH_MAX_CHECK_AGE_MS = 2 * 60 * 60 * 1000;
 
 export function assertHealthCheckAgeExceedsMetTtl(
@@ -156,7 +168,13 @@ export function healthResponse(health: HealthPayload): Response {
   const { ages, storageUnavailable, ...body } = health;
   void ages;
   void storageUnavailable;
-  return jsonResponse(body, body.ok ? 200 : 503);
+  const locations = health.locations.map((entry) => {
+    const cacheHealth = withoutMarineGridDiagnostic(entry.cacheHealth);
+    return cacheHealth === entry.cacheHealth
+      ? entry
+      : { ...entry, cacheHealth };
+  });
+  return jsonResponse({ ...body, locations }, body.ok ? 200 : 503);
 }
 
 const HTML_ESCAPES: Record<string, string> = {
@@ -334,6 +352,16 @@ interface SourceStatusView {
   detail: string;
 }
 
+function marineGridDetail(grid: ReturnType<typeof marineGridProvenanceFromUnknown>): string | null {
+  if (!grid) return null;
+  const coordinate = (point: typeof grid.returned): string =>
+    `${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`;
+  const normal = `DMI ${grid.collection} · requested ${coordinate(grid.requested)} · returned ${coordinate(grid.returned)} · ${grid.distanceMeters.toLocaleString('en-US')} m away`;
+  return grid.changed
+    ? `${normal} · expected cell ${coordinate(grid.expected)}`
+    : normal;
+}
+
 export interface StatusMarineCandidate {
   collection: string;
   id: string;
@@ -489,6 +517,19 @@ export function statusResponse(
         : key === 'waves'
           ? cacheHealth.marineInstances?.waves
           : undefined;
+      const marineGridCandidate = key === 'water'
+        ? cacheHealth.marineGrid?.water
+        : key === 'waves'
+          ? cacheHealth.marineGrid?.waves
+          : undefined;
+      const configuredLocation = FORECAST_LOCATION_BY_ID.get(location.id);
+      const marineGrid = marineInstance && configuredLocation
+        ? marineGridProvenanceFromUnknown(
+            marineGridCandidate,
+            marineInstance.collection,
+            configuredLocation.coordinate,
+          )
+        : undefined;
       // The shared manifest proves only that the catalogue listed a newer run.
       // It does not prove that this coordinate returned a complete, acceptable
       // position series, so the operator note is deliberately neutral and the
@@ -524,12 +565,13 @@ export function statusResponse(
       const provenanceDetail = provenance
         ? `${provenanceLabel} ${formatProviderTimestamp(provenance)}`
         : `${provenanceLabel} not recorded`;
+      const gridDetail = marineGridDetail(marineGrid);
       const operationalState = busy
         ? 'Provider busy'
         : degraded
           ? 'Last-good fallback'
           : null;
-      const sourceState = provenanceFault
+      const operationalSourceState = provenanceFault
         ? operationalState
           ? `${operationalState} · ${provenanceFault.state}`
           : provenanceFault.state
@@ -541,9 +583,22 @@ export function statusResponse(
             ?? (awaitingRun
               ? marineWaitingState(marineInstance, nowMs)
               : sourceAgeMs === null ? 'Age not recorded' : HEALTHY_SOURCE_STATE);
+      // A different returned cell is an operator diagnostic, not a forecast
+      // rejection. Complete values still assemble and /health remains green;
+      // the status board keeps the changed geography visible until the
+      // location config is deliberately revised and establishes a new cell.
+      const sourceState = marineGrid?.changed
+        ? operationalSourceState === HEALTHY_SOURCE_STATE
+          ? 'Grid cell changed'
+          : `${operationalSourceState} · Grid cell changed`
+        : operationalSourceState;
+      const sourceDetail = [
+        provenanceFault?.detail ?? provenanceDetail,
+        gridDetail,
+      ].filter((part): part is string => Boolean(part)).join(' · ');
       return {
         key, label, provider,
-        tone: degraded || busy || provenanceFault
+        tone: degraded || busy || provenanceFault || marineGrid?.changed
           ? 'warn'
           : sourceAgeMs === null ? 'neutral' : 'good',
         // 'Current' not 'Current snapshot': when healthy the operator already
@@ -558,7 +613,7 @@ export function statusResponse(
         // available in both the provider legend and this cell's title.
         value: provenanceFault?.value
           ?? (sourceAgeMs === null ? 'not recorded' : formatAge(sourceAgeMs)),
-        detail: provenanceFault?.detail ?? provenanceDetail,
+        detail: sourceDetail,
       };
     };
 
@@ -644,7 +699,7 @@ export function statusResponse(
     const cell = (source: typeof sources[number]): string =>
       // The exact provenance stamp ("Model run 2026-08-20 12:00 UTC") is what
       // an operator checks against DMI's run table, so it must not be lost -
-      // but printed on all four rows it was eight identical lines of noise.
+      // but printed on every row it became repeated visual noise.
       // It rides the cell as a title instead: available on demand, silent when
       // not wanted.
       `<td class="num ${source.tone === 'warn' || source.tone === 'bad' ? `tone-${source.tone}` : ''}" data-source="${source.key}" data-label="${escapeHtml(source.label)}" title="${escapeHtml(source.detail)}">`

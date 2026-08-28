@@ -12,6 +12,7 @@ import {
   mapWaterFeatures,
   mapWaveFeatures,
 } from '../src/features/forecast/normalize';
+import type { DmiFeature } from '../src/features/forecast/normalize';
 import {
   assertBeforeDeadline,
   assertBeforeProviderDeadline,
@@ -27,7 +28,9 @@ import type {
   BusyProvider,
   EventMemo,
   ForecastBuildResult,
+  MarineGridCoordinate,
   MarineIngredientEnvelope,
+  MarineGridProvenance,
   MarineInstance,
   MarineInstances,
   MarineKind,
@@ -51,12 +54,15 @@ import {
   dmiInstancesUrl,
   featureCollectionFromJson,
   heldMarineFallback,
-  isMarineIngredientEnvelope,
   isMarineRunWithinFallbackAge,
   isMetForecastResponse,
   isMetRawCache,
   latestInstanceFromResponse,
   mapMetPayload,
+  marineGridCoordinatesMatch,
+  marineGridDistanceMeters,
+  marineGridProvenanceByKindFromUnknown,
+  marineIngredientEnvelopeFromUnknown,
   marineFallbackRejection,
   marineCandidateIsWithinPublicationGrace,
   marineInstancesEqual,
@@ -70,6 +76,7 @@ import {
   marineSourcesOverdueForRefresh,
   metForecastUrl,
   parseDmiInstanceMs,
+  retainMarineGridDiagnostic,
   retainedActiveWarnings,
   shouldTryNextDmiCollection,
 } from './forecastModel';
@@ -92,6 +99,52 @@ import { marineIngredientKey, metRawKey } from './generation';
 import { putKvWithLog } from './kvWriteLogging';
 const WARNING_EXECUTION_BUDGET_MS = 5_000;
 
+function gridCoordinate(
+  feature: Pick<DmiFeature, 'geometry'>,
+): { latitude: number; longitude: number } | null {
+  const coordinates = feature.geometry?.coordinates;
+  if (!Array.isArray(coordinates) || coordinates.length < 2) return null;
+  const [longitude, latitude] = coordinates;
+  return Number.isFinite(latitude) && latitude >= -90 && latitude <= 90
+    && Number.isFinite(longitude) && longitude >= -180 && longitude <= 180
+    ? { latitude, longitude }
+    : null;
+}
+
+// Extracted from the position response already in hand: no extra provider
+// request and no separate KV write. Every feature in a /position response must
+// name one stable cell before FRANK records provenance; missing or internally
+// inconsistent geometry leaves the forecast usable and emits diagnostics at
+// the caller instead of becoming a correctness dependency.
+export function deriveMarineGridProvenance(
+  location: Pick<ForecastLocation, 'coordinate'>,
+  collection: string,
+  features: readonly Pick<DmiFeature, 'geometry'>[],
+  previousExpected?: MarineGridCoordinate,
+): MarineGridProvenance | undefined {
+  if (features.length === 0) return undefined;
+  const returned = gridCoordinate(features[0]);
+  if (!returned) return undefined;
+  if (features.some((feature) => {
+    const coordinate = gridCoordinate(feature);
+    return coordinate === null || !marineGridCoordinatesMatch(returned, coordinate);
+  })) return undefined;
+
+  const requested = {
+    latitude: location.coordinate.latitude,
+    longitude: location.coordinate.longitude,
+  };
+  const expected = previousExpected ?? returned;
+  return {
+    collection,
+    requested,
+    returned,
+    expected,
+    distanceMeters: marineGridDistanceMeters(requested, returned),
+    changed: !marineGridCoordinatesMatch(expected, returned),
+  };
+}
+
 // Selected generation-owned decisions are re-exported for focused provider
 // tests while the implementation remains at the semantic boundary.
 export {
@@ -99,6 +152,7 @@ export {
   degradedSourcesAfterProbe,
   deriveMarineSeedsFromPayload,
   isMarineRunWithinFallbackAge,
+  marineGridProvenanceByKindFromUnknown,
   marineInstancesEqual,
   marineInstancesWithinFallbackAge,
   marineProbeDecision,
@@ -920,7 +974,7 @@ async function fetchMetWeather(
 
 export async function readRetainedMarineInstances(
   env: Env,
-  location: Pick<ForecastLocation, 'id' | 'forecastConfigRevision'>,
+  location: Pick<ForecastLocation, 'id' | 'forecastConfigRevision' | 'coordinate'>,
   policy: ExecutionPolicy,
 ): Promise<MarineInstances | undefined> {
   const waterKey = marineIngredientKey(location, 'water');
@@ -942,13 +996,13 @@ export async function readRetainedMarineInstances(
         `waves retained instance check for ${location.id}`,
       ),
     ]);
-    waterStored = isMarineIngredientEnvelope(waterRaw, location)
-      && waterRaw.marineKind === 'water'
-      ? waterRaw
+    const parsedWater = marineIngredientEnvelopeFromUnknown(waterRaw, location);
+    const parsedWaves = marineIngredientEnvelopeFromUnknown(wavesRaw, location);
+    waterStored = parsedWater?.marineKind === 'water'
+      ? parsedWater
       : null;
-    wavesStored = isMarineIngredientEnvelope(wavesRaw, location)
-      && wavesRaw.marineKind === 'waves'
-      ? wavesRaw
+    wavesStored = parsedWaves?.marineKind === 'waves'
+      ? parsedWaves
       : null;
   } catch (error) {
     rethrowIfDeadlineReached(error, policy, `retained instances read recovery for ${location.id}`);
@@ -1015,9 +1069,9 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
       policy,
       `${kind} retained cache read for ${location.id}`,
     );
-    stored = isMarineIngredientEnvelope(retained, location)
-      && retained.marineKind === kind
-      ? retained
+    const parsed = marineIngredientEnvelopeFromUnknown(retained, location);
+    stored = parsed?.marineKind === kind
+      ? parsed
       : null;
   } catch (error) {
     rethrowIfDeadlineReached(error, policy, `${kind} retained cache read recovery for ${location.id}`);
@@ -1060,6 +1114,7 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
         collection: currentStored.collection,
         id: currentStored.id,
       },
+      ...(currentStored.grid ? { grid: currentStored.grid } : {}),
       fallback: !sameCollectionAsRequested,
       providerContacted: false,
       ...(sameCollectionAsRequested
@@ -1077,6 +1132,7 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
     return {
       series: currentStored.series,
       instance,
+      ...(currentStored.grid ? { grid: currentStored.grid } : {}),
       fallback: false,
       providerContacted: false,
     };
@@ -1098,6 +1154,7 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
         collection: currentStored.collection,
         id: currentStored.id,
       },
+      ...(currentStored.grid ? { grid: currentStored.grid } : {}),
       fallback: true,
       // currentStored was produced by currentMarineIngredient above, which has
       // already recomputed the full schema-v3 coverage proof once.
@@ -1172,6 +1229,19 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
   assertMarineRunWithinFallbackAge(instance, instance.collection);
 
   const series = mapFeatures(data.features);
+  const grid = deriveMarineGridProvenance(
+    location,
+    instance.collection,
+    data.features as readonly Pick<DmiFeature, 'geometry'>[],
+    stored?.gridExpectedByCollection?.[instance.collection]
+      ?? (stored?.grid?.collection === instance.collection
+        ? stored.grid.expected
+        : undefined),
+  );
+  const gridExpectedByCollection = {
+    ...(stored?.gridExpectedByCollection ?? {}),
+    ...(grid ? { [instance.collection]: grid.expected } : {}),
+  };
   const coverage = assessMarineRunCoverage(
     kind,
     instance,
@@ -1211,6 +1281,15 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
       timestampMismatchCount: coverage.timestampMismatchCount,
       invalidRequiredValueCount: coverage.invalidRequiredValueCount,
       withinPublicationGrace,
+      ...(grid
+        ? {
+            requestedGridPoint: grid.requested,
+            returnedGridPoint: grid.returned,
+            expectedGridPoint: grid.expected,
+            gridDistanceMeters: grid.distanceMeters,
+            gridCellChanged: grid.changed,
+          }
+        : { gridProvenance: 'unavailable-or-inconsistent' }),
     }));
   } catch {
     // Diagnostics cannot decide whether a candidate is accepted.
@@ -1241,6 +1320,10 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
               expectedEndMs: coverage.expectedEndMs,
               seriesEndMs: completeSeriesEndMs,
               series,
+              ...(grid ? { grid } : {}),
+              ...(Object.keys(gridExpectedByCollection).length > 0
+                ? { gridExpectedByCollection }
+                : {}),
             } satisfies MarineIngredientEnvelope),
             'raw-marine',
             location.id,
@@ -1264,7 +1347,13 @@ export async function fetchMarineSeriesWithFallback<TFeature>(
         // Retention is best-effort after the in-memory candidate has passed.
       }
     }
-    return { series, instance, fallback: false, providerContacted: true };
+    return {
+      series,
+      instance,
+      ...(grid ? { grid } : {}),
+      fallback: false,
+      providerContacted: true,
+    };
   }
 
   if (coverage.status === 'partial' && withinPublicationGrace) {
@@ -1358,12 +1447,12 @@ async function fetchWarnings(
   if (!location.emmaId) return [];
   try {
     assertBeforeDeadline(policy, `warning feed for ${location.id}`);
-    // The feed is country-wide and its URL carries no location, yet it was
-    // fetched once per city, and DK004 covers three of the four. With the CAP
-    // details behind it that was up to 28 of the ~45 usable subrequests spent
-    // re-fetching identical bytes - and spent hardest exactly when warnings are
-    // active, which is when the app matters most. emmaId and kommuneAliases are
-    // both applied after the fetch, so one body serves everyone.
+    // The feed is country-wide and its URL carries no location. Normal cron and
+    // warm invocations currently build one location, but keep the memo scoped to
+    // the invocation so maintenance or test paths that build more than one do
+    // not re-fetch identical feed and CAP-detail bytes. emmaId and
+    // kommuneAliases are both applied after the fetch, so one body serves every
+    // location handled by that invocation.
     const body = await memoizedText('warning-feed', eventMemo, async () => {
       const response = await fetchWithTimeout(METEOALARM_DENMARK_FEED, {
         headers: { Accept: '*/*' },
@@ -1458,8 +1547,14 @@ export async function buildForecastCache(
   }
 
   const met = metResult.value;
-  const water = waterResult.value;
-  const wave = waveResult.value;
+  const water = retainMarineGridDiagnostic(
+    waterResult.value,
+    marineSeeds?.marineGrid?.water,
+  );
+  const wave = retainMarineGridDiagnostic(
+    waveResult.value,
+    marineSeeds?.marineGrid?.waves,
+  );
   const warnings = warningResult.status === 'fulfilled' ? warningResult.value : [];
 
   // Marine may have completed before a slower MET/warning leg. Recheck at the

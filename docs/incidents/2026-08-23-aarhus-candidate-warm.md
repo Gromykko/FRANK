@@ -67,30 +67,30 @@ the fix. The initialization cooldown is now a reader policy: public forecast
 requests still receive the original 600-second crowd-control delay, while the
 single authenticated, serial deployment warmer receives 90 seconds. The marker
 format, its stored 600-second value, and its validation are unchanged. The warm
-window has consequently returned to 13 minutes and the Actions job limit to 15
+window is consequently 16 minutes and the Actions job limit is 20
 minutes; warming, promotion, and Pages still fail closed if the gate expires.
 
-Ninety seconds balances recovery with provider load. In 13 minutes, one
-struggling city gets six to nine attempts depending on its serial position and
-response duration. If all four cities each consume the full 30-second caller
-allowance, six complete serial passes finish in 12 minutes. A 60-second
-cooldown would not add another
-guaranteed all-city pass and would align every retry with the one-minute cron;
-120 seconds would fit only five complete passes.
+Ninety seconds balances recovery with provider load. In 16 minutes, one
+struggling city gets six to eleven attempts depending on its serial position and
+response duration. If all five configured locations each consume the full
+30-second caller allowance, six complete serial passes finish in 15 minutes.
+A 60-second cooldown would not add another guaranteed all-location pass and
+would align every retry with the one-minute cron; 120 seconds would reduce
+quick-failure retry opportunities without improving the serial-load bound.
 
-During a deploy, the live cron can spend at most 45 external requests in its
-invocation, including at most 37 to DMI. One candidate location can spend at
-most 14 external requests, including six to DMI, one to MET, and seven to the
+During a deploy, the modelled live-cron paths spend at most 44 external requests
+in one invocation, including at most 36 to DMI. One candidate location can spend
+at most 13 external requests, including five to DMI, one to MET, and seven in the
 warnings pipeline. The warmer is serial. Even pessimistically charging one
-whole live-cron event and all four warm calls to the same five-second window is
-`45 + (4 x 14) = 101` total requests across five separately bounded
-invocations. Per provider that is at most 61 DMI requests, five MET requests,
-and 35 warning fetches. DMI's documented fair-use ceiling is
+whole live-cron event and all five warm calls to the same five-second window is
+`44 + (5 x 13) = 109` total requests across six separately bounded
+invocations. Per provider that is at most 61 DMI requests, six MET requests,
+and 42 warning fetches. DMI's documented fair-use ceiling is
 [500 requests per five seconds](https://www.dmi.dk/friedata/dokumentation/basics),
 so the deliberately overstated DMI burst is 12.2% of the ceiling; retry delays
 and serial warm calls make the real peak lower. MET asks clients exceeding
 [20 requests per second](https://docs.api.met.no/doc/TermsOfService.html) to
-make an agreement, while this bound is five requests total. Warning feed and
+make an agreement, while this bound is six requests total. Warning feed and
 detail responses also use the existing five-minute edge cache. Cloudflare's
-subrequest limit remains per invocation: the live event stays at or below 45
-and each candidate event at or below 14.
+subrequest limit remains per invocation: the live event stays at or below 44
+and each candidate event at or below 13.

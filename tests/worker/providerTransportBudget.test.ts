@@ -394,13 +394,14 @@ describe('event external-subrequest budget', () => {
   it('models manifest, successful-catalogue and exhausted-catalogue paths separately', async () => {
     for (const location of locationData) {
       expect(Object.keys(location.dmiCollections)).toHaveLength(
-        CRON_SUBREQUEST_CALL_GRAPH.marineKinds,
+        CRON_SUBREQUEST_CALL_GRAPH.concurrentPositionLegs,
       );
-      for (const collections of Object.values(location.dmiCollections)) {
-        expect(collections.length).toBeLessThanOrEqual(
-          CRON_SUBREQUEST_CALL_GRAPH.instanceCollectionsPerKind,
-        );
-      }
+      expect(location.dmiCollections.water.length).toBeLessThanOrEqual(
+        CRON_SUBREQUEST_CALL_GRAPH.waterInstanceCollections,
+      );
+      expect(location.dmiCollections.waves.length).toBeLessThanOrEqual(
+        CRON_SUBREQUEST_CALL_GRAPH.waveInstanceCollections,
+      );
     }
 
     const warningSource = await readFile('src/features/forecast/parseWarnings.ts', 'utf8');
@@ -415,8 +416,8 @@ describe('event external-subrequest budget', () => {
     expect(computedReserve).toBe(CRON_CONCURRENT_EXTERNAL_SUBREQUEST_RESERVE);
 
     const computedCatalogueMaximum =
-      CRON_SUBREQUEST_CALL_GRAPH.marineKinds
-        * CRON_SUBREQUEST_CALL_GRAPH.instanceCollectionsPerKind
+      (CRON_SUBREQUEST_CALL_GRAPH.waterInstanceCollections
+        + CRON_SUBREQUEST_CALL_GRAPH.waveInstanceCollections)
         * CRON_MARINE_CATALOGUE_MAX_ATTEMPTS;
     expect(computedCatalogueMaximum).toBe(CRON_MAX_CATALOGUE_EXTERNAL_SUBREQUESTS);
 
@@ -466,7 +467,7 @@ describe('event external-subrequest budget', () => {
 
   it('keeps a quick catalogue success at one attempt below the position ceiling', () => {
     const eventMemo: EventMemo = new Map();
-    eventMemo.externalSubrequestsStarted = CRON_SUBREQUEST_CALL_GRAPH.marineKinds;
+    eventMemo.externalSubrequestsStarted = CRON_SUBREQUEST_CALL_GRAPH.concurrentPositionLegs;
 
     const adjusted = reallocateMarinePositionAttempts(fullCronPolicy(), eventMemo);
 

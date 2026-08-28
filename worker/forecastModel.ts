@@ -29,6 +29,10 @@ import type { SeriesPoint, WeatherWarning } from '../src/features/forecast/types
 import type {
   BusyProvider,
   ForecastBuildResult,
+  MarineGridCoordinate,
+  MarineGridExpectedByCollection,
+  MarineGridProvenance,
+  MarineGridProvenanceByKind,
   MarineIngredientEnvelope,
   MarineInstance,
   MarineInstances,
@@ -98,12 +102,12 @@ export const FORECAST_SOURCE_POLICY = Object.freeze({
   // published figure a fruitless check means "not published yet", not "DMI is
   // late", so the twenty-minute wait that assumed the latter would now cost up
   // to twenty minutes of staleness on every cycle.
-  dmiDueProbeBackoffMs: 4 * 60 * 1000,
+  dmiDueProbeBackoffMs: 5 * 60 * 1000,
   // A failed contact is evidence about the call, not about DMI's schedule, so
   // it must not arm the publication backoff. One rotation is the natural
   // cadence; repeated identical failures are kept out of KV by
   // shouldPersistFailureState.
-  dmiFailedProbeRetryMs: 4 * 60 * 1000,
+  dmiFailedProbeRetryMs: 5 * 60 * 1000,
   // DMI calls its completion times "usual" rather than an SLA and explicitly
   // says the network load changes them. Across the 32 collection-runs measured
   // on 2026-08-23..25, the worst terminal STAC item arrived about 18 minutes
@@ -174,6 +178,129 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+const MARINE_GRID_COORDINATE_TOLERANCE_DEGREES = 1e-6;
+
+function marineGridCoordinateFromUnknown(value: unknown): MarineGridCoordinate | null {
+  if (!isRecord(value)
+    || typeof value.latitude !== 'number'
+    || !Number.isFinite(value.latitude)
+    || value.latitude < -90
+    || value.latitude > 90
+    || typeof value.longitude !== 'number'
+    || !Number.isFinite(value.longitude)
+    || value.longitude < -180
+    || value.longitude > 180) return null;
+  return { latitude: value.latitude, longitude: value.longitude };
+}
+
+function marineGridExpectedByCollectionFromUnknown(
+  value: unknown,
+): MarineGridExpectedByCollection | undefined {
+  if (!isRecord(value)) return undefined;
+  const entries = Object.entries(value);
+  // A location currently has at most two collections per marine kind. Keep a
+  // little room for future fallbacks, but do not let optional diagnostics turn
+  // an otherwise valid KV record into an unbounded object-processing path.
+  if (entries.length > 8) return undefined;
+  const expectedByCollection = Object.create(null) as MarineGridExpectedByCollection;
+  for (const [collection, candidate] of entries) {
+    if (collection.trim().length === 0 || collection.length > 100) continue;
+    const coordinate = marineGridCoordinateFromUnknown(candidate);
+    if (coordinate) expectedByCollection[collection] = coordinate;
+  }
+  return Object.keys(expectedByCollection).length > 0
+    ? expectedByCollection
+    : undefined;
+}
+
+export function marineGridCoordinatesMatch(
+  left: MarineGridCoordinate,
+  right: MarineGridCoordinate,
+): boolean {
+  return Math.abs(left.latitude - right.latitude) <= MARINE_GRID_COORDINATE_TOLERANCE_DEGREES
+    && Math.abs(left.longitude - right.longitude) <= MARINE_GRID_COORDINATE_TOLERANCE_DEGREES;
+}
+
+export function marineGridDistanceMeters(
+  left: MarineGridCoordinate,
+  right: MarineGridCoordinate,
+): number {
+  const radians = (degrees: number): number => degrees * Math.PI / 180;
+  const latitudeDelta = radians(right.latitude - left.latitude);
+  const longitudeDelta = radians(right.longitude - left.longitude);
+  const leftLatitude = radians(left.latitude);
+  const rightLatitude = radians(right.latitude);
+  const haversine = Math.sin(latitudeDelta / 2) ** 2
+    + Math.cos(leftLatitude) * Math.cos(rightLatitude)
+      * Math.sin(longitudeDelta / 2) ** 2;
+  return Math.round(6_371_000 * 2 * Math.atan2(
+    Math.sqrt(haversine),
+    Math.sqrt(Math.max(0, 1 - haversine)),
+  ));
+}
+
+// Grid provenance is diagnostic metadata, not a forecast-validity condition.
+// Parse it independently so a malformed optional field is ignored without
+// discarding otherwise complete marine data or crashing the operator page.
+export function marineGridProvenanceFromUnknown(
+  value: unknown,
+  expectedCollection?: string,
+  expectedRequested?: MarineGridCoordinate,
+): MarineGridProvenance | undefined {
+  if (!isRecord(value)
+    || typeof value.collection !== 'string'
+    || value.collection.trim().length === 0
+    || (expectedCollection !== undefined && value.collection !== expectedCollection)) {
+    return undefined;
+  }
+  const requested = marineGridCoordinateFromUnknown(value.requested);
+  const returned = marineGridCoordinateFromUnknown(value.returned);
+  const expected = marineGridCoordinateFromUnknown(value.expected);
+  if (!requested || !returned || !expected
+    || (expectedRequested !== undefined
+      && !marineGridCoordinatesMatch(requested, expectedRequested))) {
+    return undefined;
+  }
+  return {
+    collection: value.collection,
+    requested,
+    returned,
+    expected,
+    // Recompute both derived facts rather than trusting diagnostic KV fields
+    // that could disagree after a partial write or manual mutation.
+    distanceMeters: marineGridDistanceMeters(requested, returned),
+    changed: !marineGridCoordinatesMatch(expected, returned),
+  };
+}
+
+export function marineGridProvenanceByKindFromUnknown(
+  value: unknown,
+  location: Pick<ForecastLocation, 'coordinate'>,
+  instances: Partial<MarineInstances> | null | undefined,
+): MarineGridProvenanceByKind | undefined {
+  if (!isRecord(value)) return undefined;
+  const water = instances?.water
+    ? marineGridProvenanceFromUnknown(
+        value.water,
+        instances.water.collection,
+        location.coordinate,
+      )
+    : undefined;
+  const waves = instances?.waves
+    ? marineGridProvenanceFromUnknown(
+        value.waves,
+        instances.waves.collection,
+        location.coordinate,
+      )
+    : undefined;
+  return water || waves
+    ? {
+        ...(water ? { water } : {}),
+        ...(waves ? { waves } : {}),
+      }
+    : undefined;
+}
+
 export function isMetForecastResponse(value: unknown): value is MetForecastResponse {
   if (!isRecord(value) || !isRecord(value.properties)) return false;
   const timeseries = value.properties.timeseries;
@@ -201,11 +328,11 @@ export function isMetRawCache(
     && isMetForecastResponse(value.body);
 }
 
-export function isMarineIngredientEnvelope(
+export function marineIngredientEnvelopeFromUnknown(
   value: unknown,
-  location: Pick<ForecastLocation, 'id' | 'forecastConfigRevision'>,
-): value is MarineIngredientEnvelope {
-  return isRecord(value)
+  location: Pick<ForecastLocation, 'id' | 'forecastConfigRevision' | 'coordinate'>,
+): MarineIngredientEnvelope | null {
+  if (!(isRecord(value)
     && typeof value.schemaVersion === 'number'
     && value.locationId === location.id
     && value.forecastConfigRevision === location.forecastConfigRevision
@@ -219,7 +346,46 @@ export function isMarineIngredientEnvelope(
     && typeof value.seriesEndMs === 'number'
     && Number.isFinite(value.seriesEndMs)
     && Array.isArray(value.series)
-    && value.series.every((point) => typeof point === 'object' && point !== null);
+    && value.series.every((point) => typeof point === 'object' && point !== null))) {
+    return null;
+  }
+  const parsedGrid = marineGridProvenanceFromUnknown(
+    value.grid,
+    value.collection,
+    location.coordinate,
+  );
+  const parsedExpectedByCollection = marineGridExpectedByCollectionFromUnknown(
+    value.gridExpectedByCollection,
+  );
+  const gridExpected = parsedExpectedByCollection?.[value.collection]
+    ?? parsedGrid?.expected;
+  const grid = parsedGrid && gridExpected
+    ? {
+        ...parsedGrid,
+        expected: gridExpected,
+        changed: !marineGridCoordinatesMatch(gridExpected, parsedGrid.returned),
+      }
+    : parsedGrid;
+  const gridExpectedByCollection = {
+    ...(parsedExpectedByCollection ?? {}),
+    ...(grid ? { [grid.collection]: grid.expected } : {}),
+  };
+  return {
+    schemaVersion: value.schemaVersion,
+    locationId: value.locationId,
+    forecastConfigRevision: value.forecastConfigRevision,
+    collection: value.collection,
+    id: value.id,
+    marineKind: value.marineKind,
+    expectedStartMs: value.expectedStartMs,
+    expectedEndMs: value.expectedEndMs,
+    seriesEndMs: value.seriesEndMs,
+    series: value.series as SeriesPoint[],
+    ...(grid ? { grid } : {}),
+    ...(Object.keys(gridExpectedByCollection).length > 0
+      ? { gridExpectedByCollection }
+      : {}),
+  };
 }
 
 export function featureCollectionFromJson<TFeature>(
@@ -770,8 +936,8 @@ export function mapMetPayload(
     blocks: mapMetBlocks(data),
     // An Expires we cannot act on is worse than no Expires. Number.isFinite
     // accepts a timestamp already in the PAST, and one lapsed header then makes
-    // every selected tick see stale weather, rebuild, and write: 360 writes per
-    // city/day, 1,440 across four cities, against a 1,000/day allowance from a
+    // every selected tick see stale weather, rebuild, and write: 288 writes per
+    // city/day, 1,440 across five cities, against a 1,000/day allowance from a
     // single upstream misconfiguration.
     // Far in the future is the opposite failure - the forecast freezes while
     // still reading as current. MET reissues roughly every half hour, so clamp
@@ -892,7 +1058,23 @@ export function deriveMarineSeedsFromPayload(
       wavePeriod: row.wavePeriod,
     })),
     instances: cached?.sources?.cacheHealth?.marineInstances,
+    marineGrid: cached?.sources?.cacheHealth?.marineGrid,
   };
+}
+
+// A rebuild from already-assembled hourly rows has no raw DMI features from
+// which to re-derive the effective model cell. Carry the matching diagnostic
+// alongside the retained ingredient only; it remains orthogonal to fallback,
+// degradation, provider-contact, and forecast assembly decisions.
+export function retainMarineGridDiagnostic(
+  result: MarineSeriesResult,
+  seedGrid: MarineGridProvenance | undefined,
+): MarineSeriesResult {
+  return !result.grid
+    && (result.fallback || !result.providerContacted)
+    && seedGrid?.collection === result.instance.collection
+    ? { ...result, grid: seedGrid }
+    : result;
 }
 
 export function retainedActiveWarnings(
@@ -914,6 +1096,10 @@ export function assembleForecastFromSources(
   const waterSeries = water.series;
   const waveSeries = wave.series;
   const effectiveInstances = { water: water.instance, waves: wave.instance };
+  const marineGrid = {
+    ...(water.grid ? { water: water.grid } : {}),
+    ...(wave.grid ? { waves: wave.grid } : {}),
+  };
   // A failed refresh CALL is not the same thing as stale DATA. During the
   // bounded publication grace, an exact complete retained run remains the
   // newest run we can honestly serve while the candidate is incomplete or a
@@ -1010,6 +1196,7 @@ export function assembleForecastFromSources(
     ...(degradedBusyProvider ? { degradedBusyProvider } : {}),
     providerContacted: !met.fallback || water.providerContacted || wave.providerContacted,
     marineInstances: effectiveInstances,
+    ...(Object.keys(marineGrid).length > 0 ? { marineGrid } : {}),
     forecast: {
       hourly,
       sunrise: sun.sunrise,

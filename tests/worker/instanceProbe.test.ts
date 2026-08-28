@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
+import locationData from '../../src/config/locations.json';
 import {
   CRON_PERIOD_MS,
   CRON_TICK_BUDGET_MS,
@@ -43,19 +44,15 @@ const stubOk = (ids: string[]) => {
 };
 
 describe('fetchLatestInstanceForCollections memo', () => {
-  it('asks DMI once for four concurrent callers sharing a collection list', async () => {
+  it('asks DMI once for all concurrent production-location callers sharing a collection list', async () => {
     stubOk(['2026-08-08T060000Z', '2026-08-08T120000Z']);
 
-    const first = fetchLatestInstanceForCollections(WATER, undefined, eventMemo);
-    const second = fetchLatestInstanceForCollections(WATER, undefined, eventMemo);
-    expect(second).toBe(first);
+    const requests = locationData.map(() =>
+      fetchLatestInstanceForCollections(WATER, undefined, eventMemo));
+    expect(requests.length).toBeGreaterThan(1);
+    expect(requests.every((request) => request === requests[0])).toBe(true);
 
-    const results = await Promise.all([
-      first,
-      second,
-      fetchLatestInstanceForCollections(WATER, undefined, eventMemo),
-      fetchLatestInstanceForCollections(WATER, undefined, eventMemo),
-    ]);
+    const results = await Promise.all(requests);
 
     expect(calls).toHaveLength(1);
     // Every same-invocation caller also observes the exact same resolved run.
@@ -374,7 +371,7 @@ describe('fetchLatestMarineInstances (split resolution)', () => {
 // that failure from delaying the same fjord on every subsequent tick.
 // ---------------------------------------------------------------------------
 describe('tickOrder', () => {
-  const fjords = ['horsens', 'vejle', 'kolding', 'aarhus'];
+  const fjords = locationData.map(({ id }) => id);
   const at = (iso: string) => Date.parse(iso);
   const tick = (iso: string, ticks: number) => at(iso) + ticks * CRON_PERIOD_MS;
 
@@ -393,10 +390,10 @@ describe('tickOrder', () => {
     expect(CRON_PERIOD_MS).toBe(everyMinutes * 60_000);
   });
 
-  it('reaches every fjord within four one-minute ticks from any starting tick', () => {
+  it('reaches every fjord within one complete one-minute rotation from any starting tick', () => {
     const cycleStart = '2026-08-08T15:40:00Z';
     expect(CRON_PERIOD_MS).toBe(60_000);
-    expect(fjords.length * CRON_PERIOD_MS).toBe(4 * 60_000);
+    expect(fjords.length * CRON_PERIOD_MS).toBe(locationData.length * 60_000);
 
     for (let startingTick = 0; startingTick < fjords.length; startingTick++) {
       const reached = Array.from({ length: fjords.length }, (_, offset) =>
@@ -407,15 +404,15 @@ describe('tickOrder', () => {
 
   it('advances the starting fjord by one every tick', () => {
     const start = '2026-08-08T15:40:00Z';
-    expect(tickOrder(tick(start, 0), fjords)[0]).toBe('horsens');
-    expect(tickOrder(tick(start, 1), fjords)[0]).toBe('vejle');
-    expect(tickOrder(tick(start, 2), fjords)[0]).toBe('kolding');
-    expect(tickOrder(tick(start, 3), fjords)[0]).toBe('aarhus');
+    fjords.forEach((fjord, offset) => {
+      expect(tickOrder(tick(start, offset), fjords)[0]).toBe(fjord);
+    });
   });
 
   it('keeps every fjord in the tick, just rotated', () => {
-    const order = tickOrder(tick('2026-08-08T15:40:00Z', 3), fjords);
-    expect(order).toEqual(['aarhus', 'horsens', 'vejle', 'kolding']);
+    const finalOffset = fjords.length - 1;
+    const order = tickOrder(tick('2026-08-08T15:40:00Z', finalOffset), fjords);
+    expect(order).toEqual([fjords[finalOffset], ...fjords.slice(0, finalOffset)]);
     expect([...order].sort()).toEqual([...fjords].sort());
   });
 

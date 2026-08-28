@@ -16,6 +16,9 @@ export function buildCacheHealth(
 ): WorkerCacheHealth {
   const previousHealth = data?.sources?.cacheHealth;
   const marineInstances = options.marineInstances ?? previousHealth?.marineInstances;
+  const marineGrid = options.marineGrid === null
+    ? undefined
+    : options.marineGrid ?? previousHealth?.marineGrid;
   const weatherExpires = options.weatherExpires ?? previousHealth?.weatherExpires;
   const weatherLastModified = options.weatherLastModified ?? previousHealth?.weatherLastModified;
 
@@ -25,6 +28,7 @@ export function buildCacheHealth(
       ? previousHealth.lastAttemptAt
       : now.toISOString(),
     ...(marineInstances ? { marineInstances } : {}),
+    ...(marineGrid ? { marineGrid } : {}),
     ...(weatherExpires ? { weatherExpires } : {}),
     ...(weatherLastModified ? { weatherLastModified } : {}),
     ...(options.message ? { message: options.message } : {}),
@@ -50,3 +54,14 @@ export function withCacheHealth(
   };
 }
 
+// Grid provenance is operator-only diagnostics. It is retained in the
+// generation cache so /status can explain a DMI re-grid, but it must never
+// become part of the public forecast or machine-health contracts.
+export function withoutMarineGridDiagnostic(
+  health: WorkerCacheHealth | undefined,
+): WorkerCacheHealth | undefined {
+  if (!health || !Object.prototype.hasOwnProperty.call(health, 'marineGrid')) return health;
+  const publicHealth = { ...health };
+  delete publicHealth.marineGrid;
+  return publicHealth;
+}

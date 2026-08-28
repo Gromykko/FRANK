@@ -17,6 +17,57 @@ describe('forecast location identity', () => {
     expect(configuredLocations.every(({ forecastConfigRevision }) =>
       Number.isSafeInteger(forecastConfigRevision) && forecastConfigRevision >= 1)).toBe(true);
   });
+
+  it('pins the five reviewed forecast points and their cache identities', () => {
+    const configuredLocations = locations as ForecastLocation[];
+
+    expect(configuredLocations.map((location) => ({
+      id: location.id,
+      forecastConfigRevision: location.forecastConfigRevision,
+      coordinate: location.coordinate,
+    }))).toEqual([
+      {
+        id: 'horsens',
+        forecastConfigRevision: 2,
+        coordinate: { latitude: 55.858, longitude: 9.905 },
+      },
+      {
+        id: 'vejle',
+        forecastConfigRevision: 2,
+        coordinate: { latitude: 55.705, longitude: 9.68 },
+      },
+      {
+        id: 'kolding',
+        forecastConfigRevision: 2,
+        coordinate: { latitude: 55.512, longitude: 9.659 },
+      },
+      {
+        id: 'aarhus',
+        forecastConfigRevision: 2,
+        coordinate: { latitude: 56.129, longitude: 10.257 },
+      },
+      {
+        id: 'aarhus-north',
+        forecastConfigRevision: 1,
+        coordinate: { latitude: 56.1899, longitude: 10.2543 },
+      },
+    ]);
+  });
+
+  it('uses the finer WAM-DW wave grid without a same-service fallback', () => {
+    const configuredLocations = locations as ForecastLocation[];
+
+    expect(configuredLocations.every((location) =>
+      location.dmiCollections.waves.length === 1
+      && location.dmiCollections.waves[0] === 'wam_dw')).toBe(true);
+  });
+
+  it('uses DKSS-NSBS alone where the Aarhus North IDW grid is masked', () => {
+    const north = (locations as ForecastLocation[])
+      .find((location) => location.id === 'aarhus-north');
+
+    expect(north?.dmiCollections.water).toEqual(['dkss_nsbs']);
+  });
 });
 
 describe('setLocation', () => {
