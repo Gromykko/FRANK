@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLang } from '../i18n';
-import { getPresetSettings, getWaveDangerAt, getWindDangerAt } from '../features/safety/presets';
+import { getPresetSettings } from '../features/safety/presets';
 import { GUIDED_PROFILE_MODES, SAFETY_GUIDANCE_SOURCES } from '../features/safety/guidanceSources';
 import type { SafetySettings } from '../hooks/useSettings';
 
@@ -23,7 +23,7 @@ interface TripProfilePanelProps {
 export default function TripProfilePanel({ tripMode, onTripModeChange }: TripProfilePanelProps) {
   const { t } = useLang();
   // 'weather' is deliberately NOT a fifth detent in the bank. The bank is a
-  // scale of caution; switching every check off is a different kind of choice,
+  // scale of capability profiles; switching every check off is a different kind of choice,
   // and a detent next to Advanced could be slid onto by accident, silently
   // removing the verdict. It also keeps the bank's four-column grid intact.
   const weatherOnly = tripMode === 'weather';
@@ -140,7 +140,7 @@ export default function TripProfilePanel({ tripMode, onTripModeChange }: TripPro
       {showInfo && (
         <div className="trip-profile-info" id="trip-profile-info-pop" role="note" ref={popRef}>
           <p>
-            {t('The built-in profiles use these general wind and significant-wave bands:')}
+            {t('The built-in profiles start with these maximum conditions:')}
           </p>
           <ul className="trip-profile-info-list">
             {GUIDED_PROFILE_MODES.map(({ mode, label, level }) => {
@@ -149,18 +149,16 @@ export default function TripProfilePanel({ tripMode, onTripModeChange }: TripPro
                 <li key={mode}>
                   <strong>{t(label)} · {level}:</strong>{' '}
                   {t(
-                    'wind Take care from {0} m/s and Rough from {1} m/s; waves Take care from {2} m and Rough from {3} m.',
-                    preset.windTakeCareAt.toFixed(1),
-                    getWindDangerAt(preset).toFixed(1),
-                    preset.waveTakeCareAt.toFixed(2),
-                    getWaveDangerAt(preset).toFixed(2),
+                    'maximum mean wind {0} m/s; maximum significant waves {1} m.',
+                    preset.windLimit.toFixed(1),
+                    preset.waveLimit.toFixed(2),
                   )}
                 </li>
               );
             })}
           </ul>
           <p>
-            {t('These are FRANK starting points, not DKF safety limits or proof of skill. Optional local wind sectors and every other enabled rule may make a verdict stricter.')}
+            {t('These are starting points, not DKF safety guarantees or proof of skill. Optional local wind sectors and every other enabled rule may make the result stricter.')}
           </p>
           <p className="trip-profile-info-note">
             {t('Basis: Intermediate and Advanced wind use the numeric conditions in')}{' '}
@@ -169,9 +167,9 @@ export default function TripProfilePanel({ tripMode, onTripModeChange }: TripPro
             <a href={SAFETY_GUIDANCE_SOURCES.dkfIpp3Touring} target="_blank" rel="noreferrer">{t('IPP 3 Touring norm')}</a>
             {' '}{t('and')}{' '}
             <a href={SAFETY_GUIDANCE_SOURCES.dkfIpp4Touring} target="_blank" rel="noreferrer">{t('IPP 4 Touring norm')}</a>.
-            {' '}{t("Touring IPP 2 has no numeric wind limit. Beginner's 5 m/s Rough boundary and the red wave boundaries use")}{' '}
+            {' '}{t("Touring IPP 2 has no numeric wind limit. The Beginner wind maximum and all three wave maxima use")}{' '}
             <a href={SAFETY_GUIDANCE_SOURCES.dkfSeaKayakNorm} target="_blank" rel="noreferrer">{t("DKF's 7 May 2026 sea-kayak norm")}</a>.
-            {' '}{t("Beginner's 4 m/s and the lower wave Take care boundaries are FRANK's conservative choices.")}
+            {' '}{t('The source documents describe training and assessment conditions, not guaranteed safe conditions.')}
           </p>
           <p>
             <strong>{t('Custom')}</strong> {t('is your own set: change anything in Your Limits below and it lands there.')}
@@ -180,7 +178,7 @@ export default function TripProfilePanel({ tripMode, onTripModeChange }: TripPro
             <strong>{t('Weather only')}</strong> {t('switches every check off: FRANK shows the forecast and stops giving a verdict.')}
           </p>
           <p className="trip-profile-info-note">
-            {t('Picking a mode updates the exact numbers in Your Limits — the manual explains every rule.')}
+            {t('Picking a mode updates the exact numbers in Your Limits. The manual explains every rule.')}
           </p>
         </div>
       )}

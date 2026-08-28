@@ -23,7 +23,7 @@ export interface ForecastLocation {
   // This drives only a fail-open soft filter; it can quiet a warning that
   // demonstrably excludes the town, never add a local claim.
   kommuneAliases?: string[];
-  // Area-specific wind geometry and thresholds. A location may have any
+  // Area-specific wind geometry and optional maximums. A location may have any
   // number of onshore and offshore sectors.
   windSectors: WindSector[];
 }
@@ -33,13 +33,12 @@ export interface ForecastLocation {
 export type SectorExposure = 'onshore' | 'offshore';
 
 export interface WindSector {
-  // Stable key used by per-user cap overrides.
+  // Stable key used by per-user maximum overrides.
   id: string;
   label: string;
   description: string;
   exposure: SectorExposure;
   min: number;
   max: number;
-  takeCareAt: number;
-  dangerAt: number;
+  maximumAt: number;
 }

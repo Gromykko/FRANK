@@ -6,19 +6,18 @@ import { analyzeSafetyConditions } from '../../../src/features/safety/analyzeSaf
 
 const baseSettings = {
   tripMode: 'custom',
-  windTakeCareAt: 5,
+  windLimit: 8,
   waterTempTakeCareBelow: 15,
   waterTempDangerBelow: 10,
-  waveTakeCareAt: 0.5,
+  waveLimit: 1,
   enableWindSpeed: true,
   enableWindGust: true,
   enableWaveHeight: true,
-  enableWaveTakeCare: true,
   enableWaterTemp: true,
+  enableCustomWindDirs: false,
+  sectorLimits: {},
   daylightOnly: true,
-  minDuration: 2, // requires 3 consecutive safe hours (0 to 2)
-  windDangerGap: 3,
-  waveDangerGap: 0.5,
+  minDuration: 2, // requires 3 consecutive within-limit hours (0 to 2)
 } as SafetySettings;
 
 const baseData: HourlyData = {
@@ -47,8 +46,8 @@ const generateData = (hoursCount: number, startHour: number = 12): HourlyData[] 
 };
 
 describe('findLaunchWindows', () => {
-  it('finds a launch window for consecutive safe hours', () => {
-    // 3 hours of safe conditions
+  it('finds a launch window for consecutive within-limit hours', () => {
+    // 3 hours within every selected limit
     const data = generateData(3);
     const windows = findLaunchWindows(data, baseSettings, 0);
     
@@ -61,17 +60,17 @@ describe('findLaunchWindows', () => {
   });
 
   it('rejects windows shorter than minDuration', () => {
-    // 2 hours of safe conditions (duration = 1)
+    // 2 within-limit hours (duration = 1)
     const data = generateData(2);
     const windows = findLaunchWindows(data, baseSettings, 0);
     
     expect(windows).toHaveLength(0);
   });
 
-  it('breaks windows when safety rating is not safe', () => {
-    // 5 hours: 0-1 safe, 2 danger, 3-5 safe
+  it('breaks windows when the safety rating is not within limits', () => {
+    // 5 hours: 0-1 within limits, 2 not recommended, 3-5 within limits
     const data = generateData(6);
-    data[2].windSpeed = 10; // Danger
+    data[2].windSpeed = 10; // Above the selected maximum
     
     const windows = findLaunchWindows(data, baseSettings, 0);
     
@@ -85,15 +84,19 @@ describe('findLaunchWindows', () => {
     });
   });
 
-  it('produces a low-confidence window for a safe longer-range block', () => {
-    // 3 safe hourly samples (one exact window), then a safe 6-hour interval
-    // whose start and closing endpoint are both independently safe.
+  it('produces a low-confidence window for a within-limit longer-range block', () => {
+    // 3 within-limit hourly samples (one exact window), then a 6-hour interval
+    // whose start and closing endpoint are both independently within limits.
     const hourly = generateData(3);
     const block: HourlyData = {
       ...baseData,
       time: '2026-07-11T06:00:00Z',
       isLowConfidence: true,
       blockSpanHours: 6,
+      // MET does not publish gusts for these coarse blocks. That absence is
+      // disclosed by the block explanation; the resulting window remains an
+      // explicitly low-confidence hint rather than an exact hourly window.
+      windGust: Number.NaN,
     };
     const closingEndpoint: HourlyData = {
       ...block,
@@ -132,7 +135,7 @@ describe('findLaunchWindows', () => {
       time: '2026-07-11T06:00:00Z',
       isLowConfidence: true,
       blockSpanHours: 6,
-      windSpeed: 12, // over the danger limit
+      windSpeed: 12, // over the selected maximum
     };
     const windows = findLaunchWindows([...hourly, block], baseSettings, 0);
     expect(windows.some((w) => w.lowConfidence)).toBe(false);
@@ -192,22 +195,22 @@ const atLocalTimes = (times: string[], overrides: Partial<HourlyData> = {}): Hou
   times.map((time) => ({ ...baseData, ...overrides, time: `${time}+02:00` }));
 
 describe('findLaunchWindows — endpoint rule and window shaping', () => {
-  it('an N-hour window needs N+1 safe samples (both endpoints safe)', () => {
+  it('an N-hour window needs N+1 within-limit samples (both endpoints included)', () => {
     const settings = { ...baseSettings, minDuration: 1 } as SafetySettings;
-    // Two safe samples -> one 1-hour window.
+    // Two within-limit samples -> one 1-hour window.
     expect(findLaunchWindows(generateData(2), settings, 0)).toMatchObject([
       { startIndex: 0, endIndex: 1, duration: 1 },
     ]);
-    // A single safe sample spans no hour interval -> no window.
+    // A single sample spans no hour interval -> no window.
     expect(findLaunchWindows(generateData(1), settings, 0)).toHaveLength(0);
   });
 
-  it('four consecutive safe samples make one 3-hour window', () => {
+  it('four consecutive within-limit samples make one 3-hour window', () => {
     const windows = findLaunchWindows(generateData(4), baseSettings, 0);
     expect(windows).toMatchObject([{ startIndex: 0, endIndex: 3, duration: 3 }]);
   });
 
-  it('keeps a safe 22:00–02:00 run continuous across local midnight', () => {
+  it('keeps a within-limit 22:00–02:00 run continuous across local midnight', () => {
     const data = atLocalTimes([
       '2026-07-08T22:00:00', '2026-07-08T23:00:00',
       '2026-07-09T00:00:00', '2026-07-09T01:00:00', '2026-07-09T02:00:00',
@@ -240,7 +243,7 @@ describe('findLaunchWindows — endpoint rule and window shaping', () => {
   });
 
   it('caps the result at 12 windows', () => {
-    // 14 separate days, each with a 3-sample safe run -> 14 candidate windows.
+    // 14 separate days, each with a 3-sample within-limit run -> 14 candidates.
     const days = Array.from({ length: 14 }, (_, d) => String(d + 1).padStart(2, '0'));
     const data = atLocalTimes(
       days.flatMap((day) => [
@@ -267,7 +270,7 @@ describe('findLaunchWindows — longer-range block windows', () => {
   // schedule to keep the Daylight Only rule out of the way.
   const allDaySun = { sunrise: ['2026-07-11T00:00:00'], sunset: ['2026-07-11T23:59:00'] };
 
-  it('a run of two safe blocks sums blockSpanHours into the duration', () => {
+  it('a run of two within-limit blocks sums blockSpanHours into the duration', () => {
     const blocks = [
       makeBlock('2026-07-11T06:00:00'),
       makeBlock('2026-07-11T12:00:00'),
@@ -295,7 +298,7 @@ describe('findLaunchWindows — longer-range block windows', () => {
     ).toHaveLength(0);
   });
 
-  it('withholds an unclosed block and a block closed by an unsafe endpoint', () => {
+  it('withholds an unclosed block and a block closed by a failing endpoint', () => {
     const start = makeBlock('2026-07-11T06:00:00');
     const unsafeEndpoint = makeBlock('2026-07-11T12:00:00', { windSpeed: 12 });
 
@@ -362,7 +365,7 @@ describe('findLaunchWindows — longer-range block windows', () => {
       // 06:00-12:00: 4 of 6 hours are after sunrise.
       const block = makeBlock('2026-07-11T06:00:00');
       // The same block is Caution when the matrix describes its whole period,
-      // but the planner deliberately defers daylight so it can offer the safe
+      // but the planner deliberately defers daylight so it can offer the
       // weather/marine portion clipped to complete daylight hours.
       expect(analyzeSafetyConditions(block, baseSettings, undefined, {
         blockDaylight: { sun },
@@ -398,7 +401,7 @@ describe('findLaunchWindows — longer-range block windows', () => {
 // MET's outlook blocks sit at 00/06/12/18Z = 02:00 / 08:00 / 14:00 / 20:00
 // local in CEST, so a block straddling sunrise or sunset is the normal case for
 // roughly a third of the year. Blocks are never rated nighttime, so a calm one
-// rates safe — and it used to be offered as a FULL 6-hour window on the
+// rates within limits, and it used to be offered as a full 6-hour window on the
 // strength of any daylight at all, while Daylight Only was ON.
 // ---------------------------------------------------------------------------
 describe('outlook blocks under Daylight Only', () => {
@@ -484,7 +487,6 @@ describe('findLaunchWindows with every limit disabled', () => {
     enableWindSpeed: false,
     enableWindGust: false,
     enableWaveHeight: false,
-    enableWaveTakeCare: false,
     enableWaterTemp: false,
     enableCustomWindDirs: false,
     daylightOnly: false,

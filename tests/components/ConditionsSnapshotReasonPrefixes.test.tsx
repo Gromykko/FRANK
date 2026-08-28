@@ -40,6 +40,7 @@ function renderReasons(danish = false) {
       sunset="21.04"
       reasons={reasons}
       rating="safe"
+      gustCheckEnabled
     />
   );
   const container = document.createElement('div');
@@ -57,8 +58,8 @@ describe('ConditionsSnapshot reason prefixes', () => {
     const dangerReason = container.querySelector('.reason-danger');
 
     expect(safeReason?.querySelector('.sr-only')?.textContent).toBe('');
-    expect(cautionReason?.querySelector('.sr-only')?.textContent).toBe('Take care: ');
-    expect(dangerReason?.querySelector('.sr-only')?.textContent).toBe('Rough: ');
+    expect(cautionReason?.querySelector('.sr-only')?.textContent).toBe('Check before launch: ');
+    expect(dangerReason?.querySelector('.sr-only')?.textContent).toBe('Not recommended: ');
     expect(container.querySelector('.snapshot-reasons-container')?.classList.contains('rating-safe'))
       .toBe(true);
   });
@@ -67,7 +68,7 @@ describe('ConditionsSnapshot reason prefixes', () => {
     const container = renderReasons(true);
 
     expect(container.querySelector('.reason-safe .sr-only')?.textContent).toBe('');
-    expect(container.querySelector('.reason-caution .sr-only')?.textContent).toBe('Pas på: ');
-    expect(container.querySelector('.reason-danger .sr-only')?.textContent).toBe('Barskt: ');
+    expect(container.querySelector('.reason-caution .sr-only')?.textContent).toBe('Tjek før du tager på vandet: ');
+    expect(container.querySelector('.reason-danger .sr-only')?.textContent).toBe('Frarådes: ');
   });
 });

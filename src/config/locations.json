@@ -16,7 +16,7 @@
       "water": ["dkss_idw", "dkss_nsbs"],
       "waves": ["wam_nsb", "wam_dw"]
     },
-    "_note": "The wind-sector bearings and caps are broad FRANK area estimates, not current club-published rules. They are off by default. The optional rule treats 45-135 degrees as easterly onshore wind over the longer fjord fetch and 225-315 degrees as westerly offshore wind, with caps of 5.0/8.0 and 4.5/7.0 m/s respectively.",
+    "_note": "The wind-sector bearings and maximums are broad FRANK area estimates, not current club-published rules. They are off by default. The optional rule treats 45-135 degrees as easterly onshore wind over the longer fjord fetch and 225-315 degrees as westerly offshore wind, with maximums of 8.0 and 7.0 m/s respectively.",
     "windSectors": [
       {
         "id": "onshore",
@@ -25,8 +25,7 @@
         "exposure": "onshore",
         "min": 45,
         "max": 135,
-        "takeCareAt": 5.0,
-        "dangerAt": 8.0
+        "maximumAt": 8.0
       },
       {
         "id": "offshore",
@@ -35,8 +34,7 @@
         "exposure": "offshore",
         "min": 225,
         "max": 315,
-        "takeCareAt": 4.5,
-        "dangerAt": 7.0
+        "maximumAt": 7.0
       }
     ]
   },
@@ -47,7 +45,7 @@
     "areaName": "Vejle Fjord",
     "subtitle": "Vejle",
     "timezone": "Europe/Copenhagen",
-    "_note": "Coordinate 55.705, 9.68 is a mid-fjord point where DMI's patchy DKSS grid has a valid wet node with water temperature and level data; most nearby narrow-fjord points are masked or null. The optional 45-135 and 225-315 degree sectors and their 5.0/8.0 and 4.5/7.0 m/s caps are broad FRANK area estimates, not current club-published limits, and are off by default. Brejning Baad Klub's public 29 June 2022 safety rules publish no numeric wind caps or compass sectors. An older 2016 document used 5, 6, and 8 m/s in separate guest, release-test, and instructed-introduction contexts, not as one safety ladder. Current rules: https://brejninghavn.dk/wp-content/uploads/bsk-pdf-manager/2022/10/Kajak-sikkerhedsbestemmelser-29-6-2022.pdf",
+    "_note": "Coordinate 55.705, 9.68 is a mid-fjord point where DMI's patchy DKSS grid has a valid wet node with water temperature and level data; most nearby narrow-fjord points are masked or null. The optional 45-135 and 225-315 degree sectors and their 8.0 and 7.0 m/s maximums are broad FRANK area estimates, not current club-published limits, and are off by default. Brejning Baad Klub's public 29 June 2022 safety rules publish no numeric wind caps or compass sectors. An older 2016 document used 5, 6, and 8 m/s in separate guest, release-test, and instructed-introduction contexts, not as one safety ladder. Current rules: https://brejninghavn.dk/wp-content/uploads/bsk-pdf-manager/2022/10/Kajak-sikkerhedsbestemmelser-29-6-2022.pdf",
     "coordinate": {
       "latitude": 55.705,
       "longitude": 9.68
@@ -66,8 +64,7 @@
         "exposure": "onshore",
         "min": 45,
         "max": 135,
-        "takeCareAt": 5.0,
-        "dangerAt": 8.0
+        "maximumAt": 8.0
       },
       {
         "id": "offshore",
@@ -76,8 +73,7 @@
         "exposure": "offshore",
         "min": 225,
         "max": 315,
-        "takeCareAt": 4.5,
-        "dangerAt": 7.0
+        "maximumAt": 7.0
       }
     ]
   },
@@ -88,7 +84,7 @@
     "areaName": "Kolding Fjord",
     "subtitle": "Kolding",
     "timezone": "Europe/Copenhagen",
-    "_note": "Coordinate 55.512, 9.659 is the fjord-mouth DKSS node by Løverodde and Lillebælt. Live checks found a wet dkss_idw node with water temperature and level deviation, and wam_nsb wave data; the mid-fjord grid near 9.55 is masked. The point is at the edge of Kolding Kajak Klub's stated daily paddling water. The club's published 5 m/s rule applies to non-released paddlers in a restricted area; it does not publish the 45-135 and 225-315 degree sectors or the 8.0 and 7.0 m/s danger caps. Those sectors and caps are optional FRANK area estimates and are off by default. Club source: https://koldingkajakklub.dk/sikkerhed",
+    "_note": "Coordinate 55.512, 9.659 is the fjord-mouth DKSS node by Løverodde and Lillebælt. Live checks found a wet dkss_idw node with water temperature and level deviation, and wam_nsb wave data; the mid-fjord grid near 9.55 is masked. The point is at the edge of Kolding Kajak Klub's stated daily paddling water. The club's published 5 m/s rule applies to non-released paddlers in a restricted area; it does not publish the 45-135 and 225-315 degree sectors or the 8.0 and 7.0 m/s maximums. Those sectors and maximums are optional FRANK area estimates and are off by default. Club source: https://koldingkajakklub.dk/sikkerhed",
     "coordinate": {
       "latitude": 55.512,
       "longitude": 9.659
@@ -107,8 +103,7 @@
         "exposure": "onshore",
         "min": 45,
         "max": 135,
-        "takeCareAt": 5.0,
-        "dangerAt": 8.0
+        "maximumAt": 8.0
       },
       {
         "id": "offshore",
@@ -117,8 +112,7 @@
         "exposure": "offshore",
         "min": 225,
         "max": 315,
-        "takeCareAt": 4.5,
-        "dangerAt": 7.0
+        "maximumAt": 7.0
       }
     ]
   },
@@ -129,7 +123,7 @@
     "areaName": "Aarhus Bugt",
     "subtitle": "Aarhus",
     "timezone": "Europe/Copenhagen",
-    "_note": "Coordinate 56.129, 10.257 is a wet inner-Aarhus-Bugt DKSS node just off the city. Live checks found dkss_idw water temperature and level deviation plus wam_nsb wave data. The city is on the west shore and the bay opens east and southeast toward Kattegat. The optional rule therefore treats 45-135 degrees as onshore and 225-315 degrees as offshore. The 5.0/8.0 and 4.5/7.0 m/s caps are broad FRANK area estimates, not Aarhus club-published limits, and are off by default.",
+    "_note": "Coordinate 56.129, 10.257 is a wet inner-Aarhus-Bugt DKSS node just off the city. Live checks found dkss_idw water temperature and level deviation plus wam_nsb wave data. The city is on the west shore and the bay opens east and southeast toward Kattegat. The optional rule therefore treats 45-135 degrees as onshore and 225-315 degrees as offshore. The 8.0 and 7.0 m/s maximums are broad FRANK area estimates, not Aarhus club-published limits, and are off by default.",
     "coordinate": {
       "latitude": 56.129,
       "longitude": 10.257
@@ -148,8 +142,7 @@
         "exposure": "onshore",
         "min": 45,
         "max": 135,
-        "takeCareAt": 5.0,
-        "dangerAt": 8.0
+        "maximumAt": 8.0
       },
       {
         "id": "offshore",
@@ -158,8 +151,7 @@
         "exposure": "offshore",
         "min": 225,
         "max": 315,
-        "takeCareAt": 4.5,
-        "dangerAt": 7.0
+        "maximumAt": 7.0
       }
     ]
   }

@@ -41,7 +41,8 @@ describe('missing readings are never rated safe', () => {
       for (const absent of [NaN, undefined, null]) {
         const result = rate({ [field]: absent });
         expect(result.rating, `${field}=${String(absent)}`).not.toBe('safe');
-        expect(result.reasons.some((r) => /cannot clear/i.test(r.text))).toBe(true);
+        expect(result.reasons.some((r) => /cannot assess/i.test(r.text))).toBe(true);
+        expect(result.reasons.some((r) => /does not count as within limits/i.test(r.text))).toBe(true);
       }
     });
   }
@@ -54,13 +55,23 @@ describe('missing readings are never rated safe', () => {
         settings,
       );
       expect(result.rating, `windDirection=${String(absent)}`).not.toBe('safe');
-      expect(result.reasons.some((reason) => /cannot clear/i.test(reason.text))).toBe(true);
+      expect(result.reasons.some((reason) => /cannot assess/i.test(reason.text))).toBe(true);
+      expect(result.reasons.some((reason) => /does not count as within limits/i.test(reason.text))).toBe(true);
     }
   });
 
   it('never emits the all-clear alongside a missing reading', () => {
     const result = rate({ waveHeight: NaN });
     expect(result.reasons.some((r) => /within your limits/i.test(r.text))).toBe(false);
+  });
+
+  it('calls missing data in a longer-range block an outlook period, not an hour', () => {
+    const result = rate({ blockSpanHours: 6, waveHeight: Number.NaN });
+    const text = result.reasons.map((reason) => reason.text).join(' ');
+
+    expect(result.rating).toBe('caution');
+    expect(text).toContain('in this outlook period');
+    expect(text).not.toContain('this hour');
   });
 
   it('still reports a real hazard that it could measure', () => {
@@ -113,21 +124,18 @@ describe('a corrupt stored profile cannot disable a safety check', () => {
   };
 
   it('falls back to the default when a threshold is not a number', () => {
-    const parsed = parseStoredSettings(currentRecord({ tripMode: 'custom', windTakeCareAt: 'x' }));
-    expect(parsed.windTakeCareAt).toBe(DEFAULT_SETTINGS.windTakeCareAt);
+    const parsed = parseStoredSettings(currentRecord({ tripMode: 'custom', windLimit: 'x' }));
+    expect(parsed.windLimit).toBe(DEFAULT_SETTINGS.windLimit);
     // The whole point: a gale must still rate danger afterwards.
     expect(analyzeSafetyConditions({ ...goodHour, windSpeed: 25, windGust: 30 }, parsed).rating).toBe('danger');
   });
 
-  it('rounds a derived cap so it never prints a float artifact', () => {
+  it('uses the stored wave maximum directly with inclusive up-to semantics', () => {
     const parsed = parseStoredSettings(currentRecord({
-      waveTakeCareAt: 0.1,
-      waveDangerGap: 0.2,
+      waveLimit: 0.3,
     }));
-    const text = analyzeSafetyConditions({ ...goodHour, waveHeight: 0.35 }, parsed).reasons
-      .map((r) => r.text)
-      .join(' ');
-    expect(text).not.toMatch(/0\.30000000000000004/);
+    expect(analyzeSafetyConditions({ ...goodHour, waveHeight: 0.3 }, parsed).rating).toBe('safe');
+    expect(analyzeSafetyConditions({ ...goodHour, waveHeight: 0.31 }, parsed).rating).toBe('danger');
   });
 });
 

@@ -1,19 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
   decodeStoredSettings,
-  healSectorDangerCaps,
   parseStoredSettings,
   serializeStoredSettings,
   SETTINGS_STORAGE_METADATA_KEY,
   SETTINGS_STORAGE_SCHEMA_VERSION,
 } from '../../src/hooks/useSettings';
 import { analyzeSafetyConditions } from '../../src/features/safety/analyzeSafetyConditions';
-import {
-  DEFAULT_SETTINGS,
-  getWaveDangerAt,
-  getWindDangerAt,
-} from '../../src/features/safety/presets';
-import type { SafetySettings } from '../../src/features/safety/presets';
+import { DEFAULT_SETTINGS } from '../../src/features/safety/presets';
 import { CURRENT_LOCATION } from '../../src/config/locations';
 import type { HourlyData } from '../../src/features/forecast/types';
 
@@ -28,24 +22,15 @@ const baseData: HourlyData = {
   precipitation: 0, symbolCode: 'clearsky_day', currentSpeed: 0, currentDirection: 0, isDay: true,
 };
 
-describe('healSectorDangerCaps', () => {
-  it('lifts an inverted Danger cap to Take care + 0.5', () => {
-    const s = {
-      ...DEFAULT_SETTINGS,
-      sectorLimits: { onshore: { takeCareAt: 6, dangerAt: 5 } },
-    } as SafetySettings;
-    expect(healSectorDangerCaps(s).sectorLimits.onshore).toEqual({ takeCareAt: 6, dangerAt: 6.5 });
-  });
-});
-
 describe('parseStoredSettings', () => {
-  it('derives the general-wind Danger boundary from Take care plus the stored gap', () => {
+  it('keeps the direct wind and wave maximums', () => {
     const parsed = parseStoredSettings(currentRecord({
       tripMode: 'custom',
-      windTakeCareAt: 8,
-      windDangerGap: 1.5,
+      windLimit: 8.5,
+      waveLimit: 1.25,
     }));
-    expect(getWindDangerAt(parsed)).toBe(9.5);
+    expect(parsed.windLimit).toBe(8.5);
+    expect(parsed.waveLimit).toBe(1.25);
   });
 });
 
@@ -54,8 +39,7 @@ describe('versioned settings storage', () => {
     const raw = {
       ...DEFAULT_SETTINGS,
       tripMode: 'custom' as const,
-      windTakeCareAt: 4.2,
-      windDangerGap: 1.8,
+      windLimit: 4.2,
       futureCompatibleField: { retain: true },
     };
 
@@ -63,16 +47,16 @@ describe('versioned settings storage', () => {
     const decoded = decodeStoredSettings(storedJson);
     expect(decoded.settings).toMatchObject({
       tripMode: 'custom',
-      windTakeCareAt: 4.2,
-      windDangerGap: 1.8,
+      windLimit: 4.2,
       futureCompatibleField: { retain: true },
     });
 
     const storedRecord = JSON.parse(storedJson) as Record<string, unknown>;
-    expect(storedRecord.windTakeCareAt).toBe(4.2);
-    expect(storedRecord.windDangerGap).toBe(1.8);
-    expect(storedRecord).not.toHaveProperty('windDangerAt');
-    expect(storedRecord).not.toHaveProperty('waveDangerAt');
+    expect(storedRecord.windLimit).toBe(4.2);
+    expect(storedRecord).not.toHaveProperty('windTakeCareAt');
+    expect(storedRecord).not.toHaveProperty('windDangerGap');
+    expect(storedRecord).not.toHaveProperty('waveTakeCareAt');
+    expect(storedRecord).not.toHaveProperty('waveDangerGap');
     expect(storedRecord).not.toHaveProperty('tidePreference');
     expect(storedRecord.futureCompatibleField).toEqual({ retain: true });
     expect(storedRecord[SETTINGS_STORAGE_METADATA_KEY]).toEqual({
@@ -89,11 +73,11 @@ describe('versioned settings storage', () => {
     const stored = JSON.parse(serializeStoredSettings({
       ...DEFAULT_SETTINGS,
       tripMode: 'custom',
-      windTakeCareAt: 3.7,
+      windLimit: 3.7,
     })) as Record<string, unknown>;
 
     expect(stored.tripMode).toBe('custom');
-    expect(stored.windTakeCareAt).toBe(3.7);
+    expect(stored.windLimit).toBe(3.7);
     expect(stored).not.toHaveProperty('settings');
   });
 
@@ -131,11 +115,11 @@ describe('versioned settings storage', () => {
 
     const decoded = decodeStoredSettings(currentRecord({
       tripMode: 'custom',
-      windTakeCareAt: 4.4,
+      windLimit: 4.4,
       minDuration: 'broken',
       daylightOnly: false,
     }));
-    expect(decoded.settings.windTakeCareAt).toBe(4.4);
+    expect(decoded.settings.windLimit).toBe(4.4);
     expect(decoded.settings.minDuration).toBe(DEFAULT_SETTINGS.minDuration);
     expect(decoded.settings.daylightOnly).toBe(false);
   });
@@ -153,9 +137,9 @@ describe('parseStoredSettings hardening', () => {
   it('clamps an absurd-but-finite threshold instead of accepting it', () => {
     // 999 is finite, so the type guard passed it. `windSpeed >= 999` is then
     // permanently false: the check reads as ON, nothing warns, and FRANK
-    // reports "Good to go" in a gale.
-    const parsed = parse({ windTakeCareAt: 999 });
-    expect(parsed.windTakeCareAt).toBeLessThanOrEqual(25);
+    // makes a gale look within limits.
+    const parsed = parse({ windLimit: 999 });
+    expect(parsed.windLimit).toBeLessThanOrEqual(25);
     expect(analyzeSafetyConditions({ ...baseData, windSpeed: 30 }, parsed).rating).toBe('danger');
   });
 
@@ -168,21 +152,35 @@ describe('parseStoredSettings hardening', () => {
   it('clamps a water-temp floor that would disable the cold-shock check', () => {
     const parsed = parse({ waterTempDangerBelow: 0, waterTempTakeCareBelow: 0 });
     expect(parsed.waterTempDangerBelow).toBeGreaterThanOrEqual(5);
+    expect(parsed.waterTempTakeCareBelow - parsed.waterTempDangerBelow).toBeGreaterThanOrEqual(1);
     expect(parsed.enableWaterTemp).toBe(true);
     expect(
       analyzeSafetyConditions({ ...baseData, tempWater: 3.2 }, parsed).rating,
     ).not.toBe('safe');
   });
 
-  it('derives the wind Danger cap from Take care + windDangerGap', () => {
-    const parsed = parse({ windTakeCareAt: 5.5, windDangerGap: 2.5 });
-    expect(getWindDangerAt(parsed)).toBe(8);
+  it('heals equal or inverted cold-water boundaries without deleting the check range', () => {
+    const equal = parse({ waterTempDangerBelow: 10, waterTempTakeCareBelow: 10 });
+    const inverted = parse({ waterTempDangerBelow: 18, waterTempTakeCareBelow: 12 });
+    const fractional = parse({ waterTempDangerBelow: 8.4, waterTempTakeCareBelow: 10.6 });
+
+    expect(equal.waterTempTakeCareBelow).toBe(10);
+    expect(equal.waterTempDangerBelow).toBe(9);
+    expect(inverted.waterTempTakeCareBelow).toBe(12);
+    expect(inverted.waterTempDangerBelow).toBe(11);
+    expect(fractional.waterTempTakeCareBelow).toBe(11);
+    expect(fractional.waterTempDangerBelow).toBe(8);
+  });
+
+  it('uses the stored wind maximum directly', () => {
+    const parsed = parse({ windLimit: 8 });
+    expect(parsed.windLimit).toBe(8);
     expect(analyzeSafetyConditions({ ...baseData, windSpeed: 10 }, parsed).rating).toBe('danger');
   });
 
-  it('derives the wave Danger cap the same way', () => {
-    const parsed = parse({ waveTakeCareAt: 0.3, waveDangerGap: 0.3 });
-    expect(getWaveDangerAt(parsed)).toBeCloseTo(0.6, 10);
+  it('uses the stored wave maximum directly', () => {
+    const parsed = parse({ waveLimit: 0.6 });
+    expect(parsed.waveLimit).toBeCloseTo(0.6, 10);
   });
 
   it('restores a boolean toggle stored as a falsy non-boolean', () => {
@@ -199,16 +197,16 @@ describe('parseStoredSettings hardening', () => {
     expect(parsed.tripMode).toBe(DEFAULT_SETTINGS.tripMode);
   });
 
-  it('clamps sector caps to the range both UI steppers can represent', () => {
+  it('clamps sector maximums to the range the UI stepper can represent', () => {
     const parsed = parse({
       sectorLimits: {
-        onshore: { takeCareAt: 25, dangerAt: 25.5 },
-        offshore: { takeCareAt: -4, dangerAt: 999 },
+        onshore: { maximumAt: 25.5 },
+        offshore: { maximumAt: -4 },
       },
     });
 
-    expect(parsed.sectorLimits.onshore).toEqual({ takeCareAt: 24.5, dangerAt: 25 });
-    expect(parsed.sectorLimits.offshore).toEqual({ takeCareAt: 0, dangerAt: 25 });
+    expect(parsed.sectorLimits.onshore).toEqual({ maximumAt: 25 });
+    expect(parsed.sectorLimits.offshore).toEqual({ maximumAt: 0 });
   });
 
 });

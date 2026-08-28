@@ -15,7 +15,6 @@ const rawSettings: SafetySettings = {
   enableWindSpeed: false,
   enableWindGust: false,
   enableWaveHeight: false,
-  enableWaveTakeCare: false,
   enableWaterTemp: false,
   enableCustomWindDirs: false,
   daylightOnly: false,
@@ -47,6 +46,10 @@ const withWeather = (symbolCode: string): HourlyData => ({
 describe('raw-mode safety display', () => {
   it('recognises that every configurable safety check is off', () => {
     expect(hasActiveSafetyChecks(rawSettings)).toBe(false);
+  });
+
+  it('does not treat a stored sector preference as active when wind checking is off', () => {
+    expect(hasActiveSafetyChecks({ ...rawSettings, enableCustomWindDirs: true })).toBe(false);
   });
 
   // This has moved twice, and the second move undid half the first. Limits-off

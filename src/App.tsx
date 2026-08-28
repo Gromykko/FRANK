@@ -217,17 +217,16 @@ export default function App() {
   // so this is both the honest source of truth and what lets TypeScript prove
   // the other branches only ever see a real verdict.
   const noVerdict = safetyDisplayRating === 'none';
-  // "Weather mode", not "Weather": on the glass this sits where a verdict
-  // normally does, and one word there reads as a reading rather than as the
-  // state the app has been put into.
-  const safetyBadgeTitle = t(noVerdict ? 'Weather mode' : RATING_WORD[safetyDisplayRating]);
+  // RATING_WORD owns all four public states, including the no-verdict
+  // weather-only mode, so the status bar and timeline cannot drift apart.
+  const safetyBadgeTitle = t(RATING_WORD[safetyDisplayRating]);
   const safetyBadgeSubtitle = t(noVerdict
-    ? 'Limits are off — raw forecast only'
-    : safetyDisplayRating === 'safe'
-      ? 'Have fun out there'
+      ? 'Limits are off: raw forecast only'
+      : safetyDisplayRating === 'safe'
+      ? 'No available reading exceeded your selected limits'
       : safetyDisplayRating === 'caution'
-        ? 'Keep an eye out'
-        : 'Save it for another day');
+        ? 'Read the checks below'
+        : 'Choose another time');
 
   // Find daily sunrise and sunset for the selected hour's date
   const selectedDateStr = locationDateKey(currentHourData.time);
@@ -376,6 +375,7 @@ export default function App() {
             sunset={formatSunTime(currentSunset)}
             reasons={safetyReasons}
             rating={safetyDisplayRating}
+            gustCheckEnabled={settings.enableWindSpeed && (settings.enableWindGust ?? true)}
           />
 
           {/* ③ Meteogram — the core data instrument (promoted) */}

@@ -15,9 +15,8 @@ export function hasActiveSafetyChecks(settings: SafetySettings): boolean {
     settings.enableWindSpeed,
     settings.enableWindSpeed && settings.enableWindGust,
     settings.enableWaveHeight,
-    settings.enableWaveHeight && settings.enableWaveTakeCare,
     settings.enableWaterTemp,
-    settings.enableCustomWindDirs,
+    settings.enableWindSpeed && settings.enableCustomWindDirs,
     settings.daylightOnly,
   ].some(Boolean);
 }

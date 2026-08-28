@@ -3,6 +3,8 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join, sep } from 'node:path';
 import { da } from '../src/i18n/da';
 import { MET_WEATHER_SYMBOLS } from '../src/features/forecast/weatherSymbols';
+import { RATING_WORD } from '../src/features/safety/analyzeSafetyConditions';
+import { getFrankPhrase } from '../src/features/safety/frankPhrases';
 
 // A missing Danish entry soft-fails to English by design, which is the right
 // runtime behaviour and a terrible development one: the app keeps working, in
@@ -84,16 +86,38 @@ describe('Danish dictionary covers every translated literal', () => {
     expect(da['Unknown weather']).toBe('Ukendt vejr');
   });
 
-  it('covers gust-boundary phrases selected dynamically by the safety engine', () => {
-    // These keys are passed through limitReason() before translate(), so the
-    // literal-call scanner cannot see them directly.
-    const keys = [
-      'Wind gusts: {0} m/s. At your gust danger threshold of {1} m/s.',
-      'Wind gusts: {0} m/s. Above your gust danger threshold of {1} m/s.',
-      'Wind gusts: {0} m/s. At your gust Take care threshold of {1} m/s.',
-      'Wind gusts: {0} m/s. Above your gust Take care threshold of {1} m/s.',
-    ];
+  it('covers verdict copy selected dynamically at runtime', () => {
+    // RATING_WORD, the header subtitles and getFrankPhrase() all reach t()
+    // through variables or a conditional expression, so the literal scanner
+    // above cannot see their English keys.
+    const keys = new Set([
+      ...Object.values(RATING_WORD),
+      'Limits are off: raw forecast only',
+      'No available reading exceeded your selected limits',
+      'Read the checks below',
+      'Choose another time',
+    ]);
+    const safePhrases = new Set<string>();
 
-    for (const key of keys) expect(da, `missing Danish translation for ${key}`).toHaveProperty(key);
+    // The real phrase seed is a YYYY-MM-DD date. A little over one year covers
+    // every deterministic slot in all three phrase pools without duplicating
+    // the phrase catalogue in this test.
+    for (let day = 0; day < 400; day += 1) {
+      const seed = new Date(Date.UTC(2026, 0, day + 1)).toISOString().slice(0, 10);
+      for (const rating of ['safe', 'caution', 'danger'] as const) {
+        const phrase = getFrankPhrase(rating, seed);
+        keys.add(phrase);
+        if (rating === 'safe') safePhrases.add(phrase);
+      }
+    }
+
+    // The same display is used for an hour and for a 6/12-hour outlook block.
+    // Safe phrases must not claim an hourly scope or that an unavailable gust
+    // check was completed.
+    expect([...safePhrases].every((phrase) => !/\bhour\b|all selected checks/i.test(phrase))).toBe(true);
+
+    const missing = [...keys].filter(key => !(key in da));
+    expect(missing, `dynamic verdict copy missing Danish translations: ${missing.join(', ')}`)
+      .toEqual([]);
   });
 });

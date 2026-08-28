@@ -24,9 +24,9 @@ const benignHour: HourlyData = {
 };
 
 const profiles = [
-  ['beginner', 4.0, 5.0, 0.20, 0.50],
-  ['default', 6.0, 8.0, 0.30, 1.00],
-  ['pro', 8.0, 10.0, 0.50, 2.00],
+  ['beginner', 5.0, 0.50],
+  ['default', 8.0, 1.00],
+  ['pro', 10.0, 2.00],
 ] as const;
 
 function generalWindOnly(mode: (typeof profiles)[number][0]): SafetySettings {
@@ -54,7 +54,6 @@ function wavesOnly(mode: (typeof profiles)[number][0]): SafetySettings {
     enableWindGust: false,
     enableCustomWindDirs: false,
     enableWaveHeight: true,
-    enableWaveTakeCare: true,
     enableWaterTemp: false,
     daylightOnly: false,
   };
@@ -62,47 +61,39 @@ function wavesOnly(mode: (typeof profiles)[number][0]): SafetySettings {
 
 describe('IPP-aligned profile boundaries', () => {
   it.each(profiles)(
-    '%s general wind is green below %s, Take care at it, and Rough at %s',
-    (mode, takeCareAt, roughAt) => {
+    '%s general wind stays within limits up to and including %s, then fails',
+    (mode, windLimit) => {
       const settings = generalWindOnly(mode);
-      expect(analyzeSafetyConditions({ ...benignHour, windSpeed: takeCareAt - 0.1 }, settings).rating).toBe('safe');
-      expect(analyzeSafetyConditions({ ...benignHour, windSpeed: takeCareAt }, settings).rating).toBe('caution');
-      expect(analyzeSafetyConditions({ ...benignHour, windSpeed: roughAt - 0.1 }, settings).rating).toBe('caution');
-      expect(analyzeSafetyConditions({ ...benignHour, windSpeed: roughAt }, settings).rating).toBe('danger');
+      expect(analyzeSafetyConditions({ ...benignHour, windSpeed: windLimit - 0.1 }, settings).rating).toBe('safe');
+      expect(analyzeSafetyConditions({ ...benignHour, windSpeed: windLimit }, settings).rating).toBe('safe');
+      expect(analyzeSafetyConditions({ ...benignHour, windSpeed: windLimit + 0.1 }, settings).rating).toBe('danger');
     },
   );
 
-  // Gusts get the wind band scaled by GUST_FACTOR, not the wind band itself: a
-  // mean-wind limit is written for wind that already gusts, so measuring a gust
-  // against it counts the same gustiness twice. Beginner 6.4/8.0,
-  // Intermediate 9.6/12.8, Advanced 12.8/16.0.
+  // The single gust maximum is the wind maximum scaled by GUST_FACTOR. Equality
+  // remains within the documented "up to" profile envelope.
   it.each(profiles)(
-    '%s gusts are judged against %s / %s scaled by the gust factor, without a Beaufort label',
-    (mode, windTakeCareAt, windRoughAt) => {
+    '%s gusts use the one wind maximum scaled by the gust factor, without an amber band',
+    (mode, windLimit) => {
       const settings = gustOnly(mode);
-      const takeCareAt = roundToDecimals(windTakeCareAt * GUST_FACTOR, 1);
-      const roughAt = roundToDecimals(windRoughAt * GUST_FACTOR, 1);
+      const gustMaximum = roundToDecimals(windLimit * GUST_FACTOR, 1);
 
-      // The old rule called this hour Rough; the mean wind it implies is ordinary.
-      expect(analyzeSafetyConditions({ ...benignHour, windGust: windRoughAt }, settings).rating).toBe('safe');
-
-      expect(analyzeSafetyConditions({ ...benignHour, windGust: takeCareAt - 0.1 }, settings).rating).toBe('safe');
-      const caution = analyzeSafetyConditions({ ...benignHour, windGust: takeCareAt }, settings);
-      expect(caution.rating).toBe('caution');
-      expect(caution.reasons.find((reason) => reason.text.startsWith('Wind gusts:'))?.text).not.toContain('(');
-      expect(analyzeSafetyConditions({ ...benignHour, windGust: roughAt - 0.1 }, settings).rating).toBe('caution');
-      expect(analyzeSafetyConditions({ ...benignHour, windGust: roughAt }, settings).rating).toBe('danger');
+      expect(analyzeSafetyConditions({ ...benignHour, windGust: gustMaximum - 0.1 }, settings).rating).toBe('safe');
+      expect(analyzeSafetyConditions({ ...benignHour, windGust: gustMaximum }, settings).rating).toBe('safe');
+      const failed = analyzeSafetyConditions({ ...benignHour, windGust: gustMaximum + 0.1 }, settings);
+      expect(failed.rating).toBe('danger');
+      expect(failed.reasons.find((reason) => reason.text.startsWith('Wind gusts:'))?.text).not.toContain('(');
+      expect(failed.reasons.some((reason) => reason.severity === 'caution')).toBe(false);
     },
   );
 
   it.each(profiles)(
-    '%s significant waves are green below %s, Take care at it, and Rough at %s',
-    (mode, _windTakeCareAt, _windRoughAt, takeCareAt, roughAt) => {
+    '%s significant waves stay within limits up to and including %s, then fail',
+    (mode, _windLimit, waveLimit) => {
       const settings = wavesOnly(mode);
-      expect(analyzeSafetyConditions({ ...benignHour, waveHeight: takeCareAt - 0.01 }, settings).rating).toBe('safe');
-      expect(analyzeSafetyConditions({ ...benignHour, waveHeight: takeCareAt }, settings).rating).toBe('caution');
-      expect(analyzeSafetyConditions({ ...benignHour, waveHeight: roughAt - 0.01 }, settings).rating).toBe('caution');
-      expect(analyzeSafetyConditions({ ...benignHour, waveHeight: roughAt }, settings).rating).toBe('danger');
+      expect(analyzeSafetyConditions({ ...benignHour, waveHeight: waveLimit - 0.01 }, settings).rating).toBe('safe');
+      expect(analyzeSafetyConditions({ ...benignHour, waveHeight: waveLimit }, settings).rating).toBe('safe');
+      expect(analyzeSafetyConditions({ ...benignHour, waveHeight: waveLimit + 0.01 }, settings).rating).toBe('danger');
     },
   );
 });

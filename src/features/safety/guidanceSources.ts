@@ -3,7 +3,8 @@
 // and IPP4 wind anchors; the current DKF sea-kayak norm supplies the IPP2 wind
 // ceiling and numeric wave ceilings. DMI/MET define the forecast measurements,
 // NWS supplies the official kayak-facing sustained-wind-or-gust precedent, and
-// WMO supplies the supplemental sea-wave terms.
+// WMO supplies the supplemental sea-wave terms. RNLI and Søsportens
+// Sikkerhedsråd supply the two default cold-water boundaries.
 export const SAFETY_GUIDANCE_SOURCES = {
   dkfTouring: 'https://www.kano-kajak.dk/uddannelse-og-kurser/ipp-roeruddannelse/touring-tur/',
   dkfIpp3Touring: 'https://drive.google.com/file/d/14lUb_7t5ZV1vp49sOBmCmlXuOnSWmQMX/view?usp=sharing',
@@ -14,6 +15,8 @@ export const SAFETY_GUIDANCE_SOURCES = {
   dmiSignificantWaveHeight: 'https://www.dmi.dk/hav-og-is/temaforside-monsterbolger/bolger-pa-havet',
   metForecastDataModel: 'https://docs.api.met.no/doc/locationforecast/datamodel.html',
   nwsKayakWindHazards: 'https://www.weather.gov/mqt/Local_Marine',
+  rnliColdWater: 'https://rnli.org/water-safety/know-the-risks/cold-water-shock',
+  danishColdWaterSafety: 'https://www.soesport.dk/redning-og-sikkerhed/kulde-og-beklaedning',
   metWeatherSymbolLegend: 'https://raw.githubusercontent.com/metno/weathericons/main/weather/legend.csv',
   wmoSeaStateTerminology: 'https://community.wmo.int/site/knowledge-hub/programmes-and-initiatives/marine-services/frequently-asked-questions',
 } as const;

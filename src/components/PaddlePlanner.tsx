@@ -20,7 +20,7 @@ interface PaddlePlannerProps {
   // No personal limits are switched on, so the empty list below is a refusal to
   // recommend rather than a report about conditions.
   limitsOff: boolean;
-  // This filter can starve the list while safe hours still exist. Name it in
+  // This filter can starve the list while within-limit hours still exist. Name it in
   // the empty state so the message points at the knob that is actually binding
   // instead of "your criteria", which is every knob at once.
   minDuration: number;
@@ -34,7 +34,7 @@ interface PaddlePlannerProps {
 
 // One launch-window bar on a day row of the calendar Gantt (a window crossing
 // midnight becomes one bar per day). Fractions are hours 0–24 on the day axis.
-// Windows only ever contain Good-to-go hours (findLaunchWindows accepts
+// Windows only ever contain within-limit hours (findLaunchWindows accepts
 // rating === 'safe' exclusively), so a bar needs no per-hour status detail.
 interface CalBar {
   id: string;
@@ -51,6 +51,7 @@ interface CalBar {
   compactLabel: string;
   hours: number;
   lowConfidence: boolean;
+  missingGust: boolean;
   aria: string;
 }
 
@@ -62,6 +63,21 @@ const formatDuration = (t: Translate, hours: number) => {
   if (wholeHours === 0) return t('{0} min', minutes);
   return t(wholeHours === 1 ? '{0} hr {1} min' : '{0} hrs {1} min', wholeHours, minutes);
 };
+
+// Outlook endIndex names the final block start, so its required closing row is
+// one index beyond the ordinary inclusive slice. Use one shared definition for
+// list and calendar disclosures so the two views cannot disagree about gusts.
+function rowsRepresentedByWindow(data: HourlyData[], slot: LaunchWindow): HourlyData[] {
+  return data.slice(slot.startIndex, slot.endIndex + (slot.lowConfidence ? 2 : 1));
+}
+
+function outlookWindowMissingGust(data: HourlyData[], slot: LaunchWindow): boolean {
+  return Boolean(
+    slot.lowConfidence
+    && rowsRepresentedByWindow(data, slot)
+      .some((hour) => !Number.isFinite(hour.windGust) || hour.windGust < 0),
+  );
+}
 
 interface CalDay {
   key: string;
@@ -199,6 +215,7 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
       const startRow = data[slot.startIndex];
       const endRow = data[slot.endIndex];
       if (!startRow || !endRow) continue;
+      const missingGust = outlookWindowMissingGust(data, slot);
 
       // The interval this bar must draw, in ABSOLUTE time — the same interval
       // the list card describes for the same window. Walking row indices
@@ -240,6 +257,7 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
             compactLabel: '',
             hours: 0,
             lowConfidence: Boolean(slot.lowConfidence),
+            missingGust,
             aria: '',
           };
           runs.push(run);
@@ -264,7 +282,13 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
         r.compactLabel = formatDuration(t, hours);
         r.hours = hours;
         r.aria = r.lowConfidence
-          ? t('Outlook window, approximately {0}:00 to {1}:00 — more uncertain forecast', from, to)
+          ? t(
+            r.missingGust
+              ? 'Outlook window, approximately {0}:00 to {1}:00 — no gust forecast and more uncertain'
+              : 'Outlook window, approximately {0}:00 to {1}:00 — more uncertain forecast',
+            from,
+            to,
+          )
           : t(
             hasPartialHour ? 'Launch window {0} to {1}, {2}' : 'Launch window {0}:00 to {1}:00, {2}',
             from,
@@ -372,8 +396,8 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                   // credits a comparison that never happened.
                   ? t('Your personal limits are switched off, so there is nothing to measure the forecast against and no window can be recommended. Turn a limit back on to see suggested windows.')
                   : statuses.some((s, i) => i >= startIndex && s === 'safe')
-                    ? t('There are safe hours, but never {0} in a row. Lower the minimum duration in Advanced settings, or try another trip mode.', formatDuration(t, minDuration))
-                    : t('No good windows in the forecast yet — conditions stay above your limits for now. Check back as it updates.')}
+                    ? t('Some hours are within your limits, but never {0} in a row. Lower the minimum duration in Advanced settings, or try another trip mode.', formatDuration(t, minDuration))
+                    : t('No launch windows fit all your selected checks yet. Open an hour to see what needs attention, or check again after the forecast updates.')}
               </div>
             ) : viewMode === 'list' ? (
               /* Tide-table list: day-grouped — the Gantt sibling shows the
@@ -429,10 +453,12 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                   // endpoint also bounds the interval and must be represented.
                   // Exact-hour windows already store that endpoint in endIndex;
                   // outlook windows store the last block start and close at +1.
-                  const slotHours = data.slice(
-                    slot.startIndex,
-                    slot.endIndex + (slot.lowConfidence ? 2 : 1),
-                  );
+                  const slotHours = rowsRepresentedByWindow(data, slot);
+                  // Outlook blocks usually have no gust forecast, but do not
+                  // claim that when the represented rows actually contain one.
+                  // Keep the window either way: it remains a deliberately
+                  // lower-confidence launch hint based on the readings present.
+                  const outlookMissingGust = outlookWindowMissingGust(data, slot);
                   // Only real readings: Math.min/max coerce a missing value to
                   // 0, which turned an unknown hour into a "0 m/s, 0.00 m"
                   // flat-calm claim on the card AND in the shared text.
@@ -491,7 +517,11 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                           <span className="tide-day-inline">
                             {formatDateMedium(startHour.time)}
                             {/* Tag rides the day line so the card stays short. */}
-                            {slot.lowConfidence && <span className="tide-tag">{t('outlook')}</span>}
+                            {slot.lowConfidence && (
+                              <span className="tide-tag">
+                                {t(outlookMissingGust ? 'outlook · no gust forecast' : 'outlook · more uncertain forecast')}
+                              </span>
+                            )}
                           </span>
                           <span className="tide-row-main">
                             <span className="tide-time">{displayStart}–{displayEnd}</span>
@@ -522,7 +552,11 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                             </span>
                           )}
                           {slot.lowConfidence && (
-                            <span className="sr-only"> {t('Longer-range outlook — more uncertain forecast.')}</span>
+                            <span className="sr-only"> {t(
+                              outlookMissingGust
+                                ? 'Longer-range outlook — no gust forecast and more uncertain.'
+                                : 'Longer-range outlook — more uncertain forecast.',
+                            )}</span>
                           )}
                           <span className="sr-only"> {t('Tap to show this window in the graph.')}</span>
                         </button>
@@ -625,7 +659,11 @@ export default memo(function PaddlePlanner({ data, statuses, windows, warnings, 
                     <strong className="gantt-selection-time">{selectedCalendarBar.rangeLabel}</strong>
                     <span>· {formatDuration(t, selectedCalendarBar.hours)}</span>
                     {selectedCalendarBar.lowConfidence && (
-                      <span className="gantt-selection-confidence">{t('More uncertain forecast')}</span>
+                      <span className="gantt-selection-confidence">{t(
+                        selectedCalendarBar.missingGust
+                          ? 'No gust forecast · more uncertain forecast'
+                          : 'More uncertain forecast',
+                      )}</span>
                     )}
                   </div>
                 )}

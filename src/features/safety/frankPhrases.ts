@@ -7,29 +7,25 @@ import type { SafetyRating } from './analyzeSafetyConditions';
 // in Danish), filled in by the caller so Aarhus Bugt never gets called a fjord.
 const PHRASES: Record<SafetyRating, string[]> = {
   safe: [
-    'Good weather, go ahead!',
-    'The {0} looks fint. Off you go',
-    'Smooth as smørrebrød out there',
-    'Even the herring approve today',
-    'Grab the paddle before the weather changes its mind',
-    // Moved out of the caution pool: "there's no bad weather" is a harmless
-    // quip next to an all-clear, but under a CAUTION verdict it dismissed the
-    // very warning it was sitting beneath.
-    'No bad weather, only bad clothing',
+    'The available readings are within your limits',
+    'Nothing in the available forecast crossed your limits',
+    'The available {0} readings fit your settings for now',
+    'The available checks are within range',
+    'The numbers we have fit. You still make the call',
   ],
   caution: [
-    'Doable — but pick your moment',
-    'The {0} is in a mood today',
-    'Borderline. Very Jutland of it',
-    'Manageable — keep a cool head',
-    'Fine to go, but stay near the shore',
+    'Check the details before you launch',
+    'Something here needs your judgement',
+    'The {0} needs a second look',
+    'Pause and check the conditions',
+    'Read the notes before you decide',
   ],
   danger: [
     'Nej tak. The {0} says no',
     'Even the Vikings called in sick today',
     'The {0} will still be here tomorrow',
     'The sea is angry. Coffee instead',
-    'Not today. FRANK insists',
+    'Outside your limits. Pick another time',
     'Best enjoyed from the shore today',
   ],
 };

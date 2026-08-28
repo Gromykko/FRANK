@@ -8,10 +8,10 @@ FRANK is a small, installable web app that helps sea-kayakers judge when conditi
 
 ## What it does
 
-- Rates every forecast period as **Good to go**, **Take care**, or **Rough** against the selected safety profile.
+- Rates every forecast period as **Within limits**, **Check before launch**, or **Not recommended** against the selected profile.
 - Shows the exact reasons behind a rating; colour is never the only explanation.
-- Finds uninterrupted launch windows that satisfy the selected safety limits, duration, and daylight rule.
-- Keeps missing readings unknown. A missing value is never converted to zero or treated as safe.
+- Finds exact hourly launch windows that satisfy every selected check, plus clearly marked lower-confidence outlook hints.
+- Keeps missing readings unknown. A missing hourly value is never converted to zero or treated as safe; longer-range blocks state when MET does not provide gusts.
 - Names stale or degraded sources instead of pretending every value is equally fresh.
 - Stores personal limits, selected location, language, and theme only in the browser.
 - Works as a PWA: the app shell opens offline and a previously validated forecast can remain available with clear age and connection warnings.
@@ -60,52 +60,72 @@ Browser / Installed PWA
 
 ### Safety profiles and condition language
 
-The built-in profiles use these inclusive client-side boundaries. A value on a
-boundary belongs to the stricter band: for example, Intermediate's general wind band
-is **Take care** at exactly 6.0 m/s and **Rough** at exactly 8.0 m/s. Enabled
-local sectors and other rules can trigger a stricter result earlier.
+The public wording is deliberately limited. **Within limits** means that no
+available selected check was exceeded. It does not mean that a trip is safe.
+**Check before launch** is used when a condition or missing hourly reading needs
+judgement. **Not recommended** means that a selected upper maximum was exceeded,
+a selected lower boundary was reached, or a hard weather rule fired.
+Weather-only mode gives no verdict.
 
-| Profile | General wind: Take care / Rough | Significant waves: Take care / Rough |
+Wind and waves each have one maximum. A displayed reading at or below that
+maximum stays within that check; a higher reading is Not recommended.
+
+| Profile | Maximum mean wind | Maximum significant waves |
 |---|---:|---:|
-| Beginner · IPP 2–informed | 4.0 / 5.0 m/s | 0.20 / 0.50 m |
-| Intermediate · IPP 3–informed | 6.0 / 8.0 m/s | 0.30 / 1.00 m |
-| Advanced · IPP 4–informed | 8.0 / 10.0 m/s | 0.50 / 2.00 m |
+| Beginner, informed by IPP 2 | 5.0 m/s | 0.50 m |
+| Intermediate, informed by IPP 3 | 8.0 m/s | 1.00 m |
+| Advanced, informed by IPP 4 | 10.0 m/s | 2.00 m |
 
 These are FRANK presets, not limits issued by DKF, proof of competence, or a
-guarantee that a trip is safe. The Intermediate and Advanced wind anchors use the numeric
-conditions in [DKF Touring](https://www.kano-kajak.dk/uddannelse-og-kurser/ipp-roeruddannelse/touring-tur/):
-the [IPP 3 Touring norm](https://drive.google.com/file/d/14lUb_7t5ZV1vp49sOBmCmlXuOnSWmQMX/view?usp=sharing)
-documents working conditions around 6 m/s and assessment up to 8 m/s, while the
+guarantee that a trip is safe. The Intermediate and Advanced wind maxima use
+the numeric conditions in [DKF Touring](https://www.kano-kajak.dk/uddannelse-og-kurser/ipp-roeruddannelse/touring-tur/).
+The [IPP 3 Touring norm](https://drive.google.com/file/d/14lUb_7t5ZV1vp49sOBmCmlXuOnSWmQMX/view?usp=sharing)
+documents assessment up to 8 m/s, while the
 [IPP 4 Touring norm](https://drive.google.com/file/d/1iagdhW-B3ZXvHUmEBSfxVESyne5qevb2/view?usp=sharing)
-uses 8–10 m/s. Touring IPP 2 has no numeric wind limit. Beginner's 5 m/s Rough
-boundary and the three Rough wave boundaries use the current
+uses 8 to 10 m/s. Touring IPP 2 has no numeric wind limit. The Beginner wind
+maximum and all three wave maxima use the current
 [DKF sea-kayak norm, 7 May 2026](https://drive.google.com/file/d/1YoO6StJ_nfwx2kb9X7lyH5y4gFQqp1O5/view?usp=drive_link).
-Beginner's 4 m/s Take-care boundary and all three lower wave Take-care boundaries
-are FRANK's deliberately conservative starting points. Enabled local
-wind-sector caps, gusts, water temperature, weather, daylight, route,
-equipment, and club rules can all demand a stricter decision than the general
-profile table.
+Those documents describe training and assessment conditions rather than a
+green light to launch. Gusts, cold water, weather, daylight, route, equipment,
+and club rules may all require a stricter decision.
 
 Mean-wind names follow [DMI's Beaufort scale](https://www.dmi.dk/vejr-og-atmosfare/temaforside-vind/beaufortskalaen/).
 They are not applied to gusts: MET defines `wind_speed` as a 10-minute mean at
 10 m and a gust as a much shorter three-second average in its
 [forecast data model](https://docs.api.met.no/doc/locationforecast/datamodel.html).
 The DKF/IPP material used for these profiles publishes no separate numeric gust
-band. With gust checking enabled, FRANK uses a separate, higher gust band: each
-chosen mean-wind threshold is multiplied by 1.6 and rounded to 0.1 m/s. For
-example, Intermediate's 6.0 / 8.0 m/s mean-wind band becomes 9.6 / 12.8 m/s for gusts.
-This is a FRANK rule, not a DKF limit. The US National Weather Service also
+limit. FRANK derives one gust maximum by multiplying the selected mean-wind
+maximum by 1.6 and rounding to 0.1 m/s. For example, an 8.0 m/s mean-wind
+maximum gives a 12.8 m/s gust maximum. This is a FRANK rule, not a DKF limit.
+The factor stays fixed instead of being recalculated from recent forecasts, so
+the limit does not move with the weather it is meant to judge.
+Turning the gust check off leaves the gust visible but removes it from the
+verdict. The US National Weather Service also
 considers both sustained wind and gusts in an official
 [kayak-facing marine outlook](https://www.weather.gov/mqt/Local_Marine), but its
 local Great Lakes numbers are not copied here. Direction-specific sector caps
 continue to use sustained wind only because their fetch/chop rationale does not
 apply to a momentary gust.
+
+MET does not publish gusts in its longer-range 6- or 12-hour outlook blocks.
+FRANK says so in the period explanation and judges those blocks only from the
+readings they contain. Outlook launch windows are therefore marked as more
+uncertain hints, not exact hourly recommendations.
 Wave words reuse [WMO's recommended sea-wave terminology](https://community.wmo.int/site/knowledge-hub/programmes-and-initiatives/marine-services/frequently-asked-questions)
 only as supplemental context; the numeric height remains the decision input.
 DMI defines [significant wave height](https://www.dmi.dk/hav-og-is/temaforside-monsterbolger/bolger-pa-havet)
 as the mean height of the highest third of waves and notes that individual
 waves can be higher. FRANK separately cautions that this one number does not
 describe local surf or short steep chop by itself.
+
+Cold water keeps two stages because the sources describe two different
+concerns. [RNLI](https://rnli.org/water-safety/know-the-risks/cold-water-shock)
+identifies water below 15°C as cold-water-shock territory, while
+[Søsportens Sikkerhedsråd](https://www.soesport.dk/redning-og-sikkerhed/kulde-og-beklaedning)
+advises paddlers to wait until the water is above 10°C. The default settings
+therefore ask for a check below 15°C and mark 10°C or colder Not recommended.
+The app does not prescribe one garment because clothing, rescue time, and the
+planned route all matter.
 
 ## Production Deployment & CI/CD
 

@@ -13,7 +13,7 @@ function pixels(host: HTMLElement, selector: string): string[] {
     .map((rect) => `${rect.getAttribute('x')},${rect.getAttribute('y')}`);
 }
 
-describe('GertyFace Weather mode expression', () => {
+describe('GertyFace Weather-only expression', () => {
   it('rests on a short level mouth, and never changes the eyes', () => {
     const weather = renderFace('none');
     const safe = renderFace('safe');

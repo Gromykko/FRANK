@@ -1079,9 +1079,9 @@
 }
 
 /* ---------- Your Limits: instrument panel ----------
-   Per-limit instrument cards with push-button steppers, and read-only zone
-   bars where the amber band IS the caution margin. (Trip mode lives in the
-   Trip Profile panel at the top of the section stack.) */
+   Per-limit instrument cards with push-button steppers and read-only zone
+   bars. Wind and waves have one maximum; cold water retains a sourced middle
+   check zone. Trip mode lives in the panel above this section. */
 
 .limit-cards {
   display: flex;
@@ -1276,7 +1276,7 @@
   margin-top: 4px;
 }
 
-/* Mini variant for caution margins and sector limits */
+/* Mini variant for secondary thresholds and sector limits */
 .limit-value-row.is-mini {
   gap: 8px;
   justify-content: flex-end;
@@ -1303,8 +1303,8 @@
   margin-top: 2px;
 }
 
-/* Zone bar: where the limit sits between calm and dangerous. The amber band
-   is the caution margin; the marker is the configured limit. */
+/* Zone bar: cold water passes two different boundaries and keeps a visible
+   middle zone. Wind and waves add the single-maximum treatment below. */
 .limit-zone {
   display: flex;
   flex-direction: column;
@@ -1327,12 +1327,31 @@
   opacity: 0.9;
 }
 
-/* Danger at the low end (water temperature) */
+/* The stronger result is at the low end for water temperature. */
 .zone-bar.is-inverted {
   background: linear-gradient(90deg,
     var(--color-danger) 0 var(--zone-a),
     var(--color-caution) var(--zone-a) var(--zone-b),
     var(--color-safe) var(--zone-b) 100%);
+}
+
+/* One inclusive upper maximum: green reaches the boundary, a neutral marker
+   occupies the boundary itself, and red begins visually beyond it. */
+.zone-bar.is-maximum {
+  background: linear-gradient(90deg,
+    var(--color-safe) 0 var(--zone-a),
+    var(--color-danger) var(--zone-a) 100%);
+}
+
+.zone-bar.is-maximum::after {
+  content: '';
+  position: absolute;
+  inset-block: -1px;
+  left: var(--zone-a);
+  width: 2px;
+  transform: translateX(-1px);
+  background: var(--text-muted);
+  border-radius: 1px;
 }
 
 .zone-labels {
@@ -1349,7 +1368,7 @@
   text-align: center;
 }
 
-/* Secondary control row inside a card: caution margin, sector limits */
+/* Secondary control row inside a card: extra check, boundary, or sector limit. */
 .limit-caution-row {
   display: flex;
   align-items: center;
@@ -1490,7 +1509,7 @@
 }
 
 /* Local wind sectors: a read-only compass rose beside named sector bands whose
-   only editable values are the speed caps. Scales to any number of sectors. */
+   only editable values are the wind limits. Scales to any number of sectors. */
 .sector-panel {
   display: flex;
   flex-direction: column;
@@ -3516,6 +3535,23 @@ button.legend-toggle.is-on {
 /* Wind and gust are one deliberate reading, not two accidental phone rows. */
 .snapshot-value.snapshot-wind {
   white-space: nowrap;
+}
+
+/* A disabled gust check does not hide the forecast gust. Put the honest state
+   directly under that reading, where it remains legible on a 320px phone. */
+.snapshot-value.snapshot-wind.has-gust-disclosure {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  white-space: normal;
+}
+
+.snapshot-gust-disclosure {
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: normal;
 }
 
 .snapshot-wind-visual {

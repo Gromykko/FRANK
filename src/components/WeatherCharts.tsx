@@ -16,8 +16,6 @@ import { useLang } from '../i18n';
 import type { HourlyData } from '../features/forecast/types';
 import {
   GUST_FACTOR,
-  getWaveDangerAt,
-  getWindDangerAt,
   type SafetySettings,
 } from '../features/safety/presets';
 import { Wind, Waves, ArrowDownUp, Thermometer } from 'lucide-react';
@@ -56,36 +54,35 @@ const GRID_STROKE = 'var(--panel-border)';
 const SELECTED_LINE_STROKE = 'rgba(59, 130, 246, 0.55)';
 const CAUTION_LINE = 'var(--color-caution)';
 const DANGER_LINE = 'var(--color-danger)';
+// Wind, gust, and wave maxima are inclusive. Their boundary is therefore a
+// neutral reference, not a danger-coloured reading; danger begins above it.
+const MAXIMUM_LINE = 'var(--text-muted)';
 // Faint wash above/below a limit so "over the line" reads as a region, not
 // just a crossing — kept ≤7% so it never competes with the data series.
 const WASH_OPACITY = 0.07;
 
 // Keep the chart rules on the exact boundaries used by the verdict engine.
-// Gusts have their own higher band: comparing a short peak directly with a
-// mean-wind cap would count the gustiness already implicit in that cap twice.
+// The gust maximum is derived from the mean-wind maximum; it is not a second
+// user-editable threshold.
 // oxlint-disable-next-line react/only-export-components
 export function getWindChartThresholds(settings: SafetySettings) {
-  const windTakeCare = settings.windTakeCareAt;
-  const windDanger = getWindDangerAt(settings);
   return {
-    windTakeCare,
-    windDanger,
-    gustTakeCare: roundToDecimals(windTakeCare * GUST_FACTOR, 1),
-    gustDanger: roundToDecimals(windDanger * GUST_FACTOR, 1),
+    windLimit: settings.windLimit,
+    gustLimit: roundToDecimals(settings.windLimit * GUST_FACTOR, 1),
   };
 }
 
 // Every chart answers "where does my line cross MY limit?": the user's own
-// caps render as labeled dashed rules with a faint wash beyond them, and all
-// four charts share ONE scroll body (one time axis, one drag, no sync machinery).
+// boundaries render as labeled dashed rules. Cold water also shades its two
+// lower zones; all four charts share one scroll body and one time axis.
 export default memo(function WeatherCharts({ data, settings, selectedIndex, onSelectIndex, startIndex }: WeatherChartsProps) {
   // Context consumption inside the memo'd body — a language change re-renders
   // this component even though its props are identity-stable.
   const { t } = useLang();
   const activeItem = data[selectedIndex];
-  // The dashed limit rules + washes are opt-in via the legend toggle: they
-  // add four to five lines of red/amber per chart, which is a lot of ink for
-  // information the verdict colours already carry. Off by default.
+  // The dashed limit rules + washes are opt-in via the legend toggle: even one
+  // or two lines per chart is a lot of ink for information the verdict colours
+  // already carry. Off by default.
   const [showLimits, setShowLimits] = useState(false);
 
   // Detailed graphs stop at the hourly/outlook boundary. Aggregate outlook
@@ -267,19 +264,15 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
 
   // ── The user's own limits, straight from settings ───────────────────────
   const {
-    windTakeCare: windTakeCareAt,
-    windDanger,
-    gustTakeCare,
-    gustDanger,
+    windLimit,
+    gustLimit,
   } = getWindChartThresholds(settings);
-  const waveTakeCareAt = settings.waveTakeCareAt;
-  const waveDanger = getWaveDangerAt(settings);
+  const waveLimit = settings.waveLimit;
   const tempTakeCareBelow = settings.waterTempTakeCareBelow;
   const tempDanger = settings.waterTempDangerBelow;
   const windEnabled = settings.enableWindSpeed ?? true;
   const gustEnabled = windEnabled && (settings.enableWindGust ?? true);
   const waveEnabled = settings.enableWaveHeight ?? true;
-  const waveTakeCareEnabled = waveEnabled && (settings.enableWaveTakeCare ?? true);
   const waterTempEnabled = settings.enableWaterTemp ?? true;
   // What actually renders: the enable flags decide WHICH limits exist (and
   // keep sizing the axis domains so toggling never rescales the plots); the
@@ -287,7 +280,6 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
   const windLimitsOn = showLimits && windEnabled;
   const gustLimitsOn = showLimits && gustEnabled;
   const waveLimitsOn = showLimits && waveEnabled;
-  const waveTakeCareOn = showLimits && waveTakeCareEnabled;
   const tempLimitsOn = showLimits && waterTempEnabled;
 
   const chartWidth = chartData.length * HOUR_CELL_WIDTH;
@@ -298,8 +290,8 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
   const windAxisMax = Math.max(
     10,
     Math.ceil(Math.max(
-      windEnabled ? windDanger + 1 : 0,
-      gustEnabled ? gustDanger + 1 : 0,
+      windEnabled ? windLimit + 1 : 0,
+      gustEnabled ? gustLimit + 1 : 0,
       // gustBand alone was not enough: it is null whenever EITHER wind or gust
       // is missing, so the only data term dropped out exactly when gust was
       // absent — and the sustained-wind series was never considered at all.
@@ -311,7 +303,7 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
   );
   const waveAxisMax = Math.max(
     0.5,
-    waveEnabled ? waveDanger + 0.1 : 0,
+    waveEnabled ? waveLimit + 0.1 : 0,
     Math.ceil(Math.max(...chartData.map((d) => d.waveDisplay ?? 0)) * 10) / 10,
   );
   // Rounded up to the next 25 cm so the axis labels stay round numbers.
@@ -460,20 +452,14 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
               />
               <YAxis {...axisProps} domain={[0, windAxisMax]} ticks={[0, Math.round(windAxisMax / 2), windAxisMax]} />
               {backdrops()}
-              {windLimitsOn && <ReferenceArea y1={windTakeCareAt} y2={windDanger} fill={CAUTION_LINE} fillOpacity={WASH_OPACITY} strokeOpacity={0} />}
-              {windLimitsOn && <ReferenceArea y1={windDanger} y2={windAxisMax} fill={DANGER_LINE} fillOpacity={WASH_OPACITY} strokeOpacity={0} />}
-              {windLimitsOn && <ReferenceLine y={windTakeCareAt} stroke={CAUTION_LINE} strokeDasharray="5 4" />}
-              {windLimitsOn && <ReferenceLine y={windDanger} stroke={DANGER_LINE} strokeDasharray="5 4" />}
-              {gustLimitsOn && <ReferenceLine y={gustTakeCare} stroke={CAUTION_LINE} strokeDasharray="2 4" />}
-              {gustLimitsOn && <ReferenceLine y={gustDanger} stroke={DANGER_LINE} strokeDasharray="2 4" />}
+              {windLimitsOn && <ReferenceLine y={windLimit} stroke={MAXIMUM_LINE} strokeDasharray="5 4" />}
+              {gustLimitsOn && <ReferenceLine y={gustLimit} stroke={MAXIMUM_LINE} strokeDasharray="2 4" />}
               <Area type="monotone" dataKey="gustBand" name="Gust spread" stroke="none" fill={SERIES.gust} fillOpacity={0.28} />
               <Line type="monotone" dataKey="windDisplay" name="Wind" stroke={SERIES.wind} dot={false} strokeWidth={2.5} />
             </AreaChart>
             {stickyRail(0, windAxisMax, 170 - CHART_MARGIN.top - 30, [0, Math.round(windAxisMax / 2), windAxisMax], [
-              ...(windLimitsOn ? [{ value: windTakeCareAt, label: t('wind Take care {0}', windTakeCareAt), tone: 'caution' as const }] : []),
-              ...(windLimitsOn ? [{ value: windDanger, label: t('wind danger {0}', windDanger), tone: 'danger' as const }] : []),
-              ...(gustLimitsOn ? [{ value: gustTakeCare, label: `${t('wind gusts')} ${t('Take care')} ${gustTakeCare}`, tone: 'caution' as const }] : []),
-              ...(gustLimitsOn ? [{ value: gustDanger, label: t('gust danger {0}', gustDanger), tone: 'danger' as const }] : []),
+              ...(windLimitsOn ? [{ value: windLimit, label: t('wind maximum {0}', windLimit), tone: 'muted' as const }] : []),
+              ...(gustLimitsOn ? [{ value: gustLimit, label: t('derived gust maximum {0}', gustLimit), tone: 'muted' as const }] : []),
             ], CHART_MARGIN.top + 30)}
           </div>
 
@@ -493,14 +479,11 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
               <XAxis dataKey="time" hide />
               <YAxis {...axisProps} domain={[0, waveAxisMax]} ticks={[0, waveAxisMax]} />
               {backdrops()}
-              {waveLimitsOn && <ReferenceArea y1={waveDanger} y2={waveAxisMax} fill={DANGER_LINE} fillOpacity={WASH_OPACITY} strokeOpacity={0} />}
-              {waveTakeCareOn && <ReferenceLine y={waveTakeCareAt} stroke={CAUTION_LINE} strokeDasharray="5 4" />}
-              {waveLimitsOn && <ReferenceLine y={waveDanger} stroke={DANGER_LINE} strokeDasharray="5 4" />}
+              {waveLimitsOn && <ReferenceLine y={waveLimit} stroke={MAXIMUM_LINE} strokeDasharray="5 4" />}
               <Area type="monotone" dataKey="waveDisplay" name="Wave height" stroke={SERIES.wave} fillOpacity={1} fill="url(#colorWave)" strokeWidth={2.5} />
             </AreaChart>
             {stickyRail(0, waveAxisMax, 150 - CHART_MARGIN.top, [0, waveAxisMax], [
-              ...(waveTakeCareOn ? [{ value: waveTakeCareAt, label: t('waves Take care {0}', waveTakeCareAt), tone: 'caution' as const }] : []),
-              ...(waveLimitsOn ? [{ value: waveDanger, label: t('danger {0}', waveDanger), tone: 'danger' as const }] : []),
+              ...(waveLimitsOn ? [{ value: waveLimit, label: t('wave maximum {0}', waveLimit), tone: 'muted' as const }] : []),
             ])}
           </div>
 
@@ -549,8 +532,8 @@ export default memo(function WeatherCharts({ data, settings, selectedIndex, onSe
             </ComposedChart>
             {/* plot height excludes the visible bottom hour axis (30px) + 4px margin */}
             {stickyRail(tempAxisMin, tempAxisMax, 150 - CHART_MARGIN.top - 34, [tempAxisMin, Math.round((tempAxisMin + tempAxisMax) / 2), tempAxisMax], [
-              ...(tempLimitsOn ? [{ value: tempTakeCareBelow, label: t('Take care below {0}°', tempTakeCareBelow), tone: 'caution' as const }] : []),
-              ...(tempLimitsOn ? [{ value: tempDanger, label: t('danger below {0}°', tempDanger), tone: 'danger' as const }] : []),
+              ...(tempLimitsOn ? [{ value: tempTakeCareBelow, label: t('check below {0}°', tempTakeCareBelow), tone: 'caution' as const }] : []),
+              ...(tempLimitsOn ? [{ value: tempDanger, label: t('not recommended at or below {0}°', tempDanger), tone: 'danger' as const }] : []),
             ])}
           </div>
         </div>

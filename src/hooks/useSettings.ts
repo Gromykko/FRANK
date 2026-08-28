@@ -6,7 +6,6 @@ import {
   CUSTOM_SETTINGS_STORAGE_KEY,
 } from '../features/safety/presets';
 import type { SafetySettings } from '../features/safety/presets';
-import { floorDanger, MIN_DANGER_GAP } from '../features/safety/presets';
 import { CURRENT_LOCATION } from '../config/locations';
 import type { ForecastLocation } from '../config/locations';
 import { readStorage } from '../utils/storage';
@@ -23,7 +22,7 @@ export type { SafetySettings } from '../features/safety/presets';
 // marker lets us reject records from another location or an incompatible
 // format. This pre-launch schema deliberately starts fresh when the shape
 // changes; advancing it requires an explicit decision about decode behavior.
-export const SETTINGS_STORAGE_SCHEMA_VERSION = 3;
+export const SETTINGS_STORAGE_SCHEMA_VERSION = 4;
 export const SETTINGS_STORAGE_METADATA_KEY = '__frankSettingsStorage';
 const SETTINGS_STORAGE_KIND = 'frank-safety-settings';
 
@@ -52,20 +51,17 @@ interface PendingSettingsMutation {
 }
 
 const SETTINGS_FIELD_KEYS: SettingsFieldKey[] = [
-  'windTakeCareAt',
+  'windLimit',
   'waterTempTakeCareBelow',
   'waterTempDangerBelow',
-  'waveTakeCareAt',
+  'waveLimit',
   'enableCustomWindDirs',
   'tripMode',
   'daylightOnly',
   'minDuration',
-  'windDangerGap',
-  'waveDangerGap',
   'enableWindSpeed',
   'enableWindGust',
   'enableWaveHeight',
-  'enableWaveTakeCare',
   'enableWaterTemp',
 ];
 
@@ -95,8 +91,7 @@ function settingsPatch(previous: SafetySettings, next: SafetySettings): Settings
       if (before) patch.sectorLimits[id] = null;
     } else if (
       !before
-      || before.takeCareAt !== after.takeCareAt
-      || before.dangerAt !== after.dangerAt
+      || before.maximumAt !== after.maximumAt
     ) {
       patch.sectorLimits[id] = { ...after };
     }
@@ -148,7 +143,7 @@ function sameSettings(left: SafetySettings, right: SafetySettings): boolean {
   return leftIds.every((id) => {
     const a = left.sectorLimits[id];
     const b = right.sectorLimits[id];
-    return Boolean(b) && a.takeCareAt === b.takeCareAt && a.dangerAt === b.dangerAt;
+    return Boolean(b) && a.maximumAt === b.maximumAt;
   });
 }
 
@@ -171,48 +166,33 @@ export function serializeStoredSettings(
   });
 }
 
-// A stored profile can hold a sector danger cap below its Take care cap. Heal
-// on load so the assessment never runs with an inverted band.
-export function healSectorDangerCaps(s: SafetySettings): SafetySettings {
-  if (!s.sectorLimits) return s;
-  const sectorLimits: SafetySettings['sectorLimits'] = {};
-  for (const [id, cap] of Object.entries(s.sectorLimits)) {
-    sectorLimits[id] = {
-      takeCareAt: cap.takeCareAt,
-      dangerAt: floorDanger(cap.takeCareAt, cap.dangerAt),
-    };
-  }
-  return { ...s, sectorLimits };
-}
-
 // Every numeric threshold, and the rounding they are stored at. A stored
 // profile is untrusted input: it survives app versions, can be hand-edited, and
 // `{...DEFAULT_SETTINGS, ...parsedJson}` will happily overwrite a number with a
-// string. A non-numeric cap poisons every comparison against it (`x >= "high"`
-// and `x >= NaN` are both false), which silently DISABLES that safety check and
-// reports "Good to go" — so each one falls back to its default instead.
-// Rounding here also kills the 0.1 + 0.2 = 0.30000000000000004 artifact that
-// derived caps otherwise carry into the reason text and back into storage.
+// string. A non-numeric cap poisons every comparison against it, which silently
+// disables that safety check and can make a gale look within limits. Each bad
+// value therefore falls back to its default.
+// Rounding here also keeps fractional controls stable across storage cycles.
 //
 // `min`/`max` mirror the bounds the Stepper controls already enforce. Type
 // alone was not enough: any FINITE number used to pass, so a stored
-// `windTakeCareAt: 999` (a stale profile, a hand-edit, a future writer that
+// `windLimit: 999` (a stale profile, a hand-edit, a future writer that
 // skips the Stepper) made `windSpeed >= 999` permanently false. The check reads
-// as enabled, `activeSafetyChecks` sees nothing switched off, and FRANK reports
-// "Good to go" in a gale. Clamping closes the door the NaN guard left open.
+// as enabled, `activeSafetyChecks` sees nothing switched off, and a gale can
+// look within limits. Clamping closes the door the NaN guard left open.
 const NUMERIC_LIMITS: { key: keyof SafetySettings; decimals: number; min: number; max: number }[] = [
-  { key: 'windTakeCareAt', decimals: 1, min: 0.5, max: 25 },
+  { key: 'windLimit', decimals: 1, min: 0.5, max: 25 },
   // Floor 5, matching the Stepper, and NOT 0. Every other limit here clamps to
   // a value that still checks something; a water-temp floor of 0 makes
   // `temp < 0` unsatisfiable, so a stale or hand-edited profile switches off
   // cold shock - the deadliest hazard on this coast - while `enableWaterTemp`
   // stays true and no "limits are off" disclosure fires. Disabling the rule is
   // what the toggle is for.
-  { key: 'waterTempTakeCareBelow', decimals: 1, min: 5, max: 25 },
-  { key: 'waterTempDangerBelow', decimals: 1, min: 5, max: 25 },
-  { key: 'waveTakeCareAt', decimals: 2, min: 0.1, max: 3.0 },
-  { key: 'windDangerGap', decimals: 1, min: 1, max: 10 },
-  { key: 'waveDangerGap', decimals: 2, min: 0.05, max: 2.0 },
+  // Keep at least one 1°C control step between the two cold-water boundaries.
+  // Unlike wind and waves, cold water deliberately retains a middle check range.
+  { key: 'waterTempTakeCareBelow', decimals: 0, min: 6, max: 25 },
+  { key: 'waterTempDangerBelow', decimals: 0, min: 5, max: 25 },
+  { key: 'waveLimit', decimals: 2, min: 0.1, max: 3.0 },
   { key: 'minDuration', decimals: 0, min: 1, max: 12 },
 ];
 
@@ -222,8 +202,8 @@ const NUMERIC_LIMITS: { key: keyof SafetySettings; decimals: number; min: number
 // shows the "limits are off" escape hatch. Only the falsy direction is
 // dangerous, and it was the one direction nothing guarded.
 const BOOLEAN_FLAGS = [
-  'enableWindSpeed', 'enableWindGust', 'enableWaveHeight', 'enableWaveTakeCare',
-  'enableWaterTemp', 'enableCustomWindDirs', 'daylightOnly',
+  'enableWindSpeed', 'enableWindGust', 'enableWaveHeight', 'enableWaterTemp',
+  'enableCustomWindDirs', 'daylightOnly',
 ] as const;
 
 const TRIP_MODES: readonly SafetySettings['tripMode'][] = ['default', 'beginner', 'pro', 'custom', 'weather'];
@@ -267,33 +247,27 @@ function coerceNumericLimits(s: SafetySettings): SafetySettings {
   for (const [id, cap] of Object.entries(out.sectorLimits ?? {})) {
     // Non-numbers are unusable, so drop the override and fall back to this
     // location's curated cap. Finite out-of-range numbers are recoverable:
-    // clamp them to exactly what both steppers can represent. In particular,
-    // Take care must stop one shared gap below 25 so danger never becomes 25.5 and
-    // leaves the UI with min > max and permanently disabled controls.
-    if (!isFiniteNumber(cap?.takeCareAt) || !isFiniteNumber(cap?.dangerAt)) continue;
-    const takeCareAt = roundToDecimals(
-      clampNumber(cap.takeCareAt, 0, 25 - MIN_DANGER_GAP, 0),
-      1,
-    );
-    const requestedDangerAt = roundToDecimals(clampNumber(cap.dangerAt, 0, 25, 25), 1);
+    // clamp them to exactly what the one maximum control can represent.
+    if (!isFiniteNumber(cap?.maximumAt)) continue;
     sectorLimits[id] = {
-      takeCareAt,
-      dangerAt: roundToDecimals(floorDanger(takeCareAt, requestedDangerAt), 1),
+      maximumAt: roundToDecimals(clampNumber(cap.maximumAt, 0, 25, 25), 1),
     };
   }
   out.sectorLimits = sectorLimits;
   return out;
 }
 
-// Heal the independent bands after type coercion. Mean-wind and wave danger
-// thresholds are derived from their Take care thresholds plus a validated gap,
-// so they cannot drift in storage. Water temperature runs in the other
-// direction: its danger threshold must be the colder value.
+// Water temperature retains two thresholds and runs in the opposite direction.
+// Preserving one full control step stops a malformed stored record from
+// silently deleting the middle check range.
 export function healSettings(s: SafetySettings): SafetySettings {
-  const healed = healSectorDangerCaps(coerceNumericLimits(s));
+  const healed = coerceNumericLimits(s);
   return {
     ...healed,
-    waterTempDangerBelow: Math.min(healed.waterTempTakeCareBelow, healed.waterTempDangerBelow),
+    waterTempDangerBelow: Math.min(
+      healed.waterTempTakeCareBelow - 1,
+      healed.waterTempDangerBelow,
+    ),
   };
 }
 
@@ -360,9 +334,7 @@ export function useSettings() {
   const activeWriteNeededRef = useRef(false);
   // The raw bytes of a stored profile we could not parse, or null. A failed load
   // must NOT be silently replaced: the debounced write below fires on mount too,
-  // so falling back to defaults used to stamp them over the unreadable blob
-  // 250ms later — a beginner's 4.0 m/s cap became the 6.0 m/s default,
-  // permanently, with no trace.
+  // so a fallback profile must never overwrite a stricter unreadable profile.
   //
   // But it must not block the user's own edits either. Holding the write open
   // indefinitely meant every later change was silently dropped and reverted on
@@ -652,7 +624,7 @@ export function useSettings() {
     hasEditedRef.current = true;
     activeWriteNeededRef.current = true;
     // Heal on the way in (idempotent for the editors, which already maintain
-    // the invariants) so an inverted band can never reach the assessment.
+    // the invariants) so an inverted temperature range cannot reach the assessment.
     const healed = healSettings(newSettings);
     const previous = settingsRef.current;
     activeMutationRef.current = activeLoadFailedRef.current !== null

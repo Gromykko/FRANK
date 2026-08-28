@@ -46,19 +46,21 @@ function isContiguous(previous: HourlyData, current: HourlyData): boolean {
   const expectedSpan = (previous.blockSpanHours ?? 1) * HOUR_MS;
   // Both providers are normalized onto exact ISO grid starts. A tolerance here
   // fabricates unassessed coverage: e.g. a 06:00 block followed at 12:20 has no
-  // safe reading at its real 12:00 endpoint, even though the two rows are near.
+  // within-limit reading at its real 12:00 endpoint, even though the two rows are near.
   return gap === expectedSpan;
 }
 
-// A window is a run of consecutive safe forecast samples in absolute time.
+// A window is a run of consecutive within-limit forecast samples in absolute time.
 // Midnight does not break water-time continuity; the UI alone segments the
-// resulting bar by calendar day. An N-hour window needs N+1 safe samples: both
-// endpoints of every hour interval must be safe.
+// resulting bar by calendar day. An N-hour window needs N+1 within-limit
+// samples: both endpoints of every hour interval must be within limits.
 //
 // Two ranges are searched: exact hourly windows within MET's hourly range, and
-// block-level windows across the longer-range MET period blocks. An outlook
-// interval needs a safe closing sample as well as a safe start, and is flagged
-// `lowConfidence` because the period data is still coarser than hourly data.
+// block-level hints across the longer-range MET period blocks. MET does not
+// publish gusts there, so those blocks are judged from their available readings
+// and say so in the verdict explanation. An outlook interval still needs a
+// within-limit closing sample as well as a matching start, and is flagged
+// `lowConfidence` because the period data is coarser and one selected input is absent.
 export function findLaunchWindows(
   data: HourlyData[],
   settings: SafetySettings,
@@ -91,7 +93,7 @@ export function findLaunchWindows(
 
   const slots: LaunchWindow[] = [];
 
-  // --- Exact hourly windows (endpoints must be safe) ---------------------
+  // --- Exact hourly windows (endpoints must be within limits) ------------
   let currentStart: number | null = null;
   const addHourlySlot = (start: number, end: number) => {
     const nominalStartMs = Date.parse(data[start]?.time ?? '');
@@ -115,7 +117,7 @@ export function findLaunchWindows(
   for (let i = 0; i < hourlyEnd; i++) {
     // A gap in the series breaks the run for the same reason a new day does:
     // the hours either side are not one continuous stretch on the water.
-    // Midnight is a presentation boundary, not a break in safe water time.
+    // Midnight is a presentation boundary, not a break in a qualifying run.
     // PaddlePlanner segments the one window into calendar-day bars; only a
     // real timestamp gap ends the recommendation.
     const breaksContinuity = i > 0 && !isContiguous(data[i - 1], data[i]);
@@ -132,7 +134,7 @@ export function findLaunchWindows(
   }
   if (currentStart !== null) addHourlySlot(currentStart, hourlyEnd - 1);
 
-  // --- Longer-range block windows (each safe block qualifies) ------------
+  // --- Longer-range block windows (each within-limit block qualifies) -----
   const blockSlots: LaunchWindow[] = [];
   let blockStart: number | null = null;
   const addBlockSlot = (start: number, end: number) => {
@@ -184,7 +186,7 @@ export function findLaunchWindows(
   // are both instant estimates at the block start. Neither can clear the
   // following six hours by itself. A block is therefore a recommendable
   // interval only when its exact closing sample is present, contiguous, and
-  // independently safe — the same two-safe-endpoints invariant the exact-hour
+  // independently within limits, using the same two-endpoint invariant the exact-hour
   // path uses.
   const isSafeBlockInterval = (index: number): boolean => {
     const next = data[index + 1];

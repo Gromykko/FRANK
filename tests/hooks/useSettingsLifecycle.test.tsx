@@ -10,8 +10,6 @@ import {
 import {
   CUSTOM_SETTINGS_STORAGE_KEY,
   DEFAULT_SETTINGS,
-  getWaveDangerAt,
-  getWindDangerAt,
   getPresetSettings,
   SETTINGS_STORAGE_KEY,
 } from '../../src/features/safety/presets';
@@ -136,8 +134,8 @@ describe('useSettings persistence lifecycle', () => {
   });
 
   it('does not read unsuffixed prelaunch settings keys', async () => {
-    const oldActive = JSON.stringify(customSettings({ windTakeCareAt: 4.0 }));
-    const oldCustom = JSON.stringify(customSettings({ windTakeCareAt: 4.1 }));
+    const oldActive = JSON.stringify(customSettings({ windLimit: 4.0 }));
+    const oldCustom = JSON.stringify(customSettings({ windLimit: 4.1 }));
     localStorage.setItem('frank_settings', oldActive);
     localStorage.setItem('frank_custom_saved', oldCustom);
 
@@ -154,7 +152,7 @@ describe('useSettings persistence lifecycle', () => {
   it('does not rewrite already-current records merely because a new app shell mounted', async () => {
     localStorage.setItem(SETTINGS_STORAGE_KEY, serializeStoredSettings(DEFAULT_SETTINGS));
     localStorage.setItem(CUSTOM_SETTINGS_STORAGE_KEY, serializeStoredSettings(customSettings({
-      windTakeCareAt: 4.2,
+      windLimit: 4.2,
     })));
     const setItem = vi.spyOn(Storage.prototype, 'setItem');
 
@@ -169,16 +167,12 @@ describe('useSettings persistence lifecycle', () => {
     const staleNormal = {
       ...DEFAULT_SETTINGS,
       tripMode: 'default' as const,
-      windTakeCareAt: 5.5,
-      windDangerGap: 2.5,
-      waveTakeCareAt: 0.3,
-      waveDangerGap: 0.3,
+      windLimit: 5.5,
+      waveLimit: 0.3,
     };
     const rememberedCustom = customSettings({
-      windTakeCareAt: 4.3,
-      windDangerGap: 1.7,
-      waveTakeCareAt: 0.25,
-      waveDangerGap: 0.4,
+      windLimit: 4.3,
+      waveLimit: 0.25,
     });
     localStorage.setItem(SETTINGS_STORAGE_KEY, serializeStoredSettings(staleNormal));
     localStorage.setItem(CUSTOM_SETTINGS_STORAGE_KEY, serializeStoredSettings(rememberedCustom));
@@ -188,31 +182,27 @@ describe('useSettings persistence lifecycle', () => {
     expect(current.settings).toEqual(getPresetSettings('default'));
     expect(current.settings).toMatchObject({
       tripMode: 'default',
-      windTakeCareAt: 6.0,
-      windDangerGap: 2.0,
-      waveTakeCareAt: 0.3,
-      waveDangerGap: 0.7,
+      windLimit: 8.0,
+      waveLimit: 1.0,
     });
-    expect(getWindDangerAt(current.settings)).toBe(8.0);
-    expect(getWaveDangerAt(current.settings)).toBe(1.0);
     // Merely loading a built-in mode is not a destructive migration of either
     // stored record. Built-ins resolve from code; Custom remains user-owned.
     expect(storedRecord(SETTINGS_STORAGE_KEY)).toMatchObject({
       tripMode: 'default',
-      windTakeCareAt: 5.5,
-      waveDangerGap: 0.3,
+      windLimit: 5.5,
+      waveLimit: 0.3,
     });
     expect(storedRecord(CUSTOM_SETTINGS_STORAGE_KEY)).toMatchObject({
       tripMode: 'custom',
-      windTakeCareAt: 4.3,
-      waveTakeCareAt: 0.25,
+      windLimit: 4.3,
+      waveLimit: 0.25,
     });
 
     await act(async () => current.setTripMode('custom'));
     expect(current.settings).toMatchObject({
       tripMode: 'custom',
-      windTakeCareAt: 4.3,
-      waveTakeCareAt: 0.25,
+      windLimit: 4.3,
+      waveLimit: 0.25,
     });
   });
 
@@ -237,10 +227,9 @@ describe('useSettings persistence lifecycle', () => {
     });
   });
 
-  it('treats a schema-v1 record as a fresh reset and preserves it until a deliberate choice', async () => {
+  it('treats a previous-schema record as a fresh reset and preserves it until a deliberate choice', async () => {
     const legacy = JSON.parse(serializeStoredSettings(customSettings({
-      windTakeCareAt: 4.4,
-      windDangerGap: 1.2,
+      windLimit: 4.4,
     }))) as Record<string, unknown>;
     legacy[SETTINGS_STORAGE_METADATA_KEY] = {
       ...(legacy[SETTINGS_STORAGE_METADATA_KEY] as Record<string, unknown>),
@@ -289,14 +278,14 @@ describe('useSettings persistence lifecycle', () => {
 
     await act(async () => current.saveSettings({
       ...current.settings,
-      windTakeCareAt: 4.3,
+      windLimit: 4.3,
       tripMode: 'custom',
     }));
     await flushSettingsWrite();
     expect(localStorage.getItem(`${CUSTOM_SETTINGS_STORAGE_KEY}_corrupt`)).toBe(unreadableCustom);
     expect(storedRecord(CUSTOM_SETTINGS_STORAGE_KEY)).toMatchObject({
       tripMode: 'custom',
-      windTakeCareAt: 4.3,
+      windLimit: 4.3,
       [SETTINGS_STORAGE_METADATA_KEY]: { schemaVersion: SETTINGS_STORAGE_SCHEMA_VERSION },
     });
   });
@@ -304,8 +293,7 @@ describe('useSettings persistence lifecycle', () => {
   it('uses a valid active Custom profile as recovery only when the user leaves that mode', async () => {
     const unreadableCustom = '{custom-not-json';
     localStorage.setItem(SETTINGS_STORAGE_KEY, serializeStoredSettings(customSettings({
-      windTakeCareAt: 4.6,
-      windDangerGap: 1.6,
+      windLimit: 4.6,
       daylightOnly: false,
     })));
     localStorage.setItem(CUSTOM_SETTINGS_STORAGE_KEY, unreadableCustom);
@@ -314,11 +302,9 @@ describe('useSettings persistence lifecycle', () => {
     await flushSettingsWrite();
     expect(current.settings).toMatchObject({
       tripMode: 'custom',
-      windTakeCareAt: 4.6,
-      windDangerGap: 1.6,
+      windLimit: 4.6,
       daylightOnly: false,
     });
-    expect(getWindDangerAt(current.settings)).toBe(6.2);
     // No mount-time destructive repair: a future app may understand these
     // bytes even though this one does not.
     expect(localStorage.getItem(CUSTOM_SETTINGS_STORAGE_KEY)).toBe(unreadableCustom);
@@ -327,15 +313,14 @@ describe('useSettings persistence lifecycle', () => {
     expect(localStorage.getItem(`${CUSTOM_SETTINGS_STORAGE_KEY}_corrupt`)).toBe(unreadableCustom);
     expect(storedRecord(CUSTOM_SETTINGS_STORAGE_KEY)).toMatchObject({
       tripMode: 'custom',
-      windTakeCareAt: 4.6,
-      windDangerGap: 1.6,
+      windLimit: 4.6,
       daylightOnly: false,
     });
-    expect(storedRecord(CUSTOM_SETTINGS_STORAGE_KEY)).not.toHaveProperty('windDangerAt');
+    expect(storedRecord(CUSTOM_SETTINGS_STORAGE_KEY)).not.toHaveProperty('windDangerGap');
   });
 
   it('keeps the save warning visible when only the remembered Custom slot fails', async () => {
-    const initial = customSettings({ windTakeCareAt: 5.5 });
+    const initial = customSettings({ windLimit: 5.5 });
     localStorage.setItem(SETTINGS_STORAGE_KEY, serializeStoredSettings(initial));
     localStorage.setItem(CUSTOM_SETTINGS_STORAGE_KEY, serializeStoredSettings(initial));
     await renderHook();
@@ -352,20 +337,20 @@ describe('useSettings persistence lifecycle', () => {
 
     await act(async () => current.saveSettings({
       ...current.settings,
-      windTakeCareAt: 4.1,
+      windLimit: 4.1,
     }));
     await flushSettingsWrite();
 
     // The active record fit, but that success must not hide loss of the
     // remembered profile that selecting a preset will make authoritative.
-    expect(storedRecord(SETTINGS_STORAGE_KEY)).toMatchObject({ windTakeCareAt: 4.1 });
-    expect(storedRecord(CUSTOM_SETTINGS_STORAGE_KEY)).toMatchObject({ windTakeCareAt: 5.5 });
+    expect(storedRecord(SETTINGS_STORAGE_KEY)).toMatchObject({ windLimit: 4.1 });
+    expect(storedRecord(CUSTOM_SETTINGS_STORAGE_KEY)).toMatchObject({ windLimit: 5.5 });
     expect(current.saveFailed).toBe(true);
 
     await act(async () => current.setTripMode('pro'));
     await flushSettingsWrite();
     expect(storedRecord(SETTINGS_STORAGE_KEY)).toMatchObject({ tripMode: 'pro' });
-    expect(storedRecord(CUSTOM_SETTINGS_STORAGE_KEY)).toMatchObject({ windTakeCareAt: 5.5 });
+    expect(storedRecord(CUSTOM_SETTINGS_STORAGE_KEY)).toMatchObject({ windLimit: 5.5 });
     expect(current.saveFailed).toBe(true);
 
     // Once that specific channel can persist again, its successful retry owns
@@ -375,15 +360,14 @@ describe('useSettings persistence lifecycle', () => {
     });
     await act(async () => current.setTripMode('custom'));
     await flushSettingsWrite();
-    expect(storedRecord(CUSTOM_SETTINGS_STORAGE_KEY)).toMatchObject({ windTakeCareAt: 4.1 });
+    expect(storedRecord(CUSTOM_SETTINGS_STORAGE_KEY)).toMatchObject({ windLimit: 4.1 });
     expect(current.saveFailed).toBe(false);
   });
 
   it('remembers one location-scoped Custom profile across built-in mode changes', async () => {
     localStorage.setItem(SETTINGS_STORAGE_KEY, serializeStoredSettings(DEFAULT_SETTINGS));
     localStorage.setItem(CUSTOM_SETTINGS_STORAGE_KEY, serializeStoredSettings(customSettings({
-      windTakeCareAt: 3.9,
-      windDangerGap: 1.4,
+      windLimit: 3.9,
       daylightOnly: false,
     })));
 
@@ -391,34 +375,29 @@ describe('useSettings persistence lifecycle', () => {
     await act(async () => current.setTripMode('custom'));
     expect(current.settings).toMatchObject({
       tripMode: 'custom',
-      windTakeCareAt: 3.9,
-      windDangerGap: 1.4,
+      windLimit: 3.9,
       daylightOnly: false,
     });
-    expect(getWindDangerAt(current.settings)).toBe(5.3);
 
     await act(async () => current.setTripMode('pro'));
     await act(async () => current.setTripMode('custom'));
     expect(current.settings).toMatchObject({
       tripMode: 'custom',
-      windTakeCareAt: 3.9,
-      windDangerGap: 1.4,
+      windLimit: 3.9,
       daylightOnly: false,
     });
-    expect(getWindDangerAt(current.settings)).toBe(5.3);
     await flushSettingsWrite();
     expect(storedRecord(CUSTOM_SETTINGS_STORAGE_KEY)).toMatchObject({
       tripMode: 'custom',
-      windTakeCareAt: 3.9,
-      windDangerGap: 1.4,
+      windLimit: 3.9,
       daylightOnly: false,
     });
-    expect(storedRecord(CUSTOM_SETTINGS_STORAGE_KEY)).not.toHaveProperty('windDangerAt');
+    expect(storedRecord(CUSTOM_SETTINGS_STORAGE_KEY)).not.toHaveProperty('windDangerGap');
   });
 
   it('merges an incoming storage event with a local field edit that is still pending', async () => {
     const initial = customSettings({
-      windTakeCareAt: 5.5,
+      windLimit: 5.5,
       daylightOnly: true,
     });
     localStorage.setItem(SETTINGS_STORAGE_KEY, serializeStoredSettings(initial));
@@ -428,10 +407,10 @@ describe('useSettings persistence lifecycle', () => {
     await act(async () => {
       // This field has changed locally, but the 250ms persistence debounce has
       // not fired yet when the sibling tab publishes a different field.
-      current.saveSettings({ ...current.settings, windTakeCareAt: 4.0 });
+      current.saveSettings({ ...current.settings, windLimit: 4.0 });
 
       const remote = customSettings({
-        windTakeCareAt: 5.5,
+        windLimit: 5.5,
         daylightOnly: false,
       });
       const remoteValue = serializeStoredSettings(remote);
@@ -453,26 +432,26 @@ describe('useSettings persistence lifecycle', () => {
     // dropping the not-yet-persisted local field.
     expect(current.settings).toMatchObject({
       tripMode: 'custom',
-      windTakeCareAt: 4.0,
+      windLimit: 4.0,
       daylightOnly: false,
     });
 
     await flushSettingsWrite();
     expect(storedRecord(SETTINGS_STORAGE_KEY)).toMatchObject({
       tripMode: 'custom',
-      windTakeCareAt: 4.0,
+      windLimit: 4.0,
       daylightOnly: false,
     });
     expect(storedRecord(CUSTOM_SETTINGS_STORAGE_KEY)).toMatchObject({
       tripMode: 'custom',
-      windTakeCareAt: 4.0,
+      windLimit: 4.0,
       daylightOnly: false,
     });
   });
 
   it('merges independent concurrent tab edits against the newest stored fields', async () => {
     const initial = customSettings({
-      windTakeCareAt: 5.5,
+      windLimit: 5.5,
       daylightOnly: true,
     });
     localStorage.setItem(SETTINGS_STORAGE_KEY, serializeStoredSettings(initial));
@@ -490,7 +469,7 @@ describe('useSettings persistence lifecycle', () => {
     try {
       await renderPair();
       await act(async () => {
-        pair[0].saveSettings({ ...pair[0].settings, windTakeCareAt: 4.0 });
+        pair[0].saveSettings({ ...pair[0].settings, windLimit: 4.0 });
         pair[1].saveSettings({ ...pair[1].settings, daylightOnly: false });
       });
       await flushSettingsWrite();
@@ -498,12 +477,12 @@ describe('useSettings persistence lifecycle', () => {
       const persisted = storedRecord(SETTINGS_STORAGE_KEY);
       expect(persisted).toMatchObject({
         tripMode: 'custom',
-        windTakeCareAt: 4.0,
+        windLimit: 4.0,
         daylightOnly: false,
       });
       expect(storedRecord(CUSTOM_SETTINGS_STORAGE_KEY)).toMatchObject({
         tripMode: 'custom',
-        windTakeCareAt: 4.0,
+        windLimit: 4.0,
         daylightOnly: false,
       });
       expect(lockRequest).toHaveBeenCalledTimes(2);
@@ -519,8 +498,8 @@ describe('useSettings persistence lifecycle', () => {
           storageArea: localStorage,
         }));
       });
-      expect(pair[0].settings).toMatchObject({ windTakeCareAt: 4.0, daylightOnly: false });
-      expect(pair[1].settings).toMatchObject({ windTakeCareAt: 4.0, daylightOnly: false });
+      expect(pair[0].settings).toMatchObject({ windLimit: 4.0, daylightOnly: false });
+      expect(pair[1].settings).toMatchObject({ windLimit: 4.0, daylightOnly: false });
     } finally {
       Reflect.deleteProperty(navigator, 'locks');
     }

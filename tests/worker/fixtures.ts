@@ -25,8 +25,7 @@ export function makeLocation(
       exposure: 'onshore',
       min: 45,
       max: 135,
-      takeCareAt: 6,
-      dangerAt: 9,
+      maximumAt: 9,
     }],
     ...overrides,
   };

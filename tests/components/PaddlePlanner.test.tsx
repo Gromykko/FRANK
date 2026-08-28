@@ -97,6 +97,8 @@ describe('PaddlePlanner outlook ranges', () => {
 
     expect(host.querySelector('.tide-conditions')?.textContent)
       .toContain('2–5 m/s wind · 0.10–0.40 m waves');
+    expect(host.querySelector('.tide-tag')?.textContent).toBe('outlook · more uncertain forecast');
+    expect(host.textContent).not.toContain('no gust forecast');
 
     await act(async () => {
       host.querySelector<HTMLButtonElement>('.tide-share')!.click();
@@ -105,6 +107,13 @@ describe('PaddlePlanner outlook ranges', () => {
     expect(share).toHaveBeenCalledOnce();
     expect(share.mock.calls[0]?.[0]?.text)
       .toContain('Wind 2–5 m/s, waves 0.10–0.40 m.');
+
+    await act(async () => {
+      [...host.querySelectorAll<HTMLButtonElement>('.view-toggle button')]
+        .find((button) => button.textContent === 'Calendar')!
+        .click();
+    });
+    expect(host.querySelector('.gantt-bar')?.getAttribute('aria-label')).not.toContain('no gust forecast');
   });
 });
 
@@ -136,5 +145,54 @@ describe('PaddlePlanner empty state', () => {
     const text = await renderEmpty();
     expect(text).toContain('never 3 hrs in a row');
     expect(text).not.toContain('water level');
+  });
+
+  it('names missing gusts only when an outlook window actually lacks them', async () => {
+    const data = [
+      { ...block('2026-08-20T06:00:00Z', 2.1, 0.1), windGust: Number.NaN },
+      { ...block('2026-08-20T12:00:00Z', 4.9, 0.4), windGust: Number.NaN },
+    ];
+    const window: LaunchWindow = {
+      startIndex: 0,
+      endIndex: 0,
+      duration: 6,
+      lowConfidence: true,
+    };
+
+    await act(async () => {
+      root.render(
+        <LanguageProvider>
+          <PaddlePlanner
+            data={data}
+            statuses={['safe', 'safe']}
+            limitsOff={false}
+            windows={[window]}
+            warnings={[]}
+            sunrises={[]}
+            sunsets={[]}
+            onSelectIndex={vi.fn()}
+            startIndex={0}
+            minDuration={2}
+          />
+        </LanguageProvider>,
+      );
+    });
+
+    expect(host.querySelector('.tide-tag')?.textContent).toBe('outlook · no gust forecast');
+    expect(host.textContent).toContain('Longer-range outlook — no gust forecast and more uncertain.');
+
+    await act(async () => {
+      [...host.querySelectorAll<HTMLButtonElement>('.view-toggle button')]
+        .find((button) => button.textContent === 'Calendar')!
+        .click();
+    });
+    const bar = host.querySelector<HTMLButtonElement>('.gantt-bar');
+    expect(bar?.getAttribute('aria-label')).toContain('no gust forecast');
+
+    await act(async () => {
+      bar!.click();
+    });
+    expect(host.querySelector('.gantt-selection-confidence')?.textContent)
+      .toBe('No gust forecast · more uncertain forecast');
   });
 });

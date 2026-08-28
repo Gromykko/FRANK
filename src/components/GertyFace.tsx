@@ -27,7 +27,7 @@ const MOUTHS: Record<DisplayStatus, string[]> = {
   // No verdict: at rest, not pleased. A narrow upturned mouth on a grey face
   // reads as a held smile rather than a friendly one - the expression a machine
   // wears when it wants something. A short level line says the device is on and
-  // has no opinion, which is what Weather mode means. The wide flat line is
+  // has no opinion, which is what Weather-only mode means. The wide flat line is
   // 'caution'; this one is half its width.
   none: [
     '................',

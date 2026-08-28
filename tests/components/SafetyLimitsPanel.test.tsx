@@ -6,7 +6,7 @@ import { getPresetSettings } from '../../src/features/safety/presets';
 import { LanguageProvider } from '../../src/i18n';
 
 describe('SafetyLimitsPanel terminology', () => {
-  it('shows the live Take care boundaries and unambiguous wind/wave controls', async () => {
+  it('shows one explicit maximum for wind, waves, and each optional sector', async () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
     localStorage.setItem('frank_lang', 'en');
     const host = document.createElement('div');
@@ -33,42 +33,38 @@ describe('SafetyLimitsPanel terminology', () => {
         host.querySelector<HTMLButtonElement>('.advanced-toggle')!.click();
       });
 
-      expect(host.textContent).toContain('Wind — Take care from');
+      expect(host.textContent).toContain('Maximum wind');
       expect(host.textContent).toContain('Beginner, Intermediate, Advanced');
-      expect(host.textContent).toContain('Waves — Take care from');
-      expect(host.textContent).toContain('Take care from');
-      expect(host.textContent).toContain('Danger from');
-      expect(host.textContent).toContain('Take care from 6.0 m/s; +2.0 m/s sets Danger from 8.0 m/s.');
-      expect(host.textContent).toContain('Gusts in verdict');
-      expect(host.textContent).toContain("Checks forecast gusts against FRANK's separate 1.6x band: Take care from 9.6 m/s and Danger from 12.8 m/s.");
-      expect(host.textContent).toContain('Take care from 0.30 m; +0.70 m sets Danger from 1.00 m.');
-      expect(host.textContent).not.toContain('Max Wind');
-      expect(host.textContent).not.toContain('Max Wave');
-      expect(host.textContent).not.toContain('Safe cap');
+      expect(host.textContent).toContain('Maximum waves');
+      expect(host.textContent).toContain('Include forecast gusts');
+      expect(host.textContent).toContain('Derived maximum 12.8 m/s (1.6× the wind maximum).');
+      expect(host.textContent).toContain('Check below 15°C · Not recommended at or below 10°C');
+      expect(host.textContent).not.toContain('Cold-water margin');
+      expect(host.textContent).not.toContain('Gap to Danger');
+      expect(host.textContent).not.toContain('Wind — Take care from');
+      expect(host.textContent).not.toContain('Waves — Take care from');
       expect(host.querySelector('.advanced-toggle')?.textContent).not.toContain('water level');
       expect(host.textContent).not.toContain('Preferred water level for launching');
       expect(host.textContent).not.toContain('Any Level');
       expect(host.textContent).not.toContain('High Water');
       expect(host.textContent).not.toContain('Low Water');
       expect(host.textContent).not.toContain('Rising');
+      expect(host.querySelectorAll('.zone-bar.is-maximum')).toHaveLength(2);
 
       const labels = [...host.querySelectorAll('[aria-label]')]
         .map((element) => element.getAttribute('aria-label'));
       expect(labels).not.toContain('Water level');
       expect(labels).toContain('Wind limit enabled');
-      expect(labels).toContain('Include gusts in verdict');
-      expect(labels).toContain('Apply optional FRANK wind-sector caps');
+      expect(labels).toContain('Include forecast gusts');
+      expect(labels).toContain('Apply optional wind-sector limits');
       expect(labels).toContain('Wave-height limit enabled');
-      expect(labels).toContain('Use Take care wave band in verdict');
-      expect(labels).toContain('Increase wind Take care threshold; Danger stays 2.0 m/s above');
-      expect(labels).toContain('Increase wind Take care-to-Danger gap');
-      expect(labels).toContain('Increase wave Take care threshold; Danger stays 0.70 m above');
-      expect(labels).toContain('Increase wave Take care-to-Danger gap');
-      expect(labels.some((label) => label?.includes('Take care threshold'))).toBe(true);
-      expect(
-        labels.some((label) => label?.toLowerCase().includes('danger threshold')),
-        labels.join('\n'),
-      ).toBe(true);
+      expect(labels).toContain('Increase Maximum wind');
+      expect(labels).toContain('Increase Maximum waves');
+      expect(labels).toContain('Increase water temperature check boundary');
+      expect(labels).toContain('Increase water temperature Not recommended boundary');
+      expect(labels).toContain('Increase Easterly maximum wind');
+      expect(labels).toContain('Increase Westerly maximum wind');
+      expect(labels).not.toContain('Use Take care wave band in verdict');
 
       const sectors = [...host.querySelectorAll<HTMLElement>('.sector-block')];
       expect(sectors).toHaveLength(2);
@@ -79,18 +75,18 @@ describe('SafetyLimitsPanel terminology', () => {
       expect(sectors[1].textContent).toContain('Westerly');
       expect(sectors[1].textContent).toContain('from W');
       expect(sectors[1].textContent?.match(/offshore/gi)).toHaveLength(1);
-      expect(host.textContent).toContain('optional FRANK estimates for a broad area');
-      expect(host.textContent).toContain('not current limits published by a kayak club');
+      expect(host.textContent).toContain('broad FRANK estimates');
+      expect(host.textContent).toContain('not current kayak-club rules');
 
       // All judged profiles start with the optional sector rule off. Its fixed
       // bearings and speeds remain visible for inspection, but cannot be edited
       // until the user explicitly opts in.
       expect(host.querySelector('.sector-panel')?.getAttribute('aria-disabled')).toBe('true');
-      expect(host.querySelector<HTMLButtonElement>('[aria-label="Increase Easterly Take care threshold"]')?.disabled).toBe(true);
-      expect(host.querySelector<HTMLButtonElement>('[aria-label="Increase Westerly danger threshold"]')?.disabled).toBe(true);
+      expect(host.querySelector<HTMLButtonElement>('[aria-label="Increase Easterly maximum wind"]')?.disabled).toBe(true);
+      expect(host.querySelector<HTMLButtonElement>('[aria-label="Increase Westerly maximum wind"]')?.disabled).toBe(true);
 
       await act(async () => {
-        host.querySelector<HTMLButtonElement>('[aria-label="Apply optional FRANK wind-sector caps"]')!.click();
+        host.querySelector<HTMLButtonElement>('[aria-label="Apply optional wind-sector limits"]')!.click();
       });
       expect(updateSettings).toHaveBeenLastCalledWith(expect.objectContaining({
         tripMode: 'custom',
@@ -104,7 +100,7 @@ describe('SafetyLimitsPanel terminology', () => {
     }
   });
 
-  it('keeps each configured gap attached when either linked threshold moves', async () => {
+  it('edits the wind and wave maximums directly with no derived gap fields', async () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
     localStorage.setItem('frank_lang', 'en');
     const host = document.createElement('div');
@@ -117,7 +113,11 @@ describe('SafetyLimitsPanel terminology', () => {
         root.render(
           <LanguageProvider>
             <SafetyLimitsPanel
-              settings={getPresetSettings('default')}
+              settings={{
+                ...getPresetSettings('default'),
+                waterTempTakeCareBelow: 10,
+                waterTempDangerBelow: 8,
+              }}
               updateSettings={updateSettings}
               saveFailed={false}
             />
@@ -135,21 +135,27 @@ describe('SafetyLimitsPanel terminology', () => {
         return updateSettings.mock.calls.at(-1)?.[0];
       };
 
-      const windTakeCareUpdate = await click('Increase wind Take care threshold; Danger stays 2.0 m/s above');
-      expect(windTakeCareUpdate).toMatchObject({ windTakeCareAt: 6.5, windDangerGap: 2.0 });
-      expect(windTakeCareUpdate).not.toHaveProperty('windDangerAt');
+      const windUpdate = await click('Increase Maximum wind');
+      expect(windUpdate).toMatchObject({ windLimit: 8.5 });
+      expect(windUpdate).not.toHaveProperty('windTakeCareAt');
+      expect(windUpdate).not.toHaveProperty('windDangerGap');
 
-      const windGapUpdate = await click('Increase wind Take care-to-Danger gap');
-      expect(windGapUpdate).toMatchObject({ windTakeCareAt: 6.0, windDangerGap: 2.5 });
-      expect(windGapUpdate).not.toHaveProperty('windDangerAt');
+      const waveUpdate = await click('Increase Maximum waves');
+      expect(waveUpdate).toMatchObject({ waveLimit: 1.05 });
+      expect(waveUpdate).not.toHaveProperty('waveTakeCareAt');
+      expect(waveUpdate).not.toHaveProperty('waveDangerGap');
 
-      const waveTakeCareUpdate = await click('Increase wave Take care threshold; Danger stays 0.70 m above');
-      expect(waveTakeCareUpdate).toMatchObject({ waveTakeCareAt: 0.35, waveDangerGap: 0.7 });
-      expect(waveTakeCareUpdate).not.toHaveProperty('waveDangerAt');
+      const checkTemperatureUpdate = await click('Decrease water temperature check boundary');
+      expect(checkTemperatureUpdate).toMatchObject({
+        waterTempTakeCareBelow: 9,
+        waterTempDangerBelow: 8,
+      });
 
-      const waveGapUpdate = await click('Increase wave Take care-to-Danger gap');
-      expect(waveGapUpdate).toMatchObject({ waveTakeCareAt: 0.3, waveDangerGap: 0.75 });
-      expect(waveGapUpdate).not.toHaveProperty('waveDangerAt');
+      const notRecommendedTemperatureUpdate = await click('Increase water temperature Not recommended boundary');
+      expect(notRecommendedTemperatureUpdate).toMatchObject({
+        waterTempTakeCareBelow: 10,
+        waterTempDangerBelow: 9,
+      });
     } finally {
       await act(async () => root.unmount());
       host.remove();
@@ -185,8 +191,51 @@ describe('SafetyLimitsPanel terminology', () => {
       });
 
       expect(host.querySelector('.sector-panel')?.getAttribute('aria-disabled')).toBe('false');
-      expect(host.querySelector<HTMLButtonElement>('[aria-label="Increase Easterly Take care threshold"]')?.disabled).toBe(false);
-      expect(host.querySelector<HTMLButtonElement>('[aria-label="Increase Westerly danger threshold"]')?.disabled).toBe(false);
+      expect(host.querySelector<HTMLButtonElement>('[aria-label="Increase Easterly maximum wind"]')?.disabled).toBe(false);
+      expect(host.querySelector<HTMLButtonElement>('[aria-label="Increase Westerly maximum wind"]')?.disabled).toBe(false);
+    } finally {
+      await act(async () => root.unmount());
+      host.remove();
+      localStorage.clear();
+      globalThis.IS_REACT_ACT_ENVIRONMENT = false;
+    }
+  });
+
+  it('keeps the optional sector controls subordinate to the main wind switch', async () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    localStorage.setItem('frank_lang', 'en');
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+
+    try {
+      await act(async () => {
+        root.render(
+          <LanguageProvider>
+            <SafetyLimitsPanel
+              settings={{
+                ...getPresetSettings('default'),
+                enableWindSpeed: false,
+                enableCustomWindDirs: true,
+              }}
+              updateSettings={vi.fn()}
+              saveFailed={false}
+            />
+          </LanguageProvider>,
+        );
+      });
+      await act(async () => {
+        host.querySelector<HTMLButtonElement>('.collapse-title-btn')!.click();
+      });
+      await act(async () => {
+        host.querySelector<HTMLButtonElement>('.advanced-toggle')!.click();
+      });
+
+      const sectorToggle = host.querySelector<HTMLButtonElement>('[aria-label="Apply optional wind-sector limits"]');
+      expect(sectorToggle?.disabled).toBe(true);
+      expect(sectorToggle?.getAttribute('aria-checked')).toBe('false');
+      expect(host.querySelector('.sector-panel')?.getAttribute('aria-disabled')).toBe('true');
+      expect(host.querySelector<HTMLButtonElement>('[aria-label="Increase Easterly maximum wind"]')?.disabled).toBe(true);
     } finally {
       await act(async () => root.unmount());
       host.remove();

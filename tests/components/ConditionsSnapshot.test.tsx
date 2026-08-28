@@ -31,6 +31,7 @@ const props = {
   sunset: '21.04',
   reasons: [{ severity: 'danger' as const, text: 'Heavy rain and thunder.' }],
   rating: 'danger' as const,
+  gustCheckEnabled: true,
 };
 
 function renderSnapshot(danish = false) {
@@ -85,11 +86,36 @@ describe('ConditionsSnapshot', () => {
       .toEqual(['Retning', 'Dagslys']);
   });
 
+  it('says when a displayed gust is excluded from the verdict', () => {
+    const container = document.createElement('div');
+    container.innerHTML = renderToStaticMarkup(
+      <ConditionsSnapshot {...props} gustCheckEnabled={false} />,
+    );
+
+    expect(container.querySelector('.snapshot-gust-disclosure')?.textContent)
+      .toBe('Gusts not included in verdict');
+    expect(container.querySelector('.snapshot-wind > .sr-only')?.textContent)
+      .toBe('25.5 m/s, gusts 35.0. Gusts not included in verdict.');
+  });
+
+  it('localises the gust-check disclosure', () => {
+    const container = document.createElement('div');
+    container.innerHTML = renderToStaticMarkup(
+      <LanguageProvider>
+        <ConditionsSnapshot {...props} gustCheckEnabled={false} />
+      </LanguageProvider>,
+    );
+
+    expect(container.querySelector('.snapshot-gust-disclosure')?.textContent)
+      .toBe('Vindstød indgår ikke i vurderingen');
+  });
+
   it('keeps outlook ranges and daylight in the same four-row structure', () => {
     const container = document.createElement('div');
     container.innerHTML = renderToStaticMarkup(
       <ConditionsSnapshot
         {...props}
+        gustCheckEnabled={false}
         data={{
           ...baseData,
           blockSpanHours: 6,
@@ -117,6 +143,7 @@ describe('ConditionsSnapshot', () => {
     expect(container.querySelector('.snapshot-sun')?.textContent).toContain('05.45');
     expect(container.querySelector('.snapshot-wind > .sr-only')?.textContent)
       .toBe('4.3 m/s, gusts –');
+    expect(container.querySelector('.snapshot-gust-disclosure')).toBeNull();
     // The note says the outlook is less certain and stops there. It used to
     // append MET's 90th-percentile wind, which is an uncertainty estimate at the
     // block START rather than a period maximum - a distinction that needs a
