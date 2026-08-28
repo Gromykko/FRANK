@@ -339,12 +339,12 @@ export default function SafetyManualModal({ settings, onClose }: SafetyManualMod
 
           <div>
             <h3 className="manual-h">{t('9. Launch windows')}</h3>
-            <p className="manual-p">{t('A green launch window is an unbroken run that stays below every automatic check point and passes every other active check. FRANK lists near-limit periods separately as Check before launch alternatives instead of calling them green windows:')}</p>
+            <p className="manual-p">{t('A launch window is an unbroken green run that stays below every automatic check point and passes every other active check. Periods rated Check before launch remain visible in the forecast, but are not listed as launch windows:')}</p>
             <ul className="manual-list">
               <li><strong>{t('Minimum duration:')}</strong> {t('runs shorter than your Min Duration setting are not shown.')}</li>
-              <li><strong>{t('Near a maximum:')}</strong> {t('an amber alternative contains at least one wind, gust, wave, or active sector reading from its automatic check point through its maximum, with no other caution or Not recommended result. The card shows the exact headroom.')}</li>
+              <li><strong>{t('Check before launch periods:')}</strong> {t('these stay amber in the full forecast so you can inspect the reason, but they are not promoted into the green launch-window list.')}</li>
               <li><strong>{t('Day boundaries:')}</strong> {t('a continuous hourly window can cross local midnight. The calendar draws its pieces on the matching days, and the list names the end day when needed.')}</li>
-              <li><strong>{t('Longer range:')}</strong> {t('beyond the hourly forecast, coarser outlook blocks (6 hours, occasionally 12) form windows from the readings available in each block. Gusts are not published there. These windows are marked "more uncertain forecast"; treat them as hints, not commitments.')}</li>
+              <li><strong>{t('Longer range:')}</strong> {t('beyond the hourly forecast, coarser outlook blocks (6 hours, occasionally 12) form windows from the readings available in each block. Gusts are not published there. These windows are marked "Outlook"; treat them as planning hints, not commitments.')}</li>
             </ul>
           </div>
 

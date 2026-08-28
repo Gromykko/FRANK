@@ -13,10 +13,7 @@ import { getWorkerContactMs } from './features/forecast/cache';
 import { formatTime, formatDateTime, locationDateKey } from './utils/date';
 import { compassPoint } from './utils/compass';
 import { NO_READING_TEXT } from './utils/number';
-import {
-  findLaunchWindows,
-  findNearLimitWindows,
-} from './features/planner/findLaunchWindows';
+import { findLaunchWindows } from './features/planner/findLaunchWindows';
 import { useForecast } from './features/forecast/useForecast';
 import TimelineBar from './components/TimelineBar';
 import PaddlePlanner from './components/PaddlePlanner';
@@ -140,18 +137,6 @@ export default function App() {
   const launchWindows = useMemo(
     () =>
       findLaunchWindows(
-        displayHourlyData,
-        settings,
-        nowIndex,
-        sunTimes,
-        nowMs,
-      ),
-    [displayHourlyData, settings, nowIndex, sunTimes, nowMs]
-  );
-
-  const nearLimitWindows = useMemo(
-    () =>
-      findNearLimitWindows(
         displayHourlyData,
         settings,
         nowIndex,
@@ -406,10 +391,8 @@ export default function App() {
           {/* ④ Launch windows — "when can I go?" */}
           <PaddlePlanner
             data={displayHourlyData}
-            analyses={allAnalyses}
             statuses={allStatuses}
             windows={launchWindows}
-            nearLimitWindows={nearLimitWindows}
             warnings={weatherData.warnings}
             sunrises={weatherData.sunrise}
             sunsets={weatherData.sunset}

@@ -138,8 +138,8 @@ describe('Danish dictionary covers every translated literal', () => {
       .toBe('Tjek fra {0} {1} · frarådes over {2} {1}');
     expect(da['Wave height is from its automatic check point through your selected maximum.'])
       .toBe('Bølgehøjden ligger fra sit automatiske kontrolpunkt til og med dit valgte maksimum.');
-    expect(da['Near a maximum:']).toBe('Tæt på maksimum:');
-    expect(da['These periods are not green launch windows. At least one forecast value has reached its automatic check point. Each card shows the exact headroom; open it to see the full forecast.'])
-      .toContain('ikke grønne rovinduer');
+    expect(da['Check before launch periods:']).toBe('Perioder, der skal tjekkes:');
+    expect(da['these stay amber in the full forecast so you can inspect the reason, but they are not promoted into the green launch-window list.'])
+      .toContain('de bliver ikke gjort til grønne rovinduer');
   });
 });

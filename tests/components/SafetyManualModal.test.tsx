@@ -87,9 +87,9 @@ describe('SafetyManualModal profile evidence', () => {
     expect(host.textContent).not.toContain('Low Water Filter');
     expect(host.textContent).not.toContain('Rising Only');
     expect(host.textContent).toContain('9. Launch windows');
-    expect(host.textContent).toContain('A green launch window is an unbroken run that stays below every automatic check point');
-    expect(host.textContent).toContain('FRANK lists near-limit periods separately as Check before launch alternatives');
-    expect(host.textContent).toContain('an amber alternative contains at least one wind, gust, wave, or active sector reading from its automatic check point through its maximum');
+    expect(host.textContent).toContain('A launch window is an unbroken green run that stays below every automatic check point');
+    expect(host.textContent).toContain('Periods rated Check before launch remain visible in the forecast, but are not listed as launch windows');
+    expect(host.textContent).toContain('they are not promoted into the green launch-window list');
     expect(host.textContent).not.toContain('Wind-against-Water-Level');
     expect(host.textContent).not.toContain('wind-against-water clash');
     expect(host.textContent).not.toContain('detect rising or falling water');
@@ -123,8 +123,8 @@ describe('SafetyManualModal profile evidence', () => {
     expect(host.textContent).toContain('Hver vejrbeskrivelse beholder sin præcise betydning');
     expect(host.textContent).toContain('Bølgehøjden ligger fra sit automatiske kontrolpunkt til og med dit valgte maksimum.');
     expect(host.textContent).toContain('FRANK beregner punktet ved 80 % og afrunder det til samme præcision som prognosen.');
-    expect(host.textContent).toContain('Et grønt rovindue er et ubrudt forløb');
-    expect(host.textContent).toContain('FRANK viser perioder tæt på maksimum særskilt');
+    expect(host.textContent).toContain('Et rovindue er et ubrudt grønt forløb');
+    expect(host.textContent).toContain('Perioder med Tjek før du tager på vandet kan stadig ses i prognosen, men vises ikke som rovinduer');
     expect(host.textContent).toContain('Prognosepunkter og modelgitre');
     expect(host.textContent).toContain('Se alle vejrvurderinger (41 forhold)');
     expect(host.textContent).toContain('Kraftige regnbyger eller kraftig regn');

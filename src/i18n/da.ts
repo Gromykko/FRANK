@@ -347,8 +347,6 @@ export const da: Record<string, string> = {
     'Nogle timer ligger inden for dine grænser, men aldrig {0} i træk. Sænk minimumsvarigheden under Dine grænser, eller prøv en anden turprofil.',
   'No launch windows fit all your selected checks yet. Open an hour to see what needs attention, or check again after the forecast updates.':
     'Der er endnu ingen rovinduer, som opfylder alle dine valgte tjek. Åbn en time for at se, hvad du skal være opmærksom på, eller tjek igen, når prognosen er opdateret.',
-  'No green launch windows fit every check. Near-limit alternatives are listed below for you to review.':
-    'Ingen grønne rovinduer opfylder alle tjek. Alternativer tæt på maksimum vises nedenfor, så du selv kan vurdere dem.',
   'Your personal limits are switched off, so there is nothing to measure the forecast against and no window can be recommended. Turn a limit back on to see suggested windows.':
     'Dine personlige grænser er slået fra, så der er intet at måle prognosen op imod, og intet vindue kan anbefales. Slå en grænse til igen for at se foreslåede vinduer.',
   'No enabled check was triggered: {0}, {1}, {2}. Not checked: {3}.':
@@ -368,12 +366,8 @@ export const da: Record<string, string> = {
   '{0} hr {1} min': '{0} time {1} min',
   '{0} hrs {1} min': '{0} timer {1} min',
   'outlook': 'udsigt',
-  'outlook · no gust forecast': 'udsigt · ingen vindstødsprognose',
-  'outlook · more uncertain forecast': 'udsigt · mere usikker prognose',
-  'Outlook window, approximately {0}:00 to {1}:00 — more uncertain forecast':
-    'Udsigtsvindue, cirka {0}:00 til {1}:00 — mere usikker prognose',
-  'Outlook window, approximately {0}:00 to {1}:00 — no gust forecast and more uncertain':
-    'Udsigtsvindue, cirka {0}:00 til {1}:00 — ingen vindstødsprognose og større usikkerhed',
+  'Outlook window, approximately {0}:00 to {1}:00':
+    'Udsigtsvindue, cirka {0}:00 til {1}:00',
   'Launch window {0}:00 to {1}:00, {2}': 'Rovindue {0}:00 til {1}:00, {2}',
   'Launch window {0} to {1}, {2}': 'Rovindue {0} til {1}, {2}',
   ', partly outside daylight': ', delvist uden for dagslys',
@@ -384,22 +378,13 @@ export const da: Record<string, string> = {
   'Ends near sunset ({0})': 'Slutter nær solnedgang ({0})',
   "A DMI {0} warning for {1} overlaps this window — it doesn't change this window's verdict; see the warning banner and DMI for details":
     '{0} DMI-varsel for {1} overlapper dette vindue — det ændrer ikke vinduets vurdering; se varselsbanneret og DMI for detaljer',
-  'Longer-range outlook — more uncertain forecast.': 'Langtidsudsigt — mere usikker prognose.',
-  'Longer-range outlook — no gust forecast and more uncertain.': 'Langtidsudsigt — ingen vindstødsprognose og større usikkerhed.',
-  'No gust forecast · more uncertain forecast': 'Ingen vindstødsprognose · mere usikker prognose',
   'Tap to show this window in the graph.': 'Tryk for at vise dette vindue i grafen.',
   'Share this launch window': 'Del dette rovindue',
   'Launch window': 'Rovindue',
-  'Outlook · more uncertain forecast': 'Udsigt · mere usikker prognose',
-  'More uncertain forecast': 'Mere usikker prognose',
   'Night': 'Nat',
   'Now': 'Nu',
   'Launch windows by day, {0} days': 'Rovinduer pr. dag, {0} dage',
   'Selected window': 'Valgt rovindue',
-  'These periods are not green launch windows. At least one forecast value has reached its automatic check point. Each card shows the exact headroom; open it to see the full forecast.':
-    'Disse perioder er ikke grønne rovinduer. Mindst én prognoseværdi har nået sit automatiske kontrolpunkt. Hvert kort viser den præcise afstand til maksimum; åbn det for at se hele prognosen.',
-  'Open this period in the full forecast.':
-    'Åbn denne periode i hele prognosen.',
 
   // ── WeatherCharts ─────────────────────────────────────────────────────────
   'Show limits': 'Vis grænser',
@@ -728,18 +713,18 @@ export const da: Record<string, string> = {
   'Many clubs require navigation lights and permission between sunset and sunrise. When the daylight rule is on, FRANK marks those hours Check before launch. You can turn it off if your own rules allow night paddling. A longer-range outlook block gets the same result unless its whole period is in daylight. Launch windows work differently: FRANK removes periods with no complete daylight hour and shows only the longest continuous daylight part of a partial period.':
     'Mange klubber kræver lanterner og tilladelse mellem solnedgang og solopgang. Når dagslysreglen er slået til, markeres de timer med Tjek før du tager på vandet. Du kan slå reglen fra, hvis dine egne regler tillader natroning. En blok i langtidsudsigten får samme vurdering, medmindre hele perioden ligger i dagslys. Rovinduer fungerer anderledes: FRANK fjerner perioder uden en hel time i dagslys og viser kun den længste sammenhængende del af en delvis periode, der ligger i dagslys.',
   '9. Launch windows': '9. Rovinduer',
-  'A green launch window is an unbroken run that stays below every automatic check point and passes every other active check. FRANK lists near-limit periods separately as Check before launch alternatives instead of calling them green windows:':
-    'Et grønt rovindue er et ubrudt forløb, som ligger under alle automatiske kontrolpunkter og består alle andre aktive tjek. FRANK viser perioder tæt på maksimum særskilt som alternativer med Tjek før du tager på vandet i stedet for at kalde dem grønne rovinduer:',
+  'A launch window is an unbroken green run that stays below every automatic check point and passes every other active check. Periods rated Check before launch remain visible in the forecast, but are not listed as launch windows:':
+    'Et rovindue er et ubrudt grønt forløb, som ligger under alle automatiske kontrolpunkter og består alle andre aktive tjek. Perioder med Tjek før du tager på vandet kan stadig ses i prognosen, men vises ikke som rovinduer:',
   'Minimum duration:': 'Minimumsvarighed:',
   'runs shorter than your Min Duration setting are not shown.': 'forløb kortere end din min varighed vises ikke.',
-  'Near a maximum:': 'Tæt på maksimum:',
-  'an amber alternative contains at least one wind, gust, wave, or active sector reading from its automatic check point through its maximum, with no other caution or Not recommended result. The card shows the exact headroom.':
-    'et gult alternativ indeholder mindst én måling af vind, vindstød, bølger eller en aktiv sektor fra sit automatiske kontrolpunkt til og med maksimum uden andre gule eller røde resultater. Kortet viser den præcise afstand til maksimum.',
+  'Check before launch periods:': 'Perioder, der skal tjekkes:',
+  'these stay amber in the full forecast so you can inspect the reason, but they are not promoted into the green launch-window list.':
+    'de forbliver gule i hele prognosen, så du kan se årsagen, men de bliver ikke gjort til grønne rovinduer.',
   'Day boundaries:': 'Døgngrænser:',
   'a continuous hourly window can cross local midnight. The calendar draws its pieces on the matching days, and the list names the end day when needed.':
     'et sammenhængende timevindue kan krydse lokal midnat. Kalenderen tegner delene på de rigtige dage, og listen angiver slutdagen, når det er nødvendigt.',
   'Longer range:': 'Længere sigt:',
-  'beyond the hourly forecast, coarser outlook blocks (6 hours, occasionally 12) form windows from the readings available in each block. Gusts are not published there. These windows are marked "more uncertain forecast"; treat them as hints, not commitments.':
-    'ud over timeprognosen danner grovere udsigtsblokke (6 timer, af og til 12) vinduer ud fra de målinger, der findes i hver blok. Vindstød varsles ikke her. Vinduerne markeres som "mere usikker prognose"; betragt dem som fingerpeg, ikke løfter.',
+  'beyond the hourly forecast, coarser outlook blocks (6 hours, occasionally 12) form windows from the readings available in each block. Gusts are not published there. These windows are marked "Outlook"; treat them as planning hints, not commitments.':
+    'ud over timeprognosen danner grovere udsigtsblokke (6 timer, af og til 12) vinduer ud fra de målinger, der findes i hver blok. Vindstød varsles ikke her. Vinduerne markeres som "Udsigt"; brug dem som fingerpeg til planlægningen, ikke som løfter.',
   'Close': 'Luk',
 };

@@ -165,9 +165,9 @@ const CHECKED_STAMP_MIN_WRITE_INTERVAL_MS = 25 * 60 * 1000;
 // would be one KV write per city per tick. Against a 1,000-write day, that is
 // what forced the coarse CHECKED_STAMP_MIN_WRITE_INTERVAL_MS throttle and a "checked"
 // time that could be 25 minutes behind the truth. One shared object targeting a
-// write about every fifteen scheduled minutes keeps the liveness evidence
+// write about every six scheduled minutes keeps the liveness evidence
 // affordable even when the scheduler itself fires every minute.
-// The tick count itself lives in execution.ts (see there for why it is 15);
+// The tick count itself lives in execution.ts (see there for why it is six);
 // re-exported so the heartbeat's callers and tests keep one import site.
 const CRON_HEARTBEAT_SCHEMA_VERSION = 2;
 export { CRON_HEARTBEAT_THROTTLE_TICKS };

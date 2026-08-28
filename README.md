@@ -10,7 +10,7 @@ FRANK is a small, installable web app that helps sea-kayakers judge when conditi
 
 - Rates every forecast period as **Within limits**, **Check before launch**, or **Not recommended** against the selected profile.
 - Shows the exact reasons behind a rating; colour is never the only explanation.
-- Finds green hourly launch windows, lists near-limit alternatives separately, and keeps clearly marked lower-confidence outlook hints in both groups.
+- Finds strict green launch windows and labels coarser long-range options as **Outlook**.
 - Keeps missing readings unknown. A missing hourly value is never converted to zero or treated as safe; longer-range blocks state when MET does not provide gusts.
 - Names stale or degraded sources instead of pretending every value is equally fresh.
 - Stores personal limits, selected location, language, and theme only in the browser.
@@ -122,15 +122,13 @@ apply to a momentary gust.
 
 MET does not publish gusts in its longer-range 6- or 12-hour outlook blocks.
 FRANK says so in the period explanation and judges those blocks only from the
-readings they contain. Outlook launch windows are therefore marked as more
-uncertain hints, not exact hourly recommendations.
+readings they contain. Those coarser launch windows are labelled **Outlook**
+and remain planning hints, not exact hourly recommendations.
 
 The planner keeps its green list strict: every endpoint must remain below the
-automatic check points and pass the other enabled rules. A period whose only
-issue is proximity to a wind, gust, wave, or active sector maximum appears in a
-separate **Check before launch** list. Opening it selects the amber forecast
-period and shows the exact remaining headroom. This applies to hourly data and
-the longer-range outlook.
+automatic check points and pass the other enabled rules. Amber periods remain
+visible in the full forecast with their reasons, but they are not promoted into
+the launch-window list. Coarser long-range windows are labelled **Outlook**.
 Wave words reuse [WMO's recommended sea-wave terminology](https://community.wmo.int/site/knowledge-hub/programmes-and-initiatives/marine-services/frequently-asked-questions)
 only as supplemental context; the numeric height remains the decision input.
 DMI defines [significant wave height](https://www.dmi.dk/hav-og-is/temaforside-monsterbolger/bolger-pa-havet)
