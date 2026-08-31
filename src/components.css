@@ -137,16 +137,13 @@
    every info and expand control in the app sits to the RIGHT of its text. Here
    it is a glyph INSIDE the button rather than the button itself, so the ring
    must not swallow the pointer or grow its own (empty, data-tip-less) tip. */
+/* Type comes from the shared section-header rule in index.css (flex, gap and
+   uppercase tracking included); only the button reset belongs here. */
 .outlook-note-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   min-height: 44px;
   padding: 0;
   background: none;
   border: 0;
-  font: inherit;
-  color: inherit;
   text-align: left;
   cursor: pointer;
 }

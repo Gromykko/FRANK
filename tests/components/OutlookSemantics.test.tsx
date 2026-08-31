@@ -92,8 +92,11 @@ describe('outlook period semantics', () => {
         );
       });
 
-      const collapsed = host.querySelector('.timeline-outlook-note')?.textContent ?? '';
-      expect(collapsed).toContain('How to read the 6-hour blocks');
+      const toggle = host.querySelector('.outlook-note-toggle')!;
+      // Short enough to survive uppercase section-label tracking at 320px;
+      // the accessible name still carries the full intent.
+      expect(toggle.textContent).toContain('6-hour blocks');
+      expect(toggle.getAttribute('aria-label')).toBe('How to read the 6-hour blocks');
       expect(host.querySelector('#timeline-outlook-info')).toBeNull();
 
       await act(async () => {

@@ -755,11 +755,14 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
           <button
             type="button"
             className="outlook-note-toggle"
+            // Visually it is a section label short enough to survive uppercase
+            // tracking at 320px; the accessible name keeps the full intent.
+            aria-label={t('How to read the 6-hour blocks')}
             aria-expanded={showOutlookInfo}
             aria-controls="timeline-outlook-info"
             onClick={() => setShowOutlookInfo((v) => !v)}
           >
-            {t('How to read the 6-hour blocks')}
+            {t('6-hour blocks')}
             <span className="settings-info-btn" aria-hidden="true">?</span>
           </button>
           {showOutlookInfo && (

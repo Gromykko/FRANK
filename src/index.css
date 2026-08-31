@@ -456,7 +456,11 @@ h1, h2, h3, h4, h5, h6 {
 .settings-title,
 .launch-panel-title,
 .charts-disclosure-title,
-.trip-profile-title {
+.trip-profile-title,
+/* Not a heading — it labels the matrix ABOVE it, so it stays a button. But it
+   carries a "?" and every other "?" in the app trails a section label, so it
+   has to LOOK like one or the ring reads as furniture borrowed from elsewhere. */
+.outlook-note-toggle {
   font-family: var(--font-heading);
   font-size: var(--text-body);
   font-weight: 800;
