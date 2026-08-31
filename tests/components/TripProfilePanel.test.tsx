@@ -57,4 +57,45 @@ describe('TripProfilePanel localisation', () => {
       globalThis.IS_REACT_ACT_ENVIRONMENT = false;
     }
   });
+
+  // The panel is ~700px on a phone, so it can only be read by scrolling — and a
+  // touch scroll BEGINS with a pointerdown outside it. Closing on that dismissed
+  // the panel mid-read and collapsed ~600px of page under the reader's finger.
+  it('survives the pointerdown that starts a touch scroll', async () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    localStorage.setItem('frank_lang', 'en');
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+
+    try {
+      await act(async () => {
+        root.render(
+          <LanguageProvider>
+            <TripProfilePanel tripMode="default" onTripModeChange={vi.fn()} />
+          </LanguageProvider>,
+        );
+      });
+      await act(async () => {
+        host.querySelector<HTMLButtonElement>('[aria-label="About the modes"]')!.click();
+      });
+      expect(host.querySelector('#trip-profile-info-pop')).not.toBeNull();
+
+      await act(async () => {
+        document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      });
+      expect(host.querySelector('#trip-profile-info-pop')).not.toBeNull();
+
+      // Escape and the "?" itself remain the whole dismissal contract.
+      await act(async () => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      });
+      expect(host.querySelector('#trip-profile-info-pop')).toBeNull();
+    } finally {
+      await act(async () => root.unmount());
+      host.remove();
+      localStorage.clear();
+      globalThis.IS_REACT_ACT_ENVIRONMENT = false;
+    }
+  });
 });

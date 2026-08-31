@@ -30,31 +30,23 @@ export default function TripProfilePanel({ tripMode, onTripModeChange }: TripPro
   const activeIdx = Math.max(0, MODES.findIndex((m) => m.value === tripMode));
   const [showInfo, setShowInfo] = useState(false);
   const infoBtnRef = useRef<HTMLButtonElement>(null);
-  const popRef = useRef<HTMLDivElement>(null);
 
+  // No outside-click dismissal, deliberately. A document `pointerdown` listener
+  // fires the moment a finger lands — at the START of a touch scroll, before the
+  // browser has decided it is a scroll — so scrolling to finish reading this
+  // 693px panel closed it, and the collapse yanked the page up ~600px. Nothing
+  // is trapped behind it either: it renders in normal flow (see the note below),
+  // so the "?" toggle and Escape are the whole contract.
   useEffect(() => {
     if (!showInfo) return;
-    // "Outside" means outside the POPOVER and its trigger — not the whole
-    // header strip, or a tap beside the "?" on the same line wouldn't close it.
-    // (The trigger is excluded so its own click handler toggles, instead of
-    // pointerdown-close + click-reopen fighting each other.)
-    const closeOutside = (e: PointerEvent) => {
-      const t = e.target as Node;
-      if (popRef.current?.contains(t) || infoBtnRef.current?.contains(t)) return;
-      setShowInfo(false);
-    };
     const closeOnEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setShowInfo(false);
         infoBtnRef.current?.focus();
       }
     };
-    document.addEventListener('pointerdown', closeOutside);
     document.addEventListener('keydown', closeOnEscape);
-    return () => {
-      document.removeEventListener('pointerdown', closeOutside);
-      document.removeEventListener('keydown', closeOnEscape);
-    };
+    return () => document.removeEventListener('keydown', closeOnEscape);
   }, [showInfo]);
 
   return (
@@ -138,7 +130,7 @@ export default function TripProfilePanel({ tripMode, onTripModeChange }: TripPro
           underneath. An explainer must not hide its own subject; growing the
           panel while it is open is the smaller cost. */}
       {showInfo && (
-        <div className="trip-profile-info" id="trip-profile-info-pop" role="note" ref={popRef}>
+        <div className="trip-profile-info" id="trip-profile-info-pop" role="note">
           <p>
             {t('The built-in profiles start with these maximum conditions:')}
           </p>
