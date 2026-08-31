@@ -133,9 +133,10 @@
 }
 
 /* The collapsed row. The "?" ring is the same affordance as the Trip Profile
-   trigger, but here it is a glyph INSIDE the button rather than the button
-   itself — the label beside it already says what it does, so the ring must not
-   swallow the pointer or grow its own (empty, data-tip-less) hover tip. */
+   trigger, and trails the label for the same reason it trails "Turprofil" —
+   every info and expand control in the app sits to the RIGHT of its text. Here
+   it is a glyph INSIDE the button rather than the button itself, so the ring
+   must not swallow the pointer or grow its own (empty, data-tip-less) tip. */
 .outlook-note-toggle {
   display: flex;
   align-items: center;

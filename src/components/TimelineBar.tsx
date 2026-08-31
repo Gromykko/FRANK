@@ -759,8 +759,8 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
             aria-controls="timeline-outlook-info"
             onClick={() => setShowOutlookInfo((v) => !v)}
           >
-            <span className="settings-info-btn" aria-hidden="true">?</span>
             {t('How to read the 6-hour blocks')}
+            <span className="settings-info-btn" aria-hidden="true">?</span>
           </button>
           {showOutlookInfo && (
             <div id="timeline-outlook-info" className="outlook-note-body">
