@@ -1,3 +1,5 @@
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import TimelineBar from '../../src/components/TimelineBar';
@@ -69,22 +71,46 @@ describe('outlook period semantics', () => {
     expect(container.querySelector('.meteogram-row[title="Water level (cm)"]')).not.toBeNull();
   });
 
-  it('explains block timing without provider jargon', () => {
-    const container = document.createElement('div');
-    container.innerHTML = renderToStaticMarkup(
-      <TimelineBar
-        data={[outlookBlock]}
-        statuses={['safe']}
-        selectedIndex={0}
-        onSelectIndex={vi.fn()}
-        startIndex={0}
-      />,
-    );
+  // The note lives behind a "?" now: it held 19% of a phone screen permanently
+  // for something a user reads once. Collapsed by default, same content when opened.
+  it('explains block timing without provider jargon, behind the "?"', async () => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
 
-    const note = container.querySelector('.timeline-outlook-note')?.textContent ?? '';
-    expect(note).toContain('Wind and air temperature show the forecast at the start of the block.');
-    expect(note).toContain('Water level: above mean');
-    expect(note).not.toContain('high water');
-    expect(note).not.toMatch(/\bMET\b/);
+    try {
+      await act(async () => {
+        root.render(
+          <TimelineBar
+            data={[outlookBlock]}
+            statuses={['safe']}
+            selectedIndex={0}
+            onSelectIndex={vi.fn()}
+            startIndex={0}
+          />,
+        );
+      });
+
+      const collapsed = host.querySelector('.timeline-outlook-note')?.textContent ?? '';
+      expect(collapsed).toContain('How to read the 6-hour blocks');
+      expect(host.querySelector('#timeline-outlook-info')).toBeNull();
+
+      await act(async () => {
+        host.querySelector<HTMLButtonElement>('.outlook-note-toggle')!.click();
+      });
+
+      const note = host.querySelector('#timeline-outlook-info')?.textContent ?? '';
+      expect(note).toContain('Wind and air temperature show the forecast at the start of the block.');
+      expect(note).toContain('Water level: above mean');
+      expect(note).toContain('green within limits');
+      expect(note).toContain('red not recommended');
+      expect(note).not.toContain('high water');
+      expect(note).not.toMatch(/\bMET\b/);
+    } finally {
+      await act(async () => root.unmount());
+      host.remove();
+      globalThis.IS_REACT_ACT_ENVIRONMENT = false;
+    }
   });
 });

@@ -132,6 +132,37 @@
   max-width: 68ch;
 }
 
+/* The collapsed row. The "?" ring is the same affordance as the Trip Profile
+   trigger, but here it is a glyph INSIDE the button rather than the button
+   itself — the label beside it already says what it does, so the ring must not
+   swallow the pointer or grow its own (empty, data-tip-less) hover tip. */
+.outlook-note-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0;
+  background: none;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.outlook-note-toggle .settings-info-btn {
+  margin-left: 0;
+  pointer-events: none;
+}
+
+.outlook-note-toggle .settings-info-btn::after {
+  content: none;
+}
+
+.outlook-note-body {
+  margin-top: 4px;
+}
+
 .outlook-note-lead {
   margin: 0;
 }

@@ -57,6 +57,9 @@ export const da: Record<string, string> = {
   'Water level: above mean, below mean, spans both sides, or at mean.':
     'Niveau: over middel, under middel, på begge sider eller ved middel.',
   'Tap a block for its numbers.': 'Tryk på en blok for at se tallene.',
+  'How to read the 6-hour blocks': 'Sådan læser du 6-timers blokkene',
+  'The bar under each column: green {0}, amber {1}, red {2}.':
+    'Bjælken under hver kolonne: grøn {0}, gul {1}, rød {2}.',
   'Detailed Graphs': 'Detaljerede grafer',
   'Wind, waves, water level, and temperature': 'Vind, bølger, niveau og temperatur',
   'Loading charts...': 'Indlæser grafer...',

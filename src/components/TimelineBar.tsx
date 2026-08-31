@@ -125,6 +125,8 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
 
   // Only worth explaining when the forecast actually reaches that far.
   const hasOutlookColumns = displayData.some((h) => Boolean(h.blockSpanHours));
+  // Collapsed by default: this is read once, not every visit.
+  const [showOutlookInfo, setShowOutlookInfo] = useState(false);
 
   const meteogramCellClass = (h: { data: HourlyData; isDayStart: boolean; isOutlookStart: boolean }) =>
     [
@@ -741,25 +743,56 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
           and a header reading a span like "02-08" instead of a single hour. All
           of it visual only, so a reader had no way to learn what it meant.
           A legend, not a paragraph: the first version said the same things in
-          four sentences and nobody reads four sentences under a table. */}
+          four sentences and nobody reads four sentences under a table.
+
+          Behind a "?" rather than always on: measured at 164px, it was 19% of a
+          phone screen held permanently by text a user reads once. Same contract
+          as the Trip Profile "?" — and unlike a heading-mounted trigger, this
+          one sits where the explanation appears, so it costs one line, not a
+          header row the meteogram does not otherwise have. */}
       {hasOutlookColumns && (
         <div className="timeline-outlook-note">
-          <p className="outlook-note-lead">
-            {t('Columns like 02–08 show a 6-hour block.')}
-          </p>
-          <ul className="outlook-note-list">
-            <li>{t('Waves and water temperature: the highest waves and coldest water.')}</li>
-            <li>{t('Wind and air temperature show the forecast at the start of the block.')}</li>
-            <li aria-label={t('Water level: above mean, below mean, spans both sides, or at mean.')}>
-              <span aria-hidden="true">
-                {t('Water level: above mean')} <ArrowUp size={12} />,{' '}
-                {t('below mean')} <ArrowDown size={12} />,{' '}
-                {t('spans both sides')} <ArrowUpDown size={12} />{' '}
-                {t('or at mean')} <Minus size={12} />.
-              </span>
-            </li>
-          </ul>
-          <p className="outlook-note-lead">{t('Tap a block for its numbers.')}</p>
+          <button
+            type="button"
+            className="outlook-note-toggle"
+            aria-expanded={showOutlookInfo}
+            aria-controls="timeline-outlook-info"
+            onClick={() => setShowOutlookInfo((v) => !v)}
+          >
+            <span className="settings-info-btn" aria-hidden="true">?</span>
+            {t('How to read the 6-hour blocks')}
+          </button>
+          {showOutlookInfo && (
+            <div id="timeline-outlook-info" className="outlook-note-body">
+              <p className="outlook-note-lead">
+                {t('Columns like 02–08 show a 6-hour block.')}
+              </p>
+              <ul className="outlook-note-list">
+                <li>{t('Waves and water temperature: the highest waves and coldest water.')}</li>
+                <li>{t('Wind and air temperature show the forecast at the start of the block.')}</li>
+                <li aria-label={t('Water level: above mean, below mean, spans both sides, or at mean.')}>
+                  <span aria-hidden="true">
+                    {t('Water level: above mean')} <ArrowUp size={12} />,{' '}
+                    {t('below mean')} <ArrowDown size={12} />,{' '}
+                    {t('spans both sides')} <ArrowUpDown size={12} />{' '}
+                    {t('or at mean')} <Minus size={12} />.
+                  </span>
+                </li>
+                {/* The traffic-light ribbon is the matrix's loudest signal and was
+                    explained nowhere. Verdict words come from RATING_WORD so this
+                    line cannot drift from the status bar. */}
+                <li>
+                  {t(
+                    'The bar under each column: green {0}, amber {1}, red {2}.',
+                    t(RATING_WORD.safe).toLowerCase(),
+                    t(RATING_WORD.caution).toLowerCase(),
+                    t(RATING_WORD.danger).toLowerCase(),
+                  )}
+                </li>
+              </ul>
+              <p className="outlook-note-lead">{t('Tap a block for its numbers.')}</p>
+            </div>
+          )}
         </div>
       )}
     </div>
