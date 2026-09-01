@@ -181,7 +181,7 @@ describe('judged profile maximum boundaries', () => {
       );
       expectNearLimit(atCaution);
       expect(atCaution.reasons[0].text).toContain(
-        `${(gustMaximum - gustCautionAt).toFixed(1)} m/s below the ${gustMaximum.toFixed(1)} m/s maximum`,
+        `${(gustMaximum - gustCautionAt).toFixed(1)} m/s below your maximum of ${gustMaximum.toFixed(1)} m/s`,
       );
 
       const atMaximum = analyzeSafetyConditions(
@@ -190,7 +190,7 @@ describe('judged profile maximum boundaries', () => {
       );
       expectNearLimit(atMaximum);
       expect(atMaximum.reasons[0].text).toContain(
-        `At the ${gustMaximum.toFixed(1)} m/s maximum derived from your wind limit`,
+        `At your maximum of ${gustMaximum.toFixed(1)} m/s`,
       );
 
       const above = analyzeSafetyConditions(
@@ -199,7 +199,7 @@ describe('judged profile maximum boundaries', () => {
       );
       expectAboveMaximum(above);
       expect(above.reasons[0].text).toContain(
-        `Above the ${gustMaximum.toFixed(1)} m/s maximum derived from your wind limit`,
+        `Above your maximum of ${gustMaximum.toFixed(1)} m/s`,
       );
       expect(above.reasons[0].text).not.toContain('(');
     },
@@ -260,7 +260,7 @@ describe('judged profile maximum boundaries', () => {
       );
       expectNearLimit(atCaution);
       expect(atCaution.reasons[0].text).toContain(
-        `${(onshoreMaximum - onshoreCautionAt).toFixed(1)} m/s below your ${onshoreMaximum.toFixed(1)} m/s maximum for this direction`,
+        `${(onshoreMaximum - onshoreCautionAt).toFixed(1)} m/s below your ${onshoreMaximum.toFixed(1)} m/s maximum`,
       );
 
       const atMaximum = analyzeSafetyConditions(
@@ -269,7 +269,7 @@ describe('judged profile maximum boundaries', () => {
       );
       expectNearLimit(atMaximum);
       expect(atMaximum.reasons[0].text).toContain(
-        `at your ${onshoreMaximum.toFixed(1)} m/s maximum for this direction`,
+        `at your ${onshoreMaximum.toFixed(1)} m/s maximum`,
       );
 
       const above = analyzeSafetyConditions(
@@ -278,7 +278,7 @@ describe('judged profile maximum boundaries', () => {
       );
       expectAboveMaximum(above);
       expect(above.reasons[0].text).toContain(
-        `above your ${onshoreMaximum.toFixed(1)} m/s maximum for this direction`,
+        `above your ${onshoreMaximum.toFixed(1)} m/s maximum`,
       );
     },
   );

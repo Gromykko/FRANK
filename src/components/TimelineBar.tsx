@@ -792,6 +792,7 @@ export default memo(function TimelineBar({ data, statuses, selectedIndex, onSele
                     t(RATING_WORD.danger).toLowerCase(),
                   )}
                 </li>
+                <li>{t('Gusts are not forecast for these blocks.')}</li>
               </ul>
               <p className="outlook-note-lead">{t('Tap a block for its numbers.')}</p>
             </div>

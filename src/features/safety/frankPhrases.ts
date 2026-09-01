@@ -9,16 +9,12 @@ const PHRASES: Record<SafetyRating, string[]> = {
   safe: [
     'The available readings are within your limits',
     'Nothing in the available forecast crossed your limits',
-    'The available {0} readings fit your settings for now',
-    'The available checks are within range',
-    'The numbers we have fit. You still make the call',
+    'The {0} fits your limits',
   ],
   caution: [
     'Check the details before you launch',
-    'Something here needs your judgement',
     'The {0} needs a second look',
     'Pause and check the conditions',
-    'Read the notes before you decide',
   ],
   danger: [
     'Nej tak. The {0} says no',

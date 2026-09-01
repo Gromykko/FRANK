@@ -257,18 +257,18 @@ export function analyzeSafetyConditions(
     const gustCautionAt = getNearLimitThreshold(gustMaximum, READING_DECIMALS.windGust);
     if (gustForSafety > gustMaximum) {
       gustWindReason = addReason('danger', translate(
-        'Wind gusts: {0} m/s. Above the {1} m/s maximum derived from your wind limit.',
+        'Wind gusts: {0} m/s. Above your maximum of {1} m/s.',
         gustForSafety.toFixed(1), gustMaximum.toFixed(1),
       ));
     } else if (gustForSafety >= gustCautionAt) {
       const headroom = roundToDecimals(gustMaximum - gustForSafety, READING_DECIMALS.windGust);
       const text = headroom === 0
         ? translate(
-          'Wind gusts: {0} m/s. At the {1} m/s maximum derived from your wind limit.',
+          'Wind gusts: {0} m/s. At your maximum of {1} m/s.',
           gustForSafety.toFixed(1), gustMaximum.toFixed(1),
         )
         : translate(
-          'Wind gusts: {0} m/s. {1} m/s below the {2} m/s maximum derived from your wind limit.',
+          'Wind gusts: {0} m/s. {1} m/s below your maximum of {2} m/s.',
           gustForSafety.toFixed(1), headroom.toFixed(1), gustMaximum.toFixed(1),
         );
       gustWindReason = addReason('caution', text, 'near-limit');
@@ -299,7 +299,7 @@ export function analyzeSafetyConditions(
     if (windSpeedForSafety > sectorMaximum) {
       sectorWindCandidates.push({
         reason: addReason('danger', translate(
-          'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is above your {4} m/s maximum for this direction.',
+          'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is above your {4} m/s maximum.',
           windSpeedForSafety.toFixed(1), windLabelForSafety, translate(sector.label), windDir,
           sectorMaximum.toFixed(1))),
         threshold: sectorMaximum,
@@ -309,12 +309,12 @@ export function analyzeSafetyConditions(
       const headroom = roundToDecimals(sectorMaximum - windSpeedForSafety, READING_DECIMALS.windSpeed);
       const text = headroom === 0
         ? translate(
-          'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is at your {4} m/s maximum for this direction.',
+          'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is at your {4} m/s maximum.',
           windSpeedForSafety.toFixed(1), windLabelForSafety, translate(sector.label), windDir,
           sectorMaximum.toFixed(1),
         )
         : translate(
-          'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is {4} m/s below your {5} m/s maximum for this direction.',
+          'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is {4} m/s below your {5} m/s maximum.',
           windSpeedForSafety.toFixed(1), windLabelForSafety, translate(sector.label), windDir,
           headroom.toFixed(1), sectorMaximum.toFixed(1),
         );
@@ -456,21 +456,21 @@ export function analyzeSafetyConditions(
         if (daylight.status !== 'full') {
           if (daylight.status === 'partial') {
             addReason('caution', translate(
-              'Daylight: part of this outlook period is outside sunrise-to-sunset paddling hours.',
+              'Daylight: part of this period is outside paddling hours.',
             ));
           } else if (daylight.status === 'none') {
             addReason('caution', translate(
-              'Daylight: this outlook period has no complete hour within sunrise-to-sunset paddling hours.',
+              'Daylight: no complete hour of this period is within paddling hours.',
             ));
           } else {
             addReason('caution', translate(
-              'Daylight: sunrise or sunset is unavailable for this outlook period, so FRANK cannot clear the whole period.',
+              'Daylight: sunrise or sunset is missing, so FRANK cannot clear this period.',
             ));
           }
         }
       }
     } else if (!data.isDay) {
-      addReason('caution', translate('Nighttime: outside sunrise-to-sunset paddling hours.'));
+      addReason('caution', translate('Nighttime: outside paddling hours.'));
     }
   }
 
@@ -480,8 +480,8 @@ export function analyzeSafetyConditions(
   if (missing.length > 0) {
     addReason('caution', translate(
       data.blockSpanHours
-        ? 'No reading for {0} in this outlook period, so FRANK cannot assess it. Missing data does not count as within limits. Check another source before you launch.'
-        : 'No reading for {0} this hour, so FRANK cannot assess it. Missing data does not count as within limits. Check another source before you launch.',
+        ? 'No reading for {0} in this period. FRANK cannot assess it — check another source.'
+        : 'No reading for {0} this hour. FRANK cannot assess it — check another source.',
       missing.map((field) => translate(field)).join(', ')));
   }
 
@@ -508,24 +508,23 @@ export function analyzeSafetyConditions(
     const windDescription = translate(getWindSpeedLabel(data.windSpeed)).toLowerCase();
     const weatherDescription = weatherDesc.toLowerCase();
     if (unchecked.length > 0) {
+      // The outlook gust caveat lives in the 6-hour block legend in
+      // TimelineBar.tsx now, not on every clear verdict.
       addReason('safe', translate(
-        gustUnavailableForOutlook
-          ? 'No available outlook reading triggered a check: {0}, {1}, {2}. Gusts are not forecast for this longer-range period. Not checked: {3}.'
-          : data.blockSpanHours
-            ? 'No enabled outlook check was triggered: {0}, {1}, {2}. Not checked: {3}.'
-            : 'No enabled check was triggered: {0}, {1}, {2}. Not checked: {3}.',
+        data.blockSpanHours
+          ? 'No enabled outlook check was triggered: {0}, {1}, {2}. Not checked: {3}.'
+          : 'No enabled check was triggered: {0}, {1}, {2}. Not checked: {3}.',
         windDescription,
         seaState,
         weatherDescription,
         unchecked.join(', '),
       ));
     } else {
+      // Same caveat, same new home: the 6-hour block legend in TimelineBar.tsx.
       addReason('safe', translate(
-        gustUnavailableForOutlook
-          ? 'No available outlook reading triggered a check: {0}, {1}, {2}. Gusts are not forecast for this longer-range period.'
-          : data.blockSpanHours
-            ? 'No outlook check was triggered: {0}, {1}, {2}.'
-            : 'No check was triggered: {0}, {1}, {2}.',
+        data.blockSpanHours
+          ? 'No outlook check was triggered: {0}, {1}, {2}.'
+          : 'No check was triggered: {0}, {1}, {2}.',
         windDescription,
         seaState,
         weatherDescription,

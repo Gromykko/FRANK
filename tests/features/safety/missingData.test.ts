@@ -42,7 +42,7 @@ describe('missing readings are never rated safe', () => {
         const result = rate({ [field]: absent });
         expect(result.rating, `${field}=${String(absent)}`).not.toBe('safe');
         expect(result.reasons.some((r) => /cannot assess/i.test(r.text))).toBe(true);
-        expect(result.reasons.some((r) => /does not count as within limits/i.test(r.text))).toBe(true);
+        expect(result.reasons.some((r) => /check another source/i.test(r.text))).toBe(true);
       }
     });
   }
@@ -56,7 +56,7 @@ describe('missing readings are never rated safe', () => {
       );
       expect(result.rating, `windDirection=${String(absent)}`).not.toBe('safe');
       expect(result.reasons.some((reason) => /cannot assess/i.test(reason.text))).toBe(true);
-      expect(result.reasons.some((reason) => /does not count as within limits/i.test(reason.text))).toBe(true);
+      expect(result.reasons.some((reason) => /check another source/i.test(reason.text))).toBe(true);
     }
   });
 
@@ -70,7 +70,7 @@ describe('missing readings are never rated safe', () => {
     const text = result.reasons.map((reason) => reason.text).join(' ');
 
     expect(result.rating).toBe('caution');
-    expect(text).toContain('in this outlook period');
+    expect(text).toContain('in this period');
     expect(text).not.toContain('this hour');
   });
 

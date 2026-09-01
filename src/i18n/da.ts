@@ -26,22 +26,21 @@ export const da: Record<string, string> = {
   'No enabled check was triggered': 'Ingen aktive tjek gav udslag',
   'Read the checks below': 'Se, hvad du skal tjekke, nedenfor',
   'Choose another time': 'Vælg et andet tidspunkt',
-  'Your personal limits are off. Use the raw forecast values and local judgement before launching.':
-    'Dine personlige grænser er slået fra. Brug de rå prognosetal og lokal dømmekraft, før du tager på vandet.',
+  'Your personal limits are off.': 'Dine personlige grænser er slået fra.',
   'Off duty. You are the captain now': 'Ikke på vagt. Du er kaptajnen nu',
   'Switch to dark theme': 'Skift til mørkt tema',
   'Switch to light theme': 'Skift til lyst tema',
   'built {0}': 'bygget {0}',
-  'The forecast could not be refreshed. You are seeing data from {0} — {1} old, so treat it with extra caution. FRANK retries by itself roughly every 10 minutes.':
-    'Prognosen kunne ikke opdateres. Du ser data fra {0} — {1} gamle, så brug dem med ekstra forsigtighed. FRANK prøver selv igen cirka hvert 10. minut.',
-  'This forecast has not updated as expected. You are seeing data from {0} — {1} old, so treat it with extra caution while FRANK checks again.':
-    'Prognosen er ikke blevet opdateret som forventet. Du ser data fra {0} — {1} gamle, så brug dem med ekstra forsigtighed, mens FRANK tjekker igen.',
-  'The saved forecast time could not be verified. Treat it with extra caution and check an official source before launching.':
-    'Tidspunktet for den gemte prognose kunne ikke bekræftes. Brug den med ekstra forsigtighed, og tjek en officiel kilde, før du tager ud.',
+  'The forecast could not be refreshed. You are seeing data from {0} — {1} old. FRANK retries by itself roughly every 10 minutes.':
+    'Prognosen kunne ikke opdateres. Du ser data fra {0} — {1} gamle. FRANK prøver selv igen cirka hvert 10. minut.',
+  'This forecast has not updated as expected. You are seeing data from {0} — {1} old, and FRANK is checking again.':
+    'Prognosen er ikke blevet opdateret som forventet. Du ser data fra {0} — {1} gamle, og FRANK tjekker igen.',
+  'The saved forecast time could not be verified. Check an official source before launching.':
+    'Tidspunktet for den gemte prognose kunne ikke bekræftes. Tjek en officiel kilde, før du tager ud.',
   // Offline AND old: the age warning still fires (a paddler on the water needs
   // it), but nothing is "failing" — there is no connection to try over.
-  'You have been offline for a while, so this forecast is from {0} — {1} old. Treat it with extra caution; it will update by itself once you are back online.':
-    'Du har været offline et stykke tid, så denne prognose er fra {0} — {1} gammel. Brug den med ekstra forsigtighed; den opdateres af sig selv, når du er online igen.',
+  'You have been offline for a while, so this forecast is from {0} — {1} old. It will update by itself once you are back online.':
+    'Du har været offline et stykke tid, så denne prognose er fra {0} — {1} gammel. Den opdateres af sig selv, når du er online igen.',
   'Hourly forecast timeline': 'Timeprognosens tidslinje',
   // Explains the striped, time-span columns where the matrix stops being hourly.
   // ── Meteogram outlook legend ──────────────────────────────────────────────
@@ -61,6 +60,7 @@ export const da: Record<string, string> = {
   'How to read the 6-hour blocks': 'Sådan læser du 6-timers blokkene',
   'The bar under each column: green {0}, amber {1}, red {2}.':
     'Bjælken under hver kolonne: grøn {0}, gul {1}, rød {2}.',
+  'Gusts are not forecast for these blocks.': 'Vindstød varsles ikke for disse blokke.',
   'Detailed Graphs': 'Detaljerede grafer',
   'Wind, waves, water level, and temperature': 'Vind, bølger, niveau og temperatur',
   'Loading charts...': 'Indlæser grafer...',
@@ -130,14 +130,10 @@ export const da: Record<string, string> = {
   // ── FRANK's dot-matrix phrases ─────────────────────────────────────────────
   'The available readings are within your limits': 'De tilgængelige målinger er inden for dine grænser',
   'Nothing in the available forecast crossed your limits': 'Intet i den tilgængelige prognose overskred dine grænser',
-  'The available {0} readings fit your settings for now': 'De tilgængelige målinger for {0} passer til dine indstillinger lige nu',
-  'The available checks are within range': 'De tilgængelige tjek er inden for grænserne',
-  'The numbers we have fit. You still make the call': 'De tal, vi har, passer. Du træffer stadig beslutningen',
+  'The {0} fits your limits': '{0} passer til dine grænser',
   'Check the details before you launch': 'Tjek detaljerne, før du tager på vandet',
-  'Something here needs your judgement': 'Noget her kræver din vurdering',
   'The {0} needs a second look': '{0} kræver et ekstra blik',
   'Pause and check the conditions': 'Stop op, og tjek forholdene',
-  'Read the notes before you decide': 'Læs bemærkningerne, før du beslutter dig',
   'Nej tak. The {0} says no': 'Nej tak. {0} siger nej',
   'Even the Vikings called in sick today': 'Selv vikingerne har meldt sig syge i dag',
   'The {0} will still be here tomorrow': '{0} er her også i morgen',
@@ -176,10 +172,10 @@ export const da: Record<string, string> = {
   'Charts are unavailable right now. The forecast above is unaffected.':
     'Graferne er ikke tilgængelige lige nu. Prognosen ovenfor er upåvirket.',
   // Missing-reading wording — see analyzeSafetyConditions.
-  'No reading for {0} this hour, so FRANK cannot assess it. Missing data does not count as within limits. Check another source before you launch.':
-    'FRANK har ingen måling af {0} denne time og kan derfor ikke vurdere den. Manglende data tæller ikke som inden for grænserne. Tjek en anden kilde, før du tager på vandet.',
-  'No reading for {0} in this outlook period, so FRANK cannot assess it. Missing data does not count as within limits. Check another source before you launch.':
-    'FRANK har ingen måling af {0} i denne udsigtsperiode og kan derfor ikke vurdere den. Manglende data tæller ikke som inden for grænserne. Tjek en anden kilde, før du tager på vandet.',
+  'No reading for {0} this hour. FRANK cannot assess it — check another source.':
+    'Ingen måling af {0} denne time. FRANK kan ikke vurdere den — tjek en anden kilde.',
+  'No reading for {0} in this period. FRANK cannot assess it — check another source.':
+    'Ingen måling af {0} i perioden. FRANK kan ikke vurdere den — tjek en anden kilde.',
   'wind speed': 'vindhastighed',
   'wind gusts': 'vindstød',
   'wind direction': 'vindretning',
@@ -195,18 +191,18 @@ export const da: Record<string, string> = {
     'Vindstyrke: {0} m/s ({1}). Ved dit maksimum på {2} m/s.',
   'Wind speed: {0} m/s ({1}). {2} m/s below your maximum of {3} m/s.':
     'Vindstyrke: {0} m/s ({1}). {2} m/s under dit maksimum på {3} m/s.',
-  'Wind gusts: {0} m/s. Above the {1} m/s maximum derived from your wind limit.':
-    'Vindstød: {0} m/s. Over maksimum på {1} m/s, som er beregnet ud fra din vindgrænse.',
-  'Wind gusts: {0} m/s. At the {1} m/s maximum derived from your wind limit.':
-    'Vindstød: {0} m/s. Ved maksimum på {1} m/s, som er beregnet ud fra din vindgrænse.',
-  'Wind gusts: {0} m/s. {1} m/s below the {2} m/s maximum derived from your wind limit.':
-    'Vindstød: {0} m/s. {1} m/s under maksimum på {2} m/s, som er beregnet ud fra din vindgrænse.',
-  'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is above your {4} m/s maximum for this direction.':
-    'Vindstyrke: {0} m/s ({1}). {2} vind ({3}°) er over dit maksimum på {4} m/s for denne retning.',
-  'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is at your {4} m/s maximum for this direction.':
-    'Vindstyrke: {0} m/s ({1}). {2} vind ({3}°) er ved dit maksimum på {4} m/s for denne retning.',
-  'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is {4} m/s below your {5} m/s maximum for this direction.':
-    'Vindstyrke: {0} m/s ({1}). {2} vind ({3}°) er {4} m/s under dit maksimum på {5} m/s for denne retning.',
+  'Wind gusts: {0} m/s. Above your maximum of {1} m/s.':
+    'Vindstød: {0} m/s. Over dit maksimum på {1} m/s.',
+  'Wind gusts: {0} m/s. At your maximum of {1} m/s.':
+    'Vindstød: {0} m/s. Ved dit maksimum på {1} m/s.',
+  'Wind gusts: {0} m/s. {1} m/s below your maximum of {2} m/s.':
+    'Vindstød: {0} m/s. {1} m/s under dit maksimum på {2} m/s.',
+  'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is above your {4} m/s maximum.':
+    'Vindstyrke: {0} m/s ({1}). {2} vind ({3}°) er over dit maksimum på {4} m/s.',
+  'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is at your {4} m/s maximum.':
+    'Vindstyrke: {0} m/s ({1}). {2} vind ({3}°) er ved dit maksimum på {4} m/s.',
+  'Wind speed: {0} m/s ({1}). {2} wind ({3}°) is {4} m/s below your {5} m/s maximum.':
+    'Vindstyrke: {0} m/s ({1}). {2} vind ({3}°) er {4} m/s under dit maksimum på {5} m/s.',
   'Water temperature: {0}°C. This is at or below your {1}°C lower limit.':
     'Vandtemperatur: {0}°C. Det er ved eller under din nedre grænse på {1}°C.',
   'Water temperature: {0}°C. This is below your {1}°C check boundary.':
@@ -220,13 +216,13 @@ export const da: Record<string, string> = {
   '{0}. These conditions are not recommended.': '{0}. Disse forhold frarådes.',
   '{0}. Check visibility and conditions before launch.':
     '{0}. Tjek sigtbarheden og forholdene, før du tager på vandet.',
-  'Nighttime: outside sunrise-to-sunset paddling hours.': 'Nat: uden for rotimerne mellem solopgang og solnedgang.',
-  'Daylight: part of this outlook period is outside sunrise-to-sunset paddling hours.':
-    'Dagslys: en del af denne udsigtsperiode ligger uden for rotimerne mellem solopgang og solnedgang.',
-  'Daylight: this outlook period has no complete hour within sunrise-to-sunset paddling hours.':
-    'Dagslys: denne udsigtsperiode har ingen hel time mellem solopgang og solnedgang.',
-  'Daylight: sunrise or sunset is unavailable for this outlook period, so FRANK cannot clear the whole period.':
-    'Dagslys: solopgang eller solnedgang mangler for denne udsigtsperiode, så FRANK kan ikke frikende hele perioden.',
+  'Nighttime: outside paddling hours.': 'Nat: uden for rotimerne.',
+  'Daylight: part of this period is outside paddling hours.':
+    'Dagslys: en del af perioden ligger uden for rotimerne.',
+  'Daylight: no complete hour of this period is within paddling hours.':
+    'Dagslys: ingen hel time i perioden ligger inden for rotimerne.',
+  'Daylight: sunrise or sunset is missing, so FRANK cannot clear this period.':
+    'Dagslys: solopgang eller solnedgang mangler, så FRANK kan ikke frikende perioden.',
   'No check was triggered: {0}, {1}, {2}.': 'Ingen tjek gav udslag: {0}, {1}, {2}.',
   'No outlook check was triggered: {0}, {1}, {2}.': 'Ingen tjek i langtidsudsigten gav udslag: {0}, {1}, {2}.',
   // Beaufort-style wind labels
@@ -361,10 +357,6 @@ export const da: Record<string, string> = {
     'Ingen aktive tjek gav udslag: {0}, {1}, {2}. Ikke tjekket: {3}.',
   'No enabled outlook check was triggered: {0}, {1}, {2}. Not checked: {3}.':
     'Ingen aktive tjek i langtidsudsigten gav udslag: {0}, {1}, {2}. Ikke tjekket: {3}.',
-  'No available outlook reading triggered a check: {0}, {1}, {2}. Gusts are not forecast for this longer-range period. Not checked: {3}.':
-    'Ingen af de tilgængelige målinger i langtidsudsigten gav anledning til et tjek: {0}, {1}, {2}. Vindstød varsles ikke for denne længere periode. Ikke tjekket: {3}.',
-  'No available outlook reading triggered a check: {0}, {1}, {2}. Gusts are not forecast for this longer-range period.':
-    'Ingen af de tilgængelige målinger i langtidsudsigten gav anledning til et tjek: {0}, {1}, {2}. Vindstød varsles ikke for denne længere periode.',
   'This device would not save your limits, so they will go back to the previous values next time you open FRANK. They are active for now.':
     'Denne enhed ville ikke gemme dine grænser, så de vender tilbage til de forrige værdier, næste gang du åbner FRANK. De er aktive nu.',
   'About FRANK — data, privacy and version': 'Om FRANK — data, privatliv og version',

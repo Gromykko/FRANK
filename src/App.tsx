@@ -221,7 +221,7 @@ export default function App() {
   const safetyDisplay = getSafetyDisplay(
     safety,
     activeSafetyChecks,
-    t('Your personal limits are off. Use the raw forecast values and local judgement before launching.'),
+    t('Your personal limits are off.'),
   );
   const {
     rating: safetyDisplayRating,
@@ -354,7 +354,7 @@ export default function App() {
           <div className="forecast-warning" role="alert">
             <AlertTriangle size={15} />
             {!forecastAgeLabel ? (
-              <span>{t('The saved forecast time could not be verified. Treat it with extra caution and check an official source before launching.')}</span>
+              <span>{t('The saved forecast time could not be verified. Check an official source before launching.')}</span>
             ) : !online ? (
               // Offline needs its own sentence. The banner keys on DATA AGE, which
               // is right — a paddler on the water with a six-hour-old forecast
@@ -362,11 +362,11 @@ export default function App() {
               // wording then contradicted the header one line above, which
               // correctly said "Offline". Nothing is failing; there is simply no
               // connection to try over.
-              <span>{t('You have been offline for a while, so this forecast is from {0} — {1} old. Treat it with extra caution; it will update by itself once you are back online.', formatDateTime(weatherData.sources.fetchedAt), forecastAgeLabel)}</span>
+              <span>{t('You have been offline for a while, so this forecast is from {0} — {1} old. It will update by itself once you are back online.', formatDateTime(weatherData.sources.fetchedAt), forecastAgeLabel)}</span>
             ) : refreshFailureConfirmed ? (
-              <span>{t('The forecast could not be refreshed. You are seeing data from {0} — {1} old, so treat it with extra caution. FRANK retries by itself roughly every 10 minutes.', formatDateTime(weatherData.sources.fetchedAt), forecastAgeLabel)}</span>
+              <span>{t('The forecast could not be refreshed. You are seeing data from {0} — {1} old. FRANK retries by itself roughly every 10 minutes.', formatDateTime(weatherData.sources.fetchedAt), forecastAgeLabel)}</span>
             ) : (
-              <span>{t('This forecast has not updated as expected. You are seeing data from {0} — {1} old, so treat it with extra caution while FRANK checks again.', formatDateTime(weatherData.sources.fetchedAt), forecastAgeLabel)}</span>
+              <span>{t('This forecast has not updated as expected. You are seeing data from {0} — {1} old, and FRANK is checking again.', formatDateTime(weatherData.sources.fetchedAt), forecastAgeLabel)}</span>
             )}
           </div>
         )}

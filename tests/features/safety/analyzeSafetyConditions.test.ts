@@ -100,7 +100,7 @@ describe('analyzeSafetyConditions', () => {
     const result = analyzeSafetyConditions({ ...baseData, symbolCode: '' }, baseSettings);
     expect(result.rating).toBe('caution');
     expect(result.reasons.some((reason) => /cannot assess/i.test(reason.text))).toBe(true);
-    expect(result.reasons.some((reason) => /does not count as within limits/i.test(reason.text))).toBe(true);
+    expect(result.reasons.some((reason) => /check another source/i.test(reason.text))).toBe(true);
   });
 
   it('evaluates water temp correctly', () => {
@@ -121,7 +121,7 @@ describe('analyzeSafetyConditions', () => {
       const result = analyzeSafetyConditions({ ...baseData, ...invalid }, baseSettings);
       expect(result.rating).toBe('caution');
       expect(result.reasons.some((reason) => reason.text.includes('cannot assess'))).toBe(true);
-      expect(result.reasons.some((reason) => reason.text.includes('does not count as within limits'))).toBe(true);
+      expect(result.reasons.some((reason) => reason.text.includes('check another source'))).toBe(true);
     }
     expect(getWindSpeedLabel(-1)).toBe('Unknown');
     expect(getWaveHeightLabel(-1)).toBe('Unknown');
@@ -355,7 +355,7 @@ describe('gust maximum math', () => {
     const result = analyzeSafetyConditions({ ...baseData, windSpeed: 3, windGust: 13.4 }, baseSettings);
     const gustReason = result.reasons.find((reason) => reason.text.startsWith('Wind gusts:'));
 
-    expect(gustReason?.text).toBe('Wind gusts: 13.4 m/s. Above the 12.8 m/s maximum derived from your wind limit.');
+    expect(gustReason?.text).toBe('Wind gusts: 13.4 m/s. Above your maximum of 12.8 m/s.');
     expect(gustReason?.text).not.toMatch(/\([^)]*(?:Breeze|Gale|Storm|Hurricane)[^)]*\)/);
   });
 
@@ -366,7 +366,7 @@ describe('gust maximum math', () => {
       reasons: [{
         severity: 'caution',
         kind: 'near-limit',
-        text: 'Wind gusts: 11.7 m/s. 1.1 m/s below the 12.8 m/s maximum derived from your wind limit.',
+        text: 'Wind gusts: 11.7 m/s. 1.1 m/s below your maximum of 12.8 m/s.',
       }],
     });
 
@@ -376,7 +376,7 @@ describe('gust maximum math', () => {
       reasons: [{
         severity: 'caution',
         kind: 'near-limit',
-        text: 'Wind gusts: 12.8 m/s. At the 12.8 m/s maximum derived from your wind limit.',
+        text: 'Wind gusts: 12.8 m/s. At your maximum of 12.8 m/s.',
       }],
     });
     expect(analyzeSafetyConditions({ ...baseData, windGust: 12.9 }, baseSettings).rating).toBe('danger');
@@ -412,7 +412,7 @@ describe('wind and gust explanation de-duplication', () => {
       reasons: [{
         severity: 'caution',
         kind: 'near-limit',
-        text: 'Wind gusts: 12.7 m/s. 0.1 m/s below the 12.8 m/s maximum derived from your wind limit.',
+        text: 'Wind gusts: 12.7 m/s. 0.1 m/s below your maximum of 12.8 m/s.',
       }],
     });
   });
@@ -427,7 +427,7 @@ describe('wind and gust explanation de-duplication', () => {
       rating: 'danger',
       reasons: [{
         severity: 'danger',
-        text: 'Wind gusts: 13.5 m/s. Above the 12.8 m/s maximum derived from your wind limit.',
+        text: 'Wind gusts: 13.5 m/s. Above your maximum of 12.8 m/s.',
       }],
     });
   });
@@ -464,7 +464,7 @@ describe('wind and gust explanation de-duplication', () => {
         },
         {
           severity: 'danger',
-          text: 'Wind gusts: 13.5 m/s. Above the 12.8 m/s maximum derived from your wind limit.',
+          text: 'Wind gusts: 13.5 m/s. Above your maximum of 12.8 m/s.',
         },
       ],
     });
@@ -592,7 +592,7 @@ describe('daylightOnly rule', () => {
 
     const partial = assess({ sunrise: ['2026-07-08T08:00:00Z'], sunset: ['2026-07-08T20:00:00Z'] });
     expect(partial.rating).toBe('caution');
-    expect(partial.reasons.some((reason) => reason.text.includes('part of this outlook period is outside'))).toBe(true);
+    expect(partial.reasons.some((reason) => reason.text.includes('part of this period is outside'))).toBe(true);
 
     const translateDa = (key: string, ...args: Array<string | number>) =>
       interpolate(da[key] ?? key, ...args);
@@ -609,7 +609,7 @@ describe('daylightOnly rule', () => {
 
     const unknown = assess();
     expect(unknown.rating).toBe('caution');
-    expect(unknown.reasons.some((reason) => reason.text.includes('unavailable'))).toBe(true);
+    expect(unknown.reasons.some((reason) => reason.text.includes('sunrise or sunset is missing'))).toBe(true);
   });
 
   it('can deliberately defer block daylight to launch-window clipping', () => {
@@ -705,7 +705,7 @@ describe('custom wind direction sectors', () => {
       reasons: [
         {
           severity: 'danger',
-          text: 'Wind speed: 7.8 m/s (Moderate Breeze). Westerly wind (315°) is above your 7.0 m/s maximum for this direction.',
+          text: 'Wind speed: 7.8 m/s (Moderate Breeze). Westerly wind (315°) is above your 7.0 m/s maximum.',
         },
       ],
     });
@@ -748,7 +748,7 @@ describe('custom wind direction sectors', () => {
     expect(result.rating).toBe('danger');
     expect(result.reasons).toHaveLength(1);
     expect(result.reasons[0].text).toContain('Easterly wind (90°)');
-    expect(result.reasons[0].text).toContain('8.0 m/s maximum for this direction');
+    expect(result.reasons[0].text).toContain('8.0 m/s maximum');
   });
 
   it('keeps a sector danger reason over a general near-limit reason', () => {
@@ -769,7 +769,7 @@ describe('custom wind direction sectors', () => {
     expect(result.rating).toBe('danger');
     expect(result.reasons).toHaveLength(1);
     expect(result.reasons[0].text).toContain('Easterly wind (90°)');
-    expect(result.reasons[0].text).toContain('7.0 m/s maximum for this direction');
+    expect(result.reasons[0].text).toContain('7.0 m/s maximum');
   });
 
   it('keeps the lower controlling threshold when both general and sector rules are near-limit', () => {
@@ -792,7 +792,7 @@ describe('custom wind direction sectors', () => {
       reasons: [{
         severity: 'caution',
         kind: 'near-limit',
-        text: 'Wind speed: 6.5 m/s (Moderate Breeze). Easterly wind (90°) is 0.5 m/s below your 7.0 m/s maximum for this direction.',
+        text: 'Wind speed: 6.5 m/s (Moderate Breeze). Easterly wind (90°) is 0.5 m/s below your 7.0 m/s maximum.',
       }],
     });
   });
@@ -809,7 +809,7 @@ describe('custom wind direction sectors', () => {
 
     expect(result.rating).toBe('danger');
     expect(result.reasons.map((reason) => reason.text)).toEqual([
-      'Wind speed: 7.8 m/s (Moderate Breeze). Westerly wind (270°) is above your 7.0 m/s maximum for this direction.',
+      'Wind speed: 7.8 m/s (Moderate Breeze). Westerly wind (270°) is above your 7.0 m/s maximum.',
     ]);
   });
 
@@ -842,7 +842,7 @@ describe('custom wind direction sectors', () => {
       reasons: [{
         severity: 'caution',
         kind: 'near-limit',
-        text: 'Wind speed: 6.4 m/s (Moderate Breeze). Easterly wind (90°) is 0.6 m/s below your 7.0 m/s maximum for this direction.',
+        text: 'Wind speed: 6.4 m/s (Moderate Breeze). Easterly wind (90°) is 0.6 m/s below your 7.0 m/s maximum.',
       }],
     });
   });
@@ -929,8 +929,8 @@ describe('rating combination rules', () => {
       },
     );
     expect(result.rating).toBe('safe');
-    expect(result.reasons[0].text).toContain('No available outlook reading triggered a check');
-    expect(result.reasons[0].text).toContain('Gusts are not forecast for this longer-range period.');
+    expect(result.reasons[0].text).toContain('No outlook check was triggered');
+    expect(result.reasons[0].text).not.toContain('Gusts are not forecast');
   });
 
   it('keeps a longer-range proximity warning structured as near-limit only', () => {
@@ -1021,7 +1021,7 @@ describe('weather severity (additional symbol_code cases)', () => {
     const unknownSymbol = analyzeSafetyConditions(withSymbol('sunshowersoffrogs'), baseSettings);
     expect(unknownSymbol.rating).toBe('caution');
     expect(unknownSymbol.reasons.some((r) => /cannot assess/i.test(r.text))).toBe(true);
-    expect(unknownSymbol.reasons.some((r) => /does not count as within limits/i.test(r.text))).toBe(true);
+    expect(unknownSymbol.reasons.some((r) => /check another source/i.test(r.text))).toBe(true);
   });
 
   it('a recognised symbol in otherwise-clear conditions still rates safe', () => {
