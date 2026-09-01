@@ -731,4 +731,9 @@ export const da: Record<string, string> = {
   'When no window qualifies, FRANK says how many continuous stretches came close so you can find them on the timeline. It does not list them as windows.':
     'Når intet rovindue opfylder kravene, fortæller FRANK, hvor mange sammenhængende perioder der var tæt på, så du kan finde dem i tidslinjen. De vises ikke som rovinduer.',
   'Close': 'Luk',
+  'DMI maintenance may delay wave and water-level forecasts':
+    "Vedligehold kan forsinke DMI's prognoser for bølger og vandstand",
+  'DMI says maintenance at its supercomputer provider may delay wave and water-level forecasts from 31 August through 10 September. FRANK keeps the latest complete forecast and checks again automatically. Check the forecast age before you launch.':
+    "DMI oplyser, at vedligeholdelse hos deres supercomputerleverandør kan forsinke prognoser for bølger og vandstand fra 31. august til og med 10. september. FRANK viser den seneste komplette prognose og tjekker automatisk igen. Tjek prognosens alder, før du tager på vandet.",
+  "Read DMI's maintenance notice": "Læs DMI's meddelelse om vedligeholdelse",
 };

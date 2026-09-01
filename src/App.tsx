@@ -22,6 +22,7 @@ import StatusBar from './components/StatusBar';
 import ConditionsSnapshot from './components/ConditionsSnapshot';
 import TripProfilePanel from './components/TripProfilePanel';
 import WarningStripe from './components/WarningStripe';
+import DmiMaintenanceNotice from './components/DmiMaintenanceNotice';
 import ErrorBoundary from './components/ErrorBoundary';
 import ForecastErrorScreen from './components/ForecastErrorScreen';
 import ForecastInitializingScreen from './components/ForecastInitializingScreen';
@@ -370,6 +371,12 @@ export default function App() {
             )}
           </div>
         )}
+        <DmiMaintenanceNotice
+          cacheHealth={weatherData.sources.cacheHealth}
+          nowMs={presentationNowMs}
+          online={online}
+          refreshFailureConfirmed={refreshFailureConfirmed}
+        />
         <div className="app-sections">
 
           {/* Trip profile — the input that frames every reading below */}
